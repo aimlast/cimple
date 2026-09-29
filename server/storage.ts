@@ -38,6 +38,7 @@ import { eq, ne, desc, sql, count, avg, sum, inArray, and } from "drizzle-orm";
 import { REVOKED_INVITE_STATUS } from "@shared/seller-invite-revocation";
 import { withApprovalRuleMark } from "@shared/cim-approvals";
 import { resetTokenLookupValues } from "./buyer-auth/reset-token";
+import { deleteDealRows } from "./deals/delete-deal";
 
 // Buyer profile fields that feed calculateBuyerProfileCompletion — an update
 // touching any of these recomputes profileCompletionPct (see updateBuyerUser).
@@ -601,8 +602,9 @@ export class DbStorage implements IStorage {
     return result;
   }
 
+  /** The deal and every row that carries its id (server/deals/delete-deal.ts). Files: deleteDealEverywhere. */
   async deleteDeal(id: string): Promise<void> {
-    await db.delete(deals).where(eq(deals.id, id));
+    await deleteDealRows(db, id);
   }
 
   // Document operations
@@ -616,7 +618,12 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
-  /** Look up a document by its stored fileUrl (used by the /uploads/docs access gate). */
+  /** Every document row pointing at this stored fileUrl (a copied row may share a file). */
+  async getDocumentsByFileUrl(fileUrl: string): Promise<Document[]> {
+    return db.select().from(documents).where(eq(documents.fileUrl, fileUrl));
+  }
+
+  /** Look up a document by its stored fileUrl. */
   async getDocumentByFileUrl(fileUrl: string): Promise<Document | undefined> {
     const result = await db.select().from(documents).where(eq(documents.fileUrl, fileUrl));
     return result[0];
@@ -747,6 +754,31 @@ export class DbStorage implements IStorage {
       sql`(${buyerAccess.decision} = 'under_review' OR (${buyerAccess.decision} IS NULL AND ${buyerAccess.reminderStage} = 'none'))`,
     );
     return result.filter(b => !b.revokedAt && b.firstViewedAt);
+  }
+
+  /**
+   * Records the NDA signature only if this link has not signed yet — one
+   * atomic update, so two concurrent signings can't both write (the second
+   * gets undefined). A signature is never overwritten.
+   */
+  async recordBuyerNdaSignature(id: string, updates: Partial<InsertBuyerAccess>): Promise<BuyerAccess | undefined> {
+    const result = await db.update(buyerAccess)
+      .set({ ...updates, ndaSigned: true } as any)
+      .where(and(eq(buyerAccess.id, id), sql`${buyerAccess.ndaSigned} IS NOT TRUE`))
+      .returning();
+    return result[0];
+  }
+
+  /**
+   * Marks the NDA answers on this link as read into matching criteria (the
+   * background read succeeded for exactly these words). Merged into
+   * nda_profile by the database, so the signature record beside it is never
+   * rewritten.
+   */
+  async markNdaCriteriaRead(id: string, readOf: string): Promise<void> {
+    await db.update(buyerAccess)
+      .set({ ndaProfile: sql`coalesce(${buyerAccess.ndaProfile}, '{}'::jsonb) || jsonb_build_object('criteriaReadOf', ${readOf}::text)` } as any)
+      .where(eq(buyerAccess.id, id));
   }
 
   async updateBuyerAccess(id: string, updates: Partial<InsertBuyerAccess>): Promise<BuyerAccess | undefined> {

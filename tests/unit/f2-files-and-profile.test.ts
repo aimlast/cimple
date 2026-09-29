@@ -43,6 +43,7 @@ s.updateDeal = async (_id: string, p: any) => { deal = { ...deal, ...p }; return
 s.getDocumentsByDeal = async () => docs.map((d) => ({ ...d }));
 s.getDocument = async (id: string) => docs.find((d) => d.id === id);
 s.getDocumentByFileUrl = async (u: string) => docs.find((d) => d.fileUrl === u);
+s.getDocumentsByFileUrl = async (u: string) => docs.filter((d) => d.fileUrl === u).map((d) => ({ ...d }));
 s.deleteDocument = async (id: string) => { docs = docs.filter((d) => d.id !== id); };
 s.getDiscrepanciesByDeal = async () => [];
 s.updateDiscrepancy = async () => undefined;

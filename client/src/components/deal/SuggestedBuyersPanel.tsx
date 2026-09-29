@@ -218,8 +218,12 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
       setDraftSheetOpen(true);
       toast({ description: `Drafted ${resp.drafts.length} email${resp.drafts.length === 1 ? "" : "s"} — review and edit before sending.` });
     },
-    onError: () => {
-      toast({ variant: "destructive", description: "Failed to draft outreach. Try again." });
+    onError: (e: Error) => {
+      // Show the server's own words (e.g. "Draft up to 50 buyers at a time").
+      const m = /^\d{3}: ([\s\S]*)$/.exec(e.message || "");
+      let description = "Failed to draft outreach. Try again.";
+      try { description = (m ? JSON.parse(m[1]).error : null) || description; } catch { /* keep default */ }
+      toast({ variant: "destructive", description });
     },
   });
 

@@ -77,6 +77,7 @@ s.updateDeal = async (_id: string, patch: any) => { deal = { ...deal, ...JSON.pa
 s.getDocumentsByDeal = async () => docs.map((d) => ({ ...d }));
 s.getDocument = async (id: string) => { const d = docs.find((x) => x.id === id); return d ? { ...d } : undefined; };
 s.getDocumentByFileUrl = async (u: string) => docs.find((d) => d.fileUrl === u);
+s.getDocumentsByFileUrl = async (u: string) => docs.filter((d) => d.fileUrl === u).map((d) => ({ ...d }));
 s.createDocument = async (data: any) => { const d = { id: `NEW${++created}`, createdAt: new Date(), updatedAt: new Date(), isProcessed: false, extractedText: null, extractedData: null, ...data }; docs.push(d); return { ...d }; };
 s.updateDocument = async (id: string, patch: any) => { const d = docs.find((x) => x.id === id); if (!d) return undefined; Object.assign(d, patch, { updatedAt: new Date() }); return { ...d }; };
 s.deleteDocument = async (id: string) => { docs = docs.filter((d) => d.id !== id); };

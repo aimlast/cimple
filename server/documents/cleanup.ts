@@ -5,7 +5,9 @@
  * seller removing or replacing an upload, a CRM import replacing a changed
  * item — goes through deleteDocumentAndProvenance: the row, the facts only
  * it contributed, the discrepancies about it, and the file on disk (a
- * deleted file must not stay on the volume).
+ * deleted tax return must not stay on the volume, still servable), awaited
+ * so the file is gone when the delete returns. A whole deal's delete is
+ * server/deals/delete-deal.ts.
  */
 import fs from "fs";
 import path from "path";
@@ -95,8 +97,10 @@ export async function removeDocumentFile(doc: { id: string; fileUrl?: string | n
   const filePath = resolveDocumentPath(doc);
   if (!filePath || !doc.fileUrl) return false;
   try {
-    const other = await storage.getDocumentByFileUrl(doc.fileUrl);
-    if (other && other.id !== doc.id) return false;
+    // A failed lookup throws into the catch below: the file stays (never
+    // delete a file we couldn't prove unused).
+    const others = (await storage.getDocumentsByFileUrl(doc.fileUrl)).filter((d) => d.id !== doc.id);
+    if (others.length > 0) return false;
     await fs.promises.unlink(filePath);
     return true;
   } catch (err: any) {
@@ -134,13 +138,14 @@ export function orphanDocumentFiles(
 // ── A deleted deal ──────────────────────────────────────────────────────
 
 /**
- * Everything a deleted deal keeps on the volume goes with it: its documents
- * rows (with their extracted text) and their files — never a file another
- * row still points at — and its photos/videos (rows and the deal's
+ * What a deal that is already gone left on the volume: its documents rows
+ * (with their extracted text) and their files — never a file another row
+ * still points at — and its photos/videos (rows and the deal's
  * private-media folder). DELETE /api/deals/:id used to take only the deals
  * row, so every file the broker ever uploaded to the deal stayed on the
- * volume, and the orphan-file sweep counted them as in use. Best effort per
- * item; returns what it removed.
+ * volume, and the orphan-file sweep counted them as in use. A live delete
+ * now goes through server/deals/delete-deal.ts (every child table); this is
+ * the sweep's per-deal step. Best effort per item; returns what it removed.
  */
 export async function deleteDealLeftovers(
   dealId: string,
@@ -174,7 +179,7 @@ export async function deleteDealLeftovers(
 const DELETED_DEALS_MARKER = ".deleted-deals-sweep-v1";
 
 /**
- * One-off clean-up of what deals deleted before deleteDealLeftovers existed
+ * One-off clean-up of what deals deleted before a deal delete took everything
  * left behind: documents rows whose deal is gone (with their files) and
  * photo/video rows and folders of deals that are gone. Runs once per volume
  * (a marker file in the uploads root records it); never runs against an

@@ -73,6 +73,13 @@ async function main() {
     getBuyerAccessByBuyerUser: async (bid: string) => T.access.filter((a) => a.buyerUserId === bid),
     createBuyerAccess: async (row: any) => { const r = { id: id("A"), decision: "under_review", viewCount: 0, ndaSigned: false, ...row }; T.access.push(r); return r; },
     updateBuyerAccess: async (aid: string, patch: any) => { const r = upd("access", aid, patch); return r ? { ...r } : r; },
+    // Like the database: records a signature only on a link that hasn't signed.
+    recordBuyerNdaSignature: async (aid: string, patch: any) => {
+      const a = find("access", (x) => x.id === aid);
+      if (!a || a.ndaSigned) return undefined;
+      const r = upd("access", aid, { ...patch, ndaSigned: true });
+      return r ? { ...r } : r;
+    },
     getBuyerUser: async (bid: string) => read("buyers", (b) => b.id === bid),
     getBuyerUserByEmail: async (e: string) => read("buyers", (b) => b.email === e.toLowerCase().trim()),
     createBuyerUser: async (row: any) => { const r = { id: id("U"), ...row }; T.buyers.push(r); return r; },

@@ -26,6 +26,7 @@
 import fs from "fs";
 import path from "path";
 import { createHash } from "crypto";
+import { newDocumentFileName } from "../documents/document-path";
 import { storage } from "../storage";
 import { createAndIngestSource } from "../documents/ingest";
 import { deleteDocumentAndProvenance } from "../documents/cleanup";
@@ -643,7 +644,7 @@ function fileItem(token: string, f: any, dealId: string, skipped: (why: string) 
       const { buffer } = await pdDownload(token, `/v1/files/${f.id}/download`, MAX_FILE_BYTES);
       const docsDir = path.join(uploadsDir(), "docs");
       fs.mkdirSync(docsDir, { recursive: true });
-      const filePath = path.join(docsDir, `crm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`);
+      const filePath = path.join(docsDir, newDocumentFileName("crm", `.${ext}`));
       fs.writeFileSync(filePath, buffer);
       const { category, subcategory } = guessCategory(name);
       return {
@@ -883,13 +884,15 @@ function summarise(s: CrmImportStatus): string {
   return parts.join(" · ");
 }
 
-/** Deletes a superseded source and the facts only it contributed. */
-async function retireDocument(doc: Document): Promise<void> {
+/** Deletes a superseded source, its file and the facts only it contributed. */
+export async function retireDocument(doc: Document): Promise<void> {
   try {
-    // Facts the new version repeats were recorded as corroborations when it
+    // The same clean-up as a broker's delete (deleteDocumentAndProvenance):
+    // facts the new version repeats were recorded as corroborations when it
     // was ingested, so they stay; only what the old version alone said goes,
-    // and what it leaves empty is refilled by the merge's own authority —
-    // the same clean-up as a broker's delete, the stored file included.
+    // and what it leaves empty is refilled by the merge's own authority. The
+    // file goes too (unless another row shares it) — a superseded CRM file
+    // no row points at used to stay on the volume indefinitely.
     await deleteDocumentAndProvenance(doc.id);
   } catch (err) {
     console.warn(`[crm-seller] couldn't retire superseded source ${doc.id}:`, err);
