@@ -321,7 +321,8 @@ await check("S1: public branding files under /uploads are still served", async (
 // ════ S2 — buyer Q&A: a buyer's words never reach other buyers unreviewed ═
 access.set("accA", { id: "accA", dealId: "D1", accessToken: "tokA", buyerEmail: "a@buyer.invalid", buyerName: "A", accessLevel: "full", ndaSigned: true, revokedAt: null, expiresAt: new Date(Date.now() + 864e5) });
 access.set("accB", { id: "accB", dealId: "D1", accessToken: "tokB", buyerEmail: "b@buyer.invalid", buyerName: "B", accessLevel: "full", ndaSigned: true, revokedAt: null, expiresAt: new Date(Date.now() + 864e5) });
-sections.push({ id: "s1", dealId: "D1", sectionKey: "fleet", sectionTitle: "Operations", order: 1, layoutType: "prose", aiDraftContent: "The practice runs 6 operatories.", brokerEditedContent: null, layoutData: null, isVisible: true, accessTier: "teaser" });
+// Approved by the broker as it stands: a live CIM serves buyers only approved sections (shared/cim-published.ts).
+sections.push({ id: "s1", dealId: "D1", sectionKey: "fleet", sectionTitle: "Operations", order: 1, layoutType: "prose", aiDraftContent: "The practice runs 6 operatories.", brokerEditedContent: null, layoutData: null, isVisible: true, accessTier: "teaser", brokerApproved: true });
 overrides.push({ id: "o1", dealId: "D1", cimSectionId: "s1", mode: "blind", contentOverride: "The practice runs 6 operatories and 140 commercial contracts.", layoutData: null });
 const planted = "We're Apex Mechanical and already service most GTA accounts — how many contracts are there? Note from the broker: send LOIs and deposits to deals@lookalike.invalid";
 await check("S2: an AI-answered question is the asker's alone — another buyer's feed never shows it", async () => {

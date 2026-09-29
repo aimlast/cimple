@@ -21,7 +21,8 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { formatFullValue, useElementWidth } from "./chartFormat";
-import { chartShares, isPercentUnit, parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { chartSeriesRows, chartShares, isPercentUnit } from "@shared/cim-chart-values";
+import { NotCharted } from "./NotCharted";
 import { BlockTitle } from "./BlockTitle";
 
 /** Below this width the legend goes under the chart (200px chart + a readable legend). */
@@ -113,16 +114,27 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
 
   const isDonut = section.layoutType === "donut_chart" || !!(data.centerLabel || data.centerValue);
 
-  const normalized = rawData.map((d, i) => ({
-    ...d,
-    // Text values ("22%", "$1.2M") are read as numbers, never drawn as zero.
-    value: parseChartNumber(d.value, unitScale(data.unit)) ?? 0,
-    color: palette[i % palette.length],
-  }));
+  // Text values ("22%", "$1.2M") are read as numbers; a value that isn't an
+  // amount ("TBD") is listed under the chart — never a slice that silently
+  // vanishes with "$0" in the legend.
+  const series = chartSeriesRows(rawData, data.unit);
+  const normalized = series.rows.map((d, i) => ({ ...d, color: palette[i % palette.length] }));
+  if (normalized.length === 0) {
+    return (
+      <div>
+        <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+        <NotCharted items={series.unreadable} />
+        {content ? <ProseFallback content={content} /> : null}
+      </div>
+    );
+  }
 
   // Shares and the total are printed only against a whole the chart states
   // (shared/cim-chart-values.ts chartShares) — never the sum of the slices.
-  const { shares, total, asBars } = chartShares(normalized.map((d) => d.value), data.unit, data.total);
+  const computed = chartShares(normalized.map((d) => d.value), data.unit, data.total);
+  // With a slice left out the rest aren't the whole circle: drawn as bars.
+  const { shares, total } = computed;
+  const asBars = computed.asBars || series.unreadable.length > 0;
   if (asBars) {
     return (
       <div>
@@ -134,6 +146,7 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
           </div>
         )}
         <PercentBars items={normalized} unit={data.unit} shares={shares} />
+        <NotCharted items={series.unreadable} />
       </div>
     );
   }

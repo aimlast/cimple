@@ -664,6 +664,75 @@ export function isCimFallbackSection(s: { aiLayoutReasoning?: string | null }): 
   return s.aiLayoutReasoning === CIM_FALLBACK_REASONING;
 }
 
+// ── Sample data a blank layout starts with ──────────────────────────────────
+
+/** Layouts whose blank data shows made-up figures or labels ("Category A 60 / B 40"). */
+const SAMPLE_LAYOUTS: ReadonlySet<string> = new Set([
+  "cover_page", "metric_grid", "stat_callout", "icon_stat_row", "scorecard", "bar_chart", "horizontal_bar_chart",
+  "line_chart", "pie_chart", "donut_chart", "waterfall_chart", "financial_table", "callout_list", "numbered_list",
+  "timeline", "tag_cloud", "org_chart", "location_card", "location_map",
+]);
+
+/** JSON with sorted keys, without the fields a broker adds around the sample (title, intro). */
+function sampleJson(v: unknown, top = true): string {
+  if (Array.isArray(v)) return `[${v.map((x) => sampleJson(x, false)).join(",")}]`;
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const keys = Object.keys(o).filter((k) => o[k] !== undefined && !(top && (k === "title" || k === "intro"))).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${sampleJson(o[k], false)}`).join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+
+const rowLabel = (o: Record<string, unknown>) => String(o.name ?? o.label ?? o.title ?? "").trim();
+
+function sampleRowsOf(v: unknown, out: Array<Record<string, unknown>> = []): Array<Record<string, unknown>> {
+  if (Array.isArray(v)) {
+    for (const x of v) {
+      if (isRecord(x)) {
+        // A year ("2023") with a zero is a blank bar, not a made-up label —
+        // a real chart can hold it; only the untouched whole is sample then.
+        const label = rowLabel(x);
+        if (label && !/^(?:19|20)\d{2}$/.test(label)) out.push(x);
+      }
+      sampleRowsOf(x, out);
+    }
+  } else if (isRecord(v)) {
+    for (const x of Object.values(v)) sampleRowsOf(x, out);
+  }
+  return out;
+}
+
+/**
+ * The sample data a section still shows from its blank layout ("Start it
+ * blank", a layout change with no data): the labels of made-up rows
+ * ("Category A", "Item A", "Factor", "Metric"), or "sample data" for an
+ * untouched blank. Empty = none. A pie's "Category A 60 / Category B 40"
+ * reads to a buyer as a real 60% / 40% split (chartShares treats unitless
+ * values that make 100 as shares), so such a section can't be approved,
+ * published or served (free round 2, C1).
+ */
+export function sampleDataIn(layoutType: string, layoutData: unknown): string[] {
+  if (!SAMPLE_LAYOUTS.has(layoutType) || !isRecord(layoutData)) return [];
+  const def = getCimLayout(layoutType);
+  if (!def) return [];
+  const blank = def.defaultData({});
+  if (sampleJson(layoutData) === sampleJson(blank)) return ["sample data"];
+  const found = new Set<string>();
+  // An org chart's blank node ("Owner" / "Owner") can be what an anonymised
+  // chart really says — only its untouched whole counts.
+  const sampleRows = new Set(layoutType === "org_chart" ? [] : sampleRowsOf(blank).map((r) => sampleJson(r, false)));
+  for (const r of sampleRowsOf(layoutData)) if (sampleRows.has(sampleJson(r, false))) found.add(rowLabel(r));
+  if (layoutType === "cover_page" && layoutData.businessName === "Business name") found.add("Business name");
+  if (layoutType === "stat_callout" && layoutData.primaryLabel === "Headline figure" && (!layoutData.primaryValue || layoutData.primaryValue === "—")) found.add("Headline figure");
+  return Array.from(found);
+}
+
+/** A section still showing sample data (see sampleDataIn). */
+export function hasSampleData(s: { layoutType?: string | null; layoutData?: unknown }): boolean {
+  return sampleDataIn(String(s.layoutType ?? ""), s.layoutData).length > 0;
+}
+
 /** Layout type the view room uses for a section a buyer can't open yet. */
 export const LOCKED_LAYOUT_TYPE = "locked";
 export const LOCKED_SECTION_MESSAGE = "Available once the broker upgrades your access";

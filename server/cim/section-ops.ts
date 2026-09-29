@@ -22,7 +22,9 @@ import {
   type CimSectionSnapshot,
   type InsertCimSection,
 } from "@shared/schema";
-import { CIM_ACCESS_TIERS, defaultLayoutData, isCimFallbackSection, isCimLayoutKey, sameLayoutFamily } from "@shared/cim-layouts";
+import { CIM_ACCESS_TIERS, defaultLayoutData, isCimFallbackSection, isCimLayoutKey, sameLayoutFamily, sampleDataIn } from "@shared/cim-layouts";
+import { keepPublishedBeforeChange, recordPublishedVersions } from "./published-versions";
+import { storage } from "../storage";
 import { carryFigureWarnings } from "./figure-check";
 import { getOwnedDeal } from "../broker-auth/routes";
 import { invalidateBlind } from "./blind-sync";
@@ -130,27 +132,32 @@ export async function deleteSection(section: CimSection): Promise<void> {
   });
 }
 
+/** The new row for a copy of a section (pure — see duplicateSection). */
+export function duplicateSectionFields(section: CimSection, opts: { hidden: boolean }): Omit<InsertCimSection, "dealId" | "order" | "sectionKey"> & { sectionKey?: string } {
+  return {
+    sectionTitle: `${section.sectionTitle} (copy)`.slice(0, 200),
+    sectionKey: section.sectionKey,
+    layoutType: section.layoutType,
+    layoutData: section.layoutData as any,
+    aiLayoutReasoning: section.aiLayoutReasoning,
+    tags: section.tags as any,
+    aiDraftContent: section.aiDraftContent,
+    brokerEditedContent: section.brokerEditedContent,
+    brokerApproved: false,
+    isVisible: opts.hidden ? false : section.isVisible,
+    layoutOverride: section.layoutOverride,
+    accessTier: section.accessTier ?? "teaser",
+    // The copy shows the same figures, so it carries the same flags: an
+    // untraced figure must not lose its "check these" warning by being
+    // copied (then approved with the design and published).
+    figureWarnings: Array.isArray(section.figureWarnings) && section.figureWarnings.length ? (section.figureWarnings as string[]) : null,
+    blindStaleAt: new Date(),
+  };
+}
+
 /** Copy a section (fresh key, "(copy)" title) right after the original. */
 export async function duplicateSection(section: CimSection, opts: { hidden: boolean }): Promise<CimSection> {
-  const created = await insertSectionAt(
-    section.dealId,
-    {
-      sectionTitle: `${section.sectionTitle} (copy)`.slice(0, 200),
-      sectionKey: section.sectionKey,
-      layoutType: section.layoutType,
-      layoutData: section.layoutData as any,
-      aiLayoutReasoning: section.aiLayoutReasoning,
-      tags: section.tags as any,
-      aiDraftContent: section.aiDraftContent,
-      brokerEditedContent: section.brokerEditedContent,
-      brokerApproved: false,
-      isVisible: opts.hidden ? false : section.isVisible,
-      layoutOverride: section.layoutOverride,
-      accessTier: section.accessTier ?? "teaser",
-      blindStaleAt: new Date(),
-    },
-    { afterSectionId: section.id },
-  );
+  const created = await insertSectionAt(section.dealId, duplicateSectionFields(section, opts), { afterSectionId: section.id });
   const at = await invalidateBlind(section.dealId, [created.id]);
   // A shown copy is new content the approvals never covered.
   if (created.isVisible !== false) await withdrawApprovalsAfterChange(section.dealId);
@@ -205,6 +212,8 @@ export async function undoLastChange(section: CimSection): Promise<CimSection | 
   const figureWarnings = "figureWarnings" in last
     ? last.figureWarnings ?? null
     : carryFigureWarnings(section, section.figureWarnings as string[] | null, restored);
+  // A live CIM's buyers keep the approved version until the undo is approved.
+  await keepPublishedBeforeChange(section, await storage.getDeal(section.dealId));
   const [updated] = await db
     .update(cimSections)
     .set({
@@ -252,7 +261,8 @@ export async function patchCimSection(req: Request, res: Response) {
   try {
     const sectionId = String(req.params.sectionId ?? req.params.id);
     const [section] = await db.select().from(cimSections).where(eq(cimSections.id, sectionId));
-    if (!section || !(await getOwnedDeal(section.dealId, req.session.brokerId))) {
+    const deal = section ? await getOwnedDeal(section.dealId, req.session.brokerId) : null;
+    if (!section || !deal) {
       return res.status(404).json({ error: "Section not found" });
     }
     const body = (req.body || {}) as Record<string, unknown>;
@@ -317,6 +327,15 @@ export async function patchCimSection(req: Request, res: Response) {
 
     const contentChanged = ["sectionTitle", "brokerEditedContent", "layoutData", "layoutType"].some((k) => k in set);
     if (Object.keys(set).length === 0) return res.json(section);
+    // A blank layout's sample data ("Category A 60 / B 40") is never approved:
+    // it would read to a buyer as the real split.
+    if (set.brokerApproved === true) {
+      const sample = sampleDataIn(String(set.layoutType ?? section.layoutType), set.layoutData !== undefined ? set.layoutData : section.layoutData);
+      if (sample.length > 0) {
+        const what = sample[0] === "sample data" ? "the layout's sample data" : `sample data (${sample.slice(0, 3).map((s) => `"${s}"`).join(", ")})`;
+        return res.status(400).json({ error: `This section still shows ${what}. Replace it with the business's own figures before approving.`, code: "sample_data" });
+      }
+    }
     // A change to what a section says (or showing a hidden one) needs the
     // section approved again, unless this same request approves it — the
     // broker's own edit included: the seller hasn't seen it
@@ -344,6 +363,9 @@ export async function patchCimSection(req: Request, res: Response) {
         set.aiLayoutReasoning = "Written by the broker in the CIM builder.";
       }
     }
+    // On a live CIM the approved version stays with buyers until this change
+    // is approved (shared/cim-published.ts) — recorded before it is written.
+    if (reapprove) await keepPublishedBeforeChange(section, deal);
     const [updated] = await db
       .update(cimSections)
       .set({ ...set, updatedAt: new Date() })
@@ -351,6 +373,8 @@ export async function patchCimSection(req: Request, res: Response) {
       .returning();
     const stamped = contentChanged ? withStaleStamps(updated, await invalidateBlind(section.dealId, [section.id])) : updated;
     if (reapprove && updated.isVisible !== false) await withdrawApprovalsAfterChange(section.dealId);
+    // Approved: this is now the version buyers of a live CIM get.
+    if (set.brokerApproved === true && updated.brokerApproved) await recordPublishedVersions([updated.id]);
     res.json(stamped);
   } catch (err) {
     console.error("[cim-sections] update failed:", err);

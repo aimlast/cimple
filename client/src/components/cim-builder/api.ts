@@ -72,7 +72,8 @@ export interface BuilderState {
     lastRun?: DdRunSummary | null;
   };
   buyers: { total: number; byLevel: Record<string, number> };
-  deal: { isLive: boolean; cimLayoutGeneratedAt: string | null };
+  /** listedAskingPrice: the price buyers see now (null = none listed); the previews apply it like the view room. */
+  deal: { isLive: boolean; cimLayoutGeneratedAt: string | null; listedAskingPrice?: string | null };
   review?: CimReview;
 }
 

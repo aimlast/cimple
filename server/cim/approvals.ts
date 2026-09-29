@@ -20,6 +20,7 @@ import { db } from "../db";
 import { storage } from "../storage";
 import { cimSections, type CimSection, type Deal, type InsertCimSection } from "@shared/schema";
 import { CIM_ACCESS_TIERS, isCimLayoutKey } from "@shared/cim-layouts";
+import { recordPublishedVersions } from "./published-versions";
 import {
   APPROVAL_RULE_FLAG,
   PER_SECTION_APPROVAL_SINCE,
@@ -55,6 +56,8 @@ export async function approveSectionsWithDesign(dealId: string): Promise<number>
   const sections = await storage.getCimSectionsByDeal(dealId);
   const toTick = sectionsApprovedWithDesign(sections);
   for (const s of toTick) await storage.updateCimSection(s.id, { brokerApproved: true });
+  // Each is now the version a live CIM's buyers get (shared/cim-published.ts).
+  await recordPublishedVersions(toTick.map((s) => s.id));
   return toTick.length;
 }
 
@@ -99,6 +102,8 @@ export async function backfillLegacyLiveApprovals(deal: Pick<Deal, "id" | "isLiv
       .returning({ id: cimSections.id });
     const ticked = new Set(rows.map((r) => r.id));
     if (ticked.size > 0) console.log(`[approvals] live deal ${deal.id}: ${ticked.size} section(s) approved before the per-section rule ticked`);
+    // What buyers have been reading is the approved version on record.
+    await recordPublishedVersions(Array.from(ticked));
     return sections.map((s) => (ticked.has(s.id) ? { ...s, brokerApproved: true } : s));
   } catch (err) {
     console.error(`[approvals] couldn't tick the pre-rule sections of live deal ${deal.id}:`, err);

@@ -93,6 +93,8 @@ export default function CimPrintPreview() {
       sections: builder.data.sections as unknown as CimSection[],
       overrides: overrideMode ? overrides.data ?? [] : [],
       media: media.refs,
+      // The price buyers see now — a printed copy never carries an old one.
+      ...(builder.data.deal.listedAskingPrice !== undefined ? { askingPrice: builder.data.deal.listedAskingPrice } : {}),
     });
   }, [deal, builder.data, meta.accessLevel, overrideMode, overrides.data, media.refs]);
 

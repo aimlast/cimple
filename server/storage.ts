@@ -37,6 +37,7 @@ import { db } from "./db";
 import { eq, ne, desc, sql, count, avg, sum, inArray, and } from "drizzle-orm";
 import { REVOKED_INVITE_STATUS } from "@shared/seller-invite-revocation";
 import { withApprovalRuleMark } from "@shared/cim-approvals";
+import { PUBLISHED_MODES } from "@shared/cim-published";
 import { resetTokenLookupValues } from "./buyer-auth/reset-token";
 import { deleteDealRows } from "./deals/delete-deal";
 
@@ -1009,7 +1010,8 @@ export class DbStorage implements IStorage {
     await db.transaction(async (tx) => {
       // First, so a failed hold write changes nothing (and it commits with the sections).
       await tx.update(deals).set({ ...dealUpdates, updatedAt: new Date() }).where(eq(deals.id, dealId));
-      await tx.delete(cimSectionOverrides).where(and(eq(cimSectionOverrides.dealId, dealId), inArray(cimSectionOverrides.mode, ["blind", "dd"])));
+      // Blind/DD versions and the approved (published*) versions on record were of the sections being replaced.
+      await tx.delete(cimSectionOverrides).where(and(eq(cimSectionOverrides.dealId, dealId), inArray(cimSectionOverrides.mode, ["blind", "dd", ...PUBLISHED_MODES])));
       await tx.delete(cimSections).where(eq(cimSections.dealId, dealId));
       if (sections.length > 0) {
         // Under the per-section approval rule from the start (shared/cim-approvals).

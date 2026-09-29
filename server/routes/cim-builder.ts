@@ -11,7 +11,7 @@
  */
 import type { Express, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { cimSections, type CimGenerationStatus, type CimSection, type CimSectionAiTask, type Deal } from "@shared/schema";
@@ -80,6 +80,8 @@ import { dealStreetAddress } from "@shared/cim-media";
 import { lastGenerationFacts, openBuyerLinks } from "../cim/generation-jobs";
 import { cimStaleness, writerFactsSnapshot } from "../cim/cim-staleness";
 import { backfillLegacyLiveApprovals, withdrawApprovalsAfterChange } from "../cim/approvals";
+import { keepPublishedBeforeChange } from "../cim/published-versions";
+import { listedAskingPrice } from "../information/deal-mirror";
 import { historySnapshots } from "@shared/cim-approvals";
 
 const NO_AI_MEDIA = "The AI can't choose photos or videos — add them yourself in the section's editor.";
@@ -272,7 +274,13 @@ export function registerCimBuilderRoutes(app: Express): void {
         // `total` = links that can open the CIM now (not revoked, not expired):
         // the count the regenerate dialogs quote and the hold is decided on.
         buyers: { total: openBuyerLinks(buyers), byLevel },
-        deal: { isLive: !!deal.isLive, cimLayoutGeneratedAt: deal.cimLayoutGeneratedAt ?? null },
+        deal: {
+          isLive: !!deal.isLive,
+          cimLayoutGeneratedAt: deal.cimLayoutGeneratedAt ?? null,
+          // The price buyers see on the cover and key numbers (the view room
+          // applies it at view time) — the previews show the same.
+          listedAskingPrice: listedAskingPrice(deal),
+        },
         // What the broker must look at before publishing: the last run's
         // notes, placeholders, a hold from buyers, facts changed since.
         review: {
@@ -399,6 +407,9 @@ export function registerCimBuilderRoutes(app: Express): void {
       const how = req.body?.convert === "ai" && canAiWriteLayout(layoutType) ? "ai" : "blank";
 
       if (sameLayoutFamily(section.layoutType, layoutType) || how === "blank") {
+        // On a live CIM buyers keep the approved version (a blank layout's
+        // sample data never reaches them) until the broker approves this.
+        await keepPublishedBeforeChange(section, deal);
         const [updated] = await db
           .update(cimSections)
           .set({
@@ -642,10 +653,14 @@ export function registerCimBuilderRoutes(app: Express): void {
       if (!Array.isArray(ids) || ids.some((i) => typeof i !== "string")) return res.status(400).json({ error: "sectionIds must be a list" });
       let changed = 0;
       for (const id of ids as string[]) {
+        // A tier change is a change to what buyers read (a teaser stops
+        // seeing the section): updatedAt moves, as it does through PATCH, so
+        // an unreviewed AI answer drawn from it is withdrawn (qa/cim-context
+        // answerStillHolds). A section already at that tier is left alone.
         const r = await db
           .update(cimSections)
-          .set({ accessTier: tier })
-          .where(and(eq(cimSections.id, id), eq(cimSections.dealId, deal.id)))
+          .set({ accessTier: tier, updatedAt: new Date() })
+          .where(and(eq(cimSections.id, id), eq(cimSections.dealId, deal.id), sql`${cimSections.accessTier} is distinct from ${tier}`))
           .returning({ id: cimSections.id });
         changed += r.length;
       }

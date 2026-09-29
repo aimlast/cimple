@@ -21,7 +21,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { axisWidthFor, compactFigure, formatAxisTick, useElementWidth } from "./chartFormat";
-import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { parseChartNumber, readChartValue, unitScale } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
 
 /** Below this container width the build-up is drawn as labelled horizontal rows. */
@@ -65,11 +65,16 @@ export function buildWaterfallData(items: WaterfallItem[], unit?: string): Water
 
   for (const item of items) {
     // "$78,000", "-$78K", "(78,000)" are numbers too (parseFloat read "$…" as 0).
-    const parsed = parseChartNumber(item.value, scale) ?? 0;
+    // "$36,000 (est.)" is its amount; a step with no amount at all is flagged
+    // for the broker by the figure check (figure-check.ts unreadableValues).
+    const parsed = readChartValue(item.value, scale).value ?? 0;
     const type = item.type || (result.length === 0 ? "start" : items.indexOf(item) === items.length - 1 ? "total" : parsed >= 0 ? "add" : "subtract");
-    // The step's direction is its type: a "subtract" written as 64000 still
-    // takes 64,000 off (it was drawn as an addback).
-    const numValue = type === "subtract" ? -Math.abs(parsed) : type === "add" ? Math.abs(parsed) : parsed;
+    // A "subtract" written as 64000 still takes 64,000 off (it was drawn as
+    // an add-back). An "add" step keeps its sign: "-$36,000" typed "add" is
+    // a deduction (a below-market rent normalised down) — drawn down and
+    // labelled −$36K, the way the figure check reads it
+    // (figure-check.ts reconcileWaterfall), never as a +$36K add-back.
+    const numValue = type === "subtract" ? -Math.abs(parsed) : parsed;
 
     if (type === "start") {
       runningTotal = numValue;

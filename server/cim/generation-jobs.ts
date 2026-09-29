@@ -288,6 +288,8 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
     // Design-phase deal must not drag it back to phase 3.
     if (phaseIndex(deal.phase) < phaseIndex("phase3_content_creation")) updates.phase = "phase3_content_creation";
   }
+  // (Also drops the approved versions on record — they were of the sections
+  // being replaced: published-versions.ts; same transaction.)
   await storage.replaceDealCim(deal.id, rows as any, updates as any);
   // On the job only once it is on the deal: a failed write leaves the old
   // CIM in place, live, and not held.
