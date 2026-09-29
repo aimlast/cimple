@@ -592,7 +592,7 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
           })),
         ];
         // Matched only when the linked transactions add up to the claim
-        // (over the period the uploaded ledger covers).
+        // (over the period their own upload covers — claimPeriodYears).
         const support = addbackSupport(ab, merged, allTransactions);
         return {
           ...ab,

@@ -37,11 +37,28 @@ const NAME_WORD_AFTER =
 
 /** A capitalised word before an equipment word that describes the equipment, not a business's name: its maker or kind. */
 const DESCRIBING_WORD =
-  /^(?:Equipment|Vehicles?|Fleet|Office|Shop|Warehouse|Delivery|Service|Company|Leased?|Leasing|New|Used|Heavy|Light|Commercial|Toyota|Ford|Freightliner|Volvo|Kenworth|Peterbilt|Mack|International|Western|Hino|Isuzu|Ram|Gmc|Chevrolet|Chevy|Dodge|Nissan|Mercedes|Sprinter|Transit|Canon|Xerox|Ricoh|Konica|Minolta|Sharp|Kyocera|Brother|Lexmark|Caterpillar|Deere|Kubota|Bobcat|Hyster|Yale|Clark|Crown|Komatsu|Doosan|Hyundai|Kia|Honda|Wabash|Manac|Utility|Dane|Linde|Jungheinrich|Raymond|Hitachi|Case)$/;
+  /^(?:Equipment|Vehicles?|Fleet|Office|Shop|Warehouse|Delivery|Service|Company|Leased?|Leasing|New|Used|Heavy|Light|Commercial|Toyota|Ford|Freightliner|Volvo|Kenworth|Peterbilt|Mack|International|Western|Hino|Isuzu|Ram|Gmc|Chevrolet|Chevy|Dodge|Nissan|Mercedes|Sprinter|Transit|Canon|Xerox|Ricoh|Konica|Minolta|Sharp|Kyocera|Brother|Lexmark|Caterpillar|Deere|Kubota|Bobcat|Hyster|Yale|Clark|Crown|Komatsu|Doosan|Hyundai|Kia|Honda|Wabash|Manac|Utility|Dane|Linde|Jungheinrich|Raymond|Hitachi|Case|Mitsubishi|Kalmar|Tennant|Heidelberg|Takeuchi|Genie|Skyjack|Terex|Navistar|Ryder|Penske|Cat)$/;
 
 /** Words that say the lease is for a place (a truck yard lease is still premises). */
 const PREMISES_WORD =
-  /\b(?:premises|shop|office|offices|warehouse|building|retail|suite|property|store|facility|space|land|yard|real estate|site|clinic|restaurant|storefront|head lease|sublease|plaza|mall|landlord|tenant|tenancy|(?:commercial|industrial|ground|net|triple[\s-]net)[\s_-]+leas(?:e|es|ing)|unit\s*#?\s*\d+)\b/i;
+  /\b(?:premises|shop|office|offices|warehouse|building|retail|suite|property|store|facility|space|land|yard|real estate|site|clinic|restaurant|storefront|head lease|sublease|plaza|mall|landlord)\b/i;
+
+/**
+ * Words that place a lease only when the title doesn't say outright that it
+ * is of equipment: a fleet has numbered units ("Tractor lease - Unit 14",
+ * "Truck lease (Unit #22)"), and a lessor's form may be headed "commercial
+ * lease" or speak of the lessee as a tenant. Beside a description ("Lease -
+ * Toyota forklift (Unit 4)"), a unit is the premises'.
+ */
+const SOFT_PREMISES_WORD =
+  /\b(?:tenant|tenancy|(?:commercial|industrial|ground|net|triple[\s-]net)[\s_-]+leas(?:e|es|ing)|unit\s*#?\s*\d+|(?<!\bpos\s)terminal(?!\s+(?:tractors?|trucks?))|garage|depot)\b/i;
+
+/** A model year and maker describe a vehicle ("Lease - 2022 Ford F-150", "Lease agreement - 2023 Kenworth T680"). */
+const VEHICLE_YEAR_MAKE =
+  /\b(?:19|20)\d{2}\s+(?:Ford|Chevrolet|Chevy|GMC|Ram|Dodge|Toyota|Nissan|Honda|Hyundai|Kia|Mercedes(?:-Benz)?|Freightliner|Kenworth|Peterbilt|Volvo|Mack|International|Western Star|Hino|Isuzu|Sprinter|Mitsubishi|Tesla|BMW|Audi|Lexus|Jeep|Subaru|Mazda|Volkswagen|VW)\b/;
+
+/** Point-of-sale terminals, written the usual way ("POS terminals"). */
+const POS_TERMINALS = /\bpos\s+terminals?\b/i;
 
 /** A street address ("240 Bayfront Commerce Dr", "12-45 King St W"). */
 const ADDRESS =
@@ -112,16 +129,20 @@ function equipmentEvidence(title: string): "strong" | "weak" | "none" {
     if (!hasCapitals || /[A-Z]/.test(word) || inBusinessName(title, m.index ?? 0, word)) continue;
     return "weak";
   }
+  // A model year and maker, or POS terminals, describe what is leased.
+  if (VEHICLE_YEAR_MAKE.test(title) || POS_TERMINALS.test(title)) return "weak";
   return "none";
 }
 
 /**
  * True when a source (by its title / type, and the lease facts read from it
  * when given) is a lease of equipment or vehicles, not of premises. A place
- * in the title (a premises word, "commercial lease", a unit, a street
- * address) always makes it premises; the lease's own facts (a street address,
- * tenant / landlord / floor-area terms) outweigh an equipment word that only
- * describes it, not a title that says outright what is leased.
+ * in the title (a premises word, a street address) always makes it premises;
+ * "commercial lease", a tenant or a numbered unit do unless the title says
+ * outright what equipment is leased ("Truck lease - Unit 7" is a fleet
+ * unit); the lease's own facts (a street address, tenant / landlord /
+ * floor-area terms) outweigh an equipment word that only describes it, not a
+ * title that says outright what is leased.
  */
 export function isEquipmentLeaseTitle(title: string | null | undefined, facts?: LeaseFacts | null): boolean {
   if (!title) return false;
@@ -133,7 +154,8 @@ export function isEquipmentLeaseTitle(title: string | null | undefined, facts?: 
   const placeWords = title.replace(
     /\b(?:office|shop|store|retail|warehouse|site|yard|facility|building)\s+(?:equipment|copiers?|photocopiers?|printers?|machines?|machinery|forklifts?|lift trucks?|furniture|fixtures|trucks?|vehicles?|vans?|fleet)\b/gi, " ");
   if (PREMISES_WORD.test(placeWords) || ADDRESS.test(title)) return false;
-  return evidence === "strong" || !factsSayPremises(facts);
+  if (evidence === "strong") return true;
+  return !SOFT_PREMISES_WORD.test(placeWords) && !factsSayPremises(facts);
 }
 
 /** True when the title names the business's premises lease (a lease that isn't equipment or vehicles). */

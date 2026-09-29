@@ -12,7 +12,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { parseJsonLoose } from "./shape";
-import { ADDBACK_MATCH_TOLERANCE, addbackSupport, claimWords, coveredYears, periodLabel, wholeYears } from "@shared/addback-support";
+import { ADDBACK_MATCH_TOLERANCE, addbackSupport, claimPeriodYears, claimWords, periodLabel, wholeYears } from "@shared/addback-support";
 
 /** The model client (a stub in tests: _setAddbackClientForTests). */
 interface AddbackClient {
@@ -557,8 +557,9 @@ export function settleMatch(
 ): MatchResult {
   const idx = citedIndices(modelResult?.matchedTransactionIndices, transactions.length, opts.shown);
   const matched = idx.map((i) => toMatched(transactions[i], documentId, typeof modelResult?.confidence === "number" ? modelResult.confidence : 0.7));
-  // (Compared over the period the whole ledger covers: three months of
-  // statements hold a quarter of a year's claim.)
+  // (Compared over the period the linked transactions' own upload covers:
+  // three months of statements hold a quarter of a year's claim; other
+  // uploads read alongside never stretch it.)
   const support = addbackSupport(ab, matched, transactions);
   let status: MatchResult["verificationStatus"] = support.status;
   // The model judged the transactions it cited implausible: never "matched" on them.
@@ -720,6 +721,10 @@ export function discoveryInput(transactions: ParsedTransaction[], limit: number 
   return { accountLines, indices };
 }
 
+/** Words that say an add-back is a portion of what was paid (above-market rent, the personal share of a vehicle). */
+const PORTION_WORDS =
+  /\b(?:above[\s-]market|over[\s-]market|excess|portion|personal (?:use|share|portion|part)|share of|part of|half|non[\s-]business (?:share|portion|part)|\d{1,2}(?:\.\d+)?\s?%|\d{1,2}(?:\.\d+)?\s?percent)/i;
+
 /** An add-back that is a portion of what the linked transactions paid, in words. */
 function portionNote(paid: number, annual: number, claimed: number): string {
   return `The linked transactions add up to ${money(paid)}, more than ${claimWords(annual, claimed)}: the add-back is a portion of these payments — confirm how the portion was worked out.`;
@@ -742,7 +747,8 @@ function sumsByYear(txs: MatchedTransaction[]): Record<string, number> {
  * A whole account named, or an amount within 15% of what the transactions
  * add up to, takes the transactions' total (the model's own, summed from a
  * list it may not have seen in full, is kept in the notes when it differs).
- * An amount well below the payments it cites is a portion of them (the
+ * An amount well below the payments it cites — or below the account it
+ * names, whose total it was shown — is a portion of them (the
  * above-market part of related-party rent, the personal half of a vehicle):
  * it stays the model's amount, "exceeds_claim". Well above them: partly
  * supported.
@@ -772,8 +778,10 @@ export function settleDiscovered(r: any, transactions: ParsedTransaction[], show
   const total = Math.abs(matched.reduce((s, t) => s + t.amount, 0));
   const years = sumsByYear(matched);
   const yearKeys = Object.keys(years).sort();
-  // The period the ledger covers (every transaction uploaded, else the linked ones).
-  const covered = coveredYears(transactions) ?? coveredYears(matched) ?? 1;
+  // The period the linked transactions' own source covers (their GL or bank
+  // statement, never the other uploads: recent statements next to a year's
+  // GL don't stretch a salary paid in that GL).
+  const covered = claimPeriodYears(matched, transactions) ?? 1;
   const whole = wholeYears(covered);
   const oneOff = base.category === "one_time" || base.category === "non_recurring" || matched.length < 2;
   // One amount per year: the latest year's when the transactions fall in
@@ -799,8 +807,14 @@ export function settleDiscovered(r: any, transactions: ParsedTransaction[], show
   // A whole account named as the add-back (the owner's salary account): its
   // transactions are the amount — summed in code, not the model's figure.
   // An amount close to the linked total is the same figure, summed in code.
-  const accountWhole = fromAccounts > 0;
+  // An add-back that says it is a portion ("above-market rent", "personal
+  // use (50%)") with an amount below the account it names is that portion
+  // of it — kept as the model's amount, never inflated to the whole account.
+  // Otherwise a named account is the account, summed in code (the model's
+  // own figure may come from a list it didn't see in full).
   const close = modelAnnual > 0 && Math.abs(modelAnnual - linkedAnnual) <= ADDBACK_MATCH_TOLERANCE * linkedAnnual;
+  const portionOfAccount = modelAnnual > 0 && !close && modelAnnual < linkedAnnual && PORTION_WORDS.test(`${base.label} ${base.description}`);
+  const accountWhole = fromAccounts > 0 && !portionOfAccount;
   if (accountWhole || close || modelAnnual <= 0) {
     if (modelAnnual > 0 && Math.abs(modelAnnual - linkedAnnual) > 0.15 * linkedAnnual) {
       notes.push(`The linked transactions put it at ${money(linkedAnnual)} a year (the first estimate was ${money(modelAnnual)}).`);

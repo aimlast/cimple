@@ -13,9 +13,12 @@
  *                 there, the portion is a judgment to confirm
  *  no_match       nothing linked
  *
- * The claim is compared over the period the ledger covers: three months of
- * bank statements hold a quarter of a year's rent, fifteen months of GL hold
- * a year and a quarter of a salary.
+ * The claim is compared over the period the linked transactions' own source
+ * covers: three months of bank statements hold a quarter of a year's rent,
+ * fifteen months of GL hold a year and a quarter of a salary. Other uploads
+ * never stretch it — recent bank statements next to a year's GL leave a
+ * salary paid in that GL a one-year claim, and a two-year GL leaves a claim
+ * whose payments sit in one of its years a one-year claim (claimPeriodYears).
  */
 
 /** A claim is "matched" when the supporting transactions are within this share of it. */
@@ -26,7 +29,15 @@ export type AddbackSupportStatus = "matched" | "partial_match" | "exceeds_claim"
 export interface SupportTransaction {
   amount: number;
   date?: string | null;
+  /** Which upload the transaction came from (a GL, a bank statement) — the period is worked out per source. */
+  documentId?: string | null;
+  source?: string | null;
+  description?: string | null;
+  account?: string | null;
 }
+
+/** A ledger line: what the claim period is worked out from. */
+export type LedgerLine = { date?: string | null; amount?: number | null; documentId?: string | null; source?: string | null; description?: string | null; account?: string | null };
 
 export interface SupportClaim {
   annualAmount: number;
@@ -39,9 +50,9 @@ export interface AddbackSupport {
   status: AddbackSupportStatus;
   /** What the linked transactions add up to (net, as a positive amount). */
   supported: number;
-  /** The claim they are compared with (the annual claim over the period the ledger covers). */
+  /** The claim they are compared with (the annual claim over the period the transactions' source covers). */
   claimed: number;
-  /** Months the ledger covers, when that isn't a whole number of years (the claim was pro-rated to them). */
+  /** Months that period is, when it isn't a whole number of years (the claim was pro-rated to them). */
   periodMonths?: number;
 }
 
@@ -81,19 +92,82 @@ export function wholeYears(years: number): number | null {
   return k >= 1 && Math.abs(years - k) <= 1 / 12 ? k : null;
 }
 
+/** The source a line came from: its upload, else its kind ("gl", "bank"). */
+const sourceOf = (t: LedgerLine): string => String(t.documentId || t.source || "");
+/** One line, as written, to find a linked transaction among the ledger's lines. */
+const lineOf = (t: LedgerLine): string => [t.date ?? "", Number(t.amount) || 0, String(t.description ?? "").trim(), String(t.account ?? "").trim()].join("|");
+
 /**
- * The claim the linked transactions should add up to, over the period the
- * ledger covers (`ledger`: every transaction uploaded, else the linked ones):
- * one year's claim for a year of payments, two years' for two (each year's
- * own amount when the add-back states it), a quarter of the annual claim for
- * three months of bank statements. A one-time item, or a single payment, is
- * its claim as it stands.
+ * The years a claim is compared over, from the linked transactions and the
+ * ledger they came from (`ledger`: every transaction read; without it, the
+ * linked ones alone).
+ *
+ * Worked out per source (each upload — a GL, a bank statement): the linked
+ * lines' own span, widened to the whole years it falls in but never past
+ * what that source covers. So
+ *  - Oct–Dec vehicle charges in a twelve-month GL are compared with a year's
+ *    claim (the GL shows the other nine months had none);
+ *  - three months of rent in three months of bank statements, with a
+ *    quarter of it;
+ *  - a FY2024 GL's twelve salary payments, with one year — however long ago
+ *    or recent the other uploads are (a bank statement from 2025, another
+ *    year's GL);
+ *  - the 2024 payments in a two-year GL, with 2024's claim;
+ *  - payments across fifteen or eighteen months of GL, with that period.
+ * Sources add up (a 2023 GL and a 2024 GL each holding a year of salary are
+ * two years). Null when nothing is dated.
  */
-export function claimFor(claim: SupportClaim, txs: SupportTransaction[], ledger?: Array<{ date?: string | null }>): number {
+export function claimPeriodYears(txs: LedgerLine[], ledger?: LedgerLine[] | null): number | null {
+  const linkedCover = coveredYears(txs);
+  if (!ledger || ledger.length === 0) return linkedCover;
+  const bySource = new Map<string, LedgerLine[]>();
+  const sourceOfLine = new Map<string, string>();
+  const linesIn = new Set<string>();
+  for (const t of ledger) {
+    const key = sourceOf(t);
+    const list = bySource.get(key);
+    if (list) list.push(t); else bySource.set(key, [t]);
+    const line = lineOf(t);
+    if (!sourceOfLine.has(line)) sourceOfLine.set(line, key);
+    linesIn.add(`${key}\u0000${line}`);
+  }
+  // Each linked transaction's source: its own upload when the line is there;
+  // else the upload the same line is in (a transaction keeps its values when
+  // linked); else its own upload / kind.
+  const linkedBySource = new Map<string | null, LedgerLine[]>();
+  for (const t of txs) {
+    const own = sourceOf(t);
+    const line = lineOf(t);
+    const key = linesIn.has(`${own}\u0000${line}`) ? own : sourceOfLine.get(line) ?? (bySource.has(own) ? own : null);
+    const list = linkedBySource.get(key);
+    if (list) list.push(t); else linkedBySource.set(key, [t]);
+  }
+  let total = 0;
+  for (const [key, linked] of Array.from(linkedBySource.entries())) {
+    const linkedYears = coveredYears(linked) ?? 0;
+    const sourceYears = key === null ? null : coveredYears(bySource.get(key) ?? []);
+    if (sourceYears === null) { total += linkedYears; continue; }
+    // The whole years the linked lines fall in (within a month: twelve
+    // monthly payments are one year, not two), capped at the source's span.
+    const wholeSpan = Math.max(1, Math.ceil(linkedYears - 1 / 12));
+    total += Math.max(linkedYears, Math.min(sourceYears, wholeSpan));
+  }
+  return total > 0 ? total : linkedCover;
+}
+
+/**
+ * The claim the linked transactions should add up to, over the period their
+ * source covers (claimPeriodYears; `ledger`: every transaction read, else the
+ * linked ones): one year's claim for a year of payments, two years' for two
+ * (each year's own amount when the add-back states it), a quarter of the
+ * annual claim for three months of bank statements. A one-time item, or a
+ * single payment, is its claim as it stands.
+ */
+export function claimFor(claim: SupportClaim, txs: SupportTransaction[], ledger?: LedgerLine[]): number {
   return claimOver(claim, txs, ledger).claimed;
 }
 
-function claimOver(claim: SupportClaim, txs: SupportTransaction[], ledger?: Array<{ date?: string | null }>): { claimed: number; periodMonths?: number } {
+function claimOver(claim: SupportClaim, txs: SupportTransaction[], ledger?: LedgerLine[]): { claimed: number; periodMonths?: number } {
   const annual = Math.abs(Number(claim.annualAmount) || 0);
   const stated = claim.yearAmounts ?? {};
   const years = Array.from(new Set(txs.map((t) => (t.date ?? "").match(/\b((?:19|20)\d{2})\b/)?.[1]).filter((y): y is string => !!y)));
@@ -103,7 +177,7 @@ function claimOver(claim: SupportClaim, txs: SupportTransaction[], ledger?: Arra
     const one = years.length === 1 ? statedFor(years) : null;
     return { claimed: round2(one ?? annual) };
   }
-  const covered = (ledger && coveredYears(ledger)) || coveredYears(txs) || 1;
+  const covered = claimPeriodYears(txs, ledger) || 1;
   const k = wholeYears(covered);
   if (k !== null) {
     const byYear = years.length === k ? statedFor(years) : null;
@@ -114,7 +188,7 @@ function claimOver(claim: SupportClaim, txs: SupportTransaction[], ledger?: Arra
 }
 
 /** Status of an add-back given the transactions linked to it (and the whole ledger they came from, when known). */
-export function addbackSupport(claim: SupportClaim, txs: SupportTransaction[], ledger?: Array<{ date?: string | null }>): AddbackSupport {
+export function addbackSupport(claim: SupportClaim, txs: SupportTransaction[], ledger?: LedgerLine[]): AddbackSupport {
   if (txs.length === 0) return { status: "no_match", supported: 0, claimed: round2(Math.abs(Number(claim.annualAmount) || 0)) };
   const supported = supportedTotal(txs);
   const { claimed, periodMonths } = claimOver(claim, txs, ledger);
