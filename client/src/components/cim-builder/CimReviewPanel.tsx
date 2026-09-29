@@ -131,7 +131,7 @@ export function CimReviewPanel({ dealId, review, sections, onOpenSection, compac
                   </ul>
                 )}
                 {facts.notesChanged && (
-                  <p className="text-xs text-muted-foreground">Your private notes changed — check nothing they keep out of the CIM is in it.</p>
+                  <p className="text-xs text-muted-foreground">Your private notes or the items held back from the CIM changed — regenerate or check the CIM follows them.</p>
                 )}
                 {stale.length > 0 ? (
                   <>

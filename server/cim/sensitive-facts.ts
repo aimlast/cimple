@@ -20,6 +20,8 @@
  * holdConfidentialFacts below.
  */
 import { SELLER_KEEP_OUT_REASON_RE, getSellerKeepOut, privatePiecesOf, type SellerKeepOutEntry } from "../interview/seller-keep-out";
+import { includedStaffPrivate, screenStaffPrivatePairs, staffContextFrom, type StaffContext } from "./staff-private";
+import type { StaffPrivateItem, StaffPrivateKind } from "@shared/staff-private";
 
 const PERSON = String.raw`(?:his|her|my|their|the owner'?s|owner'?s|founder'?s|seller'?s|vendor'?s|wife'?s|husband'?s|spouse'?s|partner'?s|son'?s|daughter'?s|father'?s|mother'?s)`;
 
@@ -123,11 +125,14 @@ function screenValue(value: unknown): { value: unknown; changed: boolean; droppe
 }
 
 /**
- * Screen fact pairs for the CIM writer: personal details cut (`held`), and
- * clauses marked confidential held out with the names they concern
- * (`confidential`, `heldNames` — every buyer-facing path: writer and DD).
- * `keepOut` adds what the broker's private notes and the AI review found
- * (keep-out.ts keepOutFor).
+ * Screen fact pairs for the CIM writer: personal details cut (`held`),
+ * staff-private matters held unless the broker included them
+ * (`staffPrivate` — staff-private.ts), and clauses marked confidential held
+ * out with the names they concern (`confidential`, `heldNames` — every
+ * buyer-facing path: writer and DD). `keepOut` adds what the broker's
+ * private notes and the AI review found (keep-out.ts keepOutFor) and carries
+ * the broker's include decisions; without it the staff screen reads the
+ * people from the pairs and includes nothing.
  */
 export function screenFactsForCim(
   pairs: Array<[string, unknown]>,
@@ -137,10 +142,16 @@ export function screenFactsForCim(
   held: HeldFact[];
   confidential: ConfidentialHold[];
   heldNames: string[];
+  staffPrivate: StaffPrivateItem[];
 } {
   const personal = screenPersonal(pairs);
-  const conf = holdConfidentialFacts(personal.safe, plainText, keepOut);
-  return { safe: conf.safe, held: personal.held, confidential: conf.holds, heldNames: conf.heldNames };
+  const staff = screenStaffPrivatePairs(personal.safe, {
+    ctx: keepOut?.staff?.ctx ?? staffContextFrom(Object.fromEntries(pairs)),
+    included: new Set(keepOut?.staff?.included ?? []),
+    aiClauses: keepOut?.staff?.aiClauses ?? [],
+  });
+  const conf = holdConfidentialFacts(staff.safe, plainText, keepOut);
+  return { safe: conf.safe, held: personal.held, confidential: conf.holds, heldNames: conf.heldNames, staffPrivate: staff.items };
 }
 
 function plainText(v: unknown): string {
@@ -297,6 +308,17 @@ export interface KeepOut {
   clauses: Array<{ key: string; text: string }>;
   names: string[];
   pairs: Array<{ name: string; attribute: string }>;
+  /**
+   * Staff-private matters (staff-private.ts): the deal's people, the ids the
+   * broker switched back in, and clauses the AI review found.
+   */
+  staff?: StaffKeepOut;
+}
+
+export interface StaffKeepOut {
+  ctx: StaffContext;
+  included: string[];
+  aiClauses: Array<{ key: string; text: string; kind?: StaffPrivateKind }>;
 }
 
 const lower = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
@@ -568,6 +590,7 @@ export function keepOutFromNotes(info: Record<string, unknown> | null | undefine
   const seller = sellerKeepOutHolds(info ?? {}, facts);
   out.clauses.push(...seller.clauses);
   out.names = Array.from(new Set([...out.names, ...seller.names]));
+  out.staff = { ctx: staffContextFrom(info), included: Array.from(includedStaffPrivate(info)), aiClauses: [] };
   return out;
 }
 
@@ -605,6 +628,15 @@ export function mergeKeepOut(...parts: Array<KeepOut | null | undefined>): KeepO
     out.clauses.push(...p.clauses);
     out.names.push(...p.names);
     out.pairs.push(...p.pairs);
+    if (p.staff) {
+      out.staff = out.staff
+        ? {
+            ctx: out.staff.ctx,
+            included: Array.from(new Set([...out.staff.included, ...p.staff.included])),
+            aiClauses: [...out.staff.aiClauses, ...p.staff.aiClauses],
+          }
+        : { ctx: p.staff.ctx, included: [...p.staff.included], aiClauses: [...p.staff.aiClauses] };
+    }
   }
   out.names = Array.from(new Set(out.names));
   return out;

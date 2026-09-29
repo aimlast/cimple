@@ -15,6 +15,13 @@
  * the AI can only add holds, never remove one — and when the review can't
  * run the broker is told that only the rules were applied.
  *
+ * The same review reads staff-private matters (staff-private.ts): an
+ * employee's interest in equity, pay requests, possible departures,
+ * performance or discipline, their health or family, a private talk with the
+ * owner. The rules hold the common wordings; what the review adds is held
+ * the same way (clause only, never a party) and listed for the broker with
+ * the same include switch.
+ *
  * Cached per deal and content (a regenerate or DD run with unchanged facts
  * doesn't call the model again).
  */
@@ -22,6 +29,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "node:crypto";
 import { agentConfig } from "../interview/config/load-config";
 import { holdableParty, keepOutFromNotes, mentionsHeldName, mergeKeepOut, namesIn, privateNoteTexts, type KeepOut } from "./sensitive-facts";
+import { staffContextFrom } from "./staff-private";
+import type { StaffPrivateKind } from "@shared/staff-private";
 
 export interface KeepOutResult extends KeepOut {
   /** "ai" = the review ran; "rules" = only the rules were applied. */
@@ -31,7 +40,7 @@ export interface KeepOutResult extends KeepOut {
 }
 
 /** Words that can carry a keep-out instruction (a wide net — the model decides). */
-const CANDIDATE = /\bbuyers?\b|would rather|rather not|confiden|secre|private|privately|off[- ]the[- ]record|in confidence|\bnda\b|not (?:for|in|to be|be|yet)\b|don'?t|do not|never|keep|kept|stay|out of|disclos|shar(?:e|ed|ing)|mention|unannounced|announce|public|quiet|wraps|internal only|sensitive|rumou?r|shortlist|\brfp\b|\bbid\b|tender|negotiat|\bloi\b|letter of intent|term sheet|verbal/i;
+const CANDIDATE = /\bbuyers?\b|would rather|rather not|confiden|secre|private|privately|off[- ]the[- ]record|in confidence|\bnda\b|not (?:for|in|to be|be|yet)\b|don'?t|do not|never|keep|kept|stay|out of|disclos|shar(?:e|ed|ing)|mention|unannounced|announce|public|quiet|wraps|internal only|sensitive|rumou?r|shortlist|\brfp\b|\bbid\b|tender|negotiat|\bloi\b|letter of intent|term sheet|verbal|equity|\bstakes?\b|buy(?:ing)?[- ]?in|earn-?in\b|\braise\b|underpaid|resign|\bquit|\bleav(?:e|ing)\b|flight risk|poach|disciplin|warning|probation|underperform|maternity|paternity|pregnan|divorce|confided|informally|jok(?:e|ing)|elsewhere|recruit|headhunt|exploring|(?:another|other|new) (?:job|role|position)|sounding out/i;
 
 /** Items per review call; a larger file is reviewed in several calls, never truncated. */
 const BATCH_SIZE = 120;
@@ -107,6 +116,16 @@ const TOOL = {
               description: "The specific company, person or project the confidential item is about, copied exactly as written in the item. Empty when the item is about one attribute (pricing, terms) of a party the CIM may name.",
             },
             attribute: { type: "string", description: "When only one attribute of a party is confidential (e.g. 'pricing', 'termination clause'): that attribute; else empty." },
+            kind: {
+              type: "string",
+              enum: ["confidential", "staff_private"],
+              description: "confidential = must not reach buyers (the rules above); staff_private = an employee's private matter (see STAFF-PRIVATE).",
+            },
+            staffTopic: {
+              type: "string",
+              enum: ["equity", "pay", "departure", "conduct", "personal", "conversation"],
+              description: "For staff_private: what it is about.",
+            },
             reason: { type: "string" },
           },
           required: ["ref", "parties", "reason"],
@@ -128,7 +147,9 @@ Do NOT hold:
 - details that are merely sensitive or negative but carry no keep-out instruction;
 - information the note says may go in a fuller version ("disclose in the full CIM only").
 
-For each hold give the party it is about exactly as the item writes it (the RFP's prospective customer, the target of an unannounced deal) — never the business being sold, its owners, its region or a party only mentioned in passing. When only one attribute of a party is confidential (their pricing, a termination clause), give that attribute and no party.`;
+For each hold give the party it is about exactly as the item writes it (the RFP's prospective customer, the target of an unannounced deal) — never the business being sold, its owners, its region or a party only mentioned in passing. When only one attribute of a party is confidential (their pricing, a termination clause), give that attribute and no party. Such holds are kind "confidential".
+
+STAFF-PRIVATE (kind "staff_private", no parties): also hold a fact clause that states an EMPLOYEE's (or key person's, not the owner's) private matter — their interest in equity, a stake or buying in (or the idea of offering them one to keep them); a raise request, pay complaint or dispute; a possible or rumoured departure (thinking of leaving, looking elsewhere, a flight risk, being recruited); a performance or disciplinary matter; their health, leave or family circumstances; a private conversation between them and the owner. Set staffTopic. Do NOT hold: signed or agreed arrangements (an employment or retention agreement, an agreed management rollover), a stake someone already owns, an announced departure or disclosed succession plan, a stated retirement date, anything the seller wants marketed, the owner's own plans (their retirement, their roll-over), statements that someone is staying, past staff turnover, or legal claims and settlements.`;
 
 function fingerprint(c: Candidate[]): string {
   return createHash("sha1").update(JSON.stringify(c.map((x) => [x.kind, x.key ?? "", x.text]))).digest("hex");
@@ -192,15 +213,21 @@ async function review(candidates: Candidate[], info: Record<string, unknown> | n
     messages: [{ role: "user", content: list }],
   });
   const block = response.content.find((b) => b.type === "tool_use");
-  const holds = ((block && block.type === "tool_use" ? block.input : {}) as { holds?: Array<{ ref?: string; parties?: string[]; attribute?: string }> }).holds ?? [];
+  const holds = ((block && block.type === "tool_use" ? block.input : {}) as { holds?: Array<{ ref?: string; parties?: string[]; attribute?: string; kind?: string; staffTopic?: string }> }).holds ?? [];
   const facts = Object.entries(info ?? {})
     .filter(([k]) => !k.startsWith("_"))
     .flatMap(([, v]) => textOf(v))
     .join("\n");
   const out: KeepOut = { clauses: [], names: [], pairs: [] };
+  const staffAi: Array<{ key: string; text: string; kind?: StaffPrivateKind }> = [];
   for (const h of holds) {
     const c = candidates.find((x) => x.ref === String(h.ref ?? "").trim());
     if (!c) continue;
+    // A staff matter: the clause only (never a party), includable by the broker.
+    if (h.kind === "staff_private") {
+      if (c.kind === "fact" && c.key) staffAi.push({ key: c.key, text: c.text, ...(STAFF_TOPICS.has(h.staffTopic ?? "") ? { kind: h.staffTopic as StaffPrivateKind } : {}) });
+      continue;
+    }
     if (c.kind === "fact" && c.key) out.clauses.push({ key: c.key, text: c.text });
     const attribute = typeof h.attribute === "string" ? h.attribute.trim().toLowerCase() : "";
     // A party counts only as the item writes it, and only when the facts name it.
@@ -213,5 +240,8 @@ async function review(candidates: Candidate[], info: Record<string, unknown> | n
     }
   }
   out.names = Array.from(new Set(out.names));
+  if (staffAi.length > 0) out.staff = { ctx: staffContextFrom(info), included: [], aiClauses: staffAi };
   return out;
 }
+
+const STAFF_TOPICS = new Set(["equity", "pay", "departure", "conduct", "personal", "conversation"]);

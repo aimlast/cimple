@@ -189,6 +189,12 @@ export interface CimGenerationStatus {
    * generation-status responses.
    */
   factsAt?: { values: Record<string, string>; askingPrice: string | null; notesKey: string };
+  /**
+   * Staff-private matters the finished run held out of every CIM input
+   * (server/cim/staff-private.ts) — the CIM tab lists them with an include
+   * switch. Kept so an item only the AI review found is still shown later.
+   */
+  heldPrivate?: import("./staff-private").StaffPrivateItem[];
 }
 
 /** One buyer's AI deep-check verdict for a deal. */

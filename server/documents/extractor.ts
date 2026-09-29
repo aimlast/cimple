@@ -56,6 +56,7 @@ import { agentConfig } from "../interview/config/load-config";
 import { coverageAdjustmentsForDeal } from "../interview/interview-plan";
 import type { Deal } from "@shared/schema";
 import { guardExtraction, statedMetricKeys, STATED_METRIC_NOTE, STATED_METRICS_KEY, SPOKEN_KINDS } from "./extraction-guard";
+import { routeStaffPrivate, staffContextFrom } from "../cim/staff-private";
 
 /** The slice of the SDK the extractor uses (a stand-in in tests). */
 export interface ExtractionClient {
@@ -333,6 +334,7 @@ Any other clearly business-relevant fact may use its own specific camelCase key 
 For ANY source, also extract: summary (1-2 sentences), keyFacts (most important facts as a comma-separated list), redFlags (any concerning items noted)
 
 PRIVATE MATTERS: personal or sensitive things about the owner, their family or staff that must never appear in a sales document — health, family or marital matters, personal money trouble outside the company, legal trouble not about the business, the seller's bottom line or other negotiation positions, or anything the source marks private / confidential / "don't share" — go ONLY in _privateNotes. Never put them in a business field: e.g. reasonForSale stays neutral ("Owner retiring") and the health detail goes in _privateNotes. One short, factual note per matter: put everything the source says about that matter in the one note (the heart episode, the stent and "keep it out of the brochure" are one note, not three), and name whose matter it is ("Owner's wife…").
+STAFF MATTERS: an employee's (or key person's) private matters are private notes too — their interest in equity, a stake or buying in (or the owner's idea of offering them one to keep them), a raise request or pay complaint, talk of leaving or being recruited, a warning, probation or performance problem, their health, leave or family, a private conversation with the owner. Record the business part as the fact ("Daniel Okafor: LTC lead pharmacist since 2014, primary contact for the homes") and the private part as a note that names the person ("Daniel Okafor asked about buying an equity stake about a year ago"). Signed or agreed arrangements (an employment or retention agreement, a stake someone already owns, an agreed management rollover), an announced departure or succession plan and a stated retirement date are business facts.
 Deal-process status and to-dos (an NDA or engagement letter signed, who attended or was copied, documents still to ask for, next steps), contact details (phone numbers, e-mail and office addresses) and the source's own confidentiality stamp are neither facts nor private notes: next steps go in actionItems, the rest stays in summary / keyFacts.
 Material events about the company itself — a customer giving notice or leaving, a contract or shareholder agreement signed or amended, an asset excluded from the sale, insurance policies, litigation about the business — are business facts under their own keys, never private notes.
 Company transactions that involve the owner or their family are BUSINESS facts, not private notes — a buyer's due diligence needs them and the financial analysis reads them: dividends declared or paid (dividendsDeclared, with class, amount and date), shareholder loans and amounts due to or from shareholders (shareholderLoans), personal guarantees of company debt (personalGuarantees), related-party leases, contracts and family members on the payroll (relatedPartyTransactions), and the audit / review / compilation status (auditStatus). Record them under those keys.
@@ -496,7 +498,33 @@ export function normaliseExtraction(raw: Record<string, unknown>, sourceText?: s
       process.env.NODE_ENV === "production" ? `${d.key} (${d.reason})` : `${d.key} (${d.reason}: ${String(valueAt(d.key) ?? "").slice(0, 120)})`;
     console.log(`[extractor] dropped ${guarded.dropped.length} value(s): ${guarded.dropped.map(shown).join("; ")}`);
   }
+  routeStaffPrivateToNotes(guarded.data);
   return structureExtraction(guarded.data);
+}
+
+/**
+ * An employee's private matter the source mentions (their ask for a stake, a
+ * raise request, talk of leaving, a warning, their health or family) goes to
+ * _privateNotes — the broker's, never a CIM fact — and the business part of
+ * the value stays the fact (server/cim/staff-private.ts). Mutates.
+ */
+export function routeStaffPrivateToNotes(data: Record<string, unknown>): void {
+  const ctx = staffContextFrom(data);
+  const notes: string[] = [];
+  for (const [key, value] of Object.entries(data)) {
+    // (The source's own summary / key facts / red flags are notes about the source, never CIM facts.)
+    if (key.startsWith("_") || typeof value !== "string" || key === "summary" || key === "keyFacts" || key === "redFlags") continue;
+    const r = routeStaffPrivate(key, value, ctx);
+    if (r.notes.length === 0) continue;
+    notes.push(...r.notes);
+    if (r.kept) data[key] = r.kept;
+    else delete data[key];
+  }
+  if (notes.length === 0) return;
+  const raw = data._privateNotes;
+  if (Array.isArray(raw)) data._privateNotes = [...raw, ...notes];
+  else if (typeof raw === "string" && raw.trim()) data._privateNotes = `${raw}\n${notes.join("\n")}`;
+  else data._privateNotes = notes;
 }
 
 /** A statement's own expense listing ("operatingExpenseBreakdown", "operatingExpensesDetail"): its lines as printed. */

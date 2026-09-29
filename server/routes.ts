@@ -46,6 +46,7 @@ import { checkCimGenerationGate, computeDealReadiness } from "./cim/generation-g
 import { registerCrmSellerRoutes } from "./routes/crm-seller.js";
 import { registerBuyerProfileRoutes } from "./routes/buyer-profiles.js";
 import { registerCimBuilderRoutes } from "./routes/cim-builder.js";
+import { registerCimHeldPrivateRoutes } from "./routes/cim-held-private.js";
 import { registerDiscrepancyRoutes } from "./routes/discrepancies.js";
 import { ensureDiscrepancyGate } from "./cim/discrepancy-check.js";
 import { settleMergeRowsQuietly } from "./documents/merge-conflicts.js";
@@ -69,7 +70,8 @@ import { registerBuyerNdaRoutes } from "./routes/buyer-nda.js";
 import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
 import { typedNumericValues } from "./interview/info-merger";
 import { splitFactsForCim, factValueText, CIM_LEADS_HEADING } from "./information/cim-facts";
-import { keepOutFromNotes, screenFactsForCim, type KeepOut } from "./cim/sensitive-facts";
+import { keepOutFromNotes, screenFactsForCim, screenText, type KeepOut } from "./cim/sensitive-facts";
+import { screenStaffPrivateText, staffContextFrom } from "./cim/staff-private";
 import { keepOutFor } from "./cim/keep-out";
 import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal, isDealOwnerSession } from "./broker-auth/routes.js";
 import {
@@ -183,6 +185,10 @@ async function generateSectionWithClaude(
   const keepOut = data.keepOut ?? keepOutFromNotes(data.extractedInfo);
   const confirmed = screenFactsForCim(split.confirmed, keepOut).safe;
   const leads = screenFactsForCim(split.leads, keepOut).safe;
+  // Free text (the raw questionnaire, the scrape): health details and staff-private sentences out too.
+  const staffCtx = keepOut.staff?.ctx ?? staffContextFrom(data.extractedInfo);
+  const staffIncluded = new Set(keepOut.staff?.included ?? []);
+  const screenFree = (v: unknown) => screenStaffPrivateText(screenText(String(v)), staffCtx, staffIncluded).text;
   if (confirmed.length > 0) {
     contextParts.push(
       `=== CONFIRMED (seller interview, broker, documents, questionnaire) ===\n` +
@@ -198,7 +204,7 @@ async function generateSectionWithClaude(
     if (qEntries.length > 0) {
       contextParts.push(
         `=== FROM QUESTIONNAIRE ===\n` +
-        qEntries.map(([k, v]) => `${k}: ${v}`).join("\n")
+        qEntries.map(([k, v]) => `${k}: ${screenFree(v)}`).filter((l) => !/: $/.test(l)).join("\n")
       );
     }
   }
@@ -208,7 +214,7 @@ async function generateSectionWithClaude(
     if (sEntries.length > 0) {
       contextParts.push(
         `=== PUBLICLY FOUND (treat as supporting context only) ===\n` +
-        sEntries.map(([k, v]) => `${k}: ${v}`).join("\n")
+        sEntries.map(([k, v]) => `${k}: ${screenFree(v)}`).filter((l) => !/: $/.test(l)).join("\n")
       );
     }
   }
@@ -7614,6 +7620,7 @@ Do not speculate or add information not in the CIM.`,
   registerCrmSellerRoutes(app);
   registerBuyerProfileRoutes(app);
   registerCimBuilderRoutes(app);
+  registerCimHeldPrivateRoutes(app);
   registerCimMediaRoutes(app);
   registerCimTemplateRoutes(app);
   registerBuyerNdaRoutes(app);

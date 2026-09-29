@@ -341,6 +341,7 @@ async function run(job: CimGenerationJob, deal: Deal, beforeWriting?: BeforeWrit
     job.done = document.sections.length;
     job.sectionCount = document.sections.length;
     job.warnings = document.warnings ?? [];
+    job.heldPrivate = document.heldPrivate ?? [];
   } catch (err: any) {
     if (err?.name === "DiscrepancyGateError") console.log(`[cim-generation] deal ${job.dealId} stopped at the discrepancy gate: ${err.message}`);
     else console.error(`[cim-generation] deal ${job.dealId} failed:`, err);
@@ -380,6 +381,7 @@ export async function startCimGeneration(
   const job: CimGenerationJob = {
     ...(previous?.buyerHold ? { buyerHold: previous.buyerHold } : {}),
     ...(previous?.factsAt ? { factsAt: previous.factsAt } : {}),
+    ...(previous?.heldPrivate ? { heldPrivate: previous.heldPrivate } : {}),
     dealId: deal.id,
     brokerId: deal.brokerId,
     businessName: deal.businessName,

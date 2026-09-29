@@ -179,6 +179,7 @@ import { ensureSourceReview } from "./source-review";
 import { screenLedgerForSeller } from "./source-privacy";
 import { questionPart, valuesMateriallyDiffer, sourceLabel } from "./source-context";
 import { getFieldAlternates } from "./info-merger";
+import { routeStaffPrivate, staffContextFrom, STAFF_PRIVATE_NOTE_REASON } from "../cim/staff-private";
 import { buildPolishContext, polishMessage, polishChips, polishRationale, describeReport, normalisationCallIn, type PolishContext, type PolishReport } from "./reply-polish";
 import { earningsNudge, sellerSideOf } from "./money-talk";
 import { ensureQuestionRationale, prefetchQuestionLabel, sectionsForLabel, type PrefetchedLabel, type RationaleResult } from "./question-rationale";
@@ -2908,6 +2909,35 @@ async function processTurnLocked(
   const partialEdits = intentPlan.partialEdits;
   if (intentPlan.privateNotes.length + heldBackNotes.length > 0) {
     aiResponse.privateNotes = [...(aiResponse.privateNotes ?? []), ...intentPlan.privateNotes, ...heldBackNotes];
+  }
+
+  // STAFF-PRIVATE GUARD (server/cim/staff-private.ts): an employee's private
+  // matter the seller mentioned — their ask to buy in, a raise request, talk
+  // of leaving, a warning, their health or family, a private talk with the
+  // owner — is the broker's private note, not a CIM fact. The business part
+  // of the answer stays the fact ("Daniel Okafor — LTC lead, 11 years, holds
+  // the home relationships"); the private part becomes the note.
+  {
+    const staffCtx = staffContextFrom({ ...existingExtracted, ...Object.fromEntries(changes.map((c) => [c.fieldName, c.newValue])) });
+    const staffNotes: Array<{ note: string; reason: string }> = [];
+    const routed: string[] = [];
+    const next: FieldChange[] = [];
+    for (const c of changes) {
+      if (typeof c.newValue !== "string") { next.push(c); continue; }
+      const r = routeStaffPrivate(c.fieldName, c.newValue, staffCtx);
+      if (r.notes.length === 0) { next.push(c); continue; }
+      routed.push(c.fieldName);
+      for (const note of r.notes) staffNotes.push({ note, reason: STAFF_PRIVATE_NOTE_REASON });
+      if (r.kept) next.push({ ...c, newValue: r.kept });
+      else if (confidenceLevels[c.fieldName] !== undefined) updatedConfidence[c.fieldName] = confidenceLevels[c.fieldName];
+      else delete updatedConfidence[c.fieldName];
+    }
+    if (routed.length > 0) {
+      // (Keys only — never what the seller said.)
+      console.log(`[session-manager] Staff-private guard: ${staffNotes.length} private staff matter(s) moved to the broker's notes from ${routed.join(", ")}`);
+      changes = next;
+      aiResponse.privateNotes = [...(aiResponse.privateNotes ?? []), ...staffNotes];
+    }
   }
   const newPrivateTerms = intentPlan.keptPrivateTerms;
   const withdrawnKeys = [...retractions.map((r) => r.field), ...partialEdits.filter((p) => p.kind === "withdrawn").map((p) => p.key)];
