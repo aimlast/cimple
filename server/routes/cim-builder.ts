@@ -79,6 +79,7 @@ async function staleFinancialsBlock(dealId: string): Promise<string | null> {
 import { dealStreetAddress } from "@shared/cim-media";
 import { lastGenerationFacts, openBuyerLinks } from "../cim/generation-jobs";
 import { cimStaleness, writerFactsSnapshot } from "../cim/cim-staleness";
+import { heldPrivateStateForDeal } from "../cim/held-private";
 import { backfillLegacyLiveApprovals, withdrawApprovalsAfterChange } from "../cim/approvals";
 import { keepPublishedBeforeChange } from "../cim/published-versions";
 import { listedAskingPrice } from "../information/deal-mirror";
@@ -237,12 +238,22 @@ export function registerCimBuilderRoutes(app: Express): void {
           })
         : null;
       const staleBy = new Map((staleness?.sections ?? []).map((x) => [x.id, x.facts]));
+      // Sections that still state a private staff matter now held back (a CIM
+      // written before the screen, or words typed in) — regenerate or edit.
+      let privateShowing: Map<string, string[]> = new Map();
+      try {
+        privateShowing = new Map(heldPrivateStateForDeal(deal, sections).showing.map((x) => [x.id, x.descriptions]));
+      } catch (err) {
+        console.warn("[cim-builder] held-private scan failed:", err);
+      }
       // The same chart totals buyers get (a chart written before it carried its stated total).
       const amounts = factAmounts(deal.extractedInfo);
       const rows = sections.map((s) => ({
         ...toBuilderSection(withStatedChartTotal(s, amounts), blindGenerated, withOverride.has(s.id), { generated: ddGenerated, has: withDd.has(s.id) }),
         /** Changed facts whose old value this section still shows. */
         factsChanged: staleBy.get(s.id) ?? [],
+        /** Private staff matters (held back from the CIM) this section still states. */
+        privateStaff: privateShowing.get(s.id) ?? [],
       }));
       const generation = deal.cimGeneration as CimGenerationStatus | null | undefined;
       const active = buyers.filter((b) => !b.revokedAt);
@@ -288,6 +299,8 @@ export function registerCimBuilderRoutes(app: Express): void {
           warnings: generation?.status === "done" ? generation.warnings ?? [] : [],
           warningsAt: generation?.status === "done" ? generation.finishedAt ?? null : null,
           placeholders: rows.filter((r) => r.placeholder).length,
+          /** Sections still stating a private staff matter that is now held back. */
+          privateStaffSections: rows.filter((r) => r.privateStaff.length > 0).length,
           facts: staleness && (staleness.changes.length > 0 || staleness.notesChanged)
             ? {
                 changes: staleness.changes.slice(0, 12).map((c) => ({ label: c.label, before: clip(c.before), after: clip(c.after) })),

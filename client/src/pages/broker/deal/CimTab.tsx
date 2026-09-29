@@ -35,6 +35,7 @@ import { useAiGate } from "@/components/cim-builder/useAiGate";
 import { builderRequest, errorText } from "@/components/cim-builder/api";
 import { useDdRun } from "@/components/cim-builder/useDdRun";
 import { CimReviewPanel } from "@/components/cim-builder/CimReviewPanel";
+import { HeldPrivateCard } from "@/components/cim-builder/HeldPrivateCard";
 import { regenerateBuyerImpact, reviewingUpdate } from "@shared/cim-generation-warnings";
 import { cn } from "@/lib/utils";
 import { CimDesignCard } from "@/components/cim-design/CimDesignCard";
@@ -160,6 +161,8 @@ export function CimTab() {
           onOpenSection={(id) => navigate(`/deal/${dealId}/design?section=${id}`)}
         />
       )}
+      {/* Private staff matters held out of every version — each with an Include switch. */}
+      <HeldPrivateCard dealId={dealId} />
       {gate.blockedReason && (
         <div className="space-y-3">
           <p className="text-xs text-red-400 flex items-center gap-1.5"><AlertTriangle className="h-3.5 w-3.5" /> {gate.blockedReason}</p>

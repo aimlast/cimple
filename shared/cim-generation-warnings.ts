@@ -32,7 +32,7 @@ export interface CimGenerationWarning {
 
 const PLACEHOLDER = /could not be generated/i;
 const FIGURES = /^Check the figures in "/;
-const REMOVED = /^(?:Removed from|Taken out of) "|taken out:|Kept out of the CIM/i;
+const REMOVED = /^(?:Removed from|Taken out of) "|taken out:|Kept out of the CIM|^Held back from the CIM:/i;
 const HIDDEN = /is hidden from buyers/i;
 
 export function classifyGenerationWarning(text: string): CimGenerationWarning {

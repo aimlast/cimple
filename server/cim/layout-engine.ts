@@ -30,6 +30,8 @@ import {
   type HeldFact,
   type KeepOut,
 } from "./sensitive-facts";
+import { includedStaffPrivate, screenStaffPrivateText, staffContextFrom, staffPrivateWarning } from "./staff-private";
+import type { StaffPrivateItem } from "@shared/staff-private";
 import { hasRelativeTime, repairInferredYears, staleTargets } from "./fact-dates";
 import { canonLines, earningsCanon, earningsWarnings, offCanon, screenEarningsFacts, type EarningsCanon, type EarningsHold } from "./earnings-canon";
 import { normalizeSpokenFigures } from "./spoken-figures";
@@ -204,6 +206,8 @@ interface SharedSystem extends SystemBlock {
   heldNames: string[];
   /** The broker's earnings figure overrules the analysis add-backs: no EBITDA/SDE bridge may be planned. */
   noBridge: boolean;
+  /** Staff-private matters held out of the knowledge base (staff-private.ts), for the broker. */
+  heldPrivate: StaffPrivateItem[];
 }
 
 /** The figure check's reference for an assembled knowledge base. */
@@ -234,6 +238,7 @@ function buildSharedSystem(params: CimLayoutParams): SharedSystem {
     today: params.today ?? new Date(),
     heldNames: kb.heldNames,
     noBridge: kb.canon?.override?.withheld === "bridge",
+    heldPrivate: kb.staffPrivate,
   };
 }
 
@@ -365,6 +370,7 @@ export async function generateCimLayout(
     version: 1,
     warnings: warnings.length > 0 ? warnings : undefined,
     aiError: slimAiError(runAiErrors.get(sharedSystem)),
+    ...(sharedSystem.heldPrivate.length > 0 ? { heldPrivate: sharedSystem.heldPrivate } : {}),
   };
 }
 
@@ -1324,7 +1330,7 @@ TRUTH RULES (a buyer relies on every figure; a wrong one costs the broker the de
 19. NAMES. Customers, suppliers, employees, advisors and partners are named only exactly as the knowledge base names them. A chart or list of customers uses the names on file (or the facts' own description, such as "dairy co-op", where no name is given) — never an invented or guessed company name, and never a share that isn't on file. A customer's rank or badge ("Top 5", "#2", "second-largest"), its region, what it buys and its contract terms come only from the facts about THAT customer: an aggregate ("top 5 = 47%") says nothing about which customers are in the top five.
 20. DATES AND TENSE. TODAY is given at the top of the knowledge base. A relative date in a fact ("in May", "last year", "next spring", "within one year", "before his next birthday") is resolved only against the date the fact was recorded (shown as [recorded Mon YYYY]) — if it can't be pinned down, keep it relative ("recently", "planned for May") and never guess a year. A target TODAY has reached or passed (a fact marked [date has arrived]) is never presented as a future target: restate it from the recorded date ("the owner planned to sell within a year of late 2025") or leave the date out. Keep tense: what the seller plans or intends stays a plan, never "completed".
 21. The cover's "Prepared by" and date are added by the system from the brokerage's settings — never fill them. Never name the seller's accountant, lawyer, banker or other advisors as the author of the CIM.
-22. PRIVATE MATTERS. Never mention an owner's or family member's health, medical history or personal circumstances, even as a reason for sale — say "retirement" or "succession" instead.
+22. PRIVATE MATTERS. Never mention an owner's or family member's health, medical history or personal circumstances, even as a reason for sale — say "retirement" or "succession" instead. Never write about an employee's private matters — an interest in equity or buying in, pay requests, a possible departure, performance or discipline, their health or family, a private conversation with the owner — and never build a buyer profile, risk or transition point on one, unless the knowledge base states it in so many words.
 23. FACTS ONLY — NO OUTSIDE KNOWLEDGE. Write only what the knowledge base says about this business. Never add market statistics, industry sizes, port or traffic volumes, equipment prices, typical costs, competitor counts, customer tenures or any other "general knowledge", even as background or as a round figure — a buyer reads every sentence as a claim about this deal. Describe the market and competition only through the facts on file.
 24. PEOPLE. Never assume anyone's gender. Use the person's name or role (or "they") unless the knowledge base itself says he or she for that person.
 25. THE SELLER'S WORDS. Facts are often recorded as the seller said them. Write them as clean, buyer-facing figures without changing the meaning ("six-point-something years" → "just over six years"; never quote casual phrasing). Give a growth rate only with the period the knowledge base states for it (GROWTH lists the exact periods) — a two-year change is never "year-over-year".
@@ -1391,6 +1397,8 @@ export interface AssembledKb {
   heldNames: string[];
   /** Counts from facts whose counts and rates disagree (consistency-check.ts): never stated. */
   suspectCounts: SuspectCount[];
+  /** Staff-private matters held back (staff-private.ts) — each one listed for the broker. */
+  staffPrivate: StaffPrivateItem[];
 }
 
 /**
@@ -1456,6 +1464,12 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
   const confidential: ConfidentialHold[] = [];
   let heldNames: string[] = [];
   let suspectCounts: SuspectCount[] = [];
+  // Staff-private matters (staff-private.ts): the deal's people and the
+  // broker's include decisions — for the facts and every free-text block.
+  const staffPrivate: StaffPrivateItem[] = [];
+  const staffCtx = params.keepOut?.staff?.ctx ?? staffContextFrom(params.extractedInfo ?? {});
+  const staffIncluded = new Set(params.keepOut?.staff?.included ?? Array.from(includedStaffPrivate(params.extractedInfo)));
+  const screenStaff = (text: string) => screenStaffPrivateText(text, staffCtx, staffIncluded).text;
   if (params.extractedInfo && Object.keys(params.extractedInfo).length > 0) {
     // "_"-prefixed keys (broker-private notes, provenance) and per-source
     // notes (a source's summary / red flags / to-dos) never feed CIM
@@ -1479,6 +1493,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     });
     held.push(...screened.held.map((h) => ({ ...h, key: untag(h.key) })));
     confidential.push(...screened.confidential.map((h) => ({ ...h, key: untag(h.key) })));
+    staffPrivate.push(...screened.staffPrivate);
     heldNames = screened.heldNames;
     const earn = screenEarningsFacts(screened.safe, canon, (k) => formatKey(untag(k)));
     earningsHeld.push(...earn.held);
@@ -1500,7 +1515,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
       if (fix) {
         text = fix.text;
         if (fix.changes.length > 0) {
-          const quote = screenText(fix.quotes.join(" … ")).trim();
+          const quote = screenStaff(screenText(fix.quotes.join(" … "))).trim();
           said = ` [the seller named the month but no year — never add one${quote ? `; keep their tense: "${quote}"` : ""}]`;
           yearFixes.push(`"${formatKey(key)}" (${fix.changes.join("; ")})`);
         }
@@ -1572,7 +1587,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     return true;
   });
   const resolvedBlock = renderResolvedBlock(resolved);
-  if (resolvedBlock) parts.push("\n" + screenText(resolvedBlock));
+  if (resolvedBlock) parts.push("\n" + screenStaff(screenText(resolvedBlock)));
 
   const financialsBlock = renderCimFinancialsBlock(fin);
   if (financialsBlock) parts.push("\n" + financialsBlock);
@@ -1581,7 +1596,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
   // Earlier drafts and the scrape are read by the writer too: no confidential
   // sentence and no off-bridge earnings figure survives in them.
   const cleanFreeText = (text: string) => {
-    let t = screenConfidentialText(screenText(text), heldNames);
+    let t = screenConfidentialText(screenStaff(screenText(text)), heldNames);
     if (canon) {
       t = t
         .split(/\n{2,}/)
@@ -1659,6 +1674,8 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
   }
 
   const heldKeys = held.map((h) => h.key);
+  const staffWarning = staffPrivateWarning(staffPrivate);
+  if (staffWarning) warnings.unshift(staffWarning);
   if (confidential.length > 0) warnings.unshift(CONFIDENTIAL_WARNING(confidential));
   if (heldKeys.length > 0) warnings.unshift(PERSONAL_DETAIL_WARNING(heldKeys));
   if (canon) warnings.push(...earningsWarnings(canon, earningsHeld));
@@ -1672,6 +1689,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     growth: cimGrowth(fin, canon),
     heldNames,
     suspectCounts,
+    staffPrivate,
   };
 }
 

@@ -23,6 +23,8 @@ export interface BuilderSection extends Omit<CimSection, "aiTask" | "contentHist
   placeholder?: boolean;
   /** Facts changed since the CIM was written whose old value this section still shows. */
   factsChanged?: string[];
+  /** Private staff matters now held back from the CIM that this section still states (regenerate or edit it). */
+  privateStaff?: string[];
 }
 
 /** One full DD run (POST generate-dd), kept in server memory until the next. */
@@ -44,6 +46,8 @@ export interface CimReview {
   warnings: string[];
   warningsAt: string | null;
   placeholders: number;
+  /** Sections still stating a private staff matter that is now held back. */
+  privateStaffSections?: number;
   /** Facts changed since the CIM was written (null = none). */
   facts: {
     changes: Array<{ label: string; before: string | null; after: string | null }>;

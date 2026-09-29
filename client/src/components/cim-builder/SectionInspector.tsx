@@ -154,6 +154,19 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
         </div>
       )}
 
+      {/* A private staff matter now held back from the CIM, still stated here */}
+      {!running && (section.privateStaff?.length ?? 0) > 0 && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs space-y-2" data-testid="private-staff-banner">
+          <p className="flex items-start gap-1.5 font-medium text-amber-500"><Lock className="h-3.5 w-3.5 mt-0.5 shrink-0" /> Mentions a private staff matter</p>
+          <p className="text-muted-foreground break-words">
+            It still states {section.privateStaff!.join("; ")}, which is now held back from every version of the CIM. Regenerate it, or edit it below. To keep it in, switch it on under “Held back from the CIM” on the CIM tab.
+          </p>
+          <Button size="sm" variant="outline" className="h-7 text-xs w-full gap-1.5" onClick={onRegenerate} disabled={!!aiBlockedReason} title={aiBlockedReason ?? undefined}>
+            <RefreshCw className="h-3.5 w-3.5" /> Regenerate without it
+          </Button>
+        </div>
+      )}
+
       {/* Facts that changed since the CIM was written, still shown here */}
       {!running && (section.factsChanged?.length ?? 0) > 0 && (
         <div className="rounded-lg border border-blue-500/40 bg-blue-500/10 p-3 text-xs space-y-2" data-testid="facts-changed-banner">
