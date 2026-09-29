@@ -20,6 +20,7 @@ import {
 } from "@/components/buyers/profile/ProfileSections";
 import { AiSummaryCard, CrmRecordCard, DealsCard, NdaAnswersCard, NotesTagsCard, TimelineCard } from "@/components/buyers/profile/SidePanels";
 import { EmailDialog, GrantAccessDialog, RemoveBuyerDialog } from "@/components/buyers/profile/ActionDialogs";
+import { BuyerDealsEngagement } from "@/components/engagement/buyers/BuyerDealsEngagement";
 import {
   INTEREST_OPTIONS, SOURCE_META, buyerTypeLabel, relTime, requestJson, type BuyerProfileResponse, type InterestStatus,
 } from "@/components/buyers/profile/types";
@@ -298,6 +299,7 @@ export default function BuyerProfilePage() {
                 </div>
               </div>
             )}
+            <BuyerDealsEngagement deals={data.deals} />
             <ContactSection ctx={ctx} />
             <CapacitySection ctx={ctx} />
             <BackgroundSection ctx={ctx} />

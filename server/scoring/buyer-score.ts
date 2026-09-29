@@ -6,7 +6,12 @@
  *
  *   1. Match-fit          — how well their criteria match a specific deal (35%)
  *   2. Profile completeness — how much we know about them (25%)
- *   3. Engagement          — have they actually viewed/asked about deals (25%)
+ *   3. Engagement          — how seriously they read the CIM (25%): the reading
+ *                            intent from server/engagement/insights.ts (study
+ *                            time vs what the pages need, how far they got,
+ *                            return visits, the money pages, questions) when
+ *                            reading was measured; the old view/time composite
+ *                            otherwise (buyers with only pre-2026-09 data)
  *   4. Proof of funds      — financial verification (15%)
  *
  * Scoring is profile-only when no deal context is supplied — match-fit is
@@ -28,6 +33,12 @@ export interface QualifiedLeadInput {
   match?: Pick<MatchBreakdown, "criteriaMatched" | "criteriaTested" | "deterministicScore" | "finalScore" | "excludedIndustry" | "excludedBy"> | null;
   /** Engagement signals from analytics — used when scoring buyers who have viewed deals. */
   engagement?: {
+    /**
+     * 0–1 reading intent (insights.ts buyerInsight().intent) — the same
+     * number the call list ranks by, so this score and the Engagement tab
+     * agree. When present it IS the engagement sub-score.
+     */
+    intent?: number | null;
     viewCount?: number;
     sectionsViewed?: number;
     totalTimeSeconds?: number;
@@ -83,6 +94,12 @@ function tierFor(total: number): QualifiedLeadTier {
 
 function engagementSubScore(e: QualifiedLeadInput["engagement"]): { score: number; reason: string | null } {
   if (!e) return { score: 0, reason: null };
+
+  if (e.intent != null && Number.isFinite(e.intent)) {
+    const score = Math.round(Math.max(0, Math.min(1, e.intent)) * 100);
+    const reason = score >= 60 ? "Read the CIM closely" : score >= 30 ? "Reading the CIM" : score > 0 ? "Looked at the CIM" : null;
+    return { score, reason };
+  }
 
   // Weighted: time 35, sections 25, questions 20, return visits 15, NDA 5
   const time = Math.min((e.totalTimeSeconds ?? 0) / 300, 1) * 35;             // 5 min = full

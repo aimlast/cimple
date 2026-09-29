@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { isGenericSectionType } from "./learning-loop";
 import type { CimLayoutSection, CimDocument, LayoutType } from "./layout-types.js";
 import {
   CIM_FALLBACK_REASONING,
@@ -120,10 +121,14 @@ const MODEL = agentConfig.models.supportingAgents;
  * cache instead of re-paying for it per section.
  */
 export interface EngagementInsightInput {
+  /** A page role ("financials") or role/content kind ("financials/tables") — never a deal's section key. */
   sectionType: string;
   layoutType: string;
+  /** Reading time per reader. */
   avgTimeSpentSeconds: number;
   sampleCount: number;
+  /** Read-through: reading time ÷ expected reading time, % (capped at 100). */
+  completionRate?: number | null;
 }
 
 interface ManifestEntry {
@@ -1617,15 +1622,19 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     pushOther(`\n--- HOUSE STYLE (how this brokerage's CIMs read — match it) ---\n${params.sectionOutline.toneNotes}`);
   }
 
-  if (params.engagementInsights && params.engagementInsights.length > 0) {
-    pushOther("\n--- BUYER ENGAGEMENT DATA (use to bias layout choices) ---");
-    pushOther("The following layouts have been measured for buyer engagement in similar deals in this industry.");
-    pushOther("Higher avg_time_seconds = buyers read more carefully. Use high-performing layouts for important content.");
-    const top = [...params.engagementInsights]
-      .sort((a, b) => b.avgTimeSpentSeconds - a.avgTimeSpentSeconds)
-      .slice(0, 15);
+  // Reading data from other CIMs in this industry: only generic rows (a page
+  // role, or role/content kind, measured on ≥ 3 deals — learning-loop.ts);
+  // legacy rows keyed by a deal's own section slug are never printed.
+  const learned = (params.engagementInsights ?? []).filter((i) => isGenericSectionType(i.sectionType) && (i.sampleCount ?? 0) > 0);
+  if (learned.length > 0) {
+    pushOther("\n--- WHAT BUYERS READ IN THIS INDUSTRY (measured on other CIMs; use to bias layout choices) ---");
+    pushOther("Reading time buyers gave each kind of page, by layout. Read-through = the share of a page's expected reading time buyers actually spent on it (100% = read in full). Prefer layouts with high read-through for the pages that matter most; the \"pages · kind\" rows say which content inside those pages holds attention.");
+    const top = [...learned]
+      .sort((a, b) => (b.completionRate ?? 0) - (a.completionRate ?? 0) || b.avgTimeSpentSeconds - a.avgTimeSpentSeconds)
+      .slice(0, 20);
     for (const insight of top) {
-      pushOther(`${insight.sectionType} → ${insight.layoutType}: avg ${insight.avgTimeSpentSeconds}s (n=${insight.sampleCount})`);
+      const rt = insight.completionRate != null ? `read-through ${insight.completionRate}%, ` : "";
+      pushOther(`${insight.sectionType.replace("/", " pages · ")} → ${insight.layoutType}: ${rt}${insight.avgTimeSpentSeconds}s per reader (n=${insight.sampleCount} readers)`);
     }
   }
 

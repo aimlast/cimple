@@ -508,7 +508,7 @@ export async function buildBrokerBuyerList(brokerId: string) {
     const e = engagement.get(own.id);
     const score = calculateQualifiedLeadScore({
       buyer: { ...display, hasProofOfFunds: !!display.hasProofOfFunds },
-      engagement: e ? { viewCount: e.views, sectionsViewed: e.sectionsViewed, totalTimeSeconds: e.seconds, questionCount: e.questions, ndaSigned: e.ndaSigned } : null,
+      engagement: e ? { intent: e.intent, viewCount: e.views, sectionsViewed: e.sectionsViewed, totalTimeSeconds: e.seconds, questionCount: e.questions, ndaSigned: e.ndaSigned } : null,
     });
     const deals = Math.max(dealCount, e?.dealIds.size ?? 0);
     const last = [lastActivityAt, e?.lastActivityAt ?? null].filter(Boolean).sort((a, b) => +new Date(b!) - +new Date(a!))[0] ?? null;

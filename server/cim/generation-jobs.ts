@@ -184,6 +184,7 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
             layoutType: i.layoutType,
             avgTimeSpentSeconds: i.avgTimeSpentSeconds ?? 0,
             sampleCount: i.sampleCount ?? 0,
+            completionRate: i.completionRate ?? null,
           }))
         : null,
   };
