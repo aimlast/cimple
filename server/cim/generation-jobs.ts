@@ -32,6 +32,7 @@ import { db } from "../db";
 import { interviewSessions } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { writerFactsSnapshot } from "./cim-staleness";
+import { describeAiFailure } from "../ai-retry";
 
 export type CimGenerationMode = CimGenerationStatus["mode"];
 
@@ -331,7 +332,7 @@ async function run(job: CimGenerationJob, deal: Deal, beforeWriting?: BeforeWrit
     // broker's edits, approvals, tiers, Blind and DD versions): it fails
     // honestly and the current CIM stays (generation-shortfall.ts).
     const existing = await storage.getCimSectionsByDeal(deal.id);
-    const shortfall = generationShortfall(document.sections, { hasExistingCim: existing.length > 0 });
+    const shortfall = generationShortfall(document.sections, { hasExistingCim: existing.length > 0, aiError: document.aiError });
     if (shortfall) throw new Error(shortfall.message);
     job.phase = "saving";
     touch();
@@ -353,10 +354,15 @@ async function run(job: CimGenerationJob, deal: Deal, beforeWriting?: BeforeWrit
     job.status = "failed";
     job.phase = "finished";
     // An AI service error (credits, overload, planning call failed) in the
-    // broker's words — not the API's raw JSON. Nothing was written.
-    job.error = typeof err?.status === "number"
-      ? `The AI service failed (${err.status === 529 ? "overloaded" : err.status === 429 ? "rate limit" : `error ${err.status}`}) before the CIM was written. Your current CIM was not changed — try again in a few minutes.`
-      : err?.message || "CIM generation failed";
+    // broker's words — not the API's raw JSON — and only "try again in a few
+    // minutes" when that can help (not for credits out or a rejected key).
+    // Nothing was written.
+    if (typeof err?.status === "number") {
+      const why = describeAiFailure(err);
+      job.error = `The AI service failed (${why.reason}) before the CIM was written. Your current CIM was not changed — ${why.advice}.`;
+    } else {
+      job.error = err?.message || "CIM generation failed";
+    }
     if (err?.name === "DiscrepancyGateError") {
       job.stoppedBy = "discrepancies";
       job.stoppedReason = err.reason === "new" ? "new" : "critical";

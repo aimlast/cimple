@@ -29,7 +29,7 @@
 import { storage } from "../storage";
 import { notify, escapeHtml as escapeEmailHtml } from "../notifications/service";
 import { ndaBlocksBuyer, cimHeldFromBuyers } from "@shared/cim-buyer-view";
-import type { BuyerAccess, Deal } from "@shared/schema";
+import type { BuyerAccess, BuyerAccessEvent, Deal } from "@shared/schema";
 import { cimModeForAccessLevel } from "@shared/cim-layouts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -40,6 +40,9 @@ const LAPSE_GRACE_MS = 2 * DAY_MS;    // the warning promises 48 hours
 const STALE_AFTER_MS = 30 * DAY_MS;   // never start a cycle this late
 
 export type ReminderAction = "none" | "reminder" | "warning" | "lapse";
+
+/** reminderStage of a buyer whose reminder or warning email was refused for good. */
+export const UNDELIVERABLE_STAGE = "email_undeliverable";
 
 /**
  * When this buyer's review clock started. Normally the first time CIM
@@ -81,6 +84,10 @@ export function reminderActionFor(
   if (access.expiresAt && new Date(access.expiresAt).getTime() < now) return "none";
   const age = now - clockStart;
   const stage = access.reminderStage || "none";
+  // Resend refused this buyer's email for good: no more tries, and no lapse
+  // (they were never warned) — the broker follows up. "Need more time" or a
+  // republished CIM starts a fresh cycle (stage "none").
+  if (stage === UNDELIVERABLE_STAGE) return "none";
   if (stage === "warning_sent") {
     // Lapse only once the warning's 48 hours have passed.
     const warnedAt = access.lastReminderAt ? new Date(access.lastReminderAt).getTime() : null;
@@ -109,14 +116,29 @@ export class ReminderEmailNotSentError extends Error {
 
 const EMAIL_TIMEOUT_MS = 15_000;
 
+/**
+ * Thrown-free result of one buyer email. `rejected`: Resend refused THIS
+ * email for good (400/422 — e.g. an address it won't accept); sending it
+ * again every 6 hours can't succeed. Anything else (outage, rate limit,
+ * timeout, no key, a sender/config problem) is worth retrying next run.
+ */
+export type BuyerEmailResult = { sent: true } | { sent: false; rejected: boolean; status?: number };
+
+/** Pure: is a Resend refusal permanent for this recipient (not a sender or account problem)? */
+export function isPermanentRecipientRejection(status: number, body: string): boolean {
+  if (status !== 400 && status !== 422) return false;
+  // A bad or unverified sender fails every buyer the same way — that's
+  // configuration, fixed once, so keep retrying.
+  return !/\bfrom\b|sender|domain/i.test(body);
+}
+
 // Direct email to the buyer (bypasses broker notification routing).
 // Uses the same Resend/Twilio fallback as the broker notification service.
-// True only when Resend accepted it.
-async function emailBuyer(to: string, subject: string, html: string): Promise<boolean> {
+async function emailBuyer(to: string, subject: string, html: string): Promise<BuyerEmailResult> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
     console.log(`[reminders] (no RESEND_API_KEY) would email ${to}: ${subject}`);
-    return false;
+    return { sent: false, rejected: false };
   }
   try {
     const res = await fetch("https://api.resend.com/emails", {
@@ -134,11 +156,13 @@ async function emailBuyer(to: string, subject: string, html: string): Promise<bo
       // A hung connection must not stall the whole run.
       signal: AbortSignal.timeout(EMAIL_TIMEOUT_MS),
     });
-    if (!res.ok) console.error(`[reminders] Resend refused the email to ${to}: HTTP ${res.status}`);
-    return res.ok;
+    if (res.ok) return { sent: true };
+    const body = await res.text().catch(() => "");
+    console.error(`[reminders] Resend refused the email to ${to}: HTTP ${res.status} ${body.slice(0, 200)}`);
+    return { sent: false, rejected: isPermanentRecipientRejection(res.status, body), status: res.status };
   } catch (err) {
     console.error(`[reminders] Email error to ${to}:`, err);
-    return false;
+    return { sent: false, rejected: false };
   }
 }
 
@@ -277,7 +301,7 @@ export function canSnoozeDecision(decision: string | null | undefined): boolean 
  * lapse. Returns what it did. Exported so a single row can be exercised
  * without running the whole pipeline.
  */
-export async function processReminderForAccess(access: BuyerAccess, now: number, baseUrl: string): Promise<ReminderAction> {
+export async function processReminderForAccess(access: BuyerAccess, now: number, baseUrl: string): Promise<ReminderAction | "undeliverable"> {
   if (!access.firstViewedAt || access.revokedAt) return "none";
   const deal: Deal | undefined = await storage.getDeal(access.dealId);
   if (!deal) return "none";
@@ -303,10 +327,30 @@ export async function processReminderForAccess(access: BuyerAccess, now: number,
 
   const viewUrl = `${baseUrl}/view/${access.accessToken}`;
 
+  // An email Resend refused for good (e.g. an address it won't accept):
+  // stop retrying it every 6 hours, never lapse the buyer (they were never
+  // warned), and put it on the buyer's activity for the broker to follow up.
+  const undeliverable = async (stage: "reminder" | "warning", status?: number): Promise<"undeliverable"> => {
+    const events = [...(((access as { accessEvents?: unknown }).accessEvents as BuyerAccessEvent[] | null) ?? [])];
+    events.push({ type: "reminder_undeliverable", at: new Date(now).toISOString(), stage, status: status ?? null });
+    await storage.updateBuyerAccess(access.id, {
+      decision: "under_review",
+      reminderStage: UNDELIVERABLE_STAGE,
+      lastReminderAt: new Date(now),
+      accessEvents: events,
+    } as any);
+    console.warn(`[reminders] The ${stage} email for buyer access ${access.id} was rejected (HTTP ${status ?? "?"}) — not retried; the broker follows up`);
+    return "undeliverable";
+  };
+
   // ── Stage 1: Day 3 reminder ─────────────────────────────────
   if (action === "reminder") {
     const email = buildReminderEmail("reminder", deal, access, viewUrl);
-    if (!(await emailBuyer(access.buyerEmail, email.subject, email.html))) throw new ReminderEmailNotSentError("reminder", access.id);
+    const result = await emailBuyer(access.buyerEmail, email.subject, email.html);
+    if (!result.sent) {
+      if (result.rejected) return undeliverable("reminder", result.status);
+      throw new ReminderEmailNotSentError("reminder", access.id);
+    }
     await storage.updateBuyerAccess(access.id, {
       decision: "under_review",
       reminderStage: "reminder_sent",
@@ -320,7 +364,11 @@ export async function processReminderForAccess(access: BuyerAccess, now: number,
     const email = buildReminderEmail("warning", deal, access, viewUrl);
     // Only a delivered warning moves the buyer to "warning_sent" — the one
     // stage a buyer can be lapsed from — and starts its 48 hours.
-    if (!(await emailBuyer(access.buyerEmail, email.subject, email.html))) throw new ReminderEmailNotSentError("warning", access.id);
+    const result = await emailBuyer(access.buyerEmail, email.subject, email.html);
+    if (!result.sent) {
+      if (result.rejected) return undeliverable("warning", result.status);
+      throw new ReminderEmailNotSentError("warning", access.id);
+    }
     await storage.updateBuyerAccess(access.id, {
       decision: "under_review",
       reminderStage: "warning_sent",
@@ -398,6 +446,8 @@ interface RunStats {
   reminderSent: number;
   warningSent: number;
   lapsed: number;
+  /** Emails refused for good (not retried; the broker follows up). */
+  undeliverable: number;
   errors: number;
 }
 
@@ -406,7 +456,7 @@ interface RunStats {
  * Safe to call frequently — idempotent via `reminderStage`.
  */
 export async function runDecisionReminders(): Promise<RunStats> {
-  const stats: RunStats = { checked: 0, reminderSent: 0, warningSent: 0, lapsed: 0, errors: 0 };
+  const stats: RunStats = { checked: 0, reminderSent: 0, warningSent: 0, lapsed: 0, undeliverable: 0, errors: 0 };
   const baseUrl = process.env.APP_URL || "https://cimple-production.up.railway.app";
 
   try {
@@ -420,6 +470,7 @@ export async function runDecisionReminders(): Promise<RunStats> {
         if (action === "reminder") stats.reminderSent++;
         else if (action === "warning") stats.warningSent++;
         else if (action === "lapse") stats.lapsed++;
+        else if (action === "undeliverable") stats.undeliverable++;
       } catch (err: any) {
         if (err instanceof ReminderEmailNotSentError) console.warn(`[reminders] ${err.message}`);
         else console.error(`[reminders] Error processing buyer ${access.id}:`, err);

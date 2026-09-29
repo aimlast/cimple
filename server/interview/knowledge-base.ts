@@ -6,7 +6,7 @@ import { getSectionImportance, renderSectionImportanceForPrompt } from "./sectio
 import { getInterviewOutline, renderOutlineForPrompt } from "./outline";
 import { coverageAdjustmentsForDeal, fieldLabel } from "./interview-plan";
 import type { InterviewOutline } from "@shared/schema";
-import { profileSafeForInterview, type SellerCommunicationProfile, type InterviewSellerProfile } from "./eq-profiler";
+import { profileSafeForInterview, profileValueForPrompt, type SellerCommunicationProfile, type InterviewSellerProfile } from "./eq-profiler";
 import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, isBrokerSessionSource, type FieldSource } from "./info-merger";
 import { sellerInterviewView, privateSourceMatcher, heldByBroker, withHeldFacts } from "./seller-view";
 import { resolvedNotes, settleResolvedFacts, currentResolvedNotes, resolvedNoteLabel, type ResolvedDiscrepancyNote as ResolvedNote } from "../cim/resolved-block";
@@ -1254,16 +1254,17 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     if (kb.sellerProfile.pendingRebuild) {
       parts.push(`(Profile being refreshed: only the broker's own settings are shown. Read the seller from the conversation itself.)`);
     }
-    const category: Array<[string, string | undefined]> = [
-      ["Communication style", kb.sellerProfile.communicationStyle],
-      ["Emotional state", kb.sellerProfile.emotionalState],
-      ["Selling reason", kb.sellerProfile.sellingReason],
-      ["Seller sophistication", kb.sellerProfile.sophistication],
-      ["Business attachment", kb.sellerProfile.businessAttachment],
-      ["Time orientation", kb.sellerProfile.timeOrientation],
-      ["Family involvement", kb.sellerProfile.familyInvolvement],
+    const category: Array<[string, keyof SellerCommunicationProfile, string | undefined]> = [
+      ["Communication style", "communicationStyle", kb.sellerProfile.communicationStyle],
+      ["Emotional state", "emotionalState", kb.sellerProfile.emotionalState],
+      ["Selling reason", "sellingReason", kb.sellerProfile.sellingReason],
+      ["Seller sophistication", "sophistication", kb.sellerProfile.sophistication],
+      ["Business attachment", "businessAttachment", kb.sellerProfile.businessAttachment],
+      ["Time orientation", "timeOrientation", kb.sellerProfile.timeOrientation],
+      ["Family involvement", "familyInvolvement", kb.sellerProfile.familyInvolvement],
     ];
-    for (const [label, value] of category) if (value) parts.push(`- ${label}: ${value}`);
+    // "unknown" is spelled out as "not known yet — never assume one" (eq-profiler).
+    for (const [label, field, value] of category) if (value) parts.push(`- ${label}: ${profileValueForPrompt(field, value)}`);
 
     if (kb.sellerProfile.sensitiveTopics.length > 0) {
       parts.push(`\nSensitive topics — handle with extreme care, never bring up directly:`);

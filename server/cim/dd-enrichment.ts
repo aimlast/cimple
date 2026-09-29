@@ -44,6 +44,7 @@ import type { ResolvedDiscrepancyNote } from "./resolved-block";
 import { earningsCanon, screenEarningsFacts } from "./earnings-canon";
 import { currentResolvedNotes, resolvedNotes, settleResolvedFacts } from "./resolved-block";
 import { stampSourceDetails } from "../documents/merge-policy";
+import { describeAiFailure } from "../ai-retry";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
 
@@ -109,6 +110,8 @@ export interface DdEnrichmentResult {
    * DD version).
    */
   failed?: "api" | "unusable" | "rejected";
+  /** The AI service's error when failed = "api" (to say why — credits out won't come right by retrying). */
+  aiError?: { status?: number; message: string };
 }
 
 /** A failure worth retrying: the section's current DD version must not be replaced by the named copy. */
@@ -414,7 +417,11 @@ Return the enriched section via the dd_section tool.`,
     if (message?.stop_reason !== "max_tokens" && block?.input && typeof block.input === "object") parsed = block.input;
   } catch (err) {
     console.warn(`[dd-enrichment] section ${section.id} failed:`, (err as Error)?.message);
-    return keep(`DD version of "${section.sectionTitle}" couldn't be written (the AI service failed) — its current DD version was kept. Refresh it later.`, "api");
+    const e = err as { status?: unknown; message?: unknown };
+    return {
+      ...keep(`DD version of "${section.sectionTitle}" couldn't be written (the AI service failed) — its current DD version was kept. Refresh it later.`, "api"),
+      aiError: { status: typeof e?.status === "number" ? e.status : undefined, message: String(e?.message ?? "").slice(0, 300) },
+    };
   }
   if (!parsed || !parsed.layoutData || typeof parsed.layoutData !== "object") {
     return keep(`DD version of "${section.sectionTitle}" couldn't be written — its current DD version was kept. Refresh it later.`, "unusable");
@@ -441,7 +448,7 @@ export async function refreshSectionDd(section: CimSection, deal: Deal): Promise
   // The AI service failed: the section's DD version (and its stale mark)
   // stay exactly as they were — never replaced by the named copy and marked
   // fresh, which hid it from "Refresh DD".
-  if (ddRetryable(result)) throw new DdUnavailableError();
+  if (ddRetryable(result)) throw new DdUnavailableError(result.aiError);
   const stamp = section.ddStaleAt ? new Date(section.ddStaleAt) : null;
   const committed = await db.transaction(async (tx) => {
     const cleared = await tx
@@ -486,8 +493,9 @@ export async function markDdFresh(dealId: string, startedAt: Date): Promise<void
 
 /** Thrown by refreshSectionDd when the AI service failed: nothing was changed. */
 export class DdUnavailableError extends Error {
-  constructor() {
-    super("The AI service is unavailable — the section's DD version was kept. Try again in a few minutes.");
+  constructor(aiError?: unknown) {
+    const why = aiError ? describeAiFailure(aiError) : null;
+    super(`The AI service is unavailable${why ? ` (${why.reason})` : ""} — the section's DD version was kept. ${why ? `${why.advice[0].toUpperCase()}${why.advice.slice(1)}` : "Try again in a few minutes"}.`);
     this.name = "DdUnavailableError";
   }
 }
@@ -496,6 +504,8 @@ export class DdUnavailableError extends Error {
 export const ddRunning = new Set<string>();
 
 export interface DdRunSummary {
+  /** The run's start (the generate-dd response carries it, so the page can tell this run's result from an older one). */
+  startedAt: string;
   finishedAt: string;
   /** Set when the run changed nothing (the AI service failed, or it crashed). */
   error?: string;
@@ -552,10 +562,12 @@ export function planDdRun(results: DdEnrichmentResult[], sections: Array<Pick<Ci
   const write = results.filter((r) => !ddRetryable(r));
   const attemptedCount = results.filter((r) => attempted.has(r.cimSectionId)).length;
   if (attemptedCount > 0 && notWritten.length >= attemptedCount) {
+    const cause = notWritten.find((r) => r.aiError)?.aiError;
+    const why = cause ? describeAiFailure(cause) : null;
     return {
       write: [],
       notWritten,
-      error: `The AI service failed while writing the due-diligence version (${notWritten.length} of ${attemptedCount} sections). Nothing was changed — try again in a few minutes.`,
+      error: `The AI service failed${why ? ` (${why.reason})` : ""} while writing the due-diligence version (${notWritten.length} of ${attemptedCount} sections). Nothing was changed — ${why?.advice ?? "try again in a few minutes"}.`,
     };
   }
   return { write, notWritten, error: null };
@@ -565,9 +577,10 @@ async function runFullDd(deal: Deal, sections: CimSection[], inputs: DdInputs, s
   const results = await generateDdOverrides(sections, { businessName: deal.businessName, industry: deal.industry }, inputs);
   const plan = planDdRun(results, sections);
   const warnings = results.map((r) => r.warning).filter((w): w is string => !!w);
-  if (plan.error) return { finishedAt: new Date().toISOString(), error: plan.error, written: 0, notWritten: plan.notWritten.length, warnings };
+  const started = startedAt.toISOString();
+  if (plan.error) return { startedAt: started, finishedAt: new Date().toISOString(), error: plan.error, written: 0, notWritten: plan.notWritten.length, warnings };
   await runWriter(deal.id, sections.map((s) => String(s.id)), plan.write, startedAt);
-  return { finishedAt: new Date().toISOString(), written: plan.write.length, notWritten: plan.notWritten.length, warnings };
+  return { startedAt: started, finishedAt: new Date().toISOString(), written: plan.write.length, notWritten: plan.notWritten.length, warnings };
 }
 
 /**
@@ -583,6 +596,7 @@ export function startFullDdGeneration(deal: Deal, sections: CimSection[], inputs
     .catch((err): DdRunSummary => {
       console.error(`[dd-enrichment] DD run for deal ${deal.id} failed:`, err);
       return {
+        startedAt: startedAt.toISOString(),
         finishedAt: new Date().toISOString(),
         error: "The due-diligence version couldn't be written. Nothing was changed — try again.",
         written: 0,

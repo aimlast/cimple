@@ -826,146 +826,21 @@ export async function generateSellerProfile(
 }
 
 /**
- * Renders the Seller Communication Profile as a human-readable markdown section
- * suitable for injection into the interview system prompt.
- *
- * Written as context for the interview agent, not as raw data.
+ * How a profile category the profiler couldn't read ("unknown") is put to
+ * the interview agent (knowledge-base.ts renders the profile into the
+ * prompt): an explicit instruction not to assume, never the bare word — a
+ * raw "Selling reason: unknown" invited the agent to fill the gap itself
+ * (the old stand-in profile said "retirement / solo operator").
  */
-export function renderProfileForPrompt(profile: SellerCommunicationProfile): string {
-  const lines: string[] = [];
+export const PROFILE_UNKNOWN_WORDING: Partial<Record<keyof SellerCommunicationProfile, string>> = {
+  sellingReason: "Not known yet — let the seller say it in their own words; never assume one",
+  familyInvolvement: "Not known yet — don't assume who else is involved in the decision",
+};
 
-  lines.push("## Seller Communication Profile");
-  lines.push("");
-  lines.push(
-    `> **Confidence:** ${Math.round(profile.confidenceScore * 100)}% — based on ${profile.dataSources.length > 0 ? profile.dataSources.join(", ") : "no prior data"}`,
-  );
-  lines.push("");
-
-  // Seller story — the most important piece
-  lines.push("### Who you are talking to");
-  lines.push("");
-  lines.push(profile.sellerStory);
-  lines.push("");
-
-  // Communication approach
-  lines.push("### How to communicate with this seller");
-  lines.push("");
-
-  const styleGuidance: Record<string, string> = {
-    direct:
-      "This seller prefers direct, efficient communication. Get to the point quickly. Avoid excessive small talk or over-explaining. They respect competence and brevity.",
-    conversational:
-      "This seller enjoys conversation and storytelling. Build rapport through genuine interest. Let them tell their story before narrowing in on specifics. They respond well to warmth and patience.",
-    formal:
-      "This seller communicates formally and professionally. Use polished language, structured questions, and respectful tone. Avoid casual language or overly familiar phrasing.",
-    guarded:
-      "This seller is cautious and may give short answers initially. Build trust gradually. Do not push too hard on sensitive topics early. Acknowledge their concerns and explain why information is needed before asking for it.",
-    enthusiastic:
-      "This seller is energetic and proud of their business. Channel their enthusiasm — let them share what they are proud of. Then guide the conversation to areas they may be less eager to discuss.",
-  };
-  lines.push(
-    `- **Communication style:** ${profile.communicationStyle} — ${styleGuidance[profile.communicationStyle]}`,
-  );
-
-  const emotionalGuidance: Record<string, string> = {
-    motivated: "Ready to move forward. Match their energy and keep momentum.",
-    reluctant:
-      "Has reservations about selling. Be empathetic, do not pressure. Help them see the value of thorough preparation regardless of their final decision.",
-    anxious:
-      "Worried about the process or outcome. Provide reassurance and explain what happens at each step. Normalize their concerns.",
-    grieving:
-      "Emotionally difficult to let go. Be patient and gentle. Acknowledge what they have built. Do not rush through emotional topics.",
-    neutral: "Pragmatic and business-like. Straightforward approach works well.",
-    excited:
-      "Looking forward to the next chapter. Positive energy, but ensure they stay thorough and do not rush past important details.",
-  };
-  lines.push(
-    `- **Emotional state:** ${profile.emotionalState} — ${emotionalGuidance[profile.emotionalState]}`,
-  );
-
-  const sophisticationGuidance: Record<string, string> = {
-    first_time_seller:
-      "Explain M&A concepts and processes as you go. Do not assume they know what SDE, EBITDA, or earn-outs mean. Frame the interview as helping them present their business in the best light.",
-    some_experience:
-      "Familiar with transactions but may not know all the details. Use M&A terminology where appropriate but define less common terms.",
-    serial_entrepreneur:
-      "Experienced with buying and selling businesses. Can handle technical M&A language. Focus on efficiency and depth rather than education.",
-  };
-  lines.push(
-    `- **Sophistication:** ${profile.sophistication} — ${sophisticationGuidance[profile.sophistication]}`,
-  );
-
-  const timeGuidance: Record<string, string> = {
-    patient: "No rush. Take time to be thorough.",
-    moderate: "Has a general timeline. Keep the interview moving but do not feel pressured.",
-    urgent:
-      "Under time pressure. Be efficient. Prioritize the most critical information first and flag what can be gathered later.",
-  };
-  lines.push(`- **Time orientation:** ${profile.timeOrientation} — ${timeGuidance[profile.timeOrientation]}`);
-
-  lines.push(
-    `- **Business attachment:** ${profile.businessAttachment} — ${profile.businessAttachment === "high" ? "Deeply connected to the business. Treat it with the respect they feel it deserves." : profile.businessAttachment === "medium" ? "Cares about the business but ready to move on." : "Purely transactional. Focus on facts and efficiency."}`,
-  );
-
-  const reasonLabels: Record<string, string> = {
-    retirement: "Retirement",
-    burnout: "Burnout / fatigue",
-    health: "Health concerns",
-    life_event: "Life event (divorce, relocation, family change)",
-    opportunistic: "Opportunistic (market timing or unsolicited offer)",
-    partnership_dispute: "Partnership dispute",
-    growth_beyond_capability: "Business has outgrown the owner's capacity",
-    unknown: "Not known yet — let the seller say it in their own words; never assume one",
-  };
-  lines.push(`- **Selling reason:** ${reasonLabels[profile.sellingReason] || profile.sellingReason}`);
-
-  const familyLabels: Record<string, string> = {
-    family_business: "Family business — other family members are involved. Be mindful of family dynamics.",
-    spouse_involved: "Spouse is involved in or has opinions about the sale. Decision-making may be shared.",
-    solo_operator: "Solo operator — decisions are theirs alone.",
-    partner_business: "Has business partner(s). Alignment between partners may be a factor.",
-    unknown: "Not known yet — don't assume who else is involved in the decision.",
-  };
-  lines.push(`- **Family involvement:** ${familyLabels[profile.familyInvolvement]}`);
-  lines.push("");
-
-  // Industry context
-  lines.push("### Industry context");
-  lines.push("");
-  lines.push(profile.industryContext);
-  lines.push("");
-
-  // Sensitive topics — critical for the interviewer
-  if (profile.sensitiveTopics.length > 0) {
-    lines.push("### Sensitive topics (approach with care)");
-    lines.push("");
-    for (const topic of profile.sensitiveTopics) {
-      lines.push(`- ${topic}`);
-    }
-    lines.push("");
-  }
-
-  // Personal insights — rapport builders
-  if (profile.personalInsights.length > 0) {
-    lines.push("### Personal insights (use for rapport)");
-    lines.push("");
-    for (const insight of profile.personalInsights) {
-      lines.push(`- ${insight}`);
-    }
-    lines.push("");
-  }
-
-  // Broker overrides notice
-  if (profile.brokerOverrides && Object.keys(profile.brokerOverrides).length > 0) {
-    lines.push("### Broker corrections applied");
-    lines.push("");
-    lines.push(
-      "The broker has reviewed and corrected parts of this profile. The values above reflect those corrections.",
-    );
-    lines.push("");
-  }
-
-  return lines.join("\n");
+/** A profile category's value as the interview prompt shows it. */
+export function profileValueForPrompt(field: keyof SellerCommunicationProfile, value: string): string {
+  if (value === "unknown") return PROFILE_UNKNOWN_WORDING[field] ?? "Not known yet — never assume one";
+  return value;
 }
 
 /**

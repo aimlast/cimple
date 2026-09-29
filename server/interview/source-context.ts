@@ -678,28 +678,73 @@ function chunksFor(doc: DocLike): Chunk[] {
 }
 
 /**
+ * Where in the part of a very large source past CHUNKED_CHARS_PER_SOURCE to
+ * look for one question: window starts around its topic words' matches,
+ * RAREST WORD FIRST. One pass counts every word's matches (and keeps each
+ * word's first few positions); windows are then taken round-robin over the
+ * words, fewest matches first — so a word every row carries ("business",
+ * "fuel" in a fuel-heavy ledger) can't use up the budget before a rare,
+ * deeper word ("department", "rebate") gets its passage. (Taking the first
+ * matches of ANY word in document order did exactly that.) Pure.
+ */
+export function tailWindowStarts(raw: string, words: Iterable<string>, maxWindows = 40, from = CHUNKED_CHARS_PER_SOURCE): number[] {
+  if (raw.length <= from) return [];
+  const terms = Array.from(new Set(Array.from(words).map((w) => w.toLowerCase()).filter((w) => w.length >= 4))).slice(0, 16);
+  if (terms.length === 0) return [];
+  // Longest first, so a word isn't shadowed by a shorter one it starts with.
+  const alternation = [...terms].sort((a, b) => b.length - a.length).map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const re = new RegExp(alternation, "gi");
+  re.lastIndex = from;
+  const hits = new Map<string, { count: number; at: number[]; order: number }>(terms.map((t, order) => [t, { count: 0, at: [], order }]));
+  let saturated = 0;
+  for (let m = re.exec(raw); m; m = re.exec(raw)) {
+    const h = hits.get(m[0].toLowerCase());
+    if (!h) continue;
+    h.count++;
+    if (h.at.length < maxWindows) {
+      h.at.push(m.index);
+      // Every word has as many positions as could ever be used: the order
+      // among them no longer matters, so the rest needn't be scanned.
+      if (h.at.length === maxWindows && ++saturated === terms.length) break;
+    }
+  }
+  const byRarity = Array.from(hits.values()).filter((h) => h.count > 0).sort((a, b) => a.count - b.count || a.order - b.order);
+  const starts: number[] = [];
+  const covered = (pos: number) => starts.some((st) => pos >= st && pos < st + TAIL_WINDOW_CHARS - TAIL_WINDOW_BEFORE);
+  for (let round = 0; starts.length < maxWindows; round++) {
+    let any = false;
+    for (const h of byRarity) {
+      if (round >= h.at.length) continue;
+      any = true;
+      const pos = h.at[round];
+      if (covered(pos)) continue;
+      starts.push(Math.max(from, pos - TAIL_WINDOW_BEFORE));
+      if (starts.length >= maxWindows) break;
+    }
+    if (!any) break;
+  }
+  return starts.sort((a, b) => a - b);
+}
+const TAIL_WINDOW_BEFORE = 400;
+const TAIL_WINDOW_CHARS = 1000;
+
+/**
  * The part of a very large source past CHUNKED_CHARS_PER_SOURCE, searched for
- * one question: passages around the first matches of its topic words (not
- * cached — built from a bounded number of short windows).
+ * one question: passages around its topic words, rarest first
+ * (tailWindowStarts; not cached — built from a bounded number of short
+ * windows, overlapping ones merged).
  */
 function tailChunksFor(doc: DocLike, words: Iterable<string>, maxWindows = 40): Chunk[] {
   const raw = typeof doc.extractedText === "string" ? doc.extractedText : "";
-  if (raw.length <= CHUNKED_CHARS_PER_SOURCE) return [];
-  const terms = Array.from(new Set(Array.from(words).filter((w) => w.length >= 4))).slice(0, 12);
-  if (terms.length === 0) return [];
-  const re = new RegExp(terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi");
-  re.lastIndex = CHUNKED_CHARS_PER_SOURCE;
-  const windows: string[] = [];
-  let lastEnd = -1;
-  for (let m = re.exec(raw); m && windows.length < maxWindows; m = re.exec(raw)) {
-    if (m.index < lastEnd) continue;
-    const start = Math.max(CHUNKED_CHARS_PER_SOURCE, m.index - 400);
-    const end = Math.min(raw.length, m.index + 600);
-    windows.push(raw.slice(start, end));
-    lastEnd = end;
-    re.lastIndex = end;
+  const starts = tailWindowStarts(raw, words, maxWindows);
+  const spans: Array<[number, number]> = [];
+  for (const st of starts) {
+    const end = Math.min(raw.length, st + TAIL_WINDOW_CHARS);
+    const last = spans[spans.length - 1];
+    if (last && st <= last[1]) last[1] = Math.max(last[1], end);
+    else spans.push([st, end]);
   }
-  return windows.flatMap((w) => chunkText(doc, w));
+  return spans.flatMap(([st, end]) => chunkText(doc, raw.slice(st, end)));
 }
 
 function chunkText(doc: DocLike, raw: string): Chunk[] {

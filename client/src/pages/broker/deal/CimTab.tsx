@@ -6,7 +6,7 @@
  * follow the same discrepancy gate as everywhere else. The Blind card also
  * sets the project codename pre-NDA buyers know the deal by.
  */
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -33,6 +33,7 @@ import { BUYER_ACCESS_LEVELS } from "@shared/cim-layouts";
 import { useBuilderState } from "@/components/cim-builder/CimSummaryCard";
 import { useAiGate } from "@/components/cim-builder/useAiGate";
 import { builderRequest, errorText } from "@/components/cim-builder/api";
+import { useDdRun } from "@/components/cim-builder/useDdRun";
 import { CimReviewPanel } from "@/components/cim-builder/CimReviewPanel";
 import { regenerateBuyerImpact } from "@shared/cim-generation-warnings";
 import { cn } from "@/lib/utils";
@@ -51,7 +52,7 @@ export function CimTab() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data, isLoading, error, refetch } = useBuilderState(dealId, { poll: true });
+  const { data, isLoading, error, refetch, dataUpdatedAt } = useBuilderState(dealId, { poll: true });
   const generation = useCimGeneration(dealId);
   const gate = useAiGate(dealId);
   // Enough information to write the CIM? The same rule as the Overview, the
@@ -73,40 +74,17 @@ export function CimTab() {
     },
   });
   const version = useMutation({
-    mutationFn: (mode: "blind" | "dd") => builderRequest("POST", `/api/deals/${dealId}/generate-${mode}`),
-    onSuccess: (_r, mode) => {
+    mutationFn: () => builderRequest("POST", `/api/deals/${dealId}/generate-blind`),
+    onSuccess: () => {
       refetch();
       qc.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      // The DD version is written in the background: its result is announced
-      // when the run finishes (below), never "ready" up front.
-      toast(mode === "blind"
-        ? { title: "Blind version ready" }
-        : { title: "Writing the due-diligence version", description: "This runs in the background — you can leave this page." });
+      toast({ title: "Blind version ready" });
     },
     onError: (e) => toast({ title: "Couldn't generate that version", description: errorText(e), variant: "destructive" }),
   });
-  // Announce the DD run's outcome once, when it finishes: what couldn't be
-  // written (those sections keep their DD version), or that nothing changed.
-  const ddRunning = !!data?.dd.running;
-  const ddLast = data?.dd.lastRun ?? null;
-  const ddWasRunning = useRef(false);
-  useEffect(() => {
-    if (ddRunning) { ddWasRunning.current = true; return; }
-    if (!ddWasRunning.current || !ddLast) return;
-    ddWasRunning.current = false;
-    if (ddLast.error) {
-      toast({ title: "Due-diligence version not updated", description: ddLast.error, variant: "destructive", duration: 12000 });
-    } else if (ddLast.notWritten > 0 || ddLast.warnings.length > 0) {
-      toast({
-        title: "Due-diligence version written with gaps",
-        description: `${ddLast.written} section${ddLast.written === 1 ? "" : "s"} written${ddLast.notWritten > 0 ? ` · ${ddLast.notWritten} couldn't be written and kept their previous version — refresh them later` : ""}. See the notes on the Due diligence card.`,
-        variant: ddLast.notWritten > 0 ? "destructive" : undefined,
-        duration: 12000,
-      });
-    } else {
-      toast({ title: "Due-diligence version ready" });
-    }
-  }, [ddRunning, ddLast, toast]);
+  // The DD version is written in the background; its real outcome is
+  // announced when this run's result arrives (useDdRun), never "ready" up front.
+  const ddRun = useDdRun(dealId, { dd: data?.dd, fetchedAt: dataUpdatedAt, refetch });
   // Held-back blind sections: clear their back-off and redo them now.
   const retryBlind = useMutation({
     mutationFn: () => builderRequest("POST", `/api/deals/${dealId}/cim-blind/refresh`),
@@ -233,7 +211,7 @@ export function CimTab() {
                 }
                 onPreview={() => openBuilder("teaser")}
                 action={!data.blind.generated
-                  ? { label: "Generate", busy: version.isPending && version.variables === "blind", onClick: () => version.mutate("blind") }
+                  ? { label: "Generate", busy: version.isPending, onClick: () => version.mutate() }
                   : data.blind.held > 0
                     ? { label: "Retry", busy: retryBlind.isPending, onClick: () => retryBlind.mutate() }
                     : undefined}
@@ -242,7 +220,7 @@ export function CimTab() {
                 icon={<ShieldCheck className="h-4 w-4" />}
                 title="Due diligence"
                 who="Due-diligence buyers"
-                status={data.dd.running
+                status={ddRun.busy
                   ? <span className="text-amber-500 inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Writing</span>
                   : !data.dd.generated
                     ? <span className="text-muted-foreground">Not generated</span>
@@ -250,7 +228,7 @@ export function CimTab() {
                       ? <span className="text-blue-400">{data.dd.outOfDate} section{data.dd.outOfDate === 1 ? "" : "s"} out of date</span>
                       : <span className="text-success">Ready</span>}
                 detail="The named CIM plus customer names and verification notes."
-                extra={!data.dd.running && data.dd.lastRun && (data.dd.lastRun.error || data.dd.lastRun.warnings.length > 0) ? (
+                extra={!ddRun.busy && data.dd.lastRun && (data.dd.lastRun.error || data.dd.lastRun.warnings.length > 0) ? (
                   <div className="text-[11px] text-amber-500 leading-snug space-y-1" role="status" data-testid="dd-last-run">
                     {data.dd.lastRun.error
                       ? <p className="flex items-start gap-1"><AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" /><span>{data.dd.lastRun.error}</span></p>
@@ -263,8 +241,8 @@ export function CimTab() {
                 onPreview={() => openBuilder("due_diligence")}
                 action={{
                   label: data.dd.generated ? "Refresh" : "Generate",
-                  busy: data.dd.running || (version.isPending && version.variables === "dd"),
-                  onClick: () => version.mutate("dd"),
+                  busy: ddRun.busy,
+                  onClick: ddRun.start,
                 }}
               />
             </div>

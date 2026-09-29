@@ -14,6 +14,35 @@ export function isTransientAiError(err: unknown): boolean {
   return /APIConnection|Timeout|AbortError/i.test(e.name ?? "") || /ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|overloaded/i.test(`${e.code ?? ""} ${e.message ?? ""}`);
 }
 
+/**
+ * An AI service error in the broker's words: what went wrong and what to do.
+ * Only a transient failure (rate limit, overload, server error, dropped
+ * connection) is worth "try again in a few minutes"; an account out of
+ * credits (400) or a rejected key (401/403) fails the same way every time.
+ */
+export function describeAiFailure(err: unknown): { transient: boolean; reason: string; advice: string } {
+  const e = err as { status?: number; message?: string } | null;
+  const status = typeof e?.status === "number" ? e.status : undefined;
+  const text = String(e?.message ?? "");
+  if (isTransientAiError(err)) {
+    const reason = status === 429 ? "rate limit"
+      : status === 529 || /overloaded/i.test(text) ? "overloaded"
+      : status !== undefined ? `error ${status}`
+      : "connection dropped";
+    return { transient: true, reason, advice: "try again in a few minutes" };
+  }
+  if (status === 400 && /credit|billing|balance/i.test(text)) {
+    return { transient: false, reason: "the AI account is out of credits", advice: "trying again won't help until the AI credits are topped up" };
+  }
+  if (status === 401 || status === 403) {
+    return { transient: false, reason: "the AI service refused Cimple's key", advice: "trying again won't help; please contact support" };
+  }
+  if (status !== undefined) {
+    return { transient: false, reason: `the AI service refused the request (error ${status})`, advice: "trying again won't help; please contact support" };
+  }
+  return { transient: true, reason: "no usable answer", advice: "try again in a few minutes" };
+}
+
 /** Runs `call`, retrying transient failures after each delay in turn; other errors (and the last) are thrown. */
 export async function withAiRetry<T>(call: () => Promise<T>, delaysMs: readonly number[]): Promise<T> {
   for (let attempt = 0; ; attempt++) {

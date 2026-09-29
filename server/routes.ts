@@ -5931,7 +5931,9 @@ Return JSON only.`,
         if (err?.message === "running") return res.status(409).json({ error: "The due-diligence version is already being written." });
         throw err;
       }
-      res.status(202).json({ started: true, sections: sections.length });
+      // startedAt identifies this run: the page announces the dd.lastRun
+      // whose startedAt matches — even one that failed before its first poll.
+      res.status(202).json({ started: true, sections: sections.length, startedAt: startedAt.toISOString() });
     } catch (error: any) {
       console.error("Error generating DD CIM:", error);
       if (error?.name === "StaleFinancialAnalysisError") return res.status(409).json({ error: error.message });

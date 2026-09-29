@@ -16,12 +16,12 @@ import {
   isInventedFallbackProfile,
   noteSellerProfileFailure,
   clearSellerProfileFailure,
-  renderProfileForPrompt,
   sellerProfileNeedsRebuild,
   sellerProfileRetryDue,
   SellerProfileUnavailableError,
   PROFILE_PRIVACY_VERSION,
 } from "../../server/interview/eq-profiler";
+import { assembleKnowledgeBase, renderKnowledgeBaseForPrompt } from "../../server/interview/knowledge-base";
 
 let passed = 0;
 const ok = (name: string) => { passed++; console.log(`  ✓ ${name}`); };
@@ -78,9 +78,15 @@ console.warn = () => {};
   assert.equal(called, 0);
   assert.equal(p.sellingReason, "unknown");
   assert.equal(p.familyInvolvement, "unknown");
-  const prompt = renderProfileForPrompt(p);
-  assert.ok(!/Retirement|Solo operator/i.test(prompt), prompt);
-  assert.match(prompt, /Selling reason:\*\* Not known yet/);
+  // The interview prompt (the profile's only reader) spells "unknown" out.
+  const kb = assembleKnowledgeBase({ ...bare, extractedInfo: {}, sellerProfile: p } as any, [], [], null, []);
+  const prompt = renderKnowledgeBaseForPrompt(kb);
+  const block = prompt.slice(prompt.indexOf("## Seller Communication Profile"), prompt.indexOf("## Seller Communication Profile") + 2000);
+  assert.ok(block.length > 30, "the profile reaches the prompt");
+  assert.ok(!/Retirement|Solo operator/i.test(block), block);
+  assert.ok(!/: unknown/.test(block), block);
+  assert.match(block, /- Selling reason: Not known yet — let the seller say it in their own words; never assume one/);
+  assert.match(block, /- Family involvement: Not known yet — don't assume who else is involved/);
   assert.equal(isInventedFallbackProfile(p), false, "the new default is not mistaken for a stand-in");
   assert.equal(sellerProfileNeedsRebuild(p, []), false);
   ok("the no-data profile says 'not known yet' for the selling reason and who decides");
