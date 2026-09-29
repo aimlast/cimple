@@ -9,6 +9,8 @@
  * times for the same deal (skips existing entries by documentName).
  */
 import { storage } from "../storage";
+import { matchIndustrySection } from "../interview/industry-loader";
+import { withoutSellerUnavailableNote } from "@shared/seller-portal";
 
 interface DocRequirement {
   documentName: string;
@@ -205,7 +207,170 @@ const INDUSTRY_DOCS: Record<string, DocRequirement[]> = {
     { documentName: "Domain/Trademark Registrations", category: "legal", isRequired: false },
     { documentName: "Churn and Retention Analytics", category: "financial", isRequired: false },
   ],
+
+  // ── Hospitality / lodging (New Deal "Hospitality"; no playbook section) ──
+  // Hotels, motels, inns, resorts, B&Bs, campgrounds. A restaurant or bar
+  // filed under "Hospitality" gets the restaurant list (its sub-industry decides).
+  hospitality_lodging: [
+    { documentName: "Occupancy, ADR and RevPAR Reports (3 Years)", category: "financial", isRequired: true },
+    { documentName: "Furniture, Fixtures & Equipment (FF&E) List", category: "operational", isRequired: true },
+    { documentName: "Fire, Health and Accommodation Inspection Records", category: "compliance", isRequired: true },
+    { documentName: "Booking Channel / OTA Agreements", category: "legal", isRequired: true },
+    { documentName: "Franchise / Brand (Flag) Agreement", category: "legal", isRequired: false },
+    { documentName: "Property Improvement Plan (if branded)", category: "operational", isRequired: false },
+    { documentName: "Accommodation / Occupancy Tax Filings", category: "tax", isRequired: false },
+    { documentName: "Liquor License Certificate", category: "compliance", isRequired: false },
+  ],
+
+  // ── Real estate services (New Deal "Real Estate"; no playbook section) ──
+  // Property management firms, real estate brokerages, rental portfolios.
+  real_estate: [
+    { documentName: "Property Management Agreements (All Managed Properties)", category: "legal", isRequired: true },
+    { documentName: "Rent Roll (Current)", category: "financial", isRequired: true },
+    { documentName: "Tenant Leases / Lease Abstracts", category: "legal", isRequired: true },
+    { documentName: "Brokerage / Property Management Registration", category: "compliance", isRequired: true },
+    { documentName: "Trust Account Reconciliations (12 Months)", category: "financial", isRequired: true },
+    { documentName: "Property Tax Assessments", category: "tax", isRequired: false },
+    { documentName: "Building Condition / Environmental (Phase I) Reports", category: "operational", isRequired: false },
+  ],
 };
+
+// ─── Which industry list a deal gets ──────────────────────────────────
+//
+// Deals carry the New Deal label ("Restaurant / Food Service", "Healthcare"),
+// a CRM's free text, or what the interview identified — never these keys.
+// Looking the label up directly found nothing, so every deal got only the
+// universal rows (production, 2026-09-28: Maple & Main, Clearwater, Great
+// Lakes… all exactly 12). The interview's own industry matcher
+// (industry-loader.ts, corpus sections 1–14) resolves the text; its section
+// number is industry-templates.json's mdSection for the same key.
+const SECTION_TO_INDUSTRY_KEY: Record<number, string> = {
+  1: "construction",
+  2: "healthcare",
+  3: "restaurant_food_service",
+  4: "manufacturing",
+  5: "professional_services",
+  6: "automotive",
+  7: "retail",
+  8: "wholesale_distribution",
+  9: "transportation_logistics",
+  10: "wellness_fitness_lifestyle",
+  11: "education",
+  12: "childcare_entertainment",
+  13: "advertising_media_events",
+  14: "technology_online",
+};
+
+/** The INDUSTRY_DOCS key for a deal's industry (a key itself, a New Deal label, CRM or interview text), or null. */
+export function industryDocsKey(industry: string | null | undefined, subIndustry?: string | null): string | null {
+  const text = (industry ?? "").trim();
+  if (text && INDUSTRY_DOCS[text]) return text;
+  // The industry itself decides; the sub-industry only when the industry
+  // says nothing ("Other", "Home Services"). Read together, a manufacturer
+  // "for commercial construction" or "medical device components", or an MSP
+  // "for dental practices", matched the wrong list first.
+  // A store that sells products online is asked for sales, inventory and
+  // supplier records (the retail list, which has e-commerce analytics) —
+  // not source code and MRR (the software list the playbook files it with).
+  const both = `${text} ${subIndustry ?? ""}`;
+  if (/e-?commerce|online (?:store|shop|retail)|amazon|shopify|\bfba\b|direct[- ]to[- ]consumer|\bdtc\b/i.test(both) && !/\bsaas\b|software|\bapps?\b|marketplace platform/i.test(both)) {
+    return "retail";
+  }
+  const own = docsKeyForText(text);
+  if (own) return own;
+  const sub = docsKeyForText((subIndustry ?? "").trim());
+  if (sub) return sub;
+  // "Hospitality" on its own (New Deal lists restaurants separately): lodging.
+  return /hospitality/i.test(text) ? "hospitality_lodging" : null;
+}
+
+/**
+ * One piece of industry text → its list. How the business operates decides
+ * before what it handles: "Food manufacturing" is a plant (the manufacturing
+ * list), "Food distribution" a distributor — not a restaurant, which the
+ * playbook's "food" keyword filed them under. Hotels and real estate have no
+ * playbook section but do have their own lists.
+ */
+function docsKeyForText(text: string): string | null {
+  if (!text) return null;
+  if (INDUSTRY_DOCS[text]) return text;
+  if (/manufactur|fabricat|co-?pack|processing plant/i.test(text)) return "manufacturing";
+  if (/wholesale|distribut/i.test(text)) return "wholesale_distribution";
+  if (/real estate|realty|realtor|property manage|rental propert|landlord|commercial propert/i.test(text)) return "real_estate";
+  if (/hotel|motel|\binns?\b|resort|lodg|bed (?:and|&) breakfast|\bb&b\b|campground|hostel/i.test(text)) return "hospitality_lodging";
+  const section = matchIndustrySection(text, null);
+  return section != null ? SECTION_TO_INDUSTRY_KEY[section] ?? null : null;
+}
+
+/**
+ * The industry whose document list a deal gets. The deal's own industry —
+ * New Deal, the CRM, or the broker's correction — wins whenever it resolves
+ * to a list; what the interview identified only fills in when it doesn't
+ * ("Other"). The interview's stored identification is never updated by the
+ * broker's edit, so preferring it re-added the old industry's rows on the
+ * seller's next turn and undid the correction (free round 2, J5).
+ */
+export function documentRequirementsIndustry(
+  deal: { industry?: string | null; subIndustry?: string | null },
+  identified?: { industry?: string | null; subIndustry?: string | null } | null,
+): { industry: string | null; subIndustry: string | null } {
+  const own = { industry: deal.industry ?? null, subIndustry: deal.subIndustry ?? null };
+  if (industryDocsKey(own.industry, own.subIndustry)) return own;
+  if (identified?.industry) return { industry: identified.industry, subIndustry: identified.subIndustry ?? own.subIndustry };
+  return own;
+}
+
+/** ensureIndustryDocumentRequirements for the interview: the deal's own industry first (documentRequirementsIndustry). */
+export function ensureDealDocumentRequirements(
+  dealId: string,
+  deal: { industry?: string | null; subIndustry?: string | null } | null | undefined,
+  identified?: { industry?: string | null; subIndustry?: string | null } | null,
+): Promise<number> {
+  const pick = documentRequirementsIndustry(deal ?? {}, identified);
+  return ensureIndustryDocumentRequirements(dealId, pick.industry, pick.subIndustry);
+}
+
+/** The universal rows plus the industry's own. */
+export function requirementsForIndustry(industry: string | null | undefined, subIndustry?: string | null): DocRequirement[] {
+  const key = industryDocsKey(industry, subIndustry);
+  return [...UNIVERSAL_DOCS, ...(key ? INDUSTRY_DOCS[key] : [])];
+}
+
+const populating = new Map<string, Promise<number>>();
+/** deal|industry key pairs already populated by this process (the interview asks every turn). */
+const populated = new Set<string>();
+
+/**
+ * Adds the industry's rows once the deal's industry is known or changes
+ * (New Deal, the broker's edit, the interview identifying it). Idempotent,
+ * one run per deal at a time, never throws. Resolves to the rows added.
+ */
+export function ensureIndustryDocumentRequirements(
+  dealId: string,
+  industry: string | null | undefined,
+  subIndustry?: string | null,
+): Promise<number> {
+  const key = industryDocsKey(industry, subIndustry);
+  const memo = `${dealId}|${key ?? ""}`;
+  if (populated.has(memo)) return Promise.resolve(0);
+  const prev = populating.get(dealId) ?? Promise.resolve(0);
+  const run = prev
+    .catch(() => 0)
+    .then(async () => {
+      const n = await populateDocumentRequirements(dealId, industry, subIndustry);
+      populated.add(memo);
+      return n;
+    })
+    .catch((err) => {
+      console.warn(`[requirements] couldn't add the industry's document requests on deal ${dealId}:`, err);
+      return 0;
+    });
+  populating.set(dealId, run);
+  void run.finally(() => {
+    if (populating.get(dealId) === run) populating.delete(dealId);
+  });
+  return run;
+}
 
 /**
  * Populate document requirements for a deal based on its industry.
@@ -215,21 +380,22 @@ const INDUSTRY_DOCS: Record<string, DocRequirement[]> = {
  * changes.
  *
  * @param dealId - The deal to populate requirements for
- * @param industryCategory - Industry key from industry-templates.json
- *   (e.g., "construction", "restaurant_food_service", "manufacturing")
+ * @param industryCategory - The deal's industry: a key from
+ *   industry-templates.json ("construction") or the deal's own text
+ *   ("Restaurant / Food Service") — resolved by industryDocsKey
  * @returns The number of new requirements created
  */
 export async function populateDocumentRequirements(
   dealId: string,
-  industryCategory: string,
+  industryCategory: string | null | undefined,
+  subIndustry?: string | null,
 ): Promise<number> {
   // Get existing requirements to avoid duplicates
   const existing = await storage.getDocumentRequirementsByDeal(dealId);
   const existingNames = new Set(existing.map((r) => r.documentName));
 
   // Combine universal + industry-specific docs
-  const industryDocs = INDUSTRY_DOCS[industryCategory] ?? [];
-  const allDocs = [...UNIVERSAL_DOCS, ...industryDocs];
+  const allDocs = requirementsForIndustry(industryCategory, subIndustry);
 
   let created = 0;
   for (let i = 0; i < allDocs.length; i++) {
@@ -249,6 +415,55 @@ export async function populateDocumentRequirements(
   }
 
   return created;
+}
+
+/**
+ * Rows another industry's list added that nobody has touched: auto-added,
+ * still missing, no file, no note, and not on the deal's list now. When the
+ * broker corrects the industry (a construction deal that is really a
+ * restaurant), these stop being asked for; anything the seller uploaded to,
+ * marked, or the broker annotated stays. Pure.
+ */
+export function untouchedOtherIndustryRows<
+  T extends { id: string; documentName: string; source?: string | null; status?: string | null; uploadedFileId?: string | null; notes?: string | null },
+>(rows: T[], industry: string | null | undefined, subIndustry?: string | null): T[] {
+  const keep = new Set(requirementsForIndustry(industry, subIndustry).map((r) => r.documentName));
+  const industryNames = new Set(Object.values(INDUSTRY_DOCS).flat().map((r) => r.documentName));
+  return rows.filter(
+    (r) =>
+      r.source === "auto" &&
+      r.status === "missing" &&
+      !r.uploadedFileId &&
+      !(r.notes ?? "").trim() &&
+      industryNames.has(r.documentName) &&
+      !keep.has(r.documentName),
+  );
+}
+
+/**
+ * The broker changed the deal's industry: the old industry's untouched
+ * requests go, the new one's are added. (Only on the broker's own edit —
+ * the interview's identification only ever adds.) Never throws.
+ */
+export async function switchIndustryDocumentRequirements(
+  dealId: string,
+  industry: string | null | undefined,
+  subIndustry?: string | null,
+): Promise<{ removed: number; added: number }> {
+  let removed = 0;
+  try {
+    const stale = untouchedOtherIndustryRows(await storage.getDocumentRequirementsByDeal(dealId), industry, subIndustry);
+    for (const r of stale) {
+      await storage.deleteDocumentRequirement(r.id);
+      removed++;
+    }
+  } catch (err) {
+    console.warn(`[requirements] couldn't clear the old industry's document requests on deal ${dealId}:`, err);
+  }
+  // (Switching back later must add the rows again — forget what was added.)
+  for (const memo of Array.from(populated)) if (memo.startsWith(`${dealId}|`)) populated.delete(memo);
+  const added = await ensureIndustryDocumentRequirements(dealId, industry, subIndustry);
+  return { removed, added };
 }
 
 /**
@@ -386,7 +601,7 @@ export function findMatchingRequirement<T extends LinkableRequirement>(
   // name ("Financial statements FY2023" → "Financial Statements (3 Years)").
   const uncategorised = docCategory === "other";
   const candidates = requirements.filter(
-    (r) => r.status === "missing" && (uncategorised || docCategoryForRequirement(r.category) === docCategory),
+    (r) => (r.status === "missing" || r.status === "unavailable") && (uncategorised || docCategoryForRequirement(r.category) === docCategory),
   );
 
   const scored = candidates
@@ -439,7 +654,8 @@ export async function linkUploadToRequirement(opts: {
       uploadedBy: opts.uploadedBy,
       uploadedAt: new Date(),
       // (A new copy replaces the one that couldn't be read: that line goes.)
-      ...("notes" in target ? { notes: withoutUnreadableNote((target as { notes?: string | null }).notes) } : {}),
+      // (Nor does a "Seller: I don't have this" line — they found it.)
+      ...("notes" in target ? { notes: withoutSellerUnavailableNote(withoutUnreadableNote((target as { notes?: string | null }).notes)) } : {}),
     });
     return { id: target.id, documentName: target.documentName, category: target.category };
   } catch (err) {

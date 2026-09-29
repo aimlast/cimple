@@ -18,17 +18,21 @@ import {
   ChevronRight,
   Clock,
   FileText,
+  HelpCircle,
   RefreshCw,
   Upload,
   X,
 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { sellerUnavailableReason, withoutSellerUnavailableNote } from "@shared/seller-portal";
 
 interface DocRequirement {
   id: string;
   name: string;
   category: string;
   isRequired: boolean;
-  status: "missing" | "uploaded" | "verified";
+  /** "unavailable" = the seller told their broker they don't have it. */
+  status: "missing" | "uploaded" | "verified" | "unavailable";
   notes: string | null;
   uploadedFileId?: string | null;
   uploadedFileName?: string | null;
@@ -47,11 +51,17 @@ interface SellerProgressData {
   documents: {
     requiredTotal: number;
     requiredUploaded: number;
+    requiredUnavailable?: number;
     percentage: number;
     totalUploaded: number;
     requirements: DocRequirement[];
   };
+  /** The conversation's to-dos — the documents it asked for are rows here. */
+  todo?: Array<{ id: string; kind: "document" | "follow_up"; title: string }>;
 }
+
+/** Where a picked file goes: a checklist row, or a document the conversation asked for. */
+type UploadTarget = { requirementId?: string; taskId?: string };
 
 const CATEGORY_LABELS: Record<string, string> = {
   financial: "Financial",
@@ -68,8 +78,11 @@ export default function SellerDocuments() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  const [uploadingFor, setUploadingFor] = useState<UploadTarget | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  // "I don't have this" — the row whose note is open, and the note.
+  const [unavailableFor, setUnavailableFor] = useState<string | null>(null);
+  const [unavailableReason, setUnavailableReason] = useState("");
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
     new Set(CATEGORY_ORDER),
   );
@@ -111,15 +124,17 @@ export default function SellerDocuments() {
 
   // Upload mutation
   const uploadMutation = useMutation({
-    mutationFn: async ({ file, requirementId }: { file: File; requirementId?: string }) => {
+    mutationFn: async ({ file, requirementId, taskId }: { file: File; requirementId?: string; taskId?: string }) => {
       if (!dealId) throw new Error("No deal ID");
 
       // 1. Upload the file. Naming the checklist row lets the server link
       //    it, derive the document category from it, and replace an earlier
-      //    upload of ours on the same row in one step.
+      //    upload of ours on the same row in one step. A document the
+      //    conversation asked for closes that request.
       const formData = new FormData();
       formData.append("file", file);
       if (requirementId) formData.append("requirementId", requirementId);
+      if (taskId) formData.append("taskId", taskId);
       const uploadRes = await fetch(`/api/deals/${dealId}/documents/upload`, {
         method: "POST",
         headers: sellerHeaders(),
@@ -155,7 +170,9 @@ export default function SellerDocuments() {
         doc.linkedRequirement?.documentName ??
         (requirementId
           ? progress?.documents.requirements.find((r) => r.id === requirementId)?.name
-          : undefined);
+          : taskId
+            ? progress?.todo?.find((t) => t.id === taskId)?.title
+            : undefined);
       return { doc, file, matchedName };
     },
     onSuccess: ({ file, matchedName }) => {
@@ -213,6 +230,35 @@ export default function SellerDocuments() {
     },
   });
 
+  // "I don't have this — tell my broker": the row stops counting against the
+  // seller, and the broker decides (not needed, or ask again). Also undone.
+  const unavailableMutation = useMutation({
+    mutationFn: async ({ req, unavailable, reason }: { req: DocRequirement; unavailable: boolean; reason?: string }) => {
+      if (!dealId) throw new Error("No deal ID");
+      const res = await fetch(`/api/deals/${dealId}/document-requirements/${req.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...sellerHeaders() },
+        body: JSON.stringify(unavailable ? { status: "unavailable", reason: reason ?? "" } : { status: "missing" }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Couldn't tell your broker");
+      }
+      return { req, unavailable };
+    },
+    onSuccess: ({ req, unavailable }) => {
+      refreshProgress();
+      setUnavailableFor(null);
+      setUnavailableReason("");
+      toast(
+        unavailable
+          ? { title: "Your broker will see it", description: `"${req.name}" no longer holds you up — your broker decides whether it's needed.` }
+          : { title: "Back on your list", description: `"${req.name}" is open again.` },
+      );
+    },
+    onError: (err: Error) => toast({ title: "Couldn't save that", description: err.message, variant: "destructive" }),
+  });
+
   // Best-effort match of a dropped file to an open checklist requirement by
   // name/category keywords, so a drag-and-dropped "2023 Tax Return.pdf"
   // counts toward "Tax Returns (3 Years)" instead of silently not counting.
@@ -239,11 +285,14 @@ export default function SellerDocuments() {
   );
 
   const handleFileSelect = useCallback(
-    (files: FileList | null, requirementId?: string) => {
+    (files: FileList | null, target?: UploadTarget) => {
       if (!files || files.length === 0) return;
       for (const file of Array.from(files)) {
-        const target = requirementId ?? guessRequirement(file);
-        uploadMutation.mutate({ file, requirementId: target });
+        if (target?.taskId) {
+          uploadMutation.mutate({ file, taskId: target.taskId });
+          continue;
+        }
+        uploadMutation.mutate({ file, requirementId: target?.requirementId ?? guessRequirement(file) });
       }
     },
     [uploadMutation, guessRequirement],
@@ -323,6 +372,7 @@ export default function SellerDocuments() {
 
   const requirements = progress.documents?.requirements || [];
   const docs = progress.documents;
+  const requestedDocs = (progress.todo ?? []).filter((t) => t.kind === "document");
 
   // Group by category
   const grouped = CATEGORY_ORDER.map((cat) => ({
@@ -354,6 +404,9 @@ export default function SellerDocuments() {
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm">
               {docs.requiredUploaded} of {docs.requiredTotal} required documents
+              {(docs.requiredUnavailable ?? 0) > 0 && (
+                <span className="text-muted-foreground"> · {docs.requiredUnavailable} you don't have</span>
+              )}
             </span>
             <span className="text-xs text-muted-foreground">{docs.percentage}%</span>
           </div>
@@ -403,7 +456,7 @@ export default function SellerDocuments() {
           multiple
           accept=".pdf,.xlsx,.xls,.docx,.pptx,.csv,.txt,.md"
           onChange={(e) => {
-            handleFileSelect(e.target.files, uploadingFor || undefined);
+            handleFileSelect(e.target.files, uploadingFor ?? undefined);
             // Reset so re-selecting the same file (retry, or assigning it to
             // a second checklist row) fires onChange again.
             e.target.value = "";
@@ -416,6 +469,38 @@ export default function SellerDocuments() {
         <div className="rounded-lg border border-teal/20 bg-teal/5 p-3 flex items-center gap-3">
           <div className="h-4 w-4 border-2 border-teal border-t-transparent rounded-full animate-spin" />
           <span className="text-sm">Uploading...</span>
+        </div>
+      )}
+
+      {/* Documents the conversation asked for — upload to answer the request */}
+      {requestedDocs.length > 0 && (
+        <div className="space-y-3" data-testid="section-requested-in-conversation">
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+            Asked for in your conversation
+          </h2>
+          <div className="rounded-lg border border-border bg-card divide-y divide-border">
+            {requestedDocs.map((t) => (
+              <div key={t.id} className="px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between" data-testid={`requested-doc-${t.id}`}>
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="h-5 w-5 rounded-full border border-border shrink-0 mt-0.5" />
+                  <p className="text-sm break-words line-clamp-2">{t.title}</p>
+                </div>
+                <div className="flex items-center gap-3 pl-8 sm:pl-0 shrink-0">
+                  <button
+                    className="text-xs text-teal hover:underline flex items-center gap-1"
+                    onClick={() => {
+                      setUploadingFor({ taskId: t.id });
+                      fileInputRef.current?.click();
+                    }}
+                    data-testid={`button-upload-requested-${t.id}`}
+                  >
+                    <Upload className="h-3 w-3" />
+                    Upload
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -445,106 +530,171 @@ export default function SellerDocuments() {
                 )}
               </button>
 
-              {/* Items */}
+              {/* Items — on a phone the actions sit under the name, so the
+                  name is never cut to "Fi…" and "Required" stays readable. */}
               {expandedCategories.has(group.category) && (
                 <div className="border-t border-border divide-y divide-border">
-                  {group.items.map((req) => (
-                    <div key={req.id} className="px-4 py-3 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0">
-                        {req.status === "verified" ? (
-                          <div className="h-5 w-5 rounded-full bg-teal/15 flex items-center justify-center shrink-0">
-                            <Check className="h-3 w-3 text-teal" />
-                          </div>
-                        ) : req.status === "uploaded" ? (
-                          <div className="h-5 w-5 rounded-full bg-amber-400/15 flex items-center justify-center shrink-0">
-                            <Clock className="h-3 w-3 text-amber-500" />
-                          </div>
-                        ) : (
-                          <div className="h-5 w-5 rounded-full border border-border shrink-0" />
-                        )}
-                        <div className="min-w-0">
-                          <p className="text-sm truncate">
-                            {req.name}
-                            {req.isRequired && req.status === "missing" && (
-                              <span className="text-xs text-destructive ml-1.5">Required</span>
+                  {group.items.map((req) => {
+                    const reason = req.status === "unavailable" ? sellerUnavailableReason(req.notes) : null;
+                    const brokerNote = withoutSellerUnavailableNote(req.notes);
+                    const openUpload = () => {
+                      setUploadingFor({ requirementId: req.id });
+                      fileInputRef.current?.click();
+                    };
+                    return (
+                      <div key={req.id} className="px-4 py-3" data-testid={`requirement-row-${req.id}`}>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                          <div className="flex items-start gap-3 min-w-0">
+                            {req.status === "verified" ? (
+                              <div className="h-5 w-5 rounded-full bg-teal/15 flex items-center justify-center shrink-0 mt-0.5">
+                                <Check className="h-3 w-3 text-teal" />
+                              </div>
+                            ) : req.status === "uploaded" ? (
+                              <div className="h-5 w-5 rounded-full bg-amber-400/15 flex items-center justify-center shrink-0 mt-0.5">
+                                <Clock className="h-3 w-3 text-amber-500" />
+                              </div>
+                            ) : req.status === "unavailable" ? (
+                              <div className="h-5 w-5 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5">
+                                <HelpCircle className="h-3 w-3 text-muted-foreground" />
+                              </div>
+                            ) : (
+                              <div className="h-5 w-5 rounded-full border border-border shrink-0 mt-0.5" />
                             )}
-                          </p>
-                          {req.status !== "missing" && req.uploadedFileName && (
-                            <p className="text-xs text-muted-foreground mt-0.5 truncate flex items-center gap-1">
-                              <FileText className="h-3 w-3 shrink-0" />
-                              <span className="truncate">{req.uploadedFileName}</span>
-                              {req.uploadedBy === "broker" && (
-                                <span className="shrink-0 text-muted-foreground/60">· added by your broker</span>
+                            <div className="min-w-0">
+                              <p className="text-sm break-words line-clamp-2">
+                                {req.name}
+                                {req.isRequired && req.status === "missing" && (
+                                  <span className="text-xs text-destructive ml-1.5 whitespace-nowrap">Required</span>
+                                )}
+                              </p>
+                              {req.status !== "missing" && req.status !== "unavailable" && req.uploadedFileName && (
+                                <p className="text-xs text-muted-foreground mt-0.5 flex items-start gap-1 min-w-0">
+                                  <FileText className="h-3 w-3 shrink-0 mt-0.5" />
+                                  <span className="min-w-0 break-words line-clamp-2">
+                                    {req.uploadedFileName}
+                                    {req.uploadedBy === "broker" && (
+                                      <span className="text-muted-foreground/60 whitespace-nowrap"> · added by your broker</span>
+                                    )}
+                                  </span>
+                                </p>
                               )}
-                            </p>
-                          )}
-                          {req.notes && (
-                            <p className="text-xs text-muted-foreground mt-0.5 truncate">{req.notes}</p>
-                          )}
+                              {req.status === "unavailable" && (
+                                <p className="text-xs text-muted-foreground mt-0.5 break-words">
+                                  You told your broker you don't have this — they'll let you know if it's still needed.{reason ? ` Your note: “${reason}”` : ""}
+                                </p>
+                              )}
+                              {brokerNote && (
+                                <p className="text-xs text-muted-foreground mt-0.5 break-words">{brokerNote}</p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-8 sm:pl-0 sm:shrink-0">
+                            {req.status === "missing" ? (
+                              <>
+                                <button className="text-xs text-teal hover:underline flex items-center gap-1" onClick={openUpload} data-testid={`button-upload-${req.id}`}>
+                                  <Upload className="h-3 w-3" />
+                                  Upload
+                                </button>
+                                <button
+                                  className="text-xs text-muted-foreground hover:text-foreground"
+                                  onClick={() => {
+                                    setUnavailableFor(unavailableFor === req.id ? null : req.id);
+                                    setUnavailableReason("");
+                                  }}
+                                  data-testid={`button-dont-have-${req.id}`}
+                                >
+                                  I don't have this
+                                </button>
+                              </>
+                            ) : req.status === "unavailable" ? (
+                              <>
+                                <button className="text-xs text-teal hover:underline flex items-center gap-1" onClick={openUpload}>
+                                  <Upload className="h-3 w-3" />
+                                  Found it — upload
+                                </button>
+                                <button
+                                  className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+                                  disabled={unavailableMutation.isPending}
+                                  onClick={() => unavailableMutation.mutate({ req, unavailable: false })}
+                                >
+                                  Undo
+                                </button>
+                              </>
+                            ) : req.status === "uploaded" ? (
+                              confirmRemoveId === req.id ? (
+                                <>
+                                  <span className="text-xs text-muted-foreground">Remove this file?</span>
+                                  <button
+                                    className="text-xs text-destructive hover:underline disabled:opacity-50"
+                                    disabled={removeMutation.isPending}
+                                    onClick={() => removeMutation.mutate(req)}
+                                    data-testid={`button-confirm-remove-${req.id}`}
+                                  >
+                                    Remove
+                                  </button>
+                                  <button
+                                    className="text-xs text-muted-foreground hover:underline"
+                                    onClick={() => setConfirmRemoveId(null)}
+                                  >
+                                    Keep
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-xs text-amber-500">Waiting for your broker's review</span>
+                                  <button
+                                    className="text-xs text-teal hover:underline flex items-center gap-1"
+                                    onClick={openUpload}
+                                    data-testid={`button-replace-${req.id}`}
+                                  >
+                                    <RefreshCw className="h-3 w-3" />
+                                    Replace
+                                  </button>
+                                  <button
+                                    className="text-xs text-muted-foreground hover:text-destructive flex items-center gap-1"
+                                    onClick={() => setConfirmRemoveId(req.id)}
+                                    aria-label={`Remove ${req.uploadedFileName ?? "file"}`}
+                                    data-testid={`button-remove-${req.id}`}
+                                  >
+                                    <X className="h-3 w-3" />
+                                    Remove
+                                  </button>
+                                </>
+                              )
+                            ) : (
+                              <span className="text-xs text-teal">Verified</span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      <div className="shrink-0 flex items-center gap-3">
-                        {req.status === "missing" ? (
-                          <button
-                            className="text-xs text-teal hover:underline flex items-center gap-1"
-                            onClick={() => {
-                              setUploadingFor(req.id);
-                              fileInputRef.current?.click();
-                            }}
-                          >
-                            <Upload className="h-3 w-3" />
-                            Upload
-                          </button>
-                        ) : req.status === "uploaded" ? (
-                          confirmRemoveId === req.id ? (
-                            <>
-                              <span className="text-xs text-muted-foreground">Remove this file?</span>
-                              <button
-                                className="text-xs text-destructive hover:underline disabled:opacity-50"
-                                disabled={removeMutation.isPending}
-                                onClick={() => removeMutation.mutate(req)}
-                                data-testid={`button-confirm-remove-${req.id}`}
+                        {unavailableFor === req.id && req.status === "missing" && (
+                          <div className="mt-2 pl-8 space-y-2" data-testid={`form-dont-have-${req.id}`}>
+                            <Textarea
+                              value={unavailableReason}
+                              onChange={(e) => setUnavailableReason(e.target.value)}
+                              rows={2}
+                              maxLength={500}
+                              className="text-sm"
+                              placeholder="Optional — e.g. “We own the building, so there's no lease” or “We have no debt”"
+                            />
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                size="sm"
+                                className="bg-teal text-teal-foreground hover:bg-teal/90"
+                                disabled={unavailableMutation.isPending}
+                                onClick={() => unavailableMutation.mutate({ req, unavailable: true, reason: unavailableReason })}
+                                data-testid={`button-tell-broker-${req.id}`}
                               >
-                                Remove
-                              </button>
-                              <button
-                                className="text-xs text-muted-foreground hover:underline"
-                                onClick={() => setConfirmRemoveId(null)}
-                              >
-                                Keep
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <span className="text-xs text-amber-500">Pending review</span>
-                              <button
-                                className="text-xs text-teal hover:underline flex items-center gap-1"
-                                onClick={() => {
-                                  setUploadingFor(req.id);
-                                  fileInputRef.current?.click();
-                                }}
-                                data-testid={`button-replace-${req.id}`}
-                              >
-                                <RefreshCw className="h-3 w-3" />
-                                Replace
-                              </button>
-                              <button
-                                className="text-xs text-muted-foreground hover:text-destructive flex items-center gap-1"
-                                onClick={() => setConfirmRemoveId(req.id)}
-                                aria-label={`Remove ${req.uploadedFileName ?? "file"}`}
-                                data-testid={`button-remove-${req.id}`}
-                              >
-                                <X className="h-3 w-3" />
-                                Remove
-                              </button>
-                            </>
-                          )
-                        ) : (
-                          <span className="text-xs text-teal">Verified</span>
+                                Tell my broker
+                              </Button>
+                              <Button size="sm" variant="ghost" onClick={() => setUnavailableFor(null)}>
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
                         )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -553,7 +703,7 @@ export default function SellerDocuments() {
       )}
 
       {/* Empty state when no requirements exist */}
-      {grouped.length === 0 && (
+      {grouped.length === 0 && requestedDocs.length === 0 && (
         <div className="rounded-lg border border-border bg-card p-8 text-center">
           <FileText className="h-8 w-8 mx-auto text-muted-foreground/40 mb-3" />
           <p className="text-sm text-muted-foreground">

@@ -70,6 +70,7 @@ import { answerNoticeDue, notifyBuyerQuestionAnswered } from "./qa/answer-notice
 import { buyerNdaFor, signedNdaCopy, type BuyerNdaSignature } from "./buyers/buyer-nda.js";
 import { validSignerName } from "@shared/buyer-nda";
 import { registerBuyerNdaRoutes } from "./routes/buyer-nda.js";
+import { registerSellerReviewRoutes } from "./routes/seller-review.js";
 import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
 import { typedNumericValues } from "./interview/info-merger";
 import { splitFactsForCim, factValueText, CIM_LEADS_HEADING } from "./information/cim-facts";
@@ -91,6 +92,7 @@ import { isBuyerInBrokerList, filterBuyersInBrokerList } from "./buyers/profile-
 import { unsupportedFormatReason } from "./documents/parser.js";
 import { viewLinkProblem, viewLinkError, viewStampFor, isLinkableBuyerAccount } from "./buyers/view-access.js";
 import { ndaProfileAccount } from "./buyers/nda-profile.js";
+import { discrepancyBlocksCim } from "@shared/discrepancy-gate";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -269,14 +271,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     !!dealId && !!(await getOwnedDeal(dealId, req.session.brokerId));
 
   // Product rule: unresolved CRITICAL discrepancies block every CIM-producing
-  // step (content, layout, publish). "ask_seller" counts as handled.
-  const BLOCKING_DISCREPANCY_STATUSES = new Set(["open", "seller_responded"]);
+  // step (content, layout, publish). "ask_seller" counts as handled while
+  // the interview runs (shared/discrepancy-gate.ts discrepancyBlocksCim).
   const blockingCriticalDiscrepancies = async (dealId: string) => {
     // A merge row whose conflict no longer stands (its source deleted, its facts moved on) never blocks.
     await settleMergeRowsQuietly(dealId, "discrepancy-gate");
-    return (await storage.getDiscrepanciesByDeal(dealId)).filter(
-      (d) => d.severity === "critical" && BLOCKING_DISCREPANCY_STATUSES.has(d.status),
-    );
+    const gateDeal = await storage.getDeal(dealId);
+    return (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => discrepancyBlocksCim(d, gateDeal?.interviewCompleted));
   };
   const discrepancyBlockResponse = (res: Response, open: { id: string; field: string }[], verb: string) =>
     res.status(409).json({
@@ -1407,6 +1408,15 @@ Return JSON only.`,
         return res.status(401).json({ error: "Not authorized for this interview" });
       }
       const conductedBy = await interviewCallerMode(req, dealId);
+      // A website nobody has read yet is read now, in the background (later
+      // turns use it; the opening doesn't wait).
+      {
+        const scrapeDealRow = await storage.getDeal(dealId);
+        if (scrapeDealRow) {
+          const { scrapeInBackground } = await import("./scraper/auto-scrape");
+          scrapeInBackground(scrapeDealRow, "interview started");
+        }
+      }
       // A finished interview is continued only on an explicit request
       // ("Continue interview" / "Add more detail") — loading the page alone
       // returns its finished state and starts nothing.
@@ -2017,15 +2027,18 @@ Return JSON only.`,
         console.warn("[deals] deal-detail facts not recorded:", e);
       }
 
-      // Auto-populate document requirements from industry intelligence
-      if (deal.industry) {
-        try {
-          const { populateDocumentRequirements } = await import("./documents/requirements");
-          await populateDocumentRequirements(deal.id, deal.industry);
-        } catch (e) {
-          // Non-fatal — deal still created, requirements can be populated later
-          console.warn("Auto-populate document requirements failed:", e);
-        }
+      // Auto-populate document requirements from industry intelligence (the
+      // label "Restaurant / Food Service" is resolved to its industry list).
+      // Non-fatal — the deal is created either way.
+      {
+        const { ensureIndustryDocumentRequirements } = await import("./documents/requirements");
+        await ensureIndustryDocumentRequirements(deal.id, deal.industry, deal.subIndustry);
+      }
+      // A website entered at creation is read in the background, so the
+      // interview starts informed (New Deal promises it).
+      {
+        const { scrapeInBackground } = await import("./scraper/auto-scrape");
+        scrapeInBackground(deal, "deal created");
       }
 
       res.json(deal);
@@ -2372,15 +2385,30 @@ Return JSON only.`,
         if (body[key] !== undefined) updates[key] = body[key];
       }
 
+      const { REQUIREMENT_STATUSES, SELLER_REQUIREMENT_STATUSES, withSellerUnavailableNote, withoutSellerUnavailableNote } = await import("@shared/seller-portal");
       if (updates.status !== undefined) {
-        // A seller may link an upload or take their own upload back off a
-        // row; only the broker verifies.
-        const validStatuses = isBrokerSession
-          ? ["missing", "uploaded", "verified"]
-          : ["missing", "uploaded"];
+        // A seller may link an upload, take their own upload back off a
+        // row, or say they don't have the document; only the broker verifies.
+        const validStatuses: readonly string[] = isBrokerSession ? REQUIREMENT_STATUSES : SELLER_REQUIREMENT_STATUSES;
         if (typeof updates.status !== "string" || !validStatuses.includes(updates.status)) {
           return res.status(400).json({ error: `Invalid status. Expected one of: ${validStatuses.join(", ")}` });
         }
+      }
+      // "I don't have this — tell my broker": the row stops counting against
+      // the seller and the reason is left for the broker (who decides: not
+      // needed, or ask again). Only an empty row — a file on it is removed first.
+      if (updates.status === "unavailable") {
+        if (existing.status === "uploaded") {
+          return res.status(409).json({ error: "Remove the file on this item first" });
+        }
+        const reason = typeof body.reason === "string" ? body.reason : "";
+        updates.notes = withSellerUnavailableNote(typeof updates.notes === "string" ? updates.notes : existing.notes, reason);
+        updates.uploadedFileId = null;
+        updates.uploadedBy = null;
+        updates.uploadedAt = null;
+      } else if (updates.status !== undefined && existing.status === "unavailable") {
+        // Asked again, or the seller found it after all: the "I don't have it" line goes.
+        updates.notes = withoutSellerUnavailableNote(typeof updates.notes === "string" ? updates.notes : existing.notes);
       }
       if (updates.uploadedFileId !== undefined && updates.uploadedFileId !== null && typeof updates.uploadedFileId !== "string") {
         return res.status(400).json({ error: "uploadedFileId must be a string" });
@@ -2394,7 +2422,7 @@ Return JSON only.`,
           return res.status(400).json({ error: "uploadedFileId must reference a document on this deal" });
         }
       }
-      if (!isBrokerSession && updates.uploadedBy !== undefined) {
+      if (!isBrokerSession && updates.uploadedBy !== undefined && updates.status !== "unavailable") {
         updates.uploadedBy = "seller";
       }
       if (!isBrokerSession && existing.status === "verified" && (updates.status !== undefined || updates.uploadedFileId !== undefined)) {
@@ -2496,7 +2524,7 @@ Return JSON only.`,
         return res.status(400).json({ error: "No industry set on deal and no industryCategory provided" });
       }
       const { populateDocumentRequirements } = await import("./documents/requirements");
-      const created = await populateDocumentRequirements(deal.id, industryCategory);
+      const created = await populateDocumentRequirements(deal.id, industryCategory, req.body.industryCategory ? null : deal.subIndustry);
       const requirements = await storage.getDocumentRequirementsByDeal(deal.id);
       res.json({ created, total: requirements.length, requirements });
     } catch (error: any) {
@@ -2605,10 +2633,13 @@ Return JSON only.`,
       const { insertDealSchema } = await import("@shared/schema");
 
       let allowedBody: Record<string, unknown> | null = null;
+      // The industry before this edit (a real change re-scopes the seller's document checklist).
+      let industryBefore: { industry: string | null; subIndustry: string | null } | null = null;
 
       if (req.session.brokerId) {
         const owned = await getOwnedDeal(req.params.id, req.session.brokerId);
         if (!owned) return res.status(404).json({ error: "Deal not found" });
+        industryBefore = { industry: owned.industry ?? null, subIndustry: owned.subIndustry ?? null };
         const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
         const { allowBackward, ...fields } = body;
         if ("brokerId" in fields || "id" in fields) {
@@ -2771,6 +2802,23 @@ Return JSON only.`,
         const { MIRROR_NOTES } = await import("./information/deal-mirror");
         await setMirroredDealFacts(req.params.id, identityPatch, MIRROR_NOTES.edited);
         deal = (await storage.getDeal(req.params.id)) ?? deal;
+      }
+      // A changed industry brings its own document requests, and the old
+      // industry's untouched ones go (the broker corrected it). An edit that
+      // re-sends the same industry changes nothing.
+      if (
+        industryBefore &&
+        ("industry" in identityPatch || "subIndustry" in identityPatch) &&
+        ((deal.industry ?? null) !== industryBefore.industry || (deal.subIndustry ?? null) !== industryBefore.subIndustry)
+      ) {
+        const { switchIndustryDocumentRequirements } = await import("./documents/requirements");
+        const { removed, added } = await switchIndustryDocumentRequirements(deal.id, deal.industry, deal.subIndustry);
+        if (removed || added) console.log(`[requirements] industry changed on deal ${deal.id}: ${added} request(s) added, ${removed} untouched one(s) removed`);
+      }
+      // A website added later is read in the background too.
+      if (req.session.brokerId && "websiteUrl" in (validatedData as Record<string, unknown>)) {
+        const { scrapeInBackground } = await import("./scraper/auto-scrape");
+        scrapeInBackground(deal, "website added");
       }
       // Intake answers become facts (source "questionnaire") as soon as the
       // seller saves them — the broker's Information tab and the readiness
@@ -2997,6 +3045,18 @@ Return JSON only.`,
           return res.status(409).json({ error: "Your broker has already verified this document — ask them before replacing it" });
         }
       }
+      // A document the interview asked for (an open document request): the
+      // upload answers it, and the request closes.
+      const taskId = typeof req.body.taskId === "string" && req.body.taskId.trim() ? req.body.taskId.trim() : undefined;
+      let targetTask: Awaited<ReturnType<typeof storage.getTask>> | undefined;
+      if (taskId) {
+        const { sellerMaySatisfyTask } = await import("@shared/seller-portal");
+        targetTask = await storage.getTask(taskId);
+        if (!sellerMaySatisfyTask(targetTask, req.params.dealId, targetTask?.dealId)) {
+          fs.unlink(req.file.path, () => {});
+          return res.status(400).json({ error: "That request isn't open on this deal any more" });
+        }
+      }
       const requestedCategory = typeof req.body.category === "string" && req.body.category.trim() ? req.body.category.trim() : "";
       const category =
         requestedCategory && requestedCategory !== "other"
@@ -3071,8 +3131,28 @@ Return JSON only.`,
         }
       }
 
+      let satisfiedTask: { id: string; title: string } | null = null;
+      if (targetTask) {
+        const note = `${uploadedBy === "seller" ? "The seller" : "You"} uploaded "${displayName}" for this request.`;
+        // Copies of the same request an earlier turn re-created close with it
+        // (the seller's list shows them as one row — one would pop back up).
+        const { openItemTaskIds } = await import("@shared/seller-portal");
+        const dealTasks = await storage.getTasksByDeal(req.params.dealId);
+        const now = new Date();
+        for (const tid of openItemTaskIds(dealTasks, targetTask)) {
+          const t = tid === targetTask.id ? targetTask : dealTasks.find((x) => x.id === tid);
+          if (!t) continue;
+          await storage.updateTask(tid, {
+            status: "completed",
+            completedAt: now,
+            brokerNotes: t.brokerNotes ? `${t.brokerNotes}\n${note}` : note,
+          } as any);
+        }
+        satisfiedTask = { id: targetTask.id, title: targetTask.title };
+      }
+
       parseDocumentAsync(doc.id);
-      res.json({ ...doc, linkedRequirement });
+      res.json({ ...doc, linkedRequirement, satisfiedTask });
     } catch (error: any) {
       console.error("Upload error:", error);
       res.status(500).json({ error: "Upload failed" });
@@ -3620,7 +3700,11 @@ Return JSON only.`,
         clarifyingQuestions: updatedQuestions,
       });
 
-      res.json({ analysis: updated, discrepancy });
+      // A seller who already finished the interview is told to come back
+      // (nothing would raise it otherwise).
+      const { notifySellerOfFollowUps } = await import("./interview/seller-followups");
+      const sellerFollowUp = await notifySellerOfFollowUps(req.params.dealId);
+      res.json({ analysis: updated, discrepancy, sellerFollowUp });
     } catch (error: any) {
       console.error("Error routing clarifying question to seller:", error);
       res.status(500).json({ error: "Failed to route question to the seller interview" });
@@ -3999,6 +4083,10 @@ Return JSON only.`,
       if (!picked.ok) return res.status(400).json({ error: picked.error, field: picked.field });
       const { insertTaskSchema } = await import("@shared/schema");
       const validatedData = insertTaskSchema.partial().parse(picked.data);
+      // Closed from the broker's open-items list: stamped by the server clock.
+      if ((validatedData.status === "completed" || validatedData.status === "authorized_skip") && !validatedData.completedAt) {
+        (validatedData as Record<string, unknown>).completedAt = new Date();
+      }
       const task = await storage.updateTask(req.params.id, validatedData);
       if (!task) {
         return res.status(404).json({ error: "Task not found" });
@@ -4364,10 +4452,11 @@ Return JSON only.`,
       // header's "Solid 60".
       const { assembleKnowledgeBase } = await import("./interview/knowledge-base");
       const kbDocuments = await storage.getDocumentsByDeal(deal.id);
+      const sellerTasks = sellerSideTasks(await storage.getTasksByDeal(deal.id));
       const progressKb = assembleKnowledgeBase(
         deal,
         kbDocuments,
-        sellerSideTasks(await storage.getTasksByDeal(deal.id)),
+        sellerTasks,
         sessions[0] ?? null,
         await storage.getResolvedDiscrepancies(deal.id),
       );
@@ -4385,36 +4474,37 @@ Return JSON only.`,
       const hasCompletedSession = sessions.some((s) => sessionFinishedInterview(s));
       const interviewCompleted = !!(deal as any).interviewCompleted || hasCompletedSession;
 
-      // Document requirements
+      // Document requirements. A row the seller says they don't have stops
+      // counting against them until the broker decides (shared/seller-portal).
+      const { checklistCounts, sellerIntakeState, sellerSteps, sellerTodoItems, sellerReviewStage } = await import("@shared/seller-portal");
       const docReqs = await storage.getDocumentRequirementsByDeal(deal.id);
-      const requiredDocs = docReqs.filter((r) => r.isRequired);
-      const uploadedRequired = requiredDocs.filter((r) => r.status !== "missing").length;
-      const totalRequired = requiredDocs.length;
-      const docPct = totalRequired > 0 ? Math.round((uploadedRequired / totalRequired) * 100) : 0;
+      const docCounts = checklistCounts(docReqs);
+      const docPct = docCounts.percentage;
 
       // Uploaded documents — broker-only sources (CRM notes, private emails)
       // never reach the seller.
       const allDocs = kbDocuments.filter((d) => (d as any).visibility !== "broker_only");
 
-      // Pending seller approvals
+      // Buyer questions waiting on the seller's approval — each with its own
+      // review link, on every step (the approval email can land in spam).
       const pendingQuestions = await db.select().from(buyerQuestions)
         .where(eqOp(buyerQuestions.dealId, deal.id));
       const pendingSeller = pendingQuestions.filter((q) => q.status === "pending_seller");
 
-      // Step status
-      const intakeCompleted = !!(deal as any).questionnaireData;
-      type StepStatus = "completed" | "current" | "upcoming";
-      let currentStep: "intake" | "interview" | "documents" | "review" = "intake";
-      if (intakeCompleted && !interviewCompleted) currentStep = "interview";
-      else if (interviewCompleted && docPct < 100) currentStep = "documents";
-      else if (interviewCompleted && docPct >= 100) currentStep = "review";
+      // The interview's to-dos: documents it asked for and things to look up.
+      const todo = sellerTodoItems(sellerTasks);
 
-      const steps: Array<{ id: string; label: string; status: StepStatus; pct?: number }> = [
-        { id: "intake", label: "Business Info", status: intakeCompleted ? "completed" : currentStep === "intake" ? "current" : "upcoming" },
-        { id: "interview", label: "Business Overview", status: interviewCompleted ? "completed" : currentStep === "interview" ? "current" : "upcoming", pct: interviewPct },
-        { id: "documents", label: "Documents", status: docPct >= 100 ? "completed" : currentStep === "documents" ? "current" : "upcoming", pct: docPct },
-        { id: "review", label: "Review", status: currentStep === "review" ? "current" : "upcoming" },
-      ];
+      // Questions the broker routed back to the seller after the interview
+      // (a conflict to clear up). Only the count — the rows are the broker's.
+      const followUpQuestions = interviewCompleted
+        ? (await storage.getDiscrepanciesByDeal(deal.id)).filter((d) => d.status === "ask_seller").length
+        : 0;
+
+      // Step status. Intake is complete when the last intake page (Key
+      // People) is saved — page 1 alone used to count.
+      const intake = sellerIntakeState(deal);
+      const { currentStep, steps } = sellerSteps({ intake, interviewCompleted, interviewPct, docPct });
+      const reviewStage = sellerReviewStage(deal);
 
       // Broker contact (their display name, else the brokerage — never the login username)
       const broker = await storage.getUser(deal.brokerId);
@@ -4436,9 +4526,11 @@ Return JSON only.`,
             status: s.status,
           })),
         },
+        intake,
         documents: {
-          requiredTotal: totalRequired,
-          requiredUploaded: uploadedRequired,
+          requiredTotal: docCounts.requiredTotal,
+          requiredUploaded: docCounts.requiredUploaded,
+          requiredUnavailable: docCounts.requiredUnavailable,
           percentage: docPct,
           totalUploaded: allDocs.length,
           requirements: docReqs.map((r) => {
@@ -4457,7 +4549,13 @@ Return JSON only.`,
             };
           }),
         },
+        todo,
+        followUpQuestions,
+        cimReview: { stage: reviewStage },
         pendingApprovals: pendingSeller.length,
+        pendingApprovalItems: pendingSeller
+          .filter((q) => !!q.sellerApprovalToken)
+          .map((q) => ({ id: q.id, question: q.question, href: `/approve/${q.sellerApprovalToken}` })),
         broker: broker ? { name: brokerDisplayName(broker) || sellerBrokerCompany || "Your broker", email: broker.email } : null,
       });
     } catch (error: any) {
@@ -5733,12 +5831,13 @@ Return JSON only.`,
 
       // Product rule: critical discrepancies block CIM generation until handled.
       // The client disabled the first "Generate" button but not "Regenerate";
-      // the server is now the authority. Only "open" and "seller_responded"
-      // block. "ask_seller" means the broker routed it to the seller interview,
-      // which counts as handled — otherwise a routed critical locked generation
-      // forever. When the interview ends, session-manager flips ask_seller →
-      // seller_responded so the broker reviews the transcript before generating.
-      // OverviewTab's generationBlocked mirrors this exact status list.
+      // the server is now the authority. "open" and "seller_responded" block.
+      // "ask_seller" means the broker routed it to the seller interview, which
+      // counts as handled while the interview runs; when it ends, session-
+      // manager flips ask_seller → seller_responded so the broker reviews the
+      // transcript before generating. Routed after the interview had finished,
+      // it blocks until the seller answers the follow-up (shared/discrepancy-gate.ts;
+      // OverviewTab's gate mirrors this rule).
       const openCritical = await blockingCriticalDiscrepancies(dealId);
       if (openCritical.length > 0) return discrepancyBlockResponse(res, openCritical, "generating the CIM");
 
@@ -7607,6 +7706,7 @@ Return JSON only.`,
   registerCimMediaRoutes(app);
   registerCimTemplateRoutes(app);
   registerBuyerNdaRoutes(app);
+  registerSellerReviewRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;

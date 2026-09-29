@@ -38,6 +38,7 @@ import {
   dealHasBlindVersion,
 } from "../cim/blind-sync";
 import { buildBuyerCim } from "@shared/cim-buyer-view";
+import { discrepancyBlocksCim } from "@shared/discrepancy-gate";
 import { factAmounts, withStatedChartTotal } from "@shared/cim-chart-values";
 import { codenameProblem, renameDealCodename } from "../cim/codenames";
 import {
@@ -100,13 +101,25 @@ const aiLimiter = rateLimit({
   message: { error: "Too many requests. Please slow down and try again shortly." },
 });
 
-/** Critical discrepancies block every AI step that writes CIM content. */
-async function discrepancyBlock(dealId: string): Promise<string | null> {
-  const open = (await storage.getDiscrepanciesByDeal(dealId)).filter(
-    (d) => d.severity === "critical" && (d.status === "open" || d.status === "seller_responded"),
-  );
-  if (open.length === 0) return null;
-  return `${open.length} critical discrepanc${open.length === 1 ? "y" : "ies"} must be resolved before the AI writes CIM content`;
+/**
+ * Critical discrepancies block every AI step that writes CIM content — the
+ * one rule every gate uses (shared/discrepancy-gate.ts, also the builder's
+ * useAiGate): open or awaiting review, and a critical routed to a seller who
+ * had already finished the interview, until they answer.
+ */
+async function discrepancyBlock(deal: Pick<Deal, "id" | "interviewCompleted">): Promise<string | null> {
+  const blocking = (await storage.getDiscrepanciesByDeal(deal.id)).filter((d) => discrepancyBlocksCim(d, deal.interviewCompleted));
+  return discrepancyBlockMessage(blocking);
+}
+
+/** The 409 text for the rows discrepancyBlocksCim picked (null = nothing blocks). Pure. */
+export function discrepancyBlockMessage(blocking: Array<{ status: string }>): string | null {
+  if (blocking.length === 0) return null;
+  const withSeller = blocking.filter((d) => d.status === "ask_seller").length;
+  if (withSeller === blocking.length) {
+    return `Waiting on the seller to answer ${withSeller} critical question${withSeller === 1 ? "" : "s"} you sent them — or resolve ${withSeller === 1 ? "it" : "them"} on the Overview tab — before the AI writes CIM content`;
+  }
+  return `${blocking.length} critical discrepanc${blocking.length === 1 ? "y" : "ies"} must be resolved before the AI writes CIM content`;
 }
 
 /** Load a section the session broker owns (via its deal), or answer 404. */
@@ -296,7 +309,7 @@ export function registerCimBuilderRoutes(app: Express): void {
       if (mode === "ai" && !canAiWriteLayout(body.layoutType)) return res.status(400).json({ error: NO_AI_MEDIA });
       const brief = typeof body.brief === "string" ? body.brief.trim().slice(0, 1500) : "";
       if (mode === "ai") {
-        const blocked = await discrepancyBlock(deal.id);
+        const blocked = await discrepancyBlock(deal);
         if (blocked) return res.status(409).json({ error: blocked });
       }
       const position = body.position === "start"
@@ -406,7 +419,7 @@ export function registerCimBuilderRoutes(app: Express): void {
         return res.json({ section: withStaleStamps(updated, at) });
       }
 
-      const blocked = await discrepancyBlock(deal.id);
+      const blocked = await discrepancyBlock(deal);
       if (blocked) return res.status(409).json({ error: blocked });
       const task = await startSectionTask(section, deal, "convert", { layoutType });
       res.status(202).json({ task });
@@ -421,7 +434,7 @@ export function registerCimBuilderRoutes(app: Express): void {
       const owned = await ownedSection(req, res);
       if (!owned) return;
       if (!canAiWriteLayout(owned.section.layoutType)) return res.status(400).json({ error: NO_AI_MEDIA });
-      const blocked = await discrepancyBlock(owned.deal.id);
+      const blocked = await discrepancyBlock(owned.deal);
       if (blocked) return res.status(409).json({ error: blocked });
       const brief = typeof req.body?.brief === "string" ? req.body.brief.trim().slice(0, 1500) : "";
       // A section whose first write failed is retried as a write.
@@ -451,7 +464,7 @@ export function registerCimBuilderRoutes(app: Express): void {
       if (!instructions && tones.length === 0 && length === "same") {
         return res.status(400).json({ error: "Tell the AI what to change — type an instruction, or pick a tone or length." });
       }
-      const blocked = await discrepancyBlock(owned.deal.id);
+      const blocked = await discrepancyBlock(owned.deal);
       if (blocked) return res.status(409).json({ error: blocked });
       const task = await startSectionTask(owned.section, owned.deal, "rewrite", { instructions, tones, length });
       res.status(202).json({ task });
@@ -531,7 +544,7 @@ export function registerCimBuilderRoutes(app: Express): void {
         return res.status(400).json({ error: "This CIM has no due-diligence version yet — generate it first." });
       }
       if (isTaskRunning(section.id)) return res.status(409).json({ error: "The AI is working on this section — wait for it to finish." });
-      const blocked = (await discrepancyBlock(deal.id)) ?? (await staleFinancialsBlock(deal.id));
+      const blocked = (await discrepancyBlock(deal)) ?? (await staleFinancialsBlock(deal.id));
       if (blocked) return res.status(409).json({ error: blocked });
       const { warning } = await refreshSectionDd(section, deal);
       res.json({ success: true, warning: warning ?? null });
@@ -556,7 +569,7 @@ export function registerCimBuilderRoutes(app: Express): void {
         storage.getCimSectionOverrides(deal.id, "dd"),
       ]);
       if (ddOverrides.length === 0) return res.status(400).json({ error: "This CIM has no due-diligence version yet — generate it first." });
-      const blocked = (await discrepancyBlock(deal.id)) ?? (await staleFinancialsBlock(deal.id));
+      const blocked = (await discrepancyBlock(deal)) ?? (await staleFinancialsBlock(deal.id));
       if (blocked) return res.status(409).json({ error: blocked });
       const withDd = new Set(ddOverrides.map((o) => o.cimSectionId));
       const todo = sections.filter((s) => {

@@ -12,7 +12,7 @@ import { useParams, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Interview } from "@/components/shared/Interview";
 import { SellerOnboarding } from "@/components/seller/SellerOnboarding";
-import { Loader2, CheckCircle2, ArrowLeft } from "lucide-react";
+import { Loader2, CheckCircle2, ArrowLeft, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function SellerInterview() {
@@ -22,7 +22,11 @@ export default function SellerInterview() {
   // A seller who already finished the interview lands on a completion card
   // instead of silently starting a fresh session (observed: the fullscreen
   // route skipped the card and opened a new conversation).
-  const [continueRequested, setContinueRequested] = useState(false);
+  // The follow-up link the broker's questions email carries (?followup=1)
+  // opens the conversation straight away.
+  const [continueRequested, setContinueRequested] = useState(
+    () => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("followup") === "1",
+  );
 
   const { data: inviteData, isLoading, error } = useQuery<{
     invite: any;
@@ -31,6 +35,12 @@ export default function SellerInterview() {
     queryKey: ["/api/invites", token],
     enabled: !!token,
   });
+  // Questions the broker sent back after the conversation ended.
+  const { data: progress } = useQuery<{ followUpQuestions?: number }>({
+    queryKey: [`/api/seller/${token}/progress`],
+    enabled: !!token && !!inviteData?.deal?.interviewCompleted,
+  });
+  const followUps = progress?.followUpQuestions ?? 0;
 
   if (isLoading) {
     return (
@@ -72,13 +82,25 @@ export default function SellerInterview() {
     return (
       <div className="h-screen flex items-center justify-center p-4">
         <div className="max-w-sm w-full text-center space-y-4">
-          <CheckCircle2 className="h-8 w-8 mx-auto text-primary" />
-          <h2 className="text-lg font-semibold">Your conversation is complete</h2>
+          {followUps > 0 ? (
+            <MessageSquare className="h-8 w-8 mx-auto text-teal" />
+          ) : (
+            <CheckCircle2 className="h-8 w-8 mx-auto text-primary" />
+          )}
+          <h2 className="text-lg font-semibold" data-testid="text-interview-finished-title">
+            {followUps > 0
+              ? `Your broker has ${followUps === 1 ? "a follow-up question" : `${followUps} follow-up questions`} for you`
+              : "Your conversation is complete"}
+          </h2>
           <p className="text-sm text-muted-foreground">
-            Everything you shared is saved. You can add more detail any time — the conversation picks up from what you've already covered.
+            {followUps > 0
+              ? "It's a short conversation that picks up where you left off — nothing you already answered is asked again."
+              : "Everything you shared is saved. You can add more detail any time — the conversation picks up from what you've already covered."}
           </p>
           <div className="flex flex-col gap-2">
-            <Button onClick={() => setContinueRequested(true)}>Add more detail</Button>
+            <Button onClick={() => setContinueRequested(true)} data-testid="button-continue-seller-interview">
+              {followUps > 0 ? "Answer now" : "Add more detail"}
+            </Button>
             <Button variant="ghost" onClick={() => setLocation(`/seller/${token}/progress`)}>
               <ArrowLeft className="h-4 w-4 mr-2" /> Back to progress
             </Button>

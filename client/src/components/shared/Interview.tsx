@@ -235,13 +235,13 @@ export function Interview({
               <span className="text-muted-foreground/30">·</span>
             </>
           )}
-          <span className="text-sm font-semibold truncate">
+          <span className="text-sm font-semibold truncate min-w-0">
             {businessName ?? "Business Overview"}
           </span>
           {industryContext.identified && (
             <>
-              <span className="text-muted-foreground/30">·</span>
-              <span className="text-xs text-teal font-medium">
+              <span className="hidden sm:inline text-muted-foreground/30">·</span>
+              <span className="hidden sm:inline text-xs text-teal font-medium truncate min-w-0">
                 {industryContext.industry}
               </span>
             </>
@@ -254,7 +254,7 @@ export function Interview({
               </span>
             </>
           )}
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-2 shrink-0">
             {/* Broker: fields captured + coverage panel toggle */}
             {isBroker && (
               <>
@@ -278,9 +278,11 @@ export function Interview({
               </>
             )}
             {/* Seller: simple progress dots + percentage */}
+            {/* (On a phone the dots are hidden and the % always shows — a
+                dozen dots pushed it off-screen at 390px.) */}
             {!isBroker && sectionCoverage.length > 0 && (
-              <div className="flex items-center gap-2">
-                <div className="flex gap-0.5">
+              <div className="flex items-center gap-2 min-w-0 shrink-0" data-testid="seller-interview-progress">
+                <div className="hidden sm:flex gap-0.5">
                   {sectionCoverage.map((s) => (
                     <div
                       key={s.key}

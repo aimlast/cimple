@@ -43,7 +43,7 @@ export interface DiscrepancyHeaderRow {
   sideSources?: unknown;
 }
 
-export function DiscrepancyHeaderLine({ disc, showSource = true }: { disc: DiscrepancyHeaderRow; showSource?: boolean }) {
+export function DiscrepancyHeaderLine({ disc, showSource = true, interviewFinished = false }: { disc: DiscrepancyHeaderRow; showSource?: boolean; /** The seller had finished the interview when it was routed — it waits on a follow-up. */ interviewFinished?: boolean }) {
   const config = SEVERITY_CONFIG[disc.severity as keyof typeof SEVERITY_CONFIG] || SEVERITY_CONFIG.minor;
   const Icon = config.icon;
   const settled = isSettledDiscrepancy(disc);
@@ -67,7 +67,7 @@ export function DiscrepancyHeaderLine({ disc, showSource = true }: { disc: Discr
       <div className="flex shrink-0 items-center gap-1.5">
         {routed && (
           <Badge className="bg-blue-500/10 text-blue-400 border-0 text-2xs gap-1">
-            <MessageCircleQuestion className="h-2.5 w-2.5" /> Asked in interview
+            <MessageCircleQuestion className="h-2.5 w-2.5" /> {interviewFinished ? "Sent to the seller" : "Asked in interview"}
           </Badge>
         )}
         {settled && (
