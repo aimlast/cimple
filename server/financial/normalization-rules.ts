@@ -29,6 +29,7 @@
  */
 import type { UiAddback, UiInsights, UiInsight, UiNormalization, UiReclassifiedTable, UiWorkingCapital, UiWorkingCapitalItem } from "./shape";
 import { numberTokens } from "../cim/discrepancy-filter";
+import { EMPTY_ROSTER, peopleNamedIn, statedPay, type PayRoster } from "./owner-pay-attribution";
 
 const fmt = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
@@ -423,7 +424,138 @@ export function splitOwnerCompensation(ab: UiAddback): { lines: UiAddback[]; not
   return { lines: [excess, marketLine], note: null };
 }
 
-export function applyAddbackRules(n: UiNormalization | null): UiNormalization | null {
+/** What the add-back rules know about the deal beyond the add-backs (owner-pay-attribution.ts). */
+export interface AddbackRuleContext {
+  /** Each named person's stated pay and plans, from the deal's material. */
+  roster?: PayRoster;
+  /** The reclassified P&L — a statement line of several people's pay is recognised by its name. */
+  pnl?: UiReclassifiedTable | null;
+  /** The owner the facts name (a line that names no one is theirs). */
+  ownerName?: string | null;
+  /** The shareholders / owners the facts name (first names). */
+  owners?: string[];
+}
+
+/** A statement line that is several people's pay ("Management salaries — shareholders", "Officers' salaries"). */
+const SEVERAL_PEOPLE_PAY_RE =
+  /\b(?:shareholders|owners|officers|directors|partners|principals|members|family)['’]?\b[^.]{0,30}\b(?:salar(?:y|ies)|wages|compensation|remuneration|pay)\b|\b(?:salaries|wages|compensation|remuneration|pay)\b[^.]{0,30}\b(?:shareholders|owners|officers|directors|partners|principals|members|family)\b|\bmanagement\s+salaries\b/i;
+
+/** The P&L line of several people's pay whose figure this line's pay equals (per year), if any. */
+function severalPeoplePayLine(pnl: UiReclassifiedTable | null | undefined, actual: Record<string, number>): { name: string; values: Record<string, number> } | null {
+  for (const row of pnl?.rows ?? []) {
+    if (!row || typeof row.name !== "string" || !SEVERAL_PEOPLE_PAY_RE.test(row.name)) continue;
+    const values = (row.values ?? {}) as Record<string, number>;
+    if (Object.entries(actual).some(([y, v]) => typeof values[y] === "number" && within(Number(values[y]), v))) {
+      return { name: row.name, values };
+    }
+  }
+  return null;
+}
+
+/**
+ * The owner-pay line's pay, as the named person's own. A line whose pay is
+ * more than what the material says that person is paid — the statements'
+ * one line for every shareholder's pay (Pacific: $522,000 = Harjit $285K +
+ * Manpreet $175K + Surinder $62K, taken as Harjit's) — is cut to the
+ * person's pay for the years it is stated; years it isn't stated for are
+ * left out (never guessed). A line that is several people's pay with no
+ * stated pay for the person is left for the broker to split: not added
+ * back. Returns the line to split, and notes for the broker.
+ */
+function attributeOwnerPay(ab: UiAddback, ctx: AddbackRuleContext): { line: UiAddback; notes: string[] } {
+  const roster = ctx.roster ?? EMPTY_ROSTER;
+  if (brokerOwned(ab) || roster.people.size === 0 && !ctx.pnl) return { line: ab, notes: [] };
+  const marketInfo = marketSalaryOf(ab);
+  const market = (y: string) => (marketInfo === null ? 0 : typeof marketInfo === "number" ? marketInfo : marketInfo[y] ?? Object.values(marketInfo)[0]);
+  const actual = marketInfo === null
+    ? Object.fromEntries(Object.entries(ab.amounts ?? {}).filter(([, v]) => Number.isFinite(Number(v))).map(([y, v]) => [y, Number(v)]))
+    : actualCompOf(ab, market);
+  if (!actual || Object.keys(actual).length === 0) return { line: ab, notes: [] };
+  let named = peopleNamedIn(`${ab.label}`, roster);
+  if (named.length === 0 && ctx.ownerName) named = peopleNamedIn(ctx.ownerName, roster);
+  const aggregate = severalPeoplePayLine(ctx.pnl, actual);
+  const who = named.length === 1 ? roster.people.get(named[0])! : null;
+  const stated = who ? statedPay(who) : null;
+  const years = Object.keys(actual).sort();
+  const latest = years[years.length - 1];
+  if (who && stated) {
+    const payFor = (y: string): number | null => stated.byYear[y] ?? (y === latest ? stated.current : null);
+    const kept: Record<string, number> = {};
+    const cut: string[] = [];
+    const unknown: string[] = [];
+    for (const y of years) {
+      const own = payFor(y);
+      const a = actual[y];
+      if (own !== null && a > own && !within(a, own)) {
+        kept[y] = own;
+        cut.push(y);
+      } else if (own !== null) {
+        kept[y] = a;
+      } else if (aggregate || cut.length > 0 || years.some((x) => payFor(x) !== null && actual[x] > (payFor(x) as number) && !within(actual[x], payFor(x) as number))) {
+        unknown.push(y);
+      } else {
+        kept[y] = a;
+      }
+    }
+    if (cut.length === 0) return { line: ab, notes: [] };
+    const notes: string[] = [];
+    const source = aggregate ? `the "${aggregate.name}" line` : "the line on file";
+    const list = (ys: string[]) => (ys.length <= 1 ? ys.join("") : `${ys.slice(0, -1).join(", ")} and ${ys[ys.length - 1]}`);
+    notes.push(
+      `"${ab.label}": ${source} (${cut.map((y) => `${fmt(actual[y])} in ${y}`).join(", ")}) is more than ${who.name}'s own pay (${cut.map((y) => `${fmt(kept[y])} in ${y}`).join(", ")}, as the deal's material states it) — it includes other people's pay. Only ${who.name}'s pay is normalised: the part above the market salary counts for adjusted EBITDA, all of it for SDE. Everyone else's pay stays a cost unless their own line says otherwise.`,
+    );
+    if (unknown.length > 0) {
+      notes.push(`"${ab.label}": ${who.name}'s own pay isn't stated for ${list(unknown)}, and ${source} is more than that, so nothing is added back for ${unknown.length === 1 ? "that year" : "those years"} — enter ${who.name}'s pay for ${unknown.length === 1 ? "it" : "them"} on the Financials tab to complete ${unknown.length === 1 ? "it" : "them"}.`);
+    }
+    return {
+      line: {
+        ...ab,
+        amounts: Object.fromEntries(Object.entries(kept).map(([y, v]) => [y, v])),
+        ownerActualComp: kept,
+        ...(marketInfo !== null ? { marketSalary: marketInfo } : {}),
+        ...(unknown.length > 0 || stated.private ? { confidence: "low" as const } : {}),
+      },
+      notes,
+    };
+  }
+  // Several people's pay, and no stated pay for the person: the broker splits it.
+  // (With one owner on file, a "Shareholders' salaries" line is that owner's pay.)
+  const several = !!aggregate && ((ctx.owners?.length ?? 0) >= 2 || named.length > 1);
+  if (several && ab.approved) {
+    return {
+      line: { ...ab, approved: false, confidence: "low" },
+      notes: [
+        `"${ab.label}" is the "${aggregate!.name}" line (${years.map((y) => `${fmt(actual[y])} in ${y}`).join(", ")}) — several people's pay. The material doesn't say how much of it is ${who ? `${who.name}'s` : "the selling owner's"}, so it isn't added back until you enter that pay (only the departing owner's pay above a market salary is an add-back).`,
+      ],
+    };
+  }
+  return { line: ab, notes: [] };
+}
+
+/** "doesn't work in the business", "no role since 2019", "income splitting", "above market": a relative's pay a buyer won't carry. */
+const NOT_A_REAL_COST_RE =
+  /\bnon[- ]working\b|\bno\s+(?:active\s+|operating\s+|operational\s+)?role\b|\bnot\s+(?:active|working|involved)\b|\bdoes(?:n['’]t| not)\s+work\b|\bincome[- ]splitting\b|\babove[- ]market\b|\bin\s+excess\s+of\s+market\b|\bover(?:paid|-market)\b|\bwill\s+not\s+(?:continue|be\s+replaced)\b|\bnot\s+be\s+replaced\b|\b(?:ends|stops)\s+at\s+(?:close|closing|the\s+sale)\b|\bremoved\b/i;
+
+/**
+ * A relative's pay line for someone who stays on after the sale, with
+ * nothing saying they don't really work in the business or are paid above
+ * market: a buyer keeps paying it, so it isn't added back (left for the
+ * broker to approve).
+ */
+function stayingRelativeLine(ab: UiAddback, ctx: AddbackRuleContext): { line: UiAddback; note: string | null } {
+  const roster = ctx.roster ?? EMPTY_ROSTER;
+  if (brokerOwned(ab) || !ab.approved || !isFamilyOrNonWorking(ab)) return { line: ab, note: null };
+  const named = peopleNamedIn(`${ab.label} ${ab.description ?? ""}`, roster);
+  if (named.length !== 1) return { line: ab, note: null };
+  const p = roster.people.get(named[0])!;
+  if (!p.stays || p.leaves || NOT_A_REAL_COST_RE.test(`${ab.label} ${ab.description ?? ""}`)) return { line: ab, note: null };
+  return {
+    line: { ...ab, approved: false, confidence: "low" },
+    note: `"${ab.label}": ${p.name} stays on after the sale and nothing on file says the pay is for no work or above market, so a buyer keeps paying it — not added back unless you approve it.`,
+  };
+}
+
+export function applyAddbackRules(n: UiNormalization | null, ctx: AddbackRuleContext = {}): UiNormalization | null {
   if (!n) return n;
   const notes: string[] = [...(n.notes ?? [])];
   const input = Array.isArray(n.addbacks) ? n.addbacks : [];
@@ -516,10 +648,19 @@ export function applyAddbackRules(n: UiNormalization | null): UiNormalization | 
     // The working owner's pay: the above-market part (EBITDA and SDE) and the
     // market-salary part (SDE only).
     if (isOwnerPayLine(out)) {
-      const { lines, note } = splitOwnerCompensation(out);
+      // Whose pay it is first: the named person's own, not several people's.
+      const attributed = attributeOwnerPay(out, ctx);
+      notes.push(...attributed.notes);
+      const { lines, note } = splitOwnerCompensation(attributed.line);
       if (note) notes.push(note);
       addbacks.push(...lines);
       continue;
+    }
+    // A relative who stays on is a real cost unless the facts say otherwise.
+    const relative = stayingRelativeLine(out, ctx);
+    if (relative.note) {
+      notes.push(relative.note);
+      Object.assign(out, relative.line);
     }
     // Everything else — owner perks run through the company, a relative's
     // pay, discretionary and one-time items — counts for adjusted EBITDA as

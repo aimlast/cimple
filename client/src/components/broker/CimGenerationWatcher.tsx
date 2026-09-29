@@ -65,7 +65,9 @@ export function CimGenerationWatcher() {
         toast({
           title: `CIM ready — ${job.businessName}`,
           description: job.buyerHold
-            ? `${summary.text} Buyers don't see it until you publish it again.`
+            ? job.buyerHold.servingPublished
+              ? `${summary.text} Buyers keep seeing the previous version until you publish the update.`
+              : `${summary.text} Buyers don't see it until you publish it again.`
             : summary.text,
           variant: summary.attention ? "destructive" : undefined,
           duration: 12000,

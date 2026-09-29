@@ -36,7 +36,8 @@ import { storage } from "../storage";
 import type { Discrepancy, Document, DocumentSourceMeta, InsertDiscrepancy } from "@shared/schema";
 import { BROKER_SESSION_SIDE_LABEL } from "@shared/discrepancy-sides";
 import { fieldLabel } from "../interview/interview-plan";
-import { isDocumentAuthoritativeField, isPeriodFigure, materiallyDifferent, settleConflicts, HEADLINE_MAPS, type MergeConflict } from "./merge-policy";
+import { isDocumentAuthoritativeField, isPeriodFigure, materiallyDifferent, settleConflicts, HEADLINE_MAPS, HEADCOUNT_FIELD, ROSTER_TITLE, effectiveRank, type MergeConflict } from "./merge-policy";
+import { roleCounts, type RoleCount } from "../cim/discrepancy-backstop";
 import {
   getFieldAlternates,
   getFieldCorroborations,
@@ -46,6 +47,8 @@ import {
   typedNumericValues,
   type FieldSource,
   isBrokerSessionSource,
+  recordAlternate,
+  setFieldSource,
 } from "../interview/info-merger";
 import { falseConflictReason, isTaxVsBook, shareClaimsConflict, type ConflictSideInfo } from "./conflict-measures";
 
@@ -217,6 +220,175 @@ export function shareDisputesOnFile(info: Record<string, unknown>): MergeConflic
   return out;
 }
 
+// ─── Head counts by role: the roster against what was said ──────────────────
+
+/** A source row as the head-count rule reads it (its title says whether it is a roster). */
+export type RosterDoc = ConflictDoc & Partial<Pick<Document, "extractedText" | "sourceKind">>;
+
+interface CountEntry {
+  key: string;
+  value: string;
+  src: FieldSource;
+  count: RoleCount;
+  onFile: boolean;
+}
+
+const isRosterDoc = (d: RosterDoc | undefined) => !!d && d.visibility !== "broker_only" && d.sourceKind !== "crm" && ROSTER_TITLE.test(docTitle(d) ?? "");
+
+/**
+ * Every head count by role on file, seller side and roster side. Seller side:
+ * a fact (or another value of it) from the seller — interview, call, video,
+ * email, questionnaire — or the website. Roster side: what a roster or
+ * licence-register document states, wherever it was filed (Lakeshore's
+ * "22 licensed field technicians" sat among the other values of
+ * "employees"), and the roster's own rows ("Licensed field technicians -
+ * total,22"). Broker-only material is never either side.
+ */
+function headCounts(info: Record<string, unknown>, docs: RosterDoc[]): { said: CountEntry[]; roster: CountEntry[] } {
+  const byId = new Map(docs.map((d) => [d.id, d]));
+  const sources = getFieldSources(info);
+  const alts = getFieldAlternates(info);
+  const said: CountEntry[] = [];
+  const roster: CountEntry[] = [];
+  const add = (key: string, value: string, src: FieldSource | undefined, onFile: boolean) => {
+    if (!src || src.brokerOnly || typeof value !== "string" || !value.trim()) return;
+    const kind = String(src.source);
+    const fromRoster = kind === "document" && isRosterDoc(src.documentId ? byId.get(src.documentId) : undefined);
+    const fromSeller = SPOKEN_KINDS.has(kind) || kind === "website" || kind === "social";
+    if (!fromRoster && !fromSeller) return;
+    for (const count of roleCounts(value)) (fromRoster ? roster : said).push({ key, value, src, count, onFile });
+  };
+  for (const [key, value] of Object.entries(info)) {
+    if (key.startsWith("_") || typeof value !== "string") continue;
+    add(key, value, sources[key], true);
+    for (const a of alts[key] ?? []) {
+      const { value: v, ...src } = a;
+      add(key, v, src as FieldSource, false);
+    }
+  }
+  for (const d of docs) {
+    if (!isRosterDoc(d) || !d.extractedText) continue;
+    for (const count of roleCounts(d.extractedText)) {
+      roster.push({ key: "", value: count.text, src: { source: "document", documentId: d.id, specialist: true } as FieldSource, count, onFile: false });
+    }
+  }
+  return { said, roster };
+}
+
+/** The roster's count for a role, when the roster sources agree on one. */
+function rosterCountFor(role: string, roster: CountEntry[]): CountEntry | null {
+  const same = roster.filter((r) => r.count.role === role);
+  if (same.length === 0) return null;
+  const values = new Set(same.map((r) => r.count.value));
+  if (values.size !== 1) return null; // two rosters disagree: nothing to prefer
+  // The worded statement over a bare table row.
+  return same.find((r) => r.key) ?? same[0];
+}
+
+/** The fact is the count and little else ("24 licensed techs in the field", "24 licensed technicians"). */
+function isPureCount(value: string, count: RoleCount): boolean {
+  const rest = value.replace(/\b\d{1,5}\b/, " ").toLowerCase().split(/[^a-z]+/).filter(Boolean);
+  const own = new Set(count.text.toLowerCase().split(/[^a-z]+/).filter(Boolean).concat(["in", "the", "field", "techs", "tech", "total", "currently", "about"]));
+  return rest.filter((w) => !own.has(w)).length <= 2;
+}
+
+/** A seller-side head count on file that the roster gives differently (the same role, a miscount — not a different group). */
+function rosterDisputes(info: Record<string, unknown>, docs: RosterDoc[]): Array<{ said: CountEntry; roster: CountEntry }> {
+  const { said, roster } = headCounts(info, docs);
+  const out: Array<{ said: CountEntry; roster: CountEntry }> = [];
+  for (const s of said) {
+    if (!isPureCount(s.value, s.count)) continue;
+    const r = rosterCountFor(s.count.role, roster);
+    if (!r || r.count.value === s.count.value) continue;
+    const ratio = Math.max(r.count.value, s.count.value) / Math.max(1, Math.min(r.count.value, s.count.value));
+    if (ratio > 1.5) continue;
+    out.push({ said: s, roster: r });
+  }
+  return out;
+}
+
+/**
+ * Decision A for head counts. A fact that IS a role's head count ("24
+ * licensed techs in the field"), from a source the roster outranks — a
+ * call, a video call, an email, the questionnaire, the website; not the
+ * seller live in the interview, never the broker — takes the roster's count;
+ * the old value is kept as another value. Where the fact's source outranks
+ * the roster, the roster's count is kept as another value of it. Either way
+ * both counts are stated for the fact, so the conflict row (countDisputesOnFile)
+ * stands until the broker settles it. Returns the keys changed (in place).
+ */
+export function applyRosterCounts(info: Record<string, unknown>, docs: RosterDoc[]): string[] {
+  const changed: string[] = [];
+  for (const { said: s, roster: r } of rosterDisputes(info, docs)) {
+    if (!s.onFile || changed.includes(s.key)) continue;
+    const rosterSrc: FieldSource = { ...r.src, specialist: true };
+    const before = JSON.stringify([info[s.key], getFieldAlternates(info)[s.key] ?? []]);
+    if (effectiveRank(s.key, rosterSrc) > effectiveRank(s.key, s.src)) {
+      recordAlternate(info, s.key, s.value, s.src);
+      info[s.key] = r.count.text;
+      setFieldSource(info, s.key, { ...rosterSrc, at: new Date().toISOString(), note: "The staff roster's count (the roster is the authority on head counts)" } as FieldSource);
+    } else {
+      recordAlternate(info, s.key, r.count.text, rosterSrc);
+    }
+    if (JSON.stringify([info[s.key], getFieldAlternates(info)[s.key] ?? []]) !== before) changed.push(s.key);
+  }
+  return changed;
+}
+
+/**
+ * Head counts the seller's side and the roster give differently for the
+ * same role — found across facts, since each side is often filed under its
+ * own key (Lakeshore: the seller's "24 licensed techs in the field" and the
+ * licence summary's "22 licensed field technicians" under "employees") — as
+ * a merge conflict on the seller-side fact: the value on file against the
+ * other. Only the seller's own words raise one (a website count alone is a
+ * lead, corrected quietly by applyRosterCounts); hedged or subset counts,
+ * and counts several times apart (a different group), never do.
+ */
+export function countDisputesOnFile(info: Record<string, unknown>, docs: RosterDoc[]): MergeConflict[] {
+  const sources = getFieldSources(info);
+  const out: MergeConflict[] = [];
+  const seen = new Set<string>();
+  for (const { said: s, roster: r } of rosterDisputes(info, docs)) {
+    if (!SPOKEN_KINDS.has(String(s.src.source))) continue;
+    const onFile = info[s.key];
+    const src = sources[s.key];
+    if (typeof onFile !== "string" || !src) continue;
+    // The value on file against the other side of the dispute.
+    const onFileIsRoster = roleCounts(onFile).some((c) => c.role === s.count.role && c.value === r.count.value);
+    const loser = onFileIsRoster
+      ? { value: s.value, src: s.src }
+      : { value: r.count.text, src: { ...r.src, specialist: true } as FieldSource };
+    if (loser.value === onFile) continue;
+    const id = `${s.key}|${s.count.role}|${s.count.value}|${r.count.value}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ factKey: s.key, winner: { value: onFile, src }, loser });
+  }
+  return out;
+}
+
+/**
+ * The head-count rule on a deal's saved facts (the CIM generation gate and
+ * the discrepancy check call it — no AI): the roster's count applied, and a
+ * dispute the seller's side and the roster have raised as a merge row.
+ * Returns the rows created.
+ */
+export async function applyHeadCountAuthority(dealId: string): Promise<number> {
+  const { withDealFactsLock } = await import("./facts-lock");
+  const documents = await storage.getDocumentsByDeal(dealId);
+  let saved: Record<string, unknown> | null = null;
+  await withDealFactsLock(dealId, async () => {
+    const deal = await storage.getDeal(dealId);
+    if (!deal) return;
+    const info = { ...((deal.extractedInfo as Record<string, unknown> | null) || {}) };
+    if (applyRosterCounts(info, documents).length > 0) await storage.updateDeal(dealId, { extractedInfo: info } as any);
+    saved = info;
+  });
+  if (!saved) return 0;
+  return recordMergeConflicts(dealId, [], documents, saved);
+}
+
 // ─── One conflict → one row ──────────────────────────────────────────────────
 
 export interface DiscrepancyDraft extends Omit<InsertDiscrepancy, "dealId"> {}
@@ -265,13 +437,15 @@ export function discrepancyForConflict(c: MergeConflict, docName: (id: string) =
       : isDocumentAuthoritativeField(c.factKey) || isPeriodFigure(c.factKey) || shareDispute
         ? "significant"
         : "minor";
-  const category = isPeriodFigure(c.factKey) || shareDispute
-    ? "financial"
-    : /lease|rent|landlord|shareholder|director|officer|incorporat|licen|permit|entityType|legalName/i.test(c.factKey)
-      ? "legal"
-      : /employee|staff|customer|supplier|equipment|asset|fleet|certif/i.test(c.factKey)
-        ? "operational"
-        : "factual";
+  const category = HEADCOUNT_FIELD.test(c.factKey)
+    ? "operational"
+    : isPeriodFigure(c.factKey) || shareDispute
+      ? "financial"
+      : /lease|rent|landlord|shareholder|director|officer|incorporat|licen|permit|entityType|legalName/i.test(c.factKey)
+        ? "legal"
+        : /employee|staff|customer|supplier|equipment|asset|fleet|certif/i.test(c.factKey)
+          ? "operational"
+          : "factual";
   const why = w.src.source === l.src.source
     ? "it is the more recent of the two"
     : isDocumentAuthoritativeField(c.factKey) && w.src.source === "document"
@@ -369,7 +543,9 @@ export async function recordMergeConflicts(
   /** The facts as saved — only conflicts still standing against them are raised. */
   finalInfo?: Record<string, unknown>,
 ): Promise<number> {
-  const conflicts = finalInfo ? settleConflicts(finalInfo, [...collected, ...shareDisputesOnFile(finalInfo)]) : collected;
+  const conflicts = finalInfo
+    ? settleConflicts(finalInfo, [...collected, ...shareDisputesOnFile(finalInfo), ...countDisputesOnFile(finalInfo, documents as RosterDoc[])])
+    : collected;
   if (conflicts.length === 0) return 0;
   const docs = new Map(documents.map((d) => [d.id, d]));
   const rows = comparableRows(await storage.getDiscrepanciesByDeal(dealId));

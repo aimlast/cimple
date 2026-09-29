@@ -84,7 +84,8 @@ import {
 import { PHASES, getPhaseIndex } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
 import { CimSummaryCard, useBuilderState } from "@/components/cim-builder/CimSummaryCard";
-import { regenerateBuyerImpact } from "@shared/cim-generation-warnings";
+import { regenerateBuyerImpact, reviewingUpdate } from "@shared/cim-generation-warnings";
+import { PublishedVersionBanner } from "@/components/deal/PublishedVersionBanner";
 import { publishReadiness, sectionsAwaitingApproval } from "@shared/cim-approvals";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { ReadyToBuildCta } from "@/components/deal/ReadyToBuildCta";
@@ -1982,6 +1983,8 @@ function Phase4Center() {
   const readiness = publishReadiness(deal, sections);
   // A failed load can't prove every section is approved: Publish stays off.
   const publishReady = readiness.ready && !sectionsError;
+  // Live, with a regenerated CIM waiting: buyers read the published version until this one is published.
+  const update = reviewingUpdate(deal);
 
   const publish = useMutation({
     mutationFn: () =>
@@ -1989,8 +1992,8 @@ function Phase4Center() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       toast({
-        title: "CIM published",
-        description: "Now live for invited buyers.",
+        title: update ? "Update published" : "CIM published",
+        description: update ? "Buyers now see the new version." : "Now live for invited buyers.",
       });
     },
     onError: (e: Error) =>
@@ -2113,25 +2116,25 @@ function Phase4Center() {
         />
       )}
       {publishReady &&
-        !deal.isLive && (
-          <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-4 flex items-center justify-between">
+        (!deal.isLive || update) && (
+          <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-medium text-teal">
-                Ready to publish
+                {update ? "Ready to publish the update" : "Ready to publish"}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                All approvals received.
+                {update ? "All approvals received. Publishing replaces the version buyers see now." : "All approvals received."}
               </p>
             </div>
             <Button
               size="sm"
-              className="bg-teal text-teal-foreground hover:bg-teal/90"
+              className="bg-teal text-teal-foreground hover:bg-teal/90 self-start sm:self-center"
               onClick={() => publish.mutate()}
               disabled={publish.isPending || publishBlocked}
               title={reasonFor("publishing") ?? undefined}
               data-testid="button-publish-cim"
             >
-              Publish CIM
+              {update ? "Publish update" : "Publish CIM"}
             </Button>
           </div>
         )}
@@ -2141,7 +2144,7 @@ function Phase4Center() {
           <div>
             <p className="text-sm font-medium text-success">CIM is live</p>
             <p className="text-xs text-muted-foreground">
-              Shared with invited buyers.
+              {update ? "Buyers see the version you published before the CIM was regenerated." : "Shared with invited buyers."}
             </p>
           </div>
         </div>
@@ -2427,6 +2430,7 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-6 space-y-3">
+      <PublishedVersionBanner deal={deal} />
       {PHASES.map((phase, idx) => {
         const isCurrentPhase = deal.phase === phase.key;
         const isComplete = currentPhaseIdx > idx;

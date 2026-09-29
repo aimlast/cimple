@@ -88,7 +88,7 @@ import {
   type SetAsideYear,
 } from "./merge-policy";
 import { fieldLabel as fieldLabelText } from "../interview/interview-plan";
-import { recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
+import { applyRosterCounts, recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
 import { removeSourceFromFacts } from "./source-removal";
 import { reviewPrivateNotes } from "./private-notes-review";
 import { reconcileMirroredFacts } from "../information/deal-mirror";
@@ -394,6 +394,8 @@ export async function reprocessDealDocuments(
     }
     if (deletedMeanwhile.length > 0) console.log(`[reprocess] ${dealId}: ${deletedMeanwhile.length} source(s) deleted while re-reading — their facts were taken off`);
     compactPrivateNotes(rebuilt);
+    // Head counts by role: the roster is the authority (decision A), across facts.
+    applyRosterCounts(rebuilt, documents.filter((d) => stillOnDeal.has(d.id)));
 
     // The deal's own name, industry and listed price are the broker's facts
     // (deal-mirror.ts): a tax return's NAICS line or a CRM note's "steel fab"

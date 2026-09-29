@@ -79,13 +79,24 @@ const DOC_AUTHORITATIVE_FIELD =
   /^(?:annualRevenue|revenue|grossProfit|grossMargin|netIncome|netProfit|operatingIncome|operatingExpenses|total(?:Assets|Liabilities|Expenses|Revenue)|cogs|costOfGoodsSold|costOfSales|accountsReceivable|accountsPayable|cash|cashAndEquivalents|currentAssets|otherCurrentAssets|currentLiabilities|longTermDebt|bankIndebtedness|debt|debtObligations|shareholderLoans?|retainedEarnings|shareholdersEquity|depreciation|amortization|interestExpense|incomeTaxes?|fixedAssets|workingCapital|netWorkingCapital|inventor(?:y|ies)|prepaid\w*|accrued\w*|deferredRevenue|customerDeposits|owner(?:Salary|Compensation|Wages|Remuneration)|officer(?:Salary|Compensation)|shareholder(?:Salar(?:y|ies)|Remuneration|Compensation)|managementSalar(?:y|ies)|backlog(?:Value)?|contractBacklog|workInProgress|customerConcentration|topCustomers?|largestCustomer|receivablesConcentration|receivablesAccountCount|lease(?:Address|Expiry|ExpiryDate|StartDate|Term|Sqft|RenewalOptions|Details)?|monthlyRent|annualRent|rent|landlord|shareholders?|shareholding|ownershipSplit|ownershipPercent(?:age)?s?|directors?|officers?|incorporationDate|incorporat(?:ed|ion)(?:Jurisdiction|Year)?|entityType|legalName|corporat(?:e|ion)Number|businessNumber|registrationNumber|licen[cs]eNumbers?)$/;
 
 /**
+ * A head count by role ("licensedTechnicians", "licensedTechnicianCount",
+ * "driverCount") — never a description of people ("keyEmployees",
+ * "technicianTenure"). The staff roster (or a licence register) is the
+ * authority on how many there are (founder decision A; Lakeshore rebuild
+ * 2026-09-28: the website's and the seller's "24 licensed technicians"
+ * printed over the roster's 22).
+ */
+export const HEADCOUNT_FIELD =
+  /^(?:(?:licensed|total|field|fullTime|partTime|certified|active|registered)\w*(?:Technicians?|Techs?|Drivers?|Nurses?|Hygienists?|Plumbers?|Electricians?|Mechanics?|Therapists?|Pharmacists?|Installers?|Apprentices?|Employees?|Staff|Workers?)|\w*(?:Technician|Tech|Driver|Nurse|Hygienist|Plumber|Electrician|Mechanic|Therapist|Pharmacist|Installer|Apprentice|Employee|Staff|Worker)s?(?:Count|Headcount|Number))$/i;
+
+/**
  * True for facts a document is the authority on: closed-year statement
  * figures (and their by-year maps), balance-sheet lines, customer
- * concentration, lease terms, registry facts.
+ * concentration, lease terms, registry facts, head counts by role.
  */
 export function isDocumentAuthoritativeField(key: string): boolean {
   const base = key.replace(/ByYear$/, "");
-  return base === "revenue" || DOC_AUTHORITATIVE_FIELD.test(key) || DOC_AUTHORITATIVE_FIELD.test(base);
+  return base === "revenue" || DOC_AUTHORITATIVE_FIELD.test(key) || DOC_AUTHORITATIVE_FIELD.test(base) || HEADCOUNT_FIELD.test(key);
 }
 
 /**
@@ -133,6 +144,9 @@ function isStatementsTitle(title: string): boolean {
   return parts.some((part) => (FORMAL_STATEMENTS.test(part) || STATEMENT_TITLE.test(part)) && !MANAGEMENT_REPORT.test(part));
 }
 
+/** A source that counts the staff: a roster, payroll or staff list — or a licence / certification register. */
+export const ROSTER_TITLE = /roster|headcount|payroll|employee (?:list|census)|staff list|org(?:ani[sz]ation(?:al)?)?\s*chart|licen[cs](?:e|es|ing)\b[^·]*(?:summary|list|register|roster)|certificat(?:e|ion)s?\b[^·]*(?:summary|list|register)/i;
+
 /** A dedicated source for a fact: [fact key pattern, source title pattern or test]. */
 const SPECIALIST_SOURCES: Array<[RegExp, RegExp | ((title: string) => boolean)]> = [
   // Book figures: the financial statements, not a tax return's version of them
@@ -150,6 +164,8 @@ const SPECIALIST_SOURCES: Array<[RegExp, RegExp | ((title: string) => boolean)]>
     /org(?:ani[sz]ation(?:al)?)?\s*chart|key people|management team|staff (?:list|roster)|employee (?:list|roster|census)|personnel/i],
   [/^(employees|fullTimeCount|partTimeCount|headcount)$/,
     /roster|headcount|payroll|employee (?:list|census)|staff list|org(?:ani[sz]ation(?:al)?)?\s*chart/i],
+  // How many of a role: the roster, or the licence register for licensed staff.
+  [HEADCOUNT_FIELD, ROSTER_TITLE],
   [/^(certifications|qualityCertifications|isoCertifications|accreditations|qualitySystem|permitsLicenses)$/,
     /certif|quality (?:manual|summary|system|performance)|\biso\b|accredit|licen[cs]e/i],
   [/^(assetsIncluded|equipment|equipmentList|fleet|machinery|presses|pressList|vehicles)$/,
@@ -711,6 +727,16 @@ export function materiallyDifferent(key: string, a: string, b: string): boolean 
   // statements — two descriptions quoting different numbers are not a conflict.
   if (!figureKey && (a.length > 60 || b.length > 60)) return false;
   if (figureKey && (a.length > 240 || b.length > 240)) return false;
+  // A head count is exact: 24 technicians is not 22 (no 5% allowance).
+  if (HEADCOUNT_FIELD.test(key)) {
+    const count = (t: string) => {
+      const m = t.match(/\b(?!(?:19|20)\d{2}\b)\d{1,5}\b/);
+      return m ? Number(m[0]) : null;
+    };
+    const x = count(a);
+    const y = count(b);
+    if (x !== null && y !== null) return x !== y;
+  }
   const hasTyped = (t: string) => typedNumericValues(t).length > 0;
   if (hasTyped(a) && hasTyped(b)) return numbersMateriallyConflict(a, b, 0.05);
   if (DATEISH_KEY.test(key)) {

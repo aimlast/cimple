@@ -48,6 +48,8 @@ export type DealApprovalFlag =
 
 export interface ApprovalDeal {
   isLive?: boolean | null;
+  /** The generation status: a live deal whose regenerated CIM waits for review edits a draft, not what buyers see. */
+  cimGeneration?: unknown;
   phase?: string | null;
   contentApprovedByBroker?: boolean | null;
   contentApprovedBySeller?: boolean | null;
@@ -79,7 +81,10 @@ export interface SectionAwaitingApproval {
  * nothing is to be cleared.
  */
 export function approvalsWithdrawnByChange(deal: ApprovalDeal): Partial<Record<DealApprovalFlag, false>> {
-  if (deal.isLive) return {};
+  // (A live deal whose buyers read the previously published version while
+  // its regenerated CIM waits for review: the approvals cover the draft.)
+  const reviewingUpdate = !!(deal.cimGeneration as { buyerHold?: { servingPublished?: boolean } } | null | undefined)?.buyerHold?.servingPublished;
+  if (deal.isLive && !reviewingUpdate) return {};
   const out: Partial<Record<DealApprovalFlag, false>> = {};
   if (deal.designApprovedByBroker) out.designApprovedByBroker = false;
   if (deal.designApprovedBySeller) out.designApprovedBySeller = false;

@@ -121,6 +121,12 @@ export interface CimFinancials {
    * overrules the bridge (earnings-canon.ts). Absent when unknown.
    */
   bridgeChangedAt?: Record<string, string> | null;
+  /**
+   * The bridgeChangedAt entries that are the broker's own add-back edits.
+   * Any other change is the analysis run's: it dates a broker figure out
+   * only when the broker has reviewed that analysis (earnings-canon.ts).
+   */
+  bridgeChangedByBroker?: Record<string, boolean> | null;
   /** What was left out because only the broker's private material states it (not yet approved). */
   privateWithheld?: string[];
   /** The analysis's sources changed since it ran (analysisSourceStatus) — the broker is told to re-run it. */
@@ -518,9 +524,19 @@ export function stampEarningsChange<T>(prior: unknown, next: T, now: Date): T {
  * creation. A figure whose date is unknown is left out.
  */
 export function earningsChangedAt(analysis: AnalysisLike, history: AnalysisLike[] = []): Record<string, string> {
+  return earningsChanges(analysis, history).at;
+}
+
+/**
+ * earningsChangedAt, and which of those changes the broker made (a stamp =
+ * the broker's own add-back edit): a broker-entered figure stands against a
+ * run's figure the broker never reviewed, not against the broker's own edit.
+ */
+export function earningsChanges(analysis: AnalysisLike, history: AnalysisLike[] = []): { at: Record<string, string>; byBroker: Record<string, boolean> } {
   const out: Record<string, string> = {};
+  const byBroker: Record<string, boolean> = {};
   const figures = earningsOf(analysis.normalization);
-  if (!figures) return out;
+  if (!figures) return { at: out, byBroker };
   const earlier = (cur: AnalysisLike): AnalysisLike | undefined => {
     const version: number = cur.version ?? 0;
     return history
@@ -533,7 +549,7 @@ export function earningsChangedAt(analysis: AnalysisLike, history: AnalysisLike[
     while (cur && !seen.has(String(cur.id))) {
       seen.add(String(cur.id));
       const stamp = stampsOf(cur.normalization, [key])[key];
-      if (stamp) { out[key] = stamp; break; }
+      if (stamp) { out[key] = stamp; byBroker[key] = true; break; }
       const prev = earlier(cur);
       if (!prev || (earningsOf(prev.normalization) ?? {})[key] !== value) {
         const created = isoOf(cur.createdAt);
@@ -543,7 +559,7 @@ export function earningsChangedAt(analysis: AnalysisLike, history: AnalysisLike[
       cur = prev;
     }
   }
-  return out;
+  return { at: out, byBroker };
 }
 
 /**
@@ -569,7 +585,8 @@ export function buildCimFinancials(analysis: AnalysisLike | null | undefined, hi
   if (!hasTable && !hasNorm && !wc && !debt) return null;
   const pnl = hasTable ? pnlByYear(table!, norm?.netIncome ?? {}) : null;
   const years = Array.from(new Set([...(hasTable ? table!.years : []), ...(hasNorm ? norm!.years ?? [] : [])])).sort();
-  const changedAt = hasNorm ? earningsChangedAt(analysis, history ?? []) : {};
+  const changes = hasNorm ? earningsChanges(analysis, history ?? []) : { at: {}, byBroker: {} };
+  const changedAt = changes.at;
   return {
     analysisId: String(analysis.id),
     version: analysis.version ?? 1,
@@ -585,6 +602,7 @@ export function buildCimFinancials(analysis: AnalysisLike | null | undefined, hi
     workingCapital: wc,
     ...(debt ? { debt } : {}),
     ...(Object.keys(changedAt).length > 0 ? { bridgeChangedAt: changedAt } : {}),
+    ...(Object.keys(changes.byBroker).length > 0 ? { bridgeChangedByBroker: changes.byBroker } : {}),
     ...(withheld.length > 0 ? { privateWithheld: withheld } : {}),
   };
 }

@@ -45,7 +45,7 @@ import type { Document, DocumentSourceMeta } from "@shared/schema";
 import { isHousekeepingNote, noteRecordedAsFact } from "@shared/private-notes";
 import { withDealFactsLock } from "./facts-lock";
 import { normalisePeriod, stampSourceDetails, type MergeConflict, type MergeContext } from "./merge-policy";
-import { recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
+import { applyRosterCounts, recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
 import { scheduleNotesReview } from "./private-notes-review";
 import { reconcileMirroredFacts } from "../information/deal-mirror";
 import { setBrokerFact } from "../information/facts";
@@ -520,6 +520,8 @@ export async function mergeExtractionIntoDeal(doc: Document, extracted: Extracte
       documents,
     );
     recordFactSpeakers(merged, extracted._speakers, doc.id); // who said it, on calls
+    // Head counts by role: the roster is the authority (decision A), across facts.
+    applyRosterCounts(merged, documents);
     // A note that only repeats a business fact this source recorded is not a note.
     addPrivateNotes(merged, extracted._privateNotes, doc, extracted as Record<string, unknown>);
     // The deal's own name, industry and listed price stay the broker's facts

@@ -67,7 +67,7 @@ export function CimReviewPanel({ dealId, review, sections, onOpenSection, compac
   };
   const sectionFor = (title: string | null) => (title ? byTitle.get(title.trim().toLowerCase()) ?? null : null);
   const counts = [
-    hold ? "held from buyers until you publish" : null,
+    hold ? (hold.servingPublished ? "buyers see the previous version until you publish" : "held from buyers until you publish") : null,
     review.placeholders > 0 ? `${review.placeholders} section${review.placeholders === 1 ? "" : "s"} couldn't be written` : null,
     showNotes ? `${warnings.length} note${warnings.length === 1 ? "" : "s"} from the last generation` : null,
     facts ? `facts changed since it was written${facts.sections ? ` (${facts.sections} section${facts.sections === 1 ? "" : "s"})` : ""}` : null,
@@ -85,7 +85,20 @@ export function CimReviewPanel({ dealId, review, sections, onOpenSection, compac
 
       {open && (
         <div className={cn("space-y-3", compact && "mt-2 max-h-[40vh] overflow-y-auto pr-1")}>
-          {hold && (
+          {hold?.servingPublished && (
+            <div className="flex gap-2.5" data-testid="cim-review-hold">
+              <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5 text-amber-500" />
+              <div className="min-w-0 space-y-0.5">
+                <p className="font-medium">Buyers are seeing the previous version — review and publish the update</p>
+                <p className="text-xs text-muted-foreground">
+                  {heldReplacedText(hold)}
+                  {" "}The deal stays live, and buyers keep reading the version you published until you review these sections, record the approvals on the Overview and publish the update.
+                  {hold.ddCleared ? " This version has no due-diligence version yet — generate it before you publish, or due-diligence buyers will get the named CIM." : ""}
+                </p>
+              </div>
+            </div>
+          )}
+          {hold && !hold.servingPublished && (
             <div className="flex gap-2.5" data-testid="cim-review-hold">
               <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5 text-amber-500" />
               <div className="min-w-0 space-y-0.5">

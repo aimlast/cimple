@@ -32,6 +32,7 @@ import { scrubPrivateText } from "../cim/discrepancy-privacy";
 import { mentionsPrivateSource, type DiscrepancySideSources, type DiscrepancySideSource } from "@shared/discrepancy-sides";
 import {
   applyAddbackRules,
+  type AddbackRuleContext,
   applyWorkingCapitalRules,
   flagEarningsNotes,
   flagEarningsStatements,
@@ -53,6 +54,7 @@ import {
   type FigureIndex,
 } from "./private-figures";
 import { getComparables, type CompsResult } from "./comps";
+import { ownersOnFile, payRosterFrom, payTextsFrom, peopleOnFile } from "./owner-pay-attribution";
 import {
   coerceReclassifiedTable,
   coerceNormalization,
@@ -106,6 +108,8 @@ interface SourceBundle {
   factKeys: string[];
   /** Figures in the shared vs the broker's private material (private-figures.ts). */
   figureIndex: FigureIndex;
+  /** Who is paid what, and who stays (owner-pay-attribution.ts) — for the owner-pay rules. */
+  payContext: Pick<AddbackRuleContext, "roster" | "ownerName" | "owners">;
 }
 
 /**
@@ -389,9 +393,13 @@ async function assembleSources(
   // document with text counts, processed or not (fail closed).
   const figureTexts = dealFigureTexts(allDocs, rawInfo, deal.questionnaireData);
   const figureIndex = buildFigureIndex(figureTexts.shared, figureTexts.private);
+  // Whose pay each owner line is (a statement line of every shareholder's
+  // pay is not the selling owner's).
+  const payContext = payContextFor(rawInfo, figureTexts);
 
   return {
     figureIndex,
+    payContext,
     statements,
     sourceDocumentIds: contributingDocIds,
     otherDocsContext,
@@ -494,7 +502,7 @@ export async function runFinancialAnalysis(
     //     material are marked (an add-back stays out of EBITDA/SDE and the
     //     CIM until the broker approves it; a question's private figures are
     //     never sent to the seller).
-    const ruled = markPrivateMaterial(postProcessAnalysis(freshResult), sources.figureIndex);
+    const ruled = markPrivateMaterial(postProcessAnalysis(freshResult, sources.payContext), sources.figureIndex);
     const reconciled = reconcileNetIncome(ruled.reclassifiedPnl, ruled.normalization, sources.statements);
     const carried: AnalysisOutput = previous
       ? carryForwardBrokerEdits(normalizeFinancialAnalysisRow(previous), {
@@ -580,11 +588,24 @@ export async function runFinancialAnalysis(
 
 // ── Deterministic post-processing ──
 
+/** Who is paid what and who stays, from the deal's material (owner-pay-attribution.ts). */
+export function payContextFor(
+  rawInfo: Record<string, unknown>,
+  figureTexts: { shared: string[]; private: string[] },
+): Pick<AddbackRuleContext, "roster" | "ownerName" | "owners"> {
+  const ownerName = typeof rawInfo.ownerName === "string" ? rawInfo.ownerName : null;
+  return {
+    roster: payRosterFrom(payTextsFrom(rawInfo, figureTexts), peopleOnFile(rawInfo, ownerName ? [ownerName] : [])),
+    ownerName,
+    owners: ownersOnFile(rawInfo),
+  };
+}
+
 /** Rules applied to the model's fresh output, before the broker's edits are carried over. */
-export function postProcessAnalysis(result: AnalysisOutput): AnalysisOutput {
+export function postProcessAnalysis(result: AnalysisOutput, ctx: Omit<AddbackRuleContext, "pnl"> = {}): AnalysisOutput {
   return {
     ...result,
-    normalization: applyAddbackRules(result.normalization),
+    normalization: applyAddbackRules(result.normalization, { ...ctx, pnl: result.reclassifiedPnl }),
     workingCapital: applyWorkingCapitalRules(result.workingCapital, result.reclassifiedBalanceSheet),
   };
 }
