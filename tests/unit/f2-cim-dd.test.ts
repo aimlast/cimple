@@ -49,7 +49,8 @@ const inputs = buildDdContext({
 });
 assert.ok(!/Maria Chen/.test(inputs.context), `DD context never names her:\n${inputs.context}`);
 assert.ok(!/Maria Chen/.test(inputs.knownText), "nor the look-up text the validator trusts");
-assert.match(inputs.context, /Salary paid \(owner's wife\): verified \(3 supporting transactions\)|Salary paid: verified/, "the add-back stays, under a neutral label");
+// (Worded by shared/addback-support addbackEvidenceLine — claimed vs what the ledger shows.)
+assert.match(inputs.context, /- Salary paid \(owner's wife\): verified[^\n]*3 supporting transactions|- Salary paid: verified/, "the add-back stays, under a neutral label");
 assert.match(inputs.context, /\+ Salary paid[^\n]*\$62,000/, "the bridge keeps its step");
 assert.match(inputs.context, /FY2024 statements\.pdf/);
 assert.deepEqual(inputs.heldNames, ["Maria Chen"]);

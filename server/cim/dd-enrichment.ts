@@ -29,6 +29,7 @@
 import { and, eq, inArray, isNull, lt, notInArray } from "drizzle-orm";
 import { isMediaLayout, isRegionWord, REGION_NAMES } from "@shared/cim-media";
 import { isBroadRegionWord, isCommonWord } from "@shared/blind-vocabulary";
+import { addbackEvidenceLine } from "@shared/addback-support";
 import Anthropic from "@anthropic-ai/sdk";
 import { cimSections, cimSectionOverrides, type CimSection, type Deal } from "@shared/schema";
 import { db } from "../db";
@@ -193,8 +194,10 @@ export function buildDdContext(input: {
       ab && typeof ab.label === "string" && (bridgeLabels ? isBridgeAddback(ab.label, bridgeLabels) : !isDistributionLine({ label: ab.label, amounts: ab.yearAmounts ?? {} })),
     );
     if (addbacks.length > 0) {
+      // Claimed vs what the ledger shows: a partly supported add-back is never "matched".
+      // (A held person's name never appears in a label — heldLabel.)
       parts.push(`## Add-back verification\nStatus: ${av.status}\n${addbacks.map((ab: any) =>
-        `- ${heldLabel(ab.label, heldNames)}: ${ab.verificationStatus} (${ab.matchedTransactions?.length || 0} supporting transactions)`
+        addbackEvidenceLine({ ...ab, label: typeof ab.label === "string" ? heldLabel(ab.label, heldNames) : ab.label })
       ).join("\n")}`);
     }
   }

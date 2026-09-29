@@ -71,4 +71,32 @@ const ok = (name: string) => { passed++; console.log(`PASS ${name}`); };
   ok("sharing records the broker's draft only on a published question");
 }
 
+{
+  // finance-facts: the DD add-back lines say what the ledger shows (addbackEvidenceLine);
+  // CIM: a held person's name never appears in a label (heldLabel). Both, together.
+  const { buildDdContext } = await import("../../server/cim/dd-enrichment");
+  const inputs = buildDdContext({
+    extractedInfo: { businessName: "Harbourline Dental Group", ownerName: "Dr. Alan Chen" },
+    keepOut: { clauses: [], names: ["Maria Chen"], pairs: [] },
+    financials: null,
+    addbackVerification: {
+      status: "complete",
+      addbacks: [{ label: "Salary paid to Maria Chen (owner's wife)", verificationStatus: "partial_match", annualAmount: 62000, totalMatchedAmount: 40000, matchedTransactions: [1, 2], yearAmounts: { "2024": 62000 } }],
+    },
+    documents: [],
+  } as any);
+  assert.ok(!/Maria/.test(inputs.context), inputs.context);
+  assert.match(inputs.context, /- Salary paid \(owner's wife\): partly supported[^\n]*\$40,000[^\n]*2 supporting transactions/);
+  ok("DD add-back lines: ledger evidence wording, held names kept out");
+}
+
+{
+  // review round 2 names the statements it couldn't read; finance-facts adds the part-read notes.
+  const analyzer = read("server/financial/analyzer.ts");
+  assert.ok(analyzer.includes("aiReasoning: withUnreadNote([analysisResult.aiReasoning, ...sources.readNotes].filter(Boolean).join(\"\\n\\n\"), sources.sourceDocumentIds)"));
+  assert.ok(analyzer.includes("readStatementDocs(financialDocs)"));
+  assert.ok(analyzer.includes("export function spreadWindows("));
+  ok("analysis reasoning: unread statements named first, part-read notes kept");
+}
+
 console.log(`integ-free-round-2-complete: ${passed} passed`);

@@ -21,7 +21,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { IStorage } from "../storage";
 import type { Discrepancy, FinancialAnalysis } from "@shared/schema";
-import { extractFinancialData, type ExtractedStatement } from "./extractor";
+import { extractFinancialData, unreadFinancialText, type ExtractedStatement } from "./extractor";
 import { isTransientAiError, mapWithLimit, withAiRetry } from "../ai-retry";
 import { brokerPrivacy } from "../interview/seller-view";
 import { getFieldSources } from "../interview/info-merger";
@@ -108,6 +108,8 @@ interface SourceBundle {
   factKeys: string[];
   /** Figures in the shared vs the broker's private material (private-figures.ts). */
   figureIndex: FigureIndex;
+  /** Sources read only in part ("Part-read: …") — recorded on the analysis. */
+  readNotes: string[];
 }
 
 /**
@@ -165,7 +167,9 @@ const FINANCIAL_KEYWORDS = [
 export function sliceRelevantText(text: string, budget: number, extraKeywords: string[] = []): string {
   if (text.length <= budget) return text;
 
-  const headBudget = Math.floor(budget * 0.45);
+  // A text many times the budget (three years of tax returns in one file):
+  // a smaller head, so the budget reaches the later years too.
+  const headBudget = Math.floor(budget * (text.length > budget * 4 ? 0.2 : 0.45));
   const head = text.slice(0, headBudget);
   const rest = text.slice(headBudget);
   const restLower = rest.toLowerCase();
@@ -175,13 +179,13 @@ export function sliceRelevantText(text: string, budget: number, extraKeywords: s
   const keywords = extraKeywords.length > 0
     ? Array.from(new Set([...extraKeywords.map((k) => k.toLowerCase()).filter((k) => k.length >= 3), ...FINANCIAL_KEYWORDS]))
     : FINANCIAL_KEYWORDS;
+  // Every occurrence is a candidate (not the first 20 in text order — those
+  // all sit in the oldest year of a chronological pack); spreadWindows picks.
   for (const kw of keywords) {
     let idx = restLower.indexOf(kw);
-    let guard = 0;
-    while (idx !== -1 && guard < 20) {
+    while (idx !== -1) {
       windows.push({ start: Math.max(0, idx - 200), end: idx + windowSize });
       idx = restLower.indexOf(kw, idx + windowSize);
-      guard++;
     }
   }
 
@@ -201,13 +205,10 @@ export function sliceRelevantText(text: string, budget: number, extraKeywords: s
     }
   }
 
-  let remaining = budget - headBudget;
+  const picked = spreadWindows(merged, rest.length, budget - headBudget);
   const chunks: string[] = [head];
-  for (const w of merged) {
-    if (remaining <= 0) break;
-    const len = Math.min(w.end - w.start, remaining);
-    chunks.push(`\n[... skipped to offset ${headBudget + w.start} ...]\n` + rest.slice(w.start, w.start + len));
-    remaining -= len;
+  for (const w of picked) {
+    chunks.push(`\n[... skipped to offset ${headBudget + w.start} ...]\n` + rest.slice(w.start, w.end));
   }
   return chunks.join("");
 }
@@ -266,6 +267,52 @@ export function withUnreadNote(aiReasoning: string, sources: AnalysisSourceRef[]
   if (unread.length === 0) return aiReasoning;
   const note = `Couldn't read ${unread.map((s) => `“${s.name ?? s.id}” (${s.unread})`).join(", ")} — the figures from ${unread.length === 1 ? "that statement are" : "those statements are"} missing from this analysis. Re-run the analysis to include ${unread.length === 1 ? "it" : "them"}.`;
   return aiReasoning ? `${note}\n\n${aiReasoning}` : note;
+}
+
+/**
+ * Chooses windows across the WHOLE text within a budget: the text is cut
+ * into zones (about one per two budgets of text, at most 8 — a 464K
+ * three-year tax pack gets a zone per return or so) and windows are taken
+ * one per zone per round, the last (newest, in a chronological pack) zone
+ * first, instead of filling the budget from the start. Returned in text order.
+ */
+export function spreadWindows(
+  merged: Array<{ start: number; end: number }>,
+  textLength: number,
+  budget: number,
+): Array<{ start: number; end: number }> {
+  if (budget <= 0 || merged.length === 0) return [];
+  const zoneCount = Math.max(1, Math.min(8, Math.ceil(textLength / Math.max(1, budget * 2))));
+  const zoneSize = textLength / zoneCount;
+  const zones: Array<Array<{ start: number; end: number }>> = Array.from({ length: zoneCount }, () => []);
+  // (A long run of merged windows — a dense statement page — is taken a piece at a time.)
+  const PIECE = 3000;
+  for (const w of merged) {
+    for (let s = w.start; s < w.end; s += PIECE) {
+      zones[Math.min(zoneCount - 1, Math.floor(s / zoneSize))].push({ start: s, end: Math.min(w.end, s + PIECE) });
+    }
+  }
+  const picked: Array<{ start: number; end: number }> = [];
+  let remaining = budget;
+  let round = 0;
+  while (remaining > 0 && zones.some((z) => z.length > round)) {
+    for (let z = zoneCount - 1; z >= 0 && remaining > 0; z--) {
+      const w = zones[z][round];
+      if (!w) continue;
+      const len = Math.min(w.end - w.start, remaining);
+      picked.push({ start: w.start, end: w.start + len });
+      remaining -= len;
+    }
+    round++;
+  }
+  picked.sort((a, b) => a.start - b.start);
+  const joined: Array<{ start: number; end: number }> = [];
+  for (const w of picked) {
+    const last = joined[joined.length - 1];
+    if (last && w.start <= last.end) last.end = Math.max(last.end, w.end);
+    else joined.push({ ...w });
+  }
+  return joined;
 }
 
 async function assembleSources(
@@ -333,7 +380,24 @@ async function assembleSources(
     return parts.join("\n");
   };
 
+  // A statement pack longer than the structured read covers: the rest goes
+  // in as text (its most relevant passages, spread across it), and the
+  // analysis records that it was read in part.
+  const partReadDocs = financialDocs
+    .filter((_, i) => statementArrays[i].length > 0)
+    .map((d) => ({ doc: d, unread: unreadFinancialText(d.extractedText!) }))
+    .filter((x) => x.unread.length > 0);
+  const readNotes = [
+    ...partReadDocs.map(({ doc, unread }) =>
+      `Part-read: "${doc.name}" is ${doc.extractedText!.length.toLocaleString("en-US")} characters; the statements were read from the first ${(doc.extractedText!.length - unread.length).toLocaleString("en-US")}, and the rest only as text passages.`),
+    ...[...unparsedFinancialDocs, ...taxDocs]
+      .filter((d) => (d.extractedText?.length ?? 0) > 25000)
+      .map((d) => `Part-read: "${d.name}" (${d.extractedText!.length.toLocaleString("en-US")} characters) was read as passages spread across the whole text (25,000 characters), not in full.`),
+  ];
+
   const otherDocsContext = [
+    ...partReadDocs.map(({ doc, unread }) =>
+      `### ${doc.name} — the part past the statements read above (category: ${doc.category ?? "other"}, ID: ${doc.id})\nText:\n${sliceRelevantText(unread, 25000)}`),
     ...unparsedFinancialDocs.map((d) => renderDoc(d, 25000)),
     ...taxDocs.map((d) => renderDoc(d, 25000)),
     ...otherDocs.map((d) => renderDoc(d, 4000)),
@@ -457,6 +521,7 @@ async function assembleSources(
     docMetaById,
     privateContext,
     factKeys,
+    readNotes,
   };
 }
 
@@ -630,7 +695,9 @@ export async function runFinancialAnalysis(
       insights: analysisResult.insights,
       clarifyingQuestions: analysisResult.clarifyingQuestions,
       sourceDocumentIds: sources.sourceDocumentIds,
-      aiReasoning: withUnreadNote(analysisResult.aiReasoning, sources.sourceDocumentIds),
+      // Statements that couldn't be read are named first; a source read only
+      // in part says so where the broker reads the analysis's reasoning.
+      aiReasoning: withUnreadNote([analysisResult.aiReasoning, ...sources.readNotes].filter(Boolean).join("\n\n"), sources.sourceDocumentIds),
     });
 
     // 6. Route cross-source discrepancies into the shared discrepancies table
