@@ -95,7 +95,7 @@ import { publishReadiness, sectionsAwaitingApproval } from "@shared/cim-approval
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { ReadyToBuildCta } from "@/components/deal/ReadyToBuildCta";
 import { DiscrepancyCheckNotice } from "@/components/deal/DiscrepancyCheckNotice";
-import { DealAnalyticsWidget } from "@/components/deal/DealAnalyticsWidget";
+import { BuyerPulseCard } from "@/components/engagement/BuyerPulseCard";
 import type {
   Deal,
   SellerInvite,
@@ -2621,9 +2621,9 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
       {/* Document table below phases */}
       <DocumentTable />
 
-      {/* Quick analytics summary */}
+      {/* Buyer pulse: who is reading, who to call first (replaces the old analytics widget) */}
       <div className="mt-6 pt-6 border-t border-border">
-        <DealAnalyticsWidget dealId={dealId} />
+        <BuyerPulseCard dealId={dealId} />
       </div>
     </div>
   );

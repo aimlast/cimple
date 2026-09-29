@@ -12,6 +12,7 @@
  * short while after finishing (for the watcher's completion toast); the
  * persisted status is the durable record.
  */
+import { assignLineage } from "../analytics/lineage";
 import { storage } from "../storage";
 import { generateCimLayout, type CimLayoutParams, type LayoutProgress } from "./layout-engine";
 import type { CimDocument } from "./layout-types";
@@ -223,6 +224,7 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
             layoutType: i.layoutType,
             avgTimeSpentSeconds: i.avgTimeSpentSeconds ?? 0,
             sampleCount: i.sampleCount ?? 0,
+            completionRate: i.completionRate ?? null,
           }))
         : null,
   };
@@ -300,13 +302,17 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
         ...(keepServing ? { servingPublished: true } : {}),
       }
     : null;
+  // Reading analytics: each new section continues the old one it replaces
+  // (same key, title or unique page role), so page history survives the new ids.
+  const lineage = assignLineage(await storage.getCimSectionsByDeal(deal.id).catch(() => []), document.sections);
   // The CIM buyers read now is kept before anything is replaced (throws —
   // the run then fails and nothing changes).
   if (hold && keepServing && !previousHold?.servingPublished) await takePublishedSnapshot(current);
   const cimContent: Record<string, string> = {};
-  const rows = document.sections.map((section) => {
+  const rows = document.sections.map((section, i) => {
     if (section.aiDraftContent) cimContent[section.sectionKey] = section.aiDraftContent;
     return {
+      analyticsLineage: lineage[i],
       dealId: deal.id,
       sectionKey: section.sectionKey,
       sectionTitle: section.sectionTitle,

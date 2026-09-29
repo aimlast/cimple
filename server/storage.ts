@@ -151,7 +151,7 @@ export interface IStorage {
     industry: string,
     sectionType: string,
     layoutType: string,
-    metrics: { timeSeconds: number; scrollDepth?: number }
+    metrics: { timeSeconds: number; scrollDepth?: number; sampleCount?: number; completionRate?: number }
   ): Promise<void>;
 
   // FAQ operations
@@ -614,7 +614,10 @@ export class DbStorage implements IStorage {
   /** The deal and every row that carries its id (server/deals/delete-deal.ts). Files: deleteDealEverywhere. */
   async deleteDeal(id: string): Promise<void> {
     // (Includes the kept copy of a live CIM — cim_published_snapshots — which
-    // has no foreign key and would outlive the deal with the CIM buyers were given.)
+    // has no foreign key and would outlive the deal with the CIM buyers were
+    // given, and the reading analytics — visits, rollups, served versions and
+    // the deal's anonymous benchmarks, which stop feeding other brokers'
+    // benchmarks and layout hints.)
     await deleteDealRows(db, id);
   }
 
@@ -976,6 +979,9 @@ export class DbStorage implements IStorage {
   }
 
   async deleteBuyerAccess(id: string): Promise<void> {
+    // Reading analytics of this link go with it.
+    await db.execute(sql`DELETE FROM reading_rollups WHERE buyer_access_id = ${id}`);
+    await db.execute(sql`DELETE FROM buyer_visits WHERE buyer_access_id = ${id}`);
     await db.delete(buyerAccess).where(eq(buyerAccess.id, id));
   }
 
@@ -1102,49 +1108,70 @@ export class DbStorage implements IStorage {
       .orderBy(desc(engagementInsights.avgTimeSpentSeconds));
   }
 
+  /**
+   * Atomic per (industry, sectionType, layoutType): the table has no unique
+   * key, so a transaction-scoped advisory lock serialises writers of one
+   * row — concurrent refreshes can't lose an update or insert a duplicate.
+   * With `sampleCount` the metrics are ABSOLUTE (the learning loop recomputes
+   * them from reading_benchmarks); without it, the legacy rolling average.
+   */
   async upsertEngagementInsight(
     industry: string,
     sectionType: string,
     layoutType: string,
-    metrics: { timeSeconds: number; scrollDepth?: number }
+    metrics: { timeSeconds: number; scrollDepth?: number; sampleCount?: number; completionRate?: number }
   ): Promise<void> {
-    // Query-then-update: no unique constraint, use rolling weighted average
-    const existing = await db.select()
-      .from(engagementInsights)
-      .where(
-        sql`${engagementInsights.industry} = ${industry}
-          AND ${engagementInsights.sectionType} = ${sectionType}
-          AND ${engagementInsights.layoutType} = ${layoutType}`
-      )
-      .limit(1);
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`engagement_insight|${industry}|${sectionType}|${layoutType}`}))`);
+      const existing = await tx.select()
+        .from(engagementInsights)
+        .where(
+          sql`${engagementInsights.industry} = ${industry}
+            AND ${engagementInsights.sectionType} = ${sectionType}
+            AND ${engagementInsights.layoutType} = ${layoutType}`
+        )
+        .limit(1);
 
-    if (existing.length > 0) {
-      const row = existing[0];
-      const n = (row.sampleCount ?? 0) + 1;
-      const newAvgTime = Math.round(((row.avgTimeSpentSeconds ?? 0) * (n - 1) + metrics.timeSeconds) / n);
-      const newAvgScroll = metrics.scrollDepth != null
-        ? Math.round(((row.avgScrollDepthPercent ?? 0) * (n - 1) + metrics.scrollDepth) / n)
-        : row.avgScrollDepthPercent;
-      await db.update(engagementInsights)
-        .set({
-          avgTimeSpentSeconds: newAvgTime,
-          avgScrollDepthPercent: newAvgScroll ?? 0,
-          sampleCount: n,
+      if (metrics.sampleCount != null) {
+        const values = {
+          avgTimeSpentSeconds: Math.round(metrics.timeSeconds),
+          completionRate: Math.round(metrics.completionRate ?? 0),
+          sampleCount: metrics.sampleCount,
           updatedAt: new Date(),
-        })
-        .where(eq(engagementInsights.id, row.id));
-    } else {
-      await db.insert(engagementInsights).values({
-        industry,
-        sectionType,
-        layoutType,
-        avgTimeSpentSeconds: metrics.timeSeconds,
-        avgScrollDepthPercent: metrics.scrollDepth ?? 0,
-        completionRate: 0,
-        returnVisitRate: 0,
-        sampleCount: 1,
-      });
-    }
+        };
+        if (existing.length > 0) await tx.update(engagementInsights).set(values).where(eq(engagementInsights.id, existing[0].id));
+        else await tx.insert(engagementInsights).values({ industry, sectionType, layoutType, avgScrollDepthPercent: 0, returnVisitRate: 0, ...values });
+        return;
+      }
+
+      if (existing.length > 0) {
+        const row = existing[0];
+        const n = (row.sampleCount ?? 0) + 1;
+        const newAvgTime = Math.round(((row.avgTimeSpentSeconds ?? 0) * (n - 1) + metrics.timeSeconds) / n);
+        const newAvgScroll = metrics.scrollDepth != null
+          ? Math.round(((row.avgScrollDepthPercent ?? 0) * (n - 1) + metrics.scrollDepth) / n)
+          : row.avgScrollDepthPercent;
+        await tx.update(engagementInsights)
+          .set({
+            avgTimeSpentSeconds: newAvgTime,
+            avgScrollDepthPercent: newAvgScroll ?? 0,
+            sampleCount: n,
+            updatedAt: new Date(),
+          })
+          .where(eq(engagementInsights.id, row.id));
+      } else {
+        await tx.insert(engagementInsights).values({
+          industry,
+          sectionType,
+          layoutType,
+          avgTimeSpentSeconds: metrics.timeSeconds,
+          avgScrollDepthPercent: metrics.scrollDepth ?? 0,
+          completionRate: 0,
+          returnVisitRate: 0,
+          sampleCount: 1,
+        });
+      }
+    });
   }
 
   // ── Integration operations ──

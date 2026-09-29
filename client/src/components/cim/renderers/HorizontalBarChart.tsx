@@ -21,6 +21,7 @@ import { formatAxisTick, formatFullValue } from "./chartFormat";
 import { chartSeriesRows, chartShares, isPercentUnit } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
 import { NotCharted } from "./NotCharted";
+import { useBlockAttrs, useChartPointReporter } from "../blocks";
 
 interface HBarDataPoint {
   name: string;
@@ -66,6 +67,8 @@ function CustomTooltip({ active, payload, label, unit }: CustomTooltipProps) {
 
 export function HorizontalBarChartRenderer({ layoutData, content, branding, section }: RendererProps) {
   const theme = useCimTheme();
+  const ba = useBlockAttrs();
+  const point = useChartPointReporter();
   const data: HorizontalBarChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const chartData = data.data || [];
 
@@ -80,13 +83,15 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
   // gave NaN for them and drew every bar at zero.
   // A value that isn't one amount ("TBD") is listed under the chart, never
   // drawn as a $0 bar (shared/cim-chart-values chartSeriesRows).
-  const series = chartSeriesRows(chartData, data.unit);
+  // (Each drawn bar keeps its datum's index: the reading tracker's chart
+  // points follow the layout data, which also holds the rows not drawn.)
+  const series = chartSeriesRows(chartData.map((d, srcIndex) => ({ ...d, srcIndex })), data.unit);
   const normalized = series.rows;
   if (normalized.length === 0) {
     return (
       <div>
         <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
-        <NotCharted items={series.unreadable} />
+        <div {...ba("chart")}><NotCharted items={series.unreadable} /></div>
         {content ? <ProseFallback content={content} /> : null}
       </div>
     );
@@ -114,12 +119,15 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
   return (
     <div>
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+      <div {...ba("chart")}>
       <ResponsiveContainer width="100%" height={height}>
         <BarChart
           data={withPercent}
           layout="vertical"
           margin={{ top: 4, right: showLabels ? 48 : 16, left: 0, bottom: 4 }}
           barCategoryGap="25%"
+          onMouseMove={(s) => point(s?.activeTooltipIndex == null ? null : normalized[Number(s.activeTooltipIndex)]?.srcIndex)}
+          onMouseLeave={() => point(null)}
         >
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
@@ -164,6 +172,7 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
       {data.yLabel && (
         <p className="text-xs text-muted-foreground text-center mt-1">{data.yLabel}</p>
       )}
+      </div>
     </div>
   );
 }

@@ -30,10 +30,31 @@ it.
 provide (industries, locations, financial capability), decisions you submit
 on opportunities, and questions you ask through the Q&A feature.
 
-**Automatically:** engagement analytics inside CIM viewing rooms (pages
-viewed, time spent, scroll depth, cursor heat maps) tied to the viewing
-buyer's access link; standard server logs (IP address, timestamps); session
-cookies required to keep you signed in. We do not use advertising trackers.
+**Automatically:** reading analytics inside CIM viewing rooms, tied to the
+viewing buyer's access link (see "Reading analytics in viewing rooms"
+below); standard server logs (IP address, timestamps); session cookies
+required to keep you signed in. We do not use advertising trackers.
+
+**Reading analytics in viewing rooms.** *[FOR LAWYER REVIEW — added with
+reading analytics v2, 2026-09-28.]* After a buyer has signed any required
+NDA, the viewing room records how long the buyer reads each part of the CIM
+(for example a table row, a chart or a paragraph), which pages they reach,
+and actions such as opening a section, switching a financial table to its
+normalized view, following a link inside the document, or attempting to
+copy or print. Time is counted only while the document is on screen, the
+browser tab is in front and the buyer is active. The record is tied to the
+buyer's access link and is shown only to the broker of that deal (and their
+brokerage); it is never shown to the seller or to other buyers. It is not
+recorded on the NDA form or before the NDA is signed. We do not store the
+buyer's raw IP address or browser identifier with it: only the device type,
+the browser family (e.g. "Chrome on Mac") and a keyed, one-way code of the
+network, used solely to tell the broker that a document was opened from
+several places. Every viewing room shows the notice "Your broker can see
+which parts of this document you read." Reading analytics are kept for the
+life of the deal and deleted with it or with the buyer's access. For
+anonymous learning across the platform (which layouts buyers read most),
+only aggregate figures by generic page type are used — never a page's title,
+text or any identifying detail.
 
 ## 2. How we use information
 

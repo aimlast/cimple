@@ -20,6 +20,7 @@ import {
   analyticsEvents, faqItems, integrationEmails, dealKnowledgeSources, financialAnalyses, addbackVerifications,
   cimSectionOverrides, discrepancies, dealMembers, notifications, buyerApprovalRequests, dealOutreach,
   dealDocumentRequirements, buyerEmails, dealMedia, buyerUsers, cimPublishedSnapshots,
+  cimRenditions, buyerVisits, readingRollups, readingBenchmarks,
 } from "@shared/schema";
 import { resolveDocumentPath } from "../documents/document-path";
 
@@ -53,6 +54,13 @@ export const DEAL_CHILD_TABLES = {
   deal_media: { table: dealMedia, column: dealMedia.dealId, mode: "delete" },
   // The kept copy of a live CIM while an update is reviewed (published-snapshot.ts).
   cim_published_snapshots: { table: cimPublishedSnapshots, column: cimPublishedSnapshots.dealId, mode: "delete" },
+  // Reading analytics (server/analytics/*): visits, per-part rollups, the
+  // versions buyers were served, and the deal's anonymous benchmarks (which
+  // would otherwise keep feeding other brokers' benchmarks and layout hints).
+  reading_rollups: { table: readingRollups, column: readingRollups.dealId, mode: "delete" },
+  buyer_visits: { table: buyerVisits, column: buyerVisits.dealId, mode: "delete" },
+  cim_renditions: { table: cimRenditions, column: cimRenditions.dealId, mode: "delete" },
+  reading_benchmarks: { table: readingBenchmarks, column: readingBenchmarks.dealId, mode: "delete" },
   buyer_emails: { table: buyerEmails, column: buyerEmails.dealId, mode: "detach", field: "dealId" },
   buyer_users: { table: buyerUsers, column: buyerUsers.invitedByDeal, mode: "detach", field: "invitedByDeal" },
 } as const;

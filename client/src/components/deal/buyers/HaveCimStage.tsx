@@ -1,14 +1,20 @@
 /**
  * Buyers tab, stage 4 — "Have the CIM". Everyone who can open the CIM:
  * fit (how well the business matches what they want), their decision,
- * engagement (how much they've read), NDA and link, with link actions
+ * reading (how they read the CIM — the reading tracker's status in words
+ * and a strip of the pages they read, the same judgement as the Engagement
+ * tab; click through to where they read), NDA and link, with link actions
  * (copy / extend / revoke) and the CIM version they see.
  *
  * Fit comes from GET /api/deals/:dealId/buyer-fit and is kept current by the
  * server on every load (server/matching/access-fit.ts).
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
+import { formatReadingTime } from "@shared/analytics-v2";
+import { useEngagementBuyers } from "@/hooks/useEngagement";
+import { PageStrip, StatusChip, stripScale } from "@/components/engagement/buyers/parts";
 import { AccessLevelSelect } from "@/components/cim-builder/AccessLevelSelect";
 import { Button } from "@/components/ui/button";
 import {
@@ -61,13 +67,6 @@ const DECISIONS: Record<string, { label: string; icon: typeof Clock; className: 
   interested: { label: "Interested", icon: ThumbsUp, className: "text-success-muted-foreground bg-success-muted" },
   not_interested: { label: "Not interested", icon: ThumbsDown, className: "text-red-500 bg-destructive/10" },
   lapsed: { label: "Lapsed", icon: Timer, className: "text-muted-foreground bg-muted" },
-};
-
-const INTEREST: Record<string, { label: string; className: string }> = {
-  high: { label: "Reading closely", className: "text-foreground" },
-  medium: { label: "Some reading", className: "text-foreground/80" },
-  low: { label: "A quick look", className: "text-muted-foreground" },
-  minimal: { label: "Barely opened", className: "text-muted-foreground/70" },
 };
 
 type GrantPrefill = { buyerEmail?: string | null; buyerName?: string | null; buyerCompany?: string | null };
@@ -141,14 +140,12 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
   const [revokeTarget, setRevokeTarget] = useState<any | null>(null);
   const [fitFor, setFitFor] = useState<any | null>(null);
 
-  const { data: buyerScores = [] } = useQuery<any[]>({
-    queryKey: ["/api/deals", dealId, "analytics/buyer-scores"],
-    queryFn: async () => {
-      const r = await fetch(`/api/deals/${dealId}/analytics/buyer-scores`, { credentials: "include" });
-      // Scores enrich the table but aren't essential — degrade quietly
-      return r.ok ? r.json() : [];
-    },
-  });
+  // How each buyer read the CIM (the reading tracker — the same judgement
+  // as the Engagement tab). Enriches the table but isn't essential: degrades quietly.
+  const { data: engagement } = useEngagementBuyers(dealId);
+  const [, setLocation] = useLocation();
+  const cardByAccess = useMemo(() => new Map((engagement?.buyers ?? []).map((c) => [c.accessId, c])), [engagement]);
+  const stripMax = useMemo(() => stripScale((engagement?.buyers ?? []).map((c) => c.pageStrip)), [engagement]);
   const { data: fitData, isLoading: fitLoading, refetch: refetchFit } = useQuery<{ fits: AccessFit[] }>({
     queryKey: ["/api/deals", dealId, "buyer-fit"],
     enabled: buyers.length > 0,
@@ -163,7 +160,6 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
     lastIds.current = idsKey;
   }, [idsKey, buyers.length, refetchFit]);
   const fitMap = new Map((fitData?.fits ?? []).map((f) => [f.accessId, f]));
-  const scoreMap = new Map(buyerScores.map((s: any) => [s.buyerId, s]));
 
   const extend = useMutation({
     mutationFn: async (buyer: any) => {
@@ -238,23 +234,21 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
   // Everything one row shows, worked out once for the table and the phone cards.
   const rows = buyers.map((buyer: any) => {
     const decision = DECISIONS[buyer.decision || "under_review"] || DECISIONS.under_review;
-    const score = scoreMap.get(buyer.id);
-    const engagement = Math.min(100, Math.max(0, score?.engagementScore ?? 0));
-    // The analytics events and the access row's own counters can each lag; show the larger.
-    const views = Math.max(score?.viewCount ?? 0, buyer.viewCount ?? 0);
-    const interest = views === 0
-      ? { label: "Not opened", className: "text-muted-foreground/70" }
-      : INTEREST[score?.intent ?? "minimal"] || INTEREST.minimal;
-    const totalMin = Math.round(Math.max(score?.totalTimeSeconds ?? 0, buyer.totalTimeSeconds ?? 0) / 60);
+    const card = cardByAccess.get(buyer.id) ?? null;
+    // Visits are counted by the reading tracker (the access row's counter
+    // follows it; a card can lag a moment behind) — show the larger.
+    const views = Math.max(card?.visits ?? 0, buyer.viewCount ?? 0);
     const expiresAt = buyer.expiresAt ? new Date(buyer.expiresAt) : null;
     return {
       buyer,
       name: buyer.buyerName || buyer.buyerEmail,
       decision,
       nextStep: buyer.decision === "interested" && buyer.decisionNextStep ? String(buyer.decisionNextStep).replace(/_/g, " ") : null,
-      engagement,
-      interest,
-      activity: views === 0 ? "Not opened yet" : `${views} view${views === 1 ? "" : "s"} · ${totalMin < 1 ? "<1m" : `${totalMin}m`}`,
+      card,
+      readMs: card?.activeMs ?? 0,
+      activity: views === 0 && !card
+        ? (buyer.firstViewedAt ? "Opened" : "Not opened yet")
+        : `${views} visit${views === 1 ? "" : "s"} · ${card ? formatReadingTime(card.activeMs) : "no reading yet"}`,
       lastActive: buyer.lastAccessedAt ? `Last ${shortDate(buyer.lastAccessedAt)}` : null,
       expiresAt,
       expired: !!expiresAt && expiresAt.getTime() < Date.now(),
@@ -267,7 +261,7 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
   rows.sort((a, b) =>
     (DECISION_ORDER[a.buyer.decision || "under_review"] ?? 1) - (DECISION_ORDER[b.buyer.decision || "under_review"] ?? 1)
     || (b.fit?.score ?? -1) - (a.fit?.score ?? -1)
-    || b.engagement - a.engagement
+    || b.readMs - a.readMs
     || String(a.name).localeCompare(String(b.name)));
 
   const actions = (r: (typeof rows)[number], testIdSuffix = "") => (
@@ -310,17 +304,30 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
     );
   };
 
-  const engagementCell = (r: (typeof rows)[number]) => (
-    <div>
-      <div className="flex items-center gap-2">
-        <div className="w-14 h-1.5 rounded-full bg-muted overflow-hidden" aria-hidden>
-          <div className="h-full rounded-full bg-foreground/45" style={{ width: `${r.engagement}%` }} />
-        </div>
-        <span className="text-xs tabular-nums text-muted-foreground">{r.engagement}</span>
+  const readingCell = (r: (typeof rows)[number], testIdSuffix = "") => {
+    const card = r.card;
+    if (!card) {
+      return <span className="text-xs text-muted-foreground">{r.buyer.firstViewedAt ? "Opened" : "Not opened yet"}</span>;
+    }
+    const open = () => setLocation(`/deal/${dealId}/engagement?view=document&buyers=${r.buyer.id}`);
+    return (
+      <div
+        role="link"
+        tabIndex={0}
+        className="block w-full cursor-pointer text-left"
+        onClick={open}
+        onKeyDown={(e) => { if (e.key === "Enter") open(); }}
+        title="See where they read"
+        data-testid={`reading-${r.buyer.id}${testIdSuffix}`}
+      >
+        {/* The decision already shows under Decision: here, how they read. */}
+        {["interested", "not_interested", "lapsed"].includes(card.status)
+          ? <span className="text-xs text-muted-foreground">Scrolled through {card.pagesReached} of {card.totalPages} pages</span>
+          : <StatusChip status={card.status} label={card.statusLabel} />}
+        <PageStrip cells={card.pageStrip} maxMs={stripMax} size="sm" caption={false} className="mt-1.5 w-36 max-w-full" />
       </div>
-      <p className={`text-[11px] mt-0.5 ${r.interest.className}`}>{r.interest.label}</p>
-    </div>
-  );
+    );
+  };
 
   const linkCell = (r: (typeof rows)[number]) => (
     <div className="text-xs">
@@ -341,7 +348,7 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
         <span className="text-foreground/80 font-medium">Fit</span> = how well this business matches what the buyer wants.{" "}
-        <span className="text-foreground/80 font-medium">Engagement</span> = how much of the CIM they&apos;ve read. Click a fit to see why.
+        <span className="text-foreground/80 font-medium">Reading</span> = how they&apos;ve read the CIM. Click a fit to see why, or their reading to see where they read.
       </p>
 
       {/* Wide screens: one table. Below lg it doesn't fit beside the sidebar
@@ -353,7 +360,7 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
               <th className="px-4 py-2.5 text-xs font-medium text-muted-foreground">Buyer</th>
               <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground" title="How well this business matches the buyer's criteria">Fit</th>
               <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground">Decision</th>
-              <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground" title="How much of the CIM they've read">Engagement</th>
+              <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground" title="How they've read the CIM">Reading</th>
               <th className="hidden xl:table-cell px-3 py-2.5 text-xs font-medium text-muted-foreground">Activity</th>
               <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground">NDA &amp; link</th>
               <th className="px-2 py-2.5"><span className="sr-only">Actions</span></th>
@@ -378,8 +385,8 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
                   {decisionPill(r)}
                   {r.nextStep && <p className="text-xs text-muted-foreground mt-1">Next: {r.nextStep}</p>}
                 </td>
-                <td className="px-3 py-3">
-                  {engagementCell(r)}
+                <td className="px-3 py-3 min-w-[170px]">
+                  {readingCell(r)}
                   <p className="xl:hidden mt-1 text-[11px] text-muted-foreground whitespace-nowrap">{r.activity}</p>
                 </td>
                 <td className="hidden xl:table-cell px-3 py-3">
@@ -418,8 +425,8 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
                 {r.nextStep && <p className="text-[11px] text-muted-foreground mt-1">Next: {r.nextStep}</p>}
               </div>
               <div>
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Engagement</p>
-                {engagementCell(r)}
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Reading</p>
+                {readingCell(r, "-card")}
               </div>
               <div>
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Activity</p>

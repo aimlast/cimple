@@ -12,6 +12,7 @@ import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
 import { useElementWidth } from "./chartFormat";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs } from "../blocks";
 
 interface OrgNode {
   id: string;
@@ -40,6 +41,8 @@ interface RendererProps {
 
 interface TreeNode extends OrgNode {
   children: TreeNode[];
+  /** Position of this person in layoutData.nodes (reading analytics: "node:i"). */
+  blockIndex?: number;
 }
 
 /** Card width (160px) + the padding beside it, in px. */
@@ -51,7 +54,7 @@ export function buildOrgTree(nodes: OrgNode[]): TreeNode[] {
   const map: Record<string, TreeNode> = {};
   nodes.forEach((n, i) => {
     const id = n.id != null && String(n.id) ? String(n.id) : `__${i}`;
-    if (!map[id]) map[id] = { ...n, id, children: [] };
+    if (!map[id]) map[id] = { ...n, id, children: [], blockIndex: i };
   });
   const roots: TreeNode[] = [];
   const seen = new Set<string>();
@@ -79,9 +82,10 @@ function treeSpan(node: TreeNode): number {
 }
 
 function NodeCard({ node, stretch }: { node: TreeNode; stretch?: boolean }) {
+  const ba = useBlockAttrs();
   const years = node.yearsAtCompany != null && String(node.yearsAtCompany).trim() !== "" ? String(node.yearsAtCompany) : null;
   return (
-    <div className={cn(
+    <div {...(node.blockIndex != null ? ba(`node:${node.blockIndex}`) : {})} className={cn(
       "relative bg-card border rounded-lg px-4 py-3 text-center shadow-sm",
       stretch ? "w-full max-w-[180px]" : "w-[150px] sm:w-[160px]",
       node.isOwner ? "border-teal/40" : node.isKeyPerson ? "border-blue/30" : "border-card-border"
@@ -183,6 +187,7 @@ export function OrgChartRenderer({ layoutData, content, branding, section }: Ren
   const data: OrgChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const nodes = (data.nodes || []).filter((n) => n && typeof n === "object");
   const { ref, width } = useElementWidth<HTMLDivElement>();
+  const ba = useBlockAttrs();
 
   if (nodes.length === 0) {
     if (!content) return null;
@@ -206,7 +211,7 @@ export function OrgChartRenderer({ layoutData, content, branding, section }: Ren
       </div>
 
       {(data.totalHeadcount != null || data.ownerDependency) && (
-        <div className="mt-5 pt-4 border-t border-border flex items-center gap-6 flex-wrap">
+        <div {...ba("foot")} className="mt-5 pt-4 border-t border-border flex items-center gap-6 flex-wrap">
           {data.totalHeadcount != null && (
             <div>
               <p className="text-2xs text-muted-foreground uppercase tracking-wide">Total Headcount</p>

@@ -79,5 +79,8 @@ export function invalidateBuyerPipeline(qc: QueryClient, dealId: string): void {
   qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "suggested-buyers"] });
   qc.invalidateQueries({ queryKey: [`/api/deals/${dealId}/buyer-approvals`] });
   qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "analytics/buyer-scores"] });
+  // The reading cards (Have the CIM's Reading column, the Engagement tab).
+  qc.invalidateQueries({ queryKey: ["engagement", dealId] });
+  qc.invalidateQueries({ queryKey: ["engagement", "broker"] });
   qc.invalidateQueries({ queryKey: ["/api/broker/buyers"] });
 }

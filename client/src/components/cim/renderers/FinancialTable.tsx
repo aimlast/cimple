@@ -10,6 +10,7 @@ import { ProseFallback, renderInline } from "../richText";
 import { financialLabelHeader, normalizeFinancialTable } from "@shared/financial-table";
 import { BlockTitle } from "./BlockTitle";
 import { useCimTheme } from "../CimDesignContext";
+import { useBlockAttrs } from "../blocks";
 
 /** A hex colour at low opacity ("#9e752e" → "#9e752e1f"); other colour forms are left as they are. */
 export function tint(color: string, alpha = 0.12): string {
@@ -70,6 +71,7 @@ export function FinancialTableRenderer({ layoutData, content, branding, section 
   const data: FinancialTableLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const scroller = useHiddenRight();
   const theme = useCimTheme();
+  const ba = useBlockAttrs();
 
   // One shared reading of headers vs. values (see shared/financial-table.ts):
   // the leading header names the label column, so each figure sits under its
@@ -99,7 +101,7 @@ export function FinancialTableRenderer({ layoutData, content, branding, section 
           {/* Header */}
           {showHeader && (
             <thead>
-              <tr className="border-b border-card-border bg-muted/50">
+              <tr {...ba("head")} className="border-b border-card-border bg-muted/50">
                 <th className="text-left text-xs font-semibold text-muted-foreground px-3 sm:px-4 py-2.5 min-w-[88px] sm:min-w-[200px]">
                   {labelHeader}
                 </th>
@@ -119,7 +121,7 @@ export function FinancialTableRenderer({ layoutData, content, branding, section 
             {rows.map((row, i) => {
               if (row.isSectionHeader) {
                 return (
-                  <tr key={i} className="bg-muted/30">
+                  <tr key={i} {...ba.row(i)} className="bg-muted/30">
                     <td
                       colSpan={colCount}
                       className="px-4 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide"
@@ -136,6 +138,7 @@ export function FinancialTableRenderer({ layoutData, content, branding, section 
               return (
                 <tr
                   key={i}
+                  {...ba.row(i)}
                   data-adjusted={row.isAdjusted ? "true" : undefined}
                   // An adjustment from the reported figures (the Normalized view)
                   // is highlighted, as the view's footnote says.
@@ -194,7 +197,7 @@ export function FinancialTableRenderer({ layoutData, content, branding, section 
 
       {/* Footnotes */}
       {data.footnotes && data.footnotes.length > 0 && (
-        <div className="mt-3 space-y-1">
+        <div {...ba("foot")} className="mt-3 space-y-1">
           {data.footnotes.map((fn, i) => (
             <p key={i} className="text-2xs text-muted-foreground leading-snug">
               {renderInline(fn, `fn${i}`)}

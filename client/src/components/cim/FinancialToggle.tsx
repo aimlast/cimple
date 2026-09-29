@@ -9,6 +9,7 @@ import { useState } from "react";
 import type { CimSection } from "@shared/schema";
 import type { CimBranding } from "./CimBrandingContext";
 import { CimSectionRenderer } from "./CimSectionRenderer";
+import { CimBlockScope, useCimInteraction } from "./blocks";
 
 interface FinancialToggleProps {
   section: CimSection;
@@ -45,6 +46,7 @@ export function FinancialToggle({
   onToggle,
 }: FinancialToggleProps) {
   const [view, setView] = useState<"reported" | "normalized">("reported");
+  const interaction = useCimInteraction();
 
   // Only apply to financial_table sections with normalized data
   if (section.layoutType !== "financial_table" || !hasNormalizedData(section)) {
@@ -63,6 +65,7 @@ export function FinancialToggle({
   const toggle = (next: "reported" | "normalized") => {
     setView(next);
     onToggle?.(section.sectionKey, next);
+    interaction("financial_view", undefined, next);
   };
 
   // Build the section with swapped rows when normalized
@@ -89,6 +92,7 @@ export function FinancialToggle({
       : section;
 
   return (
+    <CimBlockScope pageId={section.id} rowKind={view === "normalized" ? "nrow" : "row"}>
     <div>
       {/* Toggle bar */}
       <div className="flex items-center gap-1 mb-4 print:hidden">
@@ -121,12 +125,13 @@ export function FinancialToggle({
         )}
       </div>
 
-      {/* Render the active view */}
+      {/* Render the active view (its rows are "nrow:i" while Normalized) */}
       <CimSectionRenderer
         section={activeSection as CimSection}
         branding={branding}
         brokerMode={brokerMode}
       />
     </div>
+    </CimBlockScope>
   );
 }

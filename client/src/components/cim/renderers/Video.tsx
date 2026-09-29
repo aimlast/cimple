@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import { useCimMedia } from "../CimMediaContext";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs, useCimInteraction } from "../blocks";
 
 interface RendererProps {
   layoutData: Record<string, unknown>;
@@ -21,6 +22,8 @@ interface RendererProps {
 
 export function VideoRenderer({ layoutData, brokerMode }: RendererProps) {
   const media = useCimMedia();
+  const ba = useBlockAttrs();
+  const interaction = useCimInteraction();
   const data = normalizeVideo(layoutData);
 
   if (data.items.length === 0) {
@@ -41,11 +44,16 @@ export function VideoRenderer({ layoutData, brokerMode }: RendererProps) {
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       <div className={cn("grid gap-6", data.items.length > 1 && "sm:grid-cols-2")}>
         {data.items.map((it, i) => (
-          <figure key={`${it.mediaId ?? it.url}-${i}`} className="min-w-0">
+          <figure key={`${it.mediaId ?? it.url}-${i}`} {...ba(`video:${i}`)} className="min-w-0">
             {it.title && <p className="mb-2 text-sm font-semibold text-foreground leading-snug">{it.title}</p>}
             <div className="relative overflow-hidden rounded-lg border border-card-border bg-[#191713] aspect-video">
               {brokerMode && <BlindChip safe={blindSafe(it)} />}
-              <Player item={it} src={it.mediaId ? media.src(it.mediaId) : undefined} />
+              <Player
+                item={it}
+                src={it.mediaId ? media.src(it.mediaId) : undefined}
+                onPlay={() => interaction("media_play", `video:${i}`)}
+                onProgress={(s) => interaction("media_progress", `video:${i}`, String(Math.round(s)))}
+              />
             </div>
             {it.caption && <figcaption className="mt-2 text-xs text-muted-foreground leading-snug">{it.caption}</figcaption>}
             <p className="hidden print:block mt-1 text-[11px] text-muted-foreground">Video — watch it in the online CIM.</p>
@@ -56,11 +64,21 @@ export function VideoRenderer({ layoutData, brokerMode }: RendererProps) {
   );
 }
 
-function Player({ item, src }: { item: VideoItem; src?: string }) {
+function Player({ item, src, onPlay, onProgress }: {
+  item: VideoItem;
+  src?: string;
+  /** Uploaded videos only: embedded players don't report to the page. */
+  onPlay?: () => void;
+  /** Seconds watched so far, when the buyer pauses or the video ends. */
+  onProgress?: (seconds: number) => void;
+}) {
   if (item.source === "upload") {
     if (!src) return null;
     return (
       <video
+        onPlay={onPlay}
+        onPause={(e) => onProgress?.(e.currentTarget.currentTime)}
+        onEnded={(e) => onProgress?.(e.currentTarget.currentTime)}
         controls
         preload="metadata"
         playsInline

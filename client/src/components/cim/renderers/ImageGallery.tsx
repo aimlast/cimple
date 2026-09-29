@@ -18,6 +18,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import { useCimMedia } from "../CimMediaContext";
 import { MediaLightbox, type LightboxImage } from "./MediaLightbox";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs, useCimInteraction } from "../blocks";
 
 interface RendererProps {
   layoutData: Record<string, unknown>;
@@ -34,6 +35,8 @@ interface Shown extends LightboxImage {
 
 export function ImageGalleryRenderer({ layoutData, brokerMode }: RendererProps) {
   const media = useCimMedia();
+  const ba = useBlockAttrs();
+  const interaction = useCimInteraction();
   const data = normalizeGallery(layoutData);
   const [lightbox, setLightbox] = useState<number | null>(null);
 
@@ -58,11 +61,16 @@ export function ImageGalleryRenderer({ layoutData, brokerMode }: RendererProps) 
   const badge = (img: Shown) => (brokerMode ? blindChip(img, media.assets) : null);
   // In the builder's editing view a click selects the section; buyers (and
   // buyer previews) get the full-screen viewer.
-  const open = (i: number) => { if (!brokerMode) setLightbox(i); };
+  const open = (i: number) => {
+    if (brokerMode) return;
+    setLightbox(i);
+    interaction("gallery_open", "gallery", String(i));
+  };
 
   return (
     <div>
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+      <div {...ba("gallery")}>
       {data.style === "carousel" && images.length > 1 ? (
         <>
           <Carousel images={images} onOpen={open} badge={badge} />
@@ -73,6 +81,7 @@ export function ImageGalleryRenderer({ layoutData, brokerMode }: RendererProps) 
       ) : (
         <Grid images={images} columns={data.columns} onOpen={open} badge={badge} />
       )}
+      </div>
       <MediaLightbox images={images} index={lightbox} onIndexChange={setLightbox} />
     </div>
   );

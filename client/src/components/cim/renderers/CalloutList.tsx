@@ -12,6 +12,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs } from "../blocks";
 
 interface CalloutItem {
   title: string;
@@ -70,6 +71,7 @@ function formatStatValue(value: unknown, unit: unknown): string {
 }
 
 export function CalloutListRenderer({ layoutData, content, branding, section }: RendererProps) {
+  const ba = useBlockAttrs();
   const data: CalloutListLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
 
   // The AI sometimes emits `stats: [{label, value, description}]` for
@@ -118,7 +120,7 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
         <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
         <div className={cn("grid gap-4", gridClass)}>
           {items.map((item, i) => (
-            <div key={i} className="flex flex-col items-center text-center gap-2 p-4 bg-card rounded-lg border border-card-border">
+            <div key={i} {...ba(`item:${i}`)} className="flex flex-col items-center text-center gap-2 p-4 bg-card rounded-lg border border-card-border">
               {item.icon && lookupIcon(item.icon) ? (
                 <div className="w-10 h-10 rounded-lg bg-teal-muted flex items-center justify-center">
                   <IconBox name={item.icon} className="text-teal" />
@@ -153,6 +155,7 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
           {items.map((item, i) => (
             <div
               key={i}
+              {...ba(`item:${i}`)}
               className={cn(
                 "bg-card rounded-lg border p-4",
                 item.highlight ? "border-teal/30" : "border-card-border"
@@ -203,6 +206,7 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
         {items.map((item, i) => (
           <div
             key={i}
+            {...ba(`item:${i}`)}
             className={cn(
               "flex items-start gap-3 pl-4 border-l-2 py-1",
               item.highlight ? "border-teal" : "border-border"

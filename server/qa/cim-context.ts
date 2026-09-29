@@ -591,6 +591,9 @@ export function faqKnowledgeRows(
       similarQuestionIds: [],
       isPublished: true,
       answerScope: "all",
+      // Not asked on any page of a served CIM (reading analytics).
+      sectionId: null,
+      renditionId: null,
       createdAt: f.createdAt,
       updatedAt: f.updatedAt,
     }));

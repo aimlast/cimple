@@ -55,6 +55,11 @@ import { settleMergeRowsQuietly } from "./documents/merge-conflicts.js";
 import { registerCimMediaRoutes } from "./routes/cim-media.js";
 import { loadMediaAssets } from "./cim/media-store.js";
 import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
+import { registerEngagementRoutes } from "./routes/engagement.js";
+import { registerEngagementInsightRoutes } from "./routes/engagement-insights.js";
+import { registerReadingRoutes } from "./routes/reading.js";
+import { recordRendition, variantForAccessLevel } from "./analytics/renditions.js";
+import { viewRoomStamp } from "./analytics/reading-ingest.js";
 import { notify, previewRecipients, sendDirectEmail } from "./notifications/service.js";
 import { escapeHtml } from "./notifications/email-escape";
 import { teamInviteCopy } from "./notifications/team-invite-copy";
@@ -4810,9 +4815,13 @@ Return JSON only.`,
       // serves CIM content counts (viewStampFor) — the NDA gate and the
       // "preparing" state only move lastAccessedAt. Every return below goes
       // through stampAndBuild so the payload and the row agree.
+      // Views (viewCount) are now counted by the reading tracker, one per
+      // visit (server/analytics/reading-ingest.ts: a new visit with none on
+      // this link in the last 30 min); the GET still stamps firstViewedAt,
+      // which the reminders need even when a blocker stops the tracker.
       const now = new Date();
       const stampAndBuild = async (served: boolean) => {
-        const viewStamp = viewStampFor(access, served, now);
+        const viewStamp = viewRoomStamp(access, served, now);
         await storage.updateBuyerAccess(access.id, viewStamp as any);
         return { ...access, ...viewStamp };
       };
@@ -4991,6 +5000,16 @@ Return JSON only.`,
       // Every section held back (blind versions still being refreshed) is
       // the same as "preparing" for the buyer: nothing to read yet.
       const served = buyerCim.sections.length > 0 || publicDeal.cimContent != null;
+      // Reading analytics: record exactly what this buyer is served (the heat
+      // map is drawn on it) and hand the tracker its opaque id + page order.
+      // Not for the owning broker previewing the room (their reading isn't a buyer's).
+      const ownerPreview = !!req.session?.brokerId && req.session.brokerId === deal.brokerId;
+      const reading = buyerCim.sections.length > 0 && !ownerPreview
+        ? await recordRendition({
+            dealId: deal.id, mode: cimMode, variant: variantForAccessLevel(access.accessLevel),
+            cimLayoutVersion: deal.cimLayoutVersion ?? null, sections: buyerCim.sections, design, live: baseSections,
+          })
+        : null;
       res.json({
         access: accessPayload(await stampAndBuild(served)),
         deal: publicDeal,
@@ -5000,6 +5019,7 @@ Return JSON only.`,
         branding,
         design,
         cimMode,
+        ...(reading ? { reading } : {}),
       });
     } catch (error: any) {
       console.error("Error fetching buyer access:", error);
@@ -6478,6 +6498,17 @@ Return JSON only.`,
         const bid = q.buyerAccessId;
         if (bid && buyerStats[bid]) buyerStats[bid].questionCount += 1;
       }
+      // Reading time per buyer comes from the reading rollups (2026-09
+      // tracker; the broker's own previews excluded), falling back to the old
+      // events only for access rows with no measured visit: the same numbers
+      // as the Engagement tab and the buyer profile. Intent feeds the score.
+      const { engagementByAccess, readingIntentByAccess } = await import("./buyers/profile-data.js");
+      const [reading, intents] = await Promise.all([
+        engagementByAccess(buyers.map((b) => b.id)).catch(() => new Map() as Awaited<ReturnType<typeof engagementByAccess>>),
+        readingIntentByAccess(buyers.map((b) => ({ id: b.id, dealId: b.dealId }))).catch(() => new Map<string, number>()),
+      ]);
+      const questionsBy: Record<string, number> = {};
+      for (const q of questions) if (q.buyerAccessId) questionsBy[q.buyerAccessId] = (questionsBy[q.buyerAccessId] ?? 0) + 1;
       // For each buyer, look up their Cimple account (if linked) and compute
       // match fit against this deal. Match fit uses the SAME positive framing
       // as the buyer-side dashboard: raw criteria-matched count + dimension
@@ -6560,24 +6591,29 @@ Return JSON only.`,
         // Combines match-fit + profile completeness + engagement + proof of
         // funds into one broker-facing 0-100 score with hot/warm/cool/cold tier.
         const stats = buyerStats[b.id];
+        const read = reading.get(b.id);
+        const totalTimeSeconds = read ? read.seconds : stats?.totalSeconds ?? 0;
+        const sectionsViewedCount = read ? read.sectionsViewed : stats?.sectionsEntered.size ?? 0;
+        const questionCount = questionsBy[b.id] ?? 0;
         const qualifiedScore = buyerUser ? calculateQualifiedLeadScore({
           buyer: buyerUser,
           match: fullBreakdown,
-          engagement: stats ? {
+          engagement: read || stats ? {
+            intent: intents.get(b.id) ?? null,
             viewCount: b.viewCount ?? 0,
-            sectionsViewed: stats.sectionsEntered.size,
-            totalTimeSeconds: stats.totalSeconds,
-            questionCount: stats.questionCount,
+            sectionsViewed: sectionsViewedCount,
+            totalTimeSeconds,
+            questionCount,
             ndaSigned: !!b.ndaSignedAt,
           } : null,
         }) : null;
 
         return {
           ...b,
-          totalTimeSeconds: stats?.totalSeconds ?? 0,
-          sectionsViewedCount: stats?.sectionsEntered.size ?? 0,
+          totalTimeSeconds,
+          sectionsViewedCount,
           maxScrollDepth: stats?.maxScrollDepth ?? 0,
-          questionCount: stats?.questionCount ?? 0,
+          questionCount,
           hasAccount: !!b.buyerUserId,
           profile,
           match,
@@ -7394,6 +7430,12 @@ Return JSON only.`,
       if (question.length > MAX_BUYER_QUESTION_CHARS) {
         return res.status(400).json({ error: `Please keep your question under ${MAX_BUYER_QUESTION_CHARS.toLocaleString("en-US")} characters.`, code: "question_too_long" });
       }
+      // Reading analytics: the page the buyer was on (a section id they were
+      // served) and the version — only well-formed ids, never text.
+      const askedOn = {
+        sectionId: typeof req.body?.sectionId === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(req.body.sectionId) ? req.body.sectionId : null,
+        renditionId: typeof req.body?.renditionId === "string" && /^[0-9a-f]{32}$/.test(req.body.renditionId) ? req.body.renditionId : null,
+      };
 
       // The buyer proves access with their view-room token. Previously this
       // endpoint was unauthenticated and answered from the UNREDACTED CIM —
@@ -7503,10 +7545,11 @@ Return JSON only.`,
         addedToKnowledgeBase: false,
         answerScope: scope,
         ...(result.kind === "knowledge_base" ? { similarQuestionIds: result.matchedId ? [result.matchedId] : [] } : {}),
+        ...askedOn,
       } as any);
       // Counted only once the question exists (a lost question used to be counted).
       storage.createAnalyticsEvent({
-        dealId, buyerAccessId, eventType: "question_asked", sectionKey: null,
+        dealId, buyerAccessId, eventType: "question_asked", sectionKey: null, pageId: askedOn.sectionId,
         eventData: { question: String(question).slice(0, 200) },
       } as any).catch(() => {});
 
@@ -7808,16 +7851,23 @@ Return JSON only.`,
         }>;
       };
 
-      const ip = req.ip || req.socket.remoteAddress || null;
-      const ua = req.headers["user-agent"] || null;
-
       // Authenticate with the buyer's view-room token; attribute every event
       // to THAT access row (never a caller-supplied id); validate types; cap size.
       const batchToken = (req.body as any)?.accessToken;
       const batchAccess = typeof batchToken === "string" ? await storage.getBuyerAccessByToken(batchToken) : undefined;
       if (!batchAccess || batchAccess.dealId !== dealId || viewLinkProblem(batchAccess)) return res.status(401).json({ error: "Invalid access token" });
-      if (!dealPublishedForBuyers(await storage.getDeal(dealId))) return res.status(403).json(notPublishedBody());
-      const ALLOWED_EVENTS = new Set(["view", "page_view", "section_enter", "section_exit", "scroll", "scroll_depth", "heat_map_sample", "element_hover", "download_attempt", "time_on_page", "nav_click"]);
+      const batchDeal = await storage.getDeal(dealId);
+      if (!dealPublishedForBuyers(batchDeal)) return res.status(403).json(notPublishedBody());
+      // Nothing is recorded before a required NDA is signed (the old client
+      // sampled the NDA form too).
+      if (ndaBlocksBuyer(batchDeal!, batchAccess)) return res.json({ received: 0 });
+      // The old tracker (replaced by POST /api/view/:token/reading) is still
+      // accepted from cached tabs until LEGACY_BATCH_UNTIL; after that only
+      // the few events nothing else records.
+      const LEGACY_BATCH_UNTIL = Date.parse("2026-10-13T00:00:00Z");
+      const ALLOWED_EVENTS = new Set(Date.now() < LEGACY_BATCH_UNTIL
+        ? ["view", "page_view", "section_enter", "section_exit", "scroll", "scroll_depth", "heat_map_sample", "element_hover", "download_attempt", "time_on_page", "nav_click"]
+        : ["view", "download_attempt"]);
       if (!Array.isArray(events)) return res.status(400).json({ error: "events must be an array" });
       const accepted = events.filter(e => e && ALLOWED_EVENTS.has(String(e.eventType))).slice(0, 200);
       // Blind views send neutral section keys (s_<id>); record the real key
@@ -7838,8 +7888,9 @@ Return JSON only.`,
           viewportHeight: event.viewportHeight ?? null,
           elementId: event.elementId || null,
           eventData: event.eventData || null,
-          ipAddress: ip,
-          userAgent: ua,
+          // No raw network address or user agent on new rows.
+          ipAddress: null,
+          userAgent: null,
         } as any);
       }
 
@@ -7865,6 +7916,11 @@ Return JSON only.`,
   registerCimTemplateRoutes(app);
   registerBuyerNdaRoutes(app);
   registerSellerReviewRoutes(app);
+  // Buyer reading analytics v2 (shared/analytics-v2.ts): capture → broker
+  // engagement APIs (capture stream) and cross-deal insights (intelligence stream).
+  registerReadingRoutes(app);
+  registerEngagementRoutes(app);
+  registerEngagementInsightRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;

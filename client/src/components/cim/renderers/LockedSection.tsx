@@ -5,10 +5,13 @@
  */
 import { Lock } from "lucide-react";
 import { LOCKED_SECTION_MESSAGE } from "@shared/cim-layouts";
+import { useBlockAttrs } from "../blocks";
 
 export function LockedSectionBody() {
+  const ba = useBlockAttrs();
   return (
     <div
+      {...ba("locked")}
       className="relative overflow-hidden rounded-xl border border-dashed border-border bg-card/60 px-6 pt-14 pb-8 text-center"
       data-testid="cim-locked-section"
     >

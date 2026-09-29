@@ -23,6 +23,7 @@ import { ProseFallback } from "../richText";
 import { axisWidthFor, compactFigure, formatAxisTick, useElementWidth } from "./chartFormat";
 import { parseChartNumber, readChartValue, unitScale } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs, useChartPointReporter } from "../blocks";
 
 /** Below this container width the build-up is drawn as labelled horizontal rows. */
 const NARROW_WIDTH = 520;
@@ -233,6 +234,8 @@ function WaterfallTooltip({ active, payload, currency, unit }: CustomTooltipProp
 
 export function WaterfallChartRenderer({ layoutData, content, branding, section }: RendererProps) {
   const theme = useCimTheme();
+  const ba = useBlockAttrs();
+  const point = useChartPointReporter();
   const { ref: widthRef, width } = useElementWidth<HTMLDivElement>();
   const data: WaterfallLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const items = data.items || [];
@@ -274,6 +277,7 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
   return (
     <div ref={widthRef}>
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+      <div {...ba("chart")}>
       {narrow ? (
         <WaterfallRows data={waterfallData} colorMap={colorMap} currency={data.currency} unit={data.unit} />
       ) : (
@@ -282,6 +286,8 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
           data={waterfallData}
           margin={{ top: 22, right: 16, left: 8, bottom: 4 }}
           barCategoryGap="25%"
+          onMouseMove={(s) => point(s?.activeTooltipIndex)}
+          onMouseLeave={() => point(null)}
         >
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
@@ -353,6 +359,7 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
           <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: primaryColor }} />
           <span className="text-[11px] text-muted-foreground">Total</span>
         </div>
+      </div>
       </div>
     </div>
   );
