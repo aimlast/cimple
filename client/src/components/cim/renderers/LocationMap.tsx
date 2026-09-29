@@ -13,6 +13,7 @@ import { REGION_ZOOM, clampZoom, mapEmbedUrl, mapLinkUrl, normalizeLocationMap, 
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs, useCimInteraction } from "../blocks";
 
 interface RendererProps {
   layoutData: Record<string, unknown>;
@@ -33,6 +34,8 @@ export function LocationMapRenderer({ layoutData, brokerMode }: RendererProps) {
     .map((l) => ({ label: text(l.label), address: text(l.address), note: text(l.note), region: text(l.region) }))
     .filter((l) => (regionOnly ? !!l.region : !!l.address));
   const [active, setActive] = useState(0);
+  const ba = useBlockAttrs();
+  const interaction = useCimInteraction();
 
   if (locations.length === 0) {
     return brokerMode ? (
@@ -51,7 +54,7 @@ export function LocationMapRenderer({ layoutData, brokerMode }: RendererProps) {
   return (
     <div>
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
-      <div className="grid gap-4 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+      <div {...ba("map")} className="grid gap-4 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <div className="relative overflow-hidden rounded-lg border border-card-border bg-muted aspect-[4/3] md:aspect-auto md:min-h-[320px]">
           <iframe
             key={`${query}-${zoom}`}
@@ -74,7 +77,7 @@ export function LocationMapRenderer({ layoutData, brokerMode }: RendererProps) {
             return (
               <Tag
                 key={i}
-                {...(locations.length > 1 ? { type: "button", onClick: () => setActive(i), "aria-pressed": selected } : {})}
+                {...(locations.length > 1 ? { type: "button", onClick: () => { setActive(i); interaction("map_interact", "map", String(i)); }, "aria-pressed": selected } : {})}
                 className={cn(
                   "w-full text-left rounded-lg border bg-card p-4 transition-colors",
                   selected && locations.length > 1 ? "border-teal/60 shadow-sm" : "border-card-border",

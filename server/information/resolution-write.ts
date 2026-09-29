@@ -356,6 +356,22 @@ export function planResolution(
     target = { key: target.key, sub: year };
   }
   if (!opts.brokerChoseFact && d.factKey && d.source !== "merge" && !targetRelatesToSides(info, target, d)) return { kind: "needs_mapping" };
+  // Several years resolved at once ("2023: $9,100,000; 2024: $9,815,000")
+  // onto a by-year fact: each named year is written on its own — the other
+  // years and their sources stay as they were (the whole map used to be
+  // replaced, and every year became the broker's) — and the headline
+  // follows its own year.
+  const asMap = resolvedMapValue(resolved);
+  if (!target.sub && isPlainMap(asMap) && isMapFact(info, target.key)) {
+    const yearWrites: ResolutionWrite[] = [];
+    for (const [year, value] of Object.entries(asMap)) {
+      const v = String(value);
+      yearWrites.push({ key: target.key, sub: year, value: v });
+      const paired = pairedWrite(info, { key: target.key, sub: year }, v, d);
+      if (paired && !yearWrites.some((w) => w.key === paired.key && !w.sub)) yearWrites.push(paired);
+    }
+    return { kind: "write", target, writes: yearWrites };
+  }
   if (isNarrativeTarget(info, target, resolved, sideValues(d))) return { kind: "narrative", target };
   const writes: ResolutionWrite[] = [{ key: target.key, ...(target.sub ? { sub: target.sub } : {}), value: resolved }];
   const paired = pairedWrite(info, target, resolved, d);
@@ -383,6 +399,14 @@ export function overlayWrite(info: Info, w: ResolutionWrite, src: FieldSource): 
     info[w.key] = map;
     const summary = summariseMapSource(years);
     if (summary) setFieldSource(info, w.key, summary);
+    return;
+  }
+  // Never a string over a map by year: a year list is written year by year,
+  // anything else leaves the map as it is.
+  const cur = repairCharIndexedValue(info[w.key]);
+  if (isYearMap(cur)) {
+    const asMap = resolvedMapValue(w.value);
+    if (isPlainMap(asMap)) for (const [year, value] of Object.entries(asMap)) overlayWrite(info, { key: w.key, sub: year, value: String(value) }, src);
     return;
   }
   info[w.key] = w.value;

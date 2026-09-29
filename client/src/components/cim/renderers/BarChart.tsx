@@ -18,8 +18,10 @@ import { useCimTheme } from "../CimDesignContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { axisWidthFor, formatAxisTick, formatFullValue } from "./chartFormat";
-import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { chartSeriesRows, parseChartNumber, unitScale } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
+import { NotCharted } from "./NotCharted";
+import { useBlockAttrs, useChartPointReporter } from "../blocks";
 
 interface BarDataPoint {
   name: string;
@@ -72,6 +74,8 @@ function CustomTooltip({ active, payload, label, unit }: CustomTooltipProps) {
 
 export function BarChartRenderer({ layoutData, content, branding, section }: RendererProps) {
   const theme = useCimTheme();
+  const ba = useBlockAttrs();
+  const point = useChartPointReporter();
   const data: BarChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const chartData = data.data || [];
 
@@ -85,12 +89,26 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
   const secondaryColor = theme.chart[1];
   const hasSecondary = chartData.some((d) => d.secondaryValue != null);
 
-  const normalized = chartData.map((d) => ({
+  // Text values ("$1,250,000", "$1,850,000 (9 months YTD)") are read as
+  // numbers; one that isn't an amount ("TBD") is listed under the chart,
+  // never drawn as a $0 bar.
+  // (Each drawn bar keeps its datum's index: the reading tracker's chart
+  // points follow the layout data, which also holds the rows not drawn.)
+  const series = chartSeriesRows(chartData.map((d, srcIndex) => ({ ...d, srcIndex })), data.unit);
+  const normalized = series.rows.map((d) => ({
     ...d,
-    // Text values ("$1,250,000") are read as numbers, never drawn as zero.
-    value: parseChartNumber(d.value, unitScale(data.unit)) ?? 0,
-    secondaryValue: d.secondaryValue != null ? parseChartNumber(d.secondaryValue, unitScale(data.unit)) ?? 0 : undefined,
+    secondaryValue: d.secondaryValue != null ? parseChartNumber(d.secondaryValue, unitScale(data.unit)) ?? undefined : undefined,
   }));
+  if (normalized.length === 0) {
+    if (!content && series.unreadable.length === 0) return null;
+    return (
+      <div>
+        <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+        <div {...ba("chart")}><NotCharted items={series.unreadable} /></div>
+        {content ? <ProseFallback content={content} /> : null}
+      </div>
+    );
+  }
 
   const yAxisWidth = axisWidthFor(
     normalized.flatMap((d) =>
@@ -102,6 +120,7 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
   return (
     <div>
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+      <div {...ba("chart")}>
       {data.yLabel && (
         // Axis caption sits above the plot — a rotated label inside the axis
         // column collides with the tick numbers (worst on phones).
@@ -109,7 +128,9 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
       )}
       <ResponsiveContainer width="100%" height={280}>
         <BarChart data={normalized} margin={{ top: 4, right: 16, left: 4, bottom: data.xLabel ? 24 : 8 }}
-          barCategoryGap="30%">
+          barCategoryGap="30%"
+          onMouseMove={(s) => point(s?.activeTooltipIndex == null ? null : normalized[Number(s.activeTooltipIndex)]?.srcIndex)}
+          onMouseLeave={() => point(null)}>
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
             strokeDasharray="3 3"
@@ -174,6 +195,8 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
           )}
         </BarChart>
       </ResponsiveContainer>
+      <NotCharted items={series.unreadable} />
+      </div>
     </div>
   );
 }

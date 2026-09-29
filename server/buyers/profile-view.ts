@@ -201,7 +201,8 @@ function ndaAnswerRows(ctx: Ctx) {
     .map((a) => {
       // The signature record (typed name + the full agreement text) is not
       // an "answer": report who signed, and keep the text out of the payload.
-      const { signature, ...p } = a.ndaProfile as NdaBuyerProfile & { submittedAt?: string; signature?: { signerName?: string } };
+      // (criteriaReadOf is internal: which words the criteria read succeeded on.)
+      const { signature, criteriaReadOf: _readOf, ...p } = a.ndaProfile as NdaBuyerProfile & { submittedAt?: string; signature?: { signerName?: string }; criteriaReadOf?: string };
       return {
         dealId: a.dealId,
         businessName: ctx.dealById.get(a.dealId)?.businessName ?? "Deal",
@@ -391,6 +392,14 @@ export async function buildBuyerTimeline(brokerId: string, buyerId: string): Pro
     ((a.accessEvents as BuyerAccessEvent[] | null) ?? []).forEach((e, i) => {
       if (e.type === "extended") push({ id: `ext-${a.id}-${i}`, at: e.at, kind: "access_extended", title: "Access extended", detail: e.expiresAt ? `Now expires ${new Date(e.expiresAt).toDateString()}` : null, dealId: a.dealId, dealName: d });
       if (e.type === "level_changed") push({ id: `lvl-${a.id}-${i}`, at: e.at, kind: "access_level", title: e.accessLevel ? `Access changed to ${buyerAccessPhrase(e.accessLevel)}` : "Access level changed", dealId: a.dealId, dealName: d });
+      if (e.type === "reminder_undeliverable") {
+        push({
+          id: `undeliv-${a.id}-${i}`, at: e.at, kind: "email", tone: "negative",
+          title: `Couldn't email the ${e.stage === "warning" ? "final decision reminder" : "decision reminder"}`,
+          detail: `The email service refused ${a.buyerEmail}. They won't get more reminders and won't be marked lapsed automatically — follow up with them yourself.`,
+          dealId: a.dealId, dealName: d,
+        });
+      }
     });
     if (a.revokedAt) push({ id: `rev-${a.id}`, at: a.revokedAt, kind: "access_revoked", title: "Access revoked", dealId: a.dealId, dealName: d, tone: "negative" });
     else if (a.expiresAt && new Date(a.expiresAt) < new Date()) push({ id: `exp-${a.id}`, at: a.expiresAt, kind: "link_expired", title: "Link expired", dealId: a.dealId, dealName: d });
@@ -508,7 +517,7 @@ export async function buildBrokerBuyerList(brokerId: string) {
     const e = engagement.get(own.id);
     const score = calculateQualifiedLeadScore({
       buyer: { ...display, hasProofOfFunds: !!display.hasProofOfFunds },
-      engagement: e ? { viewCount: e.views, sectionsViewed: e.sectionsViewed, totalTimeSeconds: e.seconds, questionCount: e.questions, ndaSigned: e.ndaSigned } : null,
+      engagement: e ? { intent: e.intent, viewCount: e.views, sectionsViewed: e.sectionsViewed, totalTimeSeconds: e.seconds, questionCount: e.questions, ndaSigned: e.ndaSigned } : null,
     });
     const deals = Math.max(dealCount, e?.dealIds.size ?? 0);
     const last = [lastActivityAt, e?.lastActivityAt ?? null].filter(Boolean).sort((a, b) => +new Date(b!) - +new Date(a!))[0] ?? null;

@@ -13,9 +13,11 @@ import { builderRequest, errorText } from "./api";
 interface Props {
   dealId: string;
   buyer: { id: string; accessLevel?: string | null; buyerName?: string | null; buyerEmail: string };
+  /** Keeps test ids unique when the same buyer renders twice (table + phone card). */
+  testIdSuffix?: string;
 }
 
-export function AccessLevelSelect({ dealId, buyer }: Props) {
+export function AccessLevelSelect({ dealId, buyer, testIdSuffix = "" }: Props) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const current = BUYER_ACCESS_LEVELS.some((l) => l.key === buyer.accessLevel) ? buyer.accessLevel! : "teaser";
@@ -39,7 +41,7 @@ export function AccessLevelSelect({ dealId, buyer }: Props) {
       <SelectTrigger
         className="h-7 w-[124px] shrink-0 text-xs"
         aria-label={`CIM access for ${buyer.buyerName || buyer.buyerEmail}`}
-        data-testid={`select-access-level-${buyer.id}`}
+        data-testid={`select-access-level-${buyer.id}${testIdSuffix}`}
       >
         {save.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
         {/* Only the label in the trigger — the items also carry an explanation. */}

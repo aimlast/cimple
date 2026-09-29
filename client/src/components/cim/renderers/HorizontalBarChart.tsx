@@ -18,8 +18,10 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { formatAxisTick, formatFullValue } from "./chartFormat";
-import { chartShares, isPercentUnit, parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { chartSeriesRows, chartShares, isPercentUnit } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
+import { NotCharted } from "./NotCharted";
+import { useBlockAttrs, useChartPointReporter } from "../blocks";
 
 interface HBarDataPoint {
   name: string;
@@ -65,6 +67,8 @@ function CustomTooltip({ active, payload, label, unit }: CustomTooltipProps) {
 
 export function HorizontalBarChartRenderer({ layoutData, content, branding, section }: RendererProps) {
   const theme = useCimTheme();
+  const ba = useBlockAttrs();
+  const point = useChartPointReporter();
   const data: HorizontalBarChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const chartData = data.data || [];
 
@@ -77,11 +81,21 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
 
   // Values written as text ("$13,560,000") are read as numbers — parseFloat
   // gave NaN for them and drew every bar at zero.
-  const scale = unitScale(data.unit);
-  const normalized = chartData.map((d) => ({
-    ...d,
-    value: parseChartNumber(d.value, scale) ?? 0,
-  }));
+  // A value that isn't one amount ("TBD") is listed under the chart, never
+  // drawn as a $0 bar (shared/cim-chart-values chartSeriesRows).
+  // (Each drawn bar keeps its datum's index: the reading tracker's chart
+  // points follow the layout data, which also holds the rows not drawn.)
+  const series = chartSeriesRows(chartData.map((d, srcIndex) => ({ ...d, srcIndex })), data.unit);
+  const normalized = series.rows;
+  if (normalized.length === 0) {
+    return (
+      <div>
+        <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+        <div {...ba("chart")}><NotCharted items={series.unreadable} /></div>
+        {content ? <ProseFallback content={content} /> : null}
+      </div>
+    );
+  }
 
   // Percent labels: values in % are labelled as written; other values get a
   // share only of a total the chart states and adds up to (chartShares) —
@@ -96,21 +110,24 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
   }));
 
   // Dynamic height based on item count
-  const height = Math.max(200, chartData.length * 44 + 40);
+  const height = Math.max(200, normalized.length * 44 + 40);
 
   // Calculate left margin to accommodate long labels
-  const maxLabelLen = Math.max(...chartData.map((d) => d.name.length));
+  const maxLabelLen = Math.max(...normalized.map((d) => d.name.length));
   const leftMargin = Math.min(Math.max(maxLabelLen * 6, 80), 180);
 
   return (
     <div>
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+      <div {...ba("chart")}>
       <ResponsiveContainer width="100%" height={height}>
         <BarChart
           data={withPercent}
           layout="vertical"
           margin={{ top: 4, right: showLabels ? 48 : 16, left: 0, bottom: 4 }}
           barCategoryGap="25%"
+          onMouseMove={(s) => point(s?.activeTooltipIndex == null ? null : normalized[Number(s.activeTooltipIndex)]?.srcIndex)}
+          onMouseLeave={() => point(null)}
         >
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
@@ -151,9 +168,11 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
           </Bar>
         </BarChart>
       </ResponsiveContainer>
+      <NotCharted items={series.unreadable} />
       {data.yLabel && (
         <p className="text-xs text-muted-foreground text-center mt-1">{data.yLabel}</p>
       )}
+      </div>
     </div>
   );
 }

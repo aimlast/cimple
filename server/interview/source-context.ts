@@ -629,14 +629,125 @@ function passageWords(text: string): string[] {
   const unglued = text.replace(/([A-Za-z]{3,})(\d)/g, "$1 $2").replace(/(\d)([A-Za-z]{3,})/g, "$1 $2");
   return (unglued.match(/[A-Za-z0-9][A-Za-z0-9'’&-]*/g) ?? []).filter((w) => w.length >= 2).map(searchWord);
 }
-const chunkCache = new Map<string, Chunk[]>();
+/**
+ * How much of one source is split into cached passages. A general-ledger
+ * export (150,000 rows, 11 MB of text — well inside the upload limit) took
+ * 7–10 s of blocked event loop on the first search after a restart, stalling
+ * every other seller's stream and broker request, and held ~350 MB of heap
+ * (passages cost ~50× their text). Beyond this, a source is searched by
+ * keyword windows for the question at hand (tailChunksFor), never chunked
+ * whole.
+ */
+export const CHUNKED_CHARS_PER_SOURCE = 300_000;
+/** Total source text whose passages stay cached (least recently used goes first). */
+export const CHUNK_CACHE_CHARS = 4_000_000;
+
+const chunkCache = new Map<string, { chunks: Chunk[]; chars: number }>();
+let chunkCacheChars = 0;
+
+function cacheChunks(key: string, chunks: Chunk[], chars: number) {
+  chunkCache.set(key, { chunks, chars });
+  chunkCacheChars += chars;
+  for (const k of Array.from(chunkCache.keys())) {
+    if (chunkCacheChars <= CHUNK_CACHE_CHARS || k === key) break;
+    chunkCacheChars -= chunkCache.get(k)!.chars;
+    chunkCache.delete(k);
+  }
+}
+
+/** Test/diagnostic view of the cache's size. */
+export function _chunkCacheStats(): { entries: number; chars: number } {
+  return { entries: chunkCache.size, chars: chunkCacheChars };
+}
 
 function chunksFor(doc: DocLike): Chunk[] {
   const raw = typeof doc.extractedText === "string" ? doc.extractedText : "";
   if (!raw.trim()) return [];
   const cacheKey = `v5:${doc.id}:${raw.length}:${String(doc.updatedAt ?? "")}`;
   const hit = chunkCache.get(cacheKey);
-  if (hit) return hit;
+  if (hit) {
+    // Most recently used moves to the back of the eviction order.
+    chunkCache.delete(cacheKey);
+    chunkCache.set(cacheKey, hit);
+    return hit.chunks;
+  }
+  const head = raw.length > CHUNKED_CHARS_PER_SOURCE ? raw.slice(0, CHUNKED_CHARS_PER_SOURCE) : raw;
+  const chunks = chunkText(doc, head);
+  cacheChunks(cacheKey, chunks, head.length);
+  return chunks;
+}
+
+/**
+ * Where in the part of a very large source past CHUNKED_CHARS_PER_SOURCE to
+ * look for one question: window starts around its topic words' matches,
+ * RAREST WORD FIRST. One pass counts every word's matches (and keeps each
+ * word's first few positions); windows are then taken round-robin over the
+ * words, fewest matches first — so a word every row carries ("business",
+ * "fuel" in a fuel-heavy ledger) can't use up the budget before a rare,
+ * deeper word ("department", "rebate") gets its passage. (Taking the first
+ * matches of ANY word in document order did exactly that.) Pure.
+ */
+export function tailWindowStarts(raw: string, words: Iterable<string>, maxWindows = 40, from = CHUNKED_CHARS_PER_SOURCE): number[] {
+  if (raw.length <= from) return [];
+  const terms = Array.from(new Set(Array.from(words).map((w) => w.toLowerCase()).filter((w) => w.length >= 4))).slice(0, 16);
+  if (terms.length === 0) return [];
+  // Longest first, so a word isn't shadowed by a shorter one it starts with.
+  const alternation = [...terms].sort((a, b) => b.length - a.length).map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const re = new RegExp(alternation, "gi");
+  re.lastIndex = from;
+  const hits = new Map<string, { count: number; at: number[]; order: number }>(terms.map((t, order) => [t, { count: 0, at: [], order }]));
+  let saturated = 0;
+  for (let m = re.exec(raw); m; m = re.exec(raw)) {
+    const h = hits.get(m[0].toLowerCase());
+    if (!h) continue;
+    h.count++;
+    if (h.at.length < maxWindows) {
+      h.at.push(m.index);
+      // Every word has as many positions as could ever be used: the order
+      // among them no longer matters, so the rest needn't be scanned.
+      if (h.at.length === maxWindows && ++saturated === terms.length) break;
+    }
+  }
+  const byRarity = Array.from(hits.values()).filter((h) => h.count > 0).sort((a, b) => a.count - b.count || a.order - b.order);
+  const starts: number[] = [];
+  const covered = (pos: number) => starts.some((st) => pos >= st && pos < st + TAIL_WINDOW_CHARS - TAIL_WINDOW_BEFORE);
+  for (let round = 0; starts.length < maxWindows; round++) {
+    let any = false;
+    for (const h of byRarity) {
+      if (round >= h.at.length) continue;
+      any = true;
+      const pos = h.at[round];
+      if (covered(pos)) continue;
+      starts.push(Math.max(from, pos - TAIL_WINDOW_BEFORE));
+      if (starts.length >= maxWindows) break;
+    }
+    if (!any) break;
+  }
+  return starts.sort((a, b) => a - b);
+}
+const TAIL_WINDOW_BEFORE = 400;
+const TAIL_WINDOW_CHARS = 1000;
+
+/**
+ * The part of a very large source past CHUNKED_CHARS_PER_SOURCE, searched for
+ * one question: passages around its topic words, rarest first
+ * (tailWindowStarts; not cached — built from a bounded number of short
+ * windows, overlapping ones merged).
+ */
+function tailChunksFor(doc: DocLike, words: Iterable<string>, maxWindows = 40): Chunk[] {
+  const raw = typeof doc.extractedText === "string" ? doc.extractedText : "";
+  const starts = tailWindowStarts(raw, words, maxWindows);
+  const spans: Array<[number, number]> = [];
+  for (const st of starts) {
+    const end = Math.min(raw.length, st + TAIL_WINDOW_CHARS);
+    const last = spans[spans.length - 1];
+    if (last && st <= last[1]) last[1] = Math.max(last[1], end);
+    else spans.push([st, end]);
+  }
+  return spans.flatMap(([st, end]) => chunkText(doc, raw.slice(st, end)));
+}
+
+function chunkText(doc: DocLike, raw: string): Chunk[] {
   // A flattened table read row by row: each figure on its own label's line
   // (table-text.ts) — a window never pairs a figure with the next row's label.
   const text = normaliseTableText(raw);
@@ -656,8 +767,6 @@ function chunksFor(doc: DocLike): Chunk[] {
     const words = passageWords(windowText);
     chunks.push({ docId: doc.id, docName: doc.name, text: windowText, stems: new Set(words), words });
   }
-  if (chunkCache.size > 400) chunkCache.clear();
-  chunkCache.set(cacheKey, chunks);
   return chunks;
 }
 
@@ -768,10 +877,6 @@ export function searchSourcesTop(question: string, documents: DocLike[], n: numb
   // answers a question when it shares a DISTINCTIVE word with it — a name,
   // an acronym, or a word few passages use ("College", "deductible"), not
   // just "clinic" and "location" in a clinic's own files.
-  const allChunks = eligible.flatMap((d) => chunksFor(d));
-  const df = new Map<string, number>();
-  for (const c of allChunks) c.stems.forEach((st) => df.set(st, (df.get(st) ?? 0) + 1));
-  const rareLimit = Math.max(3, Math.ceil(allChunks.length * 0.015));
   const probes = clauses
     .map((c) => {
       const { words, names, phrases } = probeWords(c);
@@ -787,9 +892,16 @@ export function searchSourcesTop(question: string, documents: DocLike[], n: numb
     .filter((p) => p.stems.size > 0);
   if (probes.length === 0) return [];
   const allWords = new Set(probes.flatMap((p) => Array.from(p.stems)));
+  // Each source's passages: its (cached) head, plus — for a very large
+  // source — windows of the rest around this question's words.
+  const docChunks = new Map(eligible.map((d) => [d.id, [...chunksFor(d), ...tailChunksFor(d, allWords)]] as const));
+  const allChunks = Array.from(docChunks.values()).flat();
+  const df = new Map<string, number>();
+  for (const c of allChunks) c.stems.forEach((st) => df.set(st, (df.get(st) ?? 0) + 1));
+  const rareLimit = Math.max(3, Math.ceil(allChunks.length * 0.015));
   const bestByDoc = new Map<string, { chunk: Chunk; matched: string[]; score: number }>();
   for (const d of eligible) {
-    for (const chunk of chunksFor(d)) {
+    for (const chunk of docChunks.get(d.id) ?? []) {
       for (const { stems, names, phrases, needsFigure } of probes) {
         if (needsFigure && !FIGURE_RE.test(chunk.text)) continue;
         const matched = Array.from(stems).filter((s) => chunk.stems.has(s));

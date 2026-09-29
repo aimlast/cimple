@@ -18,6 +18,7 @@ import type { CimSection } from "@shared/schema";
 import { useCimDesign } from "../CimDesignContext";
 import { useCimMedia } from "../CimMediaContext";
 import { mixHex } from "@shared/cim-theme";
+import { useBlockAttrs } from "../blocks";
 
 interface CoverPageLayoutData {
   businessName?: string;
@@ -88,6 +89,7 @@ function CoverLogo({ src, alt, onDark, size }: { src: string; alt: string; onDar
 export function CoverPageRenderer({ layoutData, content, branding, section }: RendererProps) {
   const design = useCimDesign();
   const media = useCimMedia();
+  const ba = useBlockAttrs();
   const t = design.theme;
   const data: CoverPageLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
 
@@ -132,6 +134,7 @@ export function CoverPageRenderer({ layoutData, content, branding, section }: Re
 
   return (
     <div
+      {...ba("page")}
       className="cim-print-cover relative min-h-[560px] sm:min-h-[680px] flex flex-col justify-between overflow-hidden rounded-lg select-none"
       style={{ background, color: ink, border: light ? `1px solid ${t.line}` : undefined }}
       data-cover-style={style}

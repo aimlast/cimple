@@ -19,7 +19,7 @@ import rateLimit from "express-rate-limit";
 
 /** POSTs under /api/interview/:dealId/ that never run the model or mint a paid key. */
 const INTERVIEW_CONTROL_POST =
-  /^\/api\/interview\/[^/]+\/(reopen|call\/start|call\/end|call\/seller-link|call\/bot\/start|call\/bot\/stop)\/?$/i;
+  /^\/api\/interview\/[^/]+\/(reopen|call\/start|call\/end|call\/seller-link|call\/bot\/start|call\/bot\/stop|together\/leave)\/?$/i;
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 

@@ -21,7 +21,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { IStorage } from "../storage";
 import type { Discrepancy, FinancialAnalysis } from "@shared/schema";
-import { extractFinancialData, type ExtractedStatement } from "./extractor";
+import { extractFinancialData, unreadFinancialText, type ExtractedStatement } from "./extractor";
+import { isTransientAiError, mapWithLimit, withAiRetry } from "../ai-retry";
 import { brokerPrivacy } from "../interview/seller-view";
 import { getFieldSources } from "../interview/info-merger";
 import { filterDiscrepancyItems, dropReason, differentYears, discrepancyYear, normalizeFactYear } from "../cim/discrepancy-filter";
@@ -29,9 +30,12 @@ import { analysisFactKey } from "./discrepancy-fact-key";
 import { correctBalanceSheetFigures } from "./note-figures";
 import { analysisSourceRole, isFinancialStatementDoc, isTaxDocument, type AnalysisSourceRef } from "./source-status";
 import { scrubPrivateText } from "../cim/discrepancy-privacy";
+import { updateDiscrepancyIfStill } from "../cim/discrepancy-cas";
+import { keepRoutedStamp } from "@shared/discrepancy-gate";
 import { mentionsPrivateSource, type DiscrepancySideSources, type DiscrepancySideSource } from "@shared/discrepancy-sides";
 import {
   applyAddbackRules,
+  type AddbackRuleContext,
   applyWorkingCapitalRules,
   flagEarningsNotes,
   flagEarningsStatements,
@@ -53,6 +57,7 @@ import {
   type FigureIndex,
 } from "./private-figures";
 import { getComparables, type CompsResult } from "./comps";
+import { ownersOnFile, payRosterFrom, payTextsFrom, peopleOnFile } from "./owner-pay-attribution";
 import {
   coerceReclassifiedTable,
   coerceNormalization,
@@ -106,6 +111,10 @@ interface SourceBundle {
   factKeys: string[];
   /** Figures in the shared vs the broker's private material (private-figures.ts). */
   figureIndex: FigureIndex;
+  /** Sources read only in part ("Part-read: …") — recorded on the analysis. */
+  readNotes: string[];
+  /** Who is paid what, and who stays (owner-pay-attribution.ts) — for the owner-pay rules. */
+  payContext: PayContext;
 }
 
 /**
@@ -163,7 +172,9 @@ const FINANCIAL_KEYWORDS = [
 export function sliceRelevantText(text: string, budget: number, extraKeywords: string[] = []): string {
   if (text.length <= budget) return text;
 
-  const headBudget = Math.floor(budget * 0.45);
+  // A text many times the budget (three years of tax returns in one file):
+  // a smaller head, so the budget reaches the later years too.
+  const headBudget = Math.floor(budget * (text.length > budget * 4 ? 0.2 : 0.45));
   const head = text.slice(0, headBudget);
   const rest = text.slice(headBudget);
   const restLower = rest.toLowerCase();
@@ -173,13 +184,13 @@ export function sliceRelevantText(text: string, budget: number, extraKeywords: s
   const keywords = extraKeywords.length > 0
     ? Array.from(new Set([...extraKeywords.map((k) => k.toLowerCase()).filter((k) => k.length >= 3), ...FINANCIAL_KEYWORDS]))
     : FINANCIAL_KEYWORDS;
+  // Every occurrence is a candidate (not the first 20 in text order — those
+  // all sit in the oldest year of a chronological pack); spreadWindows picks.
   for (const kw of keywords) {
     let idx = restLower.indexOf(kw);
-    let guard = 0;
-    while (idx !== -1 && guard < 20) {
+    while (idx !== -1) {
       windows.push({ start: Math.max(0, idx - 200), end: idx + windowSize });
       idx = restLower.indexOf(kw, idx + windowSize);
-      guard++;
     }
   }
 
@@ -199,15 +210,114 @@ export function sliceRelevantText(text: string, budget: number, extraKeywords: s
     }
   }
 
-  let remaining = budget - headBudget;
+  const picked = spreadWindows(merged, rest.length, budget - headBudget);
   const chunks: string[] = [head];
-  for (const w of merged) {
-    if (remaining <= 0) break;
-    const len = Math.min(w.end - w.start, remaining);
-    chunks.push(`\n[... skipped to offset ${headBudget + w.start} ...]\n` + rest.slice(w.start, w.start + len));
-    remaining -= len;
+  for (const w of picked) {
+    chunks.push(`\n[... skipped to offset ${headBudget + w.start} ...]\n` + rest.slice(w.start, w.end));
   }
   return chunks.join("");
+}
+
+// ── Statement extraction: a few at a time, retried, failures recorded ──
+//
+// Every statement pack used to be read at once (Ridgeline has 10 — ten
+// parallel 16,000-token generations), with no retry: a 429/529 dropped that
+// statement silently and the analysis still reported "completed" — the
+// CIM's "authoritative" tables could miss, say, the 2023 balance sheet with
+// nothing telling the broker.
+
+/** Statement reads in flight at once for one analysis. */
+export const STATEMENT_READS_AT_ONCE = 3;
+let statementRetryDelaysMs = [5_000, 20_000];
+let statementExtractor: typeof extractFinancialData = extractFinancialData;
+export function _setStatementExtractorForTests(fn: typeof extractFinancialData | null, retryDelaysMs?: number[]) {
+  statementExtractor = fn ?? extractFinancialData;
+  if (retryDelaysMs) statementRetryDelaysMs = retryDelaysMs;
+}
+
+export { isTransientAiError };
+
+function unreadReason(err: unknown): string {
+  const e = err as { status?: number; message?: string } | null;
+  if (e?.status === 429) return "the AI service's rate limit was reached";
+  if (e?.status === 529 || /overloaded/i.test(e?.message ?? "")) return "the AI service was overloaded";
+  if (isTransientAiError(err)) return "the AI service didn't respond";
+  return "the AI service returned an error";
+}
+
+/**
+ * Read each statement document (at most STATEMENT_READS_AT_ONCE at a time,
+ * transient failures retried with back-off). Returns each document's
+ * statements in order, and the documents that couldn't be read with why.
+ */
+export async function readStatementDocs(
+  docs: Array<{ id: string; name: string; extractedText: string | null }>,
+): Promise<{ statementArrays: ExtractedStatement[][]; unread: Array<{ id: string; name: string; reason: string }> }> {
+  const unread: Array<{ id: string; name: string; reason: string }> = [];
+  const statementArrays = await mapWithLimit(docs, STATEMENT_READS_AT_ONCE, async (doc) => {
+    try {
+      return await withAiRetry(() => statementExtractor(doc.extractedText ?? "", doc.id, doc.name), statementRetryDelaysMs);
+    } catch (err: any) {
+      console.error(`Statement extraction failed for "${doc.name}" — continuing without it:`, err?.message);
+      unread.push({ id: doc.id, name: doc.name, reason: unreadReason(err) });
+      return [] as ExtractedStatement[];
+    }
+  });
+  return { statementArrays, unread };
+}
+
+/** The analysis's own notes, with the statements it couldn't read named first. */
+export function withUnreadNote(aiReasoning: string, sources: AnalysisSourceRef[]): string {
+  const unread = sources.filter((s) => s.unread);
+  if (unread.length === 0) return aiReasoning;
+  const note = `Couldn't read ${unread.map((s) => `“${s.name ?? s.id}” (${s.unread})`).join(", ")} — the figures from ${unread.length === 1 ? "that statement are" : "those statements are"} missing from this analysis. Re-run the analysis to include ${unread.length === 1 ? "it" : "them"}.`;
+  return aiReasoning ? `${note}\n\n${aiReasoning}` : note;
+}
+
+/**
+ * Chooses windows across the WHOLE text within a budget: the text is cut
+ * into zones (about one per two budgets of text, at most 8 — a 464K
+ * three-year tax pack gets a zone per return or so) and windows are taken
+ * one per zone per round, the last (newest, in a chronological pack) zone
+ * first, instead of filling the budget from the start. Returned in text order.
+ */
+export function spreadWindows(
+  merged: Array<{ start: number; end: number }>,
+  textLength: number,
+  budget: number,
+): Array<{ start: number; end: number }> {
+  if (budget <= 0 || merged.length === 0) return [];
+  const zoneCount = Math.max(1, Math.min(8, Math.ceil(textLength / Math.max(1, budget * 2))));
+  const zoneSize = textLength / zoneCount;
+  const zones: Array<Array<{ start: number; end: number }>> = Array.from({ length: zoneCount }, () => []);
+  // (A long run of merged windows — a dense statement page — is taken a piece at a time.)
+  const PIECE = 3000;
+  for (const w of merged) {
+    for (let s = w.start; s < w.end; s += PIECE) {
+      zones[Math.min(zoneCount - 1, Math.floor(s / zoneSize))].push({ start: s, end: Math.min(w.end, s + PIECE) });
+    }
+  }
+  const picked: Array<{ start: number; end: number }> = [];
+  let remaining = budget;
+  let round = 0;
+  while (remaining > 0 && zones.some((z) => z.length > round)) {
+    for (let z = zoneCount - 1; z >= 0 && remaining > 0; z--) {
+      const w = zones[z][round];
+      if (!w) continue;
+      const len = Math.min(w.end - w.start, remaining);
+      picked.push({ start: w.start, end: w.start + len });
+      remaining -= len;
+    }
+    round++;
+  }
+  picked.sort((a, b) => a.start - b.start);
+  const joined: Array<{ start: number; end: number }> = [];
+  for (const w of picked) {
+    const last = joined[joined.length - 1];
+    if (last && w.start <= last.end) last.end = Math.max(last.end, w.end);
+    else joined.push({ ...w });
+  }
+  return joined;
 }
 
 async function assembleSources(
@@ -241,17 +351,9 @@ async function assembleSources(
     (d) => isFinancialStatementDoc(d) && d.extractedText && d.extractedText.trim().length >= 50,
   );
   // Per-doc failures (network blips, malformed output) must not kill the run —
-  // the comprehensive pass still has the other docs + raw context to work with.
-  const statementArrays = await Promise.all(
-    financialDocs.map(async (doc) => {
-      try {
-        return await extractFinancialData(doc.extractedText!, doc.id, doc.name);
-      } catch (err: any) {
-        console.error(`Statement extraction failed for "${doc.name}" — continuing without it:`, err.message);
-        return [] as ExtractedStatement[];
-      }
-    }),
-  );
+  // the comprehensive pass still has the other docs + raw context to work with
+  // — but a statement that couldn't be read is recorded and told to the broker.
+  const { statementArrays, unread } = await readStatementDocs(financialDocs);
   const statements = statementArrays.flat();
 
   // Financial docs whose structured extraction produced nothing still carry
@@ -283,7 +385,24 @@ async function assembleSources(
     return parts.join("\n");
   };
 
+  // A statement pack longer than the structured read covers: the rest goes
+  // in as text (its most relevant passages, spread across it), and the
+  // analysis records that it was read in part.
+  const partReadDocs = financialDocs
+    .filter((_, i) => statementArrays[i].length > 0)
+    .map((d) => ({ doc: d, unread: unreadFinancialText(d.extractedText!) }))
+    .filter((x) => x.unread.length > 0);
+  const readNotes = [
+    ...partReadDocs.map(({ doc, unread }) =>
+      `Part-read: "${doc.name}" is ${doc.extractedText!.length.toLocaleString("en-US")} characters; the statements were read from the first ${(doc.extractedText!.length - unread.length).toLocaleString("en-US")}, and the rest only as text passages.`),
+    ...[...unparsedFinancialDocs, ...taxDocs]
+      .filter((d) => (d.extractedText?.length ?? 0) > 25000)
+      .map((d) => `Part-read: "${d.name}" (${d.extractedText!.length.toLocaleString("en-US")} characters) was read as passages spread across the whole text (25,000 characters), not in full.`),
+  ];
+
   const otherDocsContext = [
+    ...partReadDocs.map(({ doc, unread }) =>
+      `### ${doc.name} — the part past the statements read above (category: ${doc.category ?? "other"}, ID: ${doc.id})\nText:\n${sliceRelevantText(unread, 25000)}`),
     ...unparsedFinancialDocs.map((d) => renderDoc(d, 25000)),
     ...taxDocs.map((d) => renderDoc(d, 25000)),
     ...otherDocs.map((d) => renderDoc(d, 4000)),
@@ -370,10 +489,14 @@ async function assembleSources(
 
   // Every document the run read, with its role — so a deleted statement
   // (or one added since) marks the analysis out of date (source-status.ts).
+  // A statement the run couldn't read is marked (`unread`): the analysis is
+  // flagged until it is re-run (source-status.ts).
+  const unreadById = new Map(unread.map((u) => [u.id, u.reason]));
   const contributingDocIds: AnalysisSourceRef[] = processedDocs.map((d) => ({
     id: d.id,
     name: d.name,
     role: financialIds.has(d.id) ? "statements" : analysisSourceRole(d),
+    ...(unreadById.has(d.id) ? { unread: unreadById.get(d.id)! } : {}),
   }));
 
   const privateParts: string[] = [];
@@ -389,9 +512,13 @@ async function assembleSources(
   // document with text counts, processed or not (fail closed).
   const figureTexts = dealFigureTexts(allDocs, rawInfo, deal.questionnaireData);
   const figureIndex = buildFigureIndex(figureTexts.shared, figureTexts.private);
+  // Whose pay each owner line is (a statement line of every shareholder's
+  // pay is not the selling owner's).
+  const payContext = payContextFor(rawInfo, figureTexts);
 
   return {
     figureIndex,
+    payContext,
     statements,
     sourceDocumentIds: contributingDocIds,
     otherDocsContext,
@@ -403,6 +530,7 @@ async function assembleSources(
     docMetaById,
     privateContext,
     factKeys,
+    readNotes,
   };
 }
 
@@ -431,6 +559,47 @@ export async function createAnalysisPlaceholder(
     status: "running",
   });
   return { id: analysis.id, version: nextVersion };
+}
+
+/** Deals with an analysis running in this process (one run per deal at a time). */
+const runningAnalyses = new Set<string>();
+
+export class AnalysisRunningError extends Error {
+  readonly status = 409;
+  constructor() {
+    super("An analysis is already running for this deal. Wait for it to finish, then re-run it if you need to.");
+  }
+}
+
+export function isFinancialAnalysisRunning(dealId: string): boolean {
+  return runningAnalyses.has(dealId);
+}
+
+/**
+ * Starts a background analysis: creates the "running" placeholder and runs
+ * the analysis without waiting for it. One run per deal at a time — two
+ * runs each wrote discrepancies from their own snapshot (duplicate rows,
+ * two versions with one number). Throws AnalysisRunningError while one runs.
+ * A run cut off by a restart doesn't hold the deal: this is per process.
+ */
+export async function startFinancialAnalysis(
+  dealId: string,
+  storage: IStorage,
+  run: typeof runFinancialAnalysis = runFinancialAnalysis,
+): Promise<{ id: string; version: number }> {
+  if (runningAnalyses.has(dealId)) throw new AnalysisRunningError();
+  runningAnalyses.add(dealId);
+  let placeholder: { id: string; version: number };
+  try {
+    placeholder = await createAnalysisPlaceholder(dealId, storage);
+  } catch (err) {
+    runningAnalyses.delete(dealId);
+    throw err;
+  }
+  run(dealId, storage, { analysisId: placeholder.id })
+    .catch((err: any) => console.error("Background financial analysis failed:", err))
+    .finally(() => runningAnalyses.delete(dealId));
+  return placeholder;
 }
 
 export async function runFinancialAnalysis(
@@ -494,7 +663,7 @@ export async function runFinancialAnalysis(
     //     material are marked (an add-back stays out of EBITDA/SDE and the
     //     CIM until the broker approves it; a question's private figures are
     //     never sent to the seller).
-    const ruled = markPrivateMaterial(postProcessAnalysis(freshResult), sources.figureIndex);
+    const ruled = markPrivateMaterial(postProcessAnalysis(freshResult, sources.payContext), sources.figureIndex);
     const reconciled = reconcileNetIncome(ruled.reclassifiedPnl, ruled.normalization, sources.statements);
     const carried: AnalysisOutput = previous
       ? carryForwardBrokerEdits(normalizeFinancialAnalysisRow(previous), {
@@ -535,7 +704,9 @@ export async function runFinancialAnalysis(
       insights: analysisResult.insights,
       clarifyingQuestions: analysisResult.clarifyingQuestions,
       sourceDocumentIds: sources.sourceDocumentIds,
-      aiReasoning: analysisResult.aiReasoning,
+      // Statements that couldn't be read are named first; a source read only
+      // in part says so where the broker reads the analysis's reasoning.
+      aiReasoning: withUnreadNote([analysisResult.aiReasoning, ...sources.readNotes].filter(Boolean).join("\n\n"), sources.sourceDocumentIds),
     });
 
     // 6. Route cross-source discrepancies into the shared discrepancies table
@@ -580,11 +751,50 @@ export async function runFinancialAnalysis(
 
 // ── Deterministic post-processing ──
 
+/** What the owner-pay rules read: who is paid what, who stays, and the material to read more names in. */
+export type PayContext = Pick<AddbackRuleContext, "roster" | "ownerName" | "owners"> & {
+  /** The texts and names the roster was read from — re-read with the people the add-backs name. */
+  payTexts?: { shared: string[]; private: string[] };
+  payNames?: string[];
+};
+
+/** Who is paid what and who stays, from the deal's material (owner-pay-attribution.ts). */
+export function payContextFor(
+  rawInfo: Record<string, unknown>,
+  figureTexts: { shared: string[]; private: string[] },
+): PayContext {
+  const ownerName = typeof rawInfo.ownerName === "string" ? rawInfo.ownerName : null;
+  const payTexts = payTextsFrom(rawInfo, figureTexts);
+  const payNames = peopleOnFile(rawInfo, ownerName ? [ownerName] : []);
+  return {
+    roster: payRosterFrom(payTexts, payNames),
+    ownerName,
+    owners: ownersOnFile(rawInfo),
+    payTexts,
+    payNames,
+  };
+}
+
+/**
+ * The roster, with the people the add-backs themselves name ("Related
+ * party salary — Maria Moretti") read from the same material — a relative
+ * the facts don't list as staff is still someone whose pay the material may
+ * describe.
+ */
+function withAddbackPeople(ctx: PayContext, n: AnalysisOutput["normalization"]): Omit<AddbackRuleContext, "pnl"> {
+  const { payTexts, payNames, ...rules } = ctx;
+  if (!payTexts || !payNames || !rules.roster || !n || !Array.isArray(n.addbacks)) return rules;
+  const labelled = peopleOnFile({}, n.addbacks.flatMap((a) => [String(a?.label ?? ""), String(a?.description ?? "")]));
+  const extra = labelled.filter((name) => !rules.roster!.people.has(name.toLowerCase()));
+  if (extra.length === 0) return rules;
+  return { ...rules, roster: payRosterFrom(payTexts, [...payNames, ...extra]) };
+}
+
 /** Rules applied to the model's fresh output, before the broker's edits are carried over. */
-export function postProcessAnalysis(result: AnalysisOutput): AnalysisOutput {
+export function postProcessAnalysis(result: AnalysisOutput, ctx: PayContext = {}): AnalysisOutput {
   return {
     ...result,
-    normalization: applyAddbackRules(result.normalization),
+    normalization: applyAddbackRules(result.normalization, { ...withAddbackPeople(ctx, result.normalization), pnl: result.reclassifiedPnl }),
     workingCapital: applyWorkingCapitalRules(result.workingCapital, result.reclassifiedBalanceSheet),
   };
 }
@@ -1291,7 +1501,9 @@ async function persistFinancialDiscrepancies(
       if (row.source !== "financial_analysis" || row.factKey) continue;
       const hit = analysisFactKey({ field: row.field, factYear: row.factYear, sourceA: { value: row.interviewValue ?? "" }, sourceB: { value: row.documentValue ?? "" } }, info);
       if (!hit) continue;
-      await storage.updateDiscrepancy(row.id, { factKey: hit.factKey, ...(row.factYear ? {} : { factYear: hit.factYear }) });
+      if (!(await updateDiscrepancyIfStill(storage, row.id, [row.status], { factKey: hit.factKey, ...(row.factYear ? {} : { factYear: hit.factYear }) }))) {
+        continue; // settled or routed while the analysis ran — left as the broker left it
+      }
       row.factKey = hit.factKey;
       if (!row.factYear) row.factYear = hit.factYear;
     }
@@ -1351,8 +1563,12 @@ async function persistFinancialDiscrepancies(
       // field name and a fact key the broker already linked.
       // A year the broker linked stays, unless the finding is plainly about
       // another year (it never reaches here then — matchesExisting).
-      await storage.updateDiscrepancy(openMatch.id, {
+      // Only while the row is as this run found it: one the broker resolved
+      // or routed during the run keeps the sides they decided on.
+      await updateDiscrepancyIfStill(storage, openMatch.id, [openMatch.status], {
         ...values,
+        // (A routed row keeps its routing stamp — shared/discrepancy-gate.ts.)
+        sideSources: keepRoutedStamp(openMatch.sideSources, values.sideSources) as any,
         factKey: openMatch.factKey || values.factKey,
         factYear: openMatch.factKey ? openMatch.factYear ?? values.factYear : values.factYear,
       });
@@ -1384,7 +1600,7 @@ async function persistFinancialDiscrepancies(
       documentValue: b ?? row.documentValue,
       aiExplanation: `${row.aiExplanation ?? ""}${row.aiExplanation ? " " : ""}${DIVIDEND_NOTE}`,
     };
-    await storage.updateDiscrepancy(row.id, patch);
+    if (!(await updateDiscrepancyIfStill(storage, row.id, [row.status], patch))) continue;
     unsettled[i] = { ...row, ...patch };
     byId.set(row.id, unsettled[i]);
   }
@@ -1402,7 +1618,9 @@ async function persistFinancialDiscrepancies(
     const row = byId.get(id);
     if (!row || row.source !== "financial_analysis" || refreshed.has(id)) continue;
     if (row.status !== "open" && row.status !== "seller_responded") continue;
-    await storage.updateDiscrepancy(id, { status: "superseded" });
+    // The status this run saw must still hold: a row the broker resolved or
+    // routed to the seller while the analysis ran is never closed by it.
+    await updateDiscrepancyIfStill(storage, id, [row.status], { status: "superseded" });
   }
 }
 

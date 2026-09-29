@@ -14,6 +14,7 @@ import type { CimSection } from "@shared/schema";
 import { numericScore, scorecardIsNumeric } from "@shared/cim-layouts";
 import { ProseFallback, renderInline } from "../richText";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs } from "../blocks";
 
 interface ScorecardItem {
   label: string;
@@ -58,6 +59,7 @@ export function benchmarkLabelPlacement(pct: number): { left?: string; right?: s
 const Title = ({ title, intro }: { title?: string; intro?: unknown }) => <BlockTitle title={title} intro={intro} />;
 
 export function ScorecardRenderer({ layoutData, content, branding, section }: RendererProps) {
+  const ba = useBlockAttrs();
   const data: ScorecardLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const items = (data.items || []).filter((it) => it && typeof it === "object");
   const maxScore = numericScore(data.maxScore) || 100;
@@ -74,7 +76,7 @@ export function ScorecardRenderer({ layoutData, content, branding, section }: Re
         <Title title={data.title} intro={(data as { intro?: unknown }).intro} />
         <div className="divide-y divide-border/60 rounded-lg border border-card-border bg-card">
           {items.map((item, i) => (
-            <div key={i} className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+            <div key={i} {...ba(`row:${i}`)} className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-foreground leading-snug">{item.label}</p>
                 {item.description && (
@@ -108,7 +110,7 @@ export function ScorecardRenderer({ layoutData, content, branding, section }: Re
           const benchmarkText = benchmark == null && item.benchmark != null && String(item.benchmark).trim() ? String(item.benchmark) : null;
 
           return (
-            <div key={i} className="space-y-1.5">
+            <div key={i} {...ba(`row:${i}`)} className="space-y-1.5">
               <div className="flex items-center justify-between gap-4">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground leading-snug">{item.label}</p>

@@ -21,6 +21,7 @@ import {
   getFieldSources,
   setFieldSource,
   recordAlternate,
+  addPrivateNote,
   typedNumericValues,
   SOURCE_META_KEYS,
   type FieldSource,
@@ -34,6 +35,7 @@ import {
   mergeMapEntryInto,
   isBrokerProcessKey,
   isSpecialistSource,
+  premisesKey,
   isYearMapKey,
   mergeScalarInto,
   mergeYearMapInto,
@@ -56,6 +58,8 @@ import { agentConfig } from "../interview/config/load-config";
 import { coverageAdjustmentsForDeal } from "../interview/interview-plan";
 import type { Deal } from "@shared/schema";
 import { guardExtraction, statedMetricKeys, STATED_METRIC_NOTE, STATED_METRICS_KEY, SPOKEN_KINDS } from "./extraction-guard";
+import { equipmentLeaseKey, isEquipmentLeaseTitle, PREMISES_LEASE_KEY } from "./lease-kind";
+import { routeStaffPrivate, staffContextFrom, STAFF_PRIVATE_NOTE_REASON, type StaffContext } from "../cim/staff-private";
 
 /** The slice of the SDK the extractor uses (a stand-in in tests). */
 export interface ExtractionClient {
@@ -310,7 +314,7 @@ FISCAL PERIODS (any source that states figures):
 
 BROKER PROCESS: how the business reached the broker (who referred it, the lead source), the broker's fee, commission, listing or engagement terms, earlier approaches or offers — these are not facts about the business: put them ONLY in _privateNotes.
 
-For LEASE / LEGAL documents, extract: leaseExpiry, monthlyRent, leaseSqft, leaseRenewalOptions, leaseAddress, contracts, legalNotes, permitsLicenses (all licenses and permits)
+For LEASE / LEGAL documents, extract: leaseExpiry, monthlyRent, leaseSqft, leaseRenewalOptions, leaseAddress, contracts, legalNotes, permitsLicenses (all licenses and permits). The lease fields (leaseExpiry, monthlyRent, leaseSqft, leaseRenewalOptions, leaseAddress, leaseDetails, landlord) are ONLY for the lease of the business's premises (the building, unit, yard or land it occupies). A lease of equipment or vehicles (a forklift, truck, tractor, trailer, van, copier, machine) goes under equipmentLeases (or vehicleLeases for vehicles) as one line with what is leased, the payment and the term — never under the premises-lease fields — and set _documentType to say so (e.g. "Equipment lease - forklift").
 
 For OPERATIONS / HR documents, extract: employees (total headcount), fullTimeCount, partTimeCount, keyPersonnel, ownerInvolvement (incl. hours/week), suppliers, inventory, assetsIncluded (equipment and assets), operationsNotes
 
@@ -333,6 +337,7 @@ Any other clearly business-relevant fact may use its own specific camelCase key 
 For ANY source, also extract: summary (1-2 sentences), keyFacts (most important facts as a comma-separated list), redFlags (any concerning items noted)
 
 PRIVATE MATTERS: personal or sensitive things about the owner, their family or staff that must never appear in a sales document — health, family or marital matters, personal money trouble outside the company, legal trouble not about the business, the seller's bottom line or other negotiation positions, or anything the source marks private / confidential / "don't share" — go ONLY in _privateNotes. Never put them in a business field: e.g. reasonForSale stays neutral ("Owner retiring") and the health detail goes in _privateNotes. One short, factual note per matter: put everything the source says about that matter in the one note (the heart episode, the stent and "keep it out of the brochure" are one note, not three), and name whose matter it is ("Owner's wife…").
+STAFF MATTERS: an employee's (or key person's) private matters are private notes too — their interest in equity, a stake or buying in (or the owner's idea of offering them one to keep them), a raise request or pay complaint, talk of leaving or being recruited, a warning, probation or performance problem, their health, leave or family, a private conversation with the owner. Record the business part as the fact ("Daniel Okafor: LTC lead pharmacist since 2014, primary contact for the homes") and the private part as a note that names the person ("Daniel Okafor asked about buying an equity stake about a year ago"). Signed or agreed arrangements (an employment or retention agreement, a stake someone already owns, an agreed management rollover), an announced departure or succession plan and a stated retirement date are business facts.
 Deal-process status and to-dos (an NDA or engagement letter signed, who attended or was copied, documents still to ask for, next steps), contact details (phone numbers, e-mail and office addresses) and the source's own confidentiality stamp are neither facts nor private notes: next steps go in actionItems, the rest stays in summary / keyFacts.
 Material events about the company itself — a customer giving notice or leaving, a contract or shareholder agreement signed or amended, an asset excluded from the sale, insurance policies, litigation about the business — are business facts under their own keys, never private notes.
 Company transactions that involve the owner or their family are BUSINESS facts, not private notes — a buyer's due diligence needs them and the financial analysis reads them: dividends declared or paid (dividendsDeclared, with class, amount and date), shareholder loans and amounts due to or from shareholders (shareholderLoans), personal guarantees of company debt (personalGuarantees), related-party leases, contracts and family members on the payroll (relatedPartyTransactions), and the audit / review / compilation status (auditStatus). Record them under those keys.
@@ -356,6 +361,125 @@ export const MAX_SOURCE_PARTS = 10;
 const PART_CONCURRENCY = 3;
 /** Below this much text there is nothing to read (a scanned image, an empty file). */
 export const MIN_READABLE_CHARS = 50;
+/** A page of a scanned PDF's text layer holds at most this much text of its own (a stray scanner mark, a stamp). */
+export const MAX_SCANNED_PAGE_CHARS = 10;
+/** A scanned PDF: at least this share of its pages hold (almost) no text. */
+const SCANNED_PAGE_SHARE = 0.75;
+/** Without each page's text: a PDF averaging under this much text of its own a page (a typed cover over image pages). */
+export const MIN_USEFUL_CHARS_PER_PAGE = 25;
+/** Without a page count: a scanner watermark's pages averaging under this much text of their own. */
+const MIN_CHARS_PER_WATERMARKED_PAGE = 150;
+
+/** A scanning app's own stamp ("Scanned with CamScanner", "Scanned by TurboScan"). */
+const SCANNER_STAMP = /\b(?:scanned (?:with|by|using|via)|camscanner|adobe scan|genius ?scan|microsoft lens|office lens|tiny ?scanner|turbo ?scan|scanbot|clear ?scan|swift ?scan|iscanner|scanner pro|simple ?scan)\b/i;
+
+/** How a source's text was laid out: a PDF's pages (and each page's text), or a file that has no pages. */
+export interface TextLayout {
+  /** The PDF's page count. */
+  pages?: number;
+  /** Each page's text, when the PDF was just read. */
+  pageTexts?: string[];
+  /** True for a PDF (its text may be a scan's text layer); false for Word, Excel, PowerPoint, text and pasted sources. */
+  pdf?: boolean;
+}
+
+const asLayout = (layout?: number | TextLayout): TextLayout =>
+  typeof layout === "number" ? { pages: layout, pdf: true } : layout ?? {};
+
+const normLine = (l: string) => l.toLowerCase().replace(/\s+/g, " ");
+const PAGE_NUMBER_LINE = /^(?:page\s*)?#?\s*\d+(?:\s*(?:of|\/)\s*\d+)?$|^[-–—]\s*\d+\s*[-–—]$/i;
+const ownChars = (line: string) => line.replace(/[^A-Za-z0-9]/g, "").length;
+
+/**
+ * The text a source holds of its own: letters and digits outside a
+ * scanner's stamp, a running header / footer and page numbers — and how many
+ * pages a scanner's repeated stamp suggests when the page count isn't known.
+ * Only a scanner's stamp counts pages: a questionnaire's "Yes" / "No"
+ * answers, a slide footer ("Confidential") or a status column ("Owned")
+ * repeat too, and they are text of the document's own.
+ */
+export function usefulText(text: string, runningLines?: Set<string>): { chars: number; repeatedPages: number } {
+  const lines = (text || "").split(/\r?\n|\f/).map((l) => l.trim()).filter(Boolean);
+  const counts = new Map<string, number>();
+  for (const l of lines) counts.set(normLine(l), (counts.get(normLine(l)) ?? 0) + 1);
+  let chars = 0;
+  let repeatedPages = 0;
+  for (const l of lines) {
+    const n = counts.get(normLine(l)) ?? 0;
+    if (SCANNER_STAMP.test(l) && l.length <= 80) { repeatedPages = Math.max(repeatedPages, n); continue; }
+    if (runningLines?.has(normLine(l))) continue;
+    if (PAGE_NUMBER_LINE.test(l)) continue;
+    chars += ownChars(l);
+  }
+  return { chars, repeatedPages };
+}
+
+/** Lines on at least half of a PDF's pages (a running header or footer), by their text. */
+function runningLinesOf(pageTexts: string[]): Set<string> {
+  const onPages = new Map<string, number>();
+  for (const page of pageTexts) {
+    const seen = new Set(page.split(/\r?\n|\f/).map((l) => l.trim()).filter((l) => l && l.length <= 80).map(normLine));
+    seen.forEach((l) => onPages.set(l, (onPages.get(l) ?? 0) + 1));
+  }
+  const out = new Set<string>();
+  onPages.forEach((n, l) => { if (n >= Math.max(3, pageTexts.length / 2)) out.add(l); });
+  return out;
+}
+
+/**
+ * True when a document's text layer is too thin to have been read — a
+ * scanned PDF whose only text is a scanner's stamp or a typed cover page
+ * over image pages. Judged on three or more pages:
+ * - with each page's text (a PDF just read): most pages (three in four)
+ *   hold almost no text of their own once running headers, footers and
+ *   stamps are set aside — a sparse slide deck ("Founded 2009", "Thank
+ *   you") has a little on nearly every page, a scan has nothing;
+ * - with only the PDF's page count: under MIN_USEFUL_CHARS_PER_PAGE a page;
+ * - with no page count (a PDF's stored text): only a scanner's stamp,
+ *   repeated page after page, counts the pages.
+ * Word, Excel, PowerPoint, text and pasted sources are never judged thin:
+ * they have no scanned pages, and their repeated lines are their own text.
+ * A one- or two-page document is judged by MIN_READABLE_CHARS alone.
+ */
+export function thinTextLayer(text: string, layout?: number | TextLayout): boolean {
+  const { pages, pageTexts, pdf } = asLayout(layout);
+  if (pdf === false) return false;
+  if (pageTexts && pageTexts.length >= 3) {
+    const running = runningLinesOf(pageTexts);
+    const empty = pageTexts.filter((page) => usefulText(page, running).chars <= MAX_SCANNED_PAGE_CHARS).length;
+    return empty >= pageTexts.length * SCANNED_PAGE_SHARE;
+  }
+  if (pages && pages > 0) {
+    if (pages < 3) return false;
+    return usefulText(text).chars / pages < MIN_USEFUL_CHARS_PER_PAGE;
+  }
+  const { chars, repeatedPages } = usefulText(text);
+  if (repeatedPages < 3) return false;
+  return chars / repeatedPages < MIN_CHARS_PER_WATERMARKED_PAGE;
+}
+
+/** The reason given for a scanned document with a thin text layer. */
+export const SCANNED_REASON = "most of its pages have no readable text — it looks like a scanned document; upload a text PDF, a Word file or a typed copy";
+
+/**
+ * A read that found nothing, of a text with little of its own: under 300
+ * characters a page (or 300 in all). With hasNoBusinessFacts, the source is
+ * not counted as the checklist document it was uploaded for. Only a PDF can
+ * be a scan: a short Word, Excel, PowerPoint or text file is what it says.
+ */
+export function readFoundNothing(data: ExtractedDocumentData, text: string, layout?: number | TextLayout): boolean {
+  if (!hasNoBusinessFacts(data)) return false;
+  const { pages, pdf } = asLayout(layout);
+  if (pdf === false) return false;
+  const { chars, repeatedPages } = usefulText(text);
+  const pageCount = Math.max(1, pages && pages > 0 ? pages : repeatedPages);
+  return chars < 300 || chars / pageCount < 300;
+}
+
+/** True when an extraction holds no fact about the business (only its summary and bookkeeping). */
+export function hasNoBusinessFacts(data: ExtractedDocumentData): boolean {
+  return Object.entries(data).every(([k, v]) => k.startsWith("_") || k === "summary" || k === "keyFacts" || v === undefined || v === null || v === "");
+}
 
 /** Where a page, sheet or form feed starts — the preferred place to cut a long source. */
 const PAGE_BREAK_RE = /\f|\n(?=[^\n]{0,80}\bPage \d+ of \d+\b)|\n(?=--- Sheet: )|\n\n(?=\S)/g;
@@ -496,7 +620,41 @@ export function normaliseExtraction(raw: Record<string, unknown>, sourceText?: s
       process.env.NODE_ENV === "production" ? `${d.key} (${d.reason})` : `${d.key} (${d.reason}: ${String(valueAt(d.key) ?? "").slice(0, 120)})`;
     console.log(`[extractor] dropped ${guarded.dropped.length} value(s): ${guarded.dropped.map(shown).join("; ")}`);
   }
+  routeStaffPrivateToNotes(guarded.data);
   return structureExtraction(guarded.data);
+}
+
+/**
+ * An employee's private matter the source mentions (their ask for a stake, a
+ * raise request, talk of leaving, a warning, their health or family) goes to
+ * _privateNotes — the broker's, never a CIM fact — and the business part of
+ * the value stays the fact (server/cim/staff-private.ts). Mutates; returns
+ * the notes it added.
+ *
+ * Precision first (routeStaffPrivate is strict): only a clause about someone
+ * the source (or, at merge time, the deal) shows is staff — a staff word, a
+ * job title, a name recorded as staff — is moved; a first name alone on the
+ * owner's topics ("Helen is thinking about retiring" as the reason for sale)
+ * stays the fact. `ctx` defaults to the people this extraction names;
+ * mergeExtractedData passes the deal's own.
+ */
+export function routeStaffPrivateToNotes(data: Record<string, unknown>, ctx: StaffContext = staffContextFrom(data)): string[] {
+  const notes: string[] = [];
+  for (const [key, value] of Object.entries(data)) {
+    // (The source's own summary / key facts / red flags are notes about the source, never CIM facts.)
+    if (key.startsWith("_") || typeof value !== "string" || key === "summary" || key === "keyFacts" || key === "redFlags") continue;
+    const r = routeStaffPrivate(key, value, ctx);
+    if (r.notes.length === 0) continue;
+    notes.push(...r.notes);
+    if (r.kept) data[key] = r.kept;
+    else delete data[key];
+  }
+  if (notes.length === 0) return notes;
+  const raw = data._privateNotes;
+  if (Array.isArray(raw)) data._privateNotes = [...raw, ...notes];
+  else if (typeof raw === "string" && raw.trim()) data._privateNotes = `${raw}\n${notes.join("\n")}`;
+  else data._privateNotes = notes;
+  return notes;
 }
 
 /** A statement's own expense listing ("operatingExpenseBreakdown", "operatingExpensesDetail"): its lines as printed. */
@@ -749,9 +907,13 @@ export async function extractDocumentData(
   /** What kind of source this is — an email or call is read differently from a P&L. */
   kind: SourceKind = "document",
   /** The deal's checklist keys, so answers land where the interview and coverage look (see extractionChecklist). */
-  opts: { checklist?: ExtractionChecklistItem[] } = {},
+  /** pages / pageTexts / pdf: how the text was laid out (thinTextLayer). */
+  opts: { checklist?: ExtractionChecklistItem[] } & TextLayout = {},
 ): Promise<ExtractedDocumentData> {
   if (!text || text.trim().length < MIN_READABLE_CHARS) return unreadableExtraction(text, kind);
+  // A scanned PDF whose text layer is a watermark or a cover page: not read
+  // (nothing in it is), and said so — it is not the document it was sent as.
+  if (kind === "document" && thinTextLayer(text, { pages: opts.pages, pageTexts: opts.pageTexts, pdf: opts.pdf })) return unreadableExtraction(text, kind, SCANNED_REASON);
 
   const parts = splitSourceText(text);
   if (parts.length === 1) {
@@ -991,7 +1153,13 @@ const DOC_NOUN = "(?:database|export|report|file|document|spreadsheet|workbook|s
 const PART_LABEL_START = /^\s*(?:this is\s+)?(\()?part\s+(\d{1,3})\s*(?:of|\/)\s*(\d{1,3})\b(?:\s*(\)))?/i;
 /** What may follow an unbracketed label: a delimiter, or "of a/an/the <the source>". */
 const AFTER_LABEL_DELIM = /^\s*[:\-–—,]\s*/;
-const AFTER_LABEL_OF_DOC = new RegExp(`^\\s*of\\s+(?:a|an|the)\\s+(?=(?:[\\w'&/-]+\\s+){0,5}?${DOC_NOUN}\\b)`, "i");
+/**
+ * Words that end the noun phrase after "of the": an article, "to", a verb.
+ * "Part 2 of 5 of the lease requires the tenant to file returns" names no
+ * source — "returns" is five words on, past a verb — and is kept as written.
+ */
+const NOT_IN_SOURCE_NAME = "(?:the|a|an|to|is|are|was|were|be|been|being|has|have|had|and|or|of|that|which|who|it|its|this|these|requires?|required|shows?|showed|states?|stated|says|said|includes?|included|provides?|provided|lists?|listed|covers?|covered|contains?|contained|describes?|described|indicates?|indicated|notes?|noted|sets?|gives?|gave|must|shall|will|would|can|could|may|might|should|files?|filed|pays?|paid|runs?|ran)";
+const AFTER_LABEL_OF_DOC = new RegExp(`^\\s*of\\s+(?:a|an|the)\\s+(?=(?:(?!${NOT_IN_SOURCE_NAME}\\b)[\\w'&/-]+\\s+){0,5}?${DOC_NOUN}\\b)`, "i");
 /** "Part 4 of customer membership database…" — a part's own number without the count (summaries only). */
 const OWN_PART_LEAD = /^\s*(?:this is\s+)?\(?part\s+(\d+)\)?\s*(?:[:\-–—,.]\s*|of\s+)(?:(?:the|a|an)\s+)?/i;
 
@@ -1108,7 +1276,7 @@ const ROW_ID_RANGE = new RegExp(
   "i",
 );
 /** A finding about the records ("… show no major failures", "… were reconciled", "…: no late payments"): a fact, not a row range. */
-const FINDING_AFTER = /^(?:\s*:\s*\S|[^.;]*?\b(?:show(?:s|ed)?|indicate[sd]?|confirm(?:s|ed)?|reveal(?:s|ed)?|demonstrate[sd]?|contain(?:s|ed)?|reflect(?:s|ed)?|total(?:s|led|ed)?|averag(?:e|es|ed)|grew|declined|increased|decreased|doubled|tripled|has|have|had|was|were|is|are)\b)/i;
+const FINDING_AFTER = /^(?:\s*:\s*\S|[^.;]*?\b(?:show(?:s|ed)?|indicate[sd]?|confirm(?:s|ed)?|reveal(?:s|ed)?|demonstrate[sd]?|contain(?:s|ed)?|reflect(?:s|ed)?|total(?:s|led|ed)?|averag(?:e|es|ed)|grew|declined|increased|decreased|doubled|tripled|has|have|had|was|were|is|are|reconcile[sd]?|match(?:es|ed)?|agree[sd]?|tie[sd]?|support(?:s|ed)?|balance[sd]?|exceed(?:s|ed)?|verif(?:y|ies|ied)|prove[sd]?|remain(?:s|ed)?|equal(?:s|led|ed)?|include[sd]?|document(?:s|ed)|record(?:s|ed)|list(?:s|ed)|cover(?:s|ed)|net(?:s|ted)?|came|come|comes|run|runs|ran|went|go|goes)\b)/i;
 /** The business doing something with the records ("The practice has retained patient records from …"): a fact. */
 const FINDING_BEFORE = /\b(?:has|have|had|retain(?:s|ed)?|digiti[sz](?:e|es|ed)|kept|keeps?|maintain(?:s|ed)?|holds?|held|stor(?:e|es|ed)|occup(?:y|ies|ied)|stock(?:s|ed)?|owns?|owned|audit(?:s|ed)?|archiv(?:e|es|ed))\b/i;
 
@@ -1164,8 +1332,11 @@ export function combinePartSummaries(summaries: PartSummary[], opts: { total?: n
   if (findings.length === 0) return items[0] ?? "";
   const scores = findings.map(headlineScore);
   const best = scores.indexOf(Math.max(...scores));
-  const ordered = scores[best] > 0 ? [findings[best], ...findings.filter((_, i) => i !== best)] : findings;
-  return ordered.join(" ");
+  // A part that only describes its rows is left out only when another part
+  // states the source's headline; otherwise every part's summary stays, in
+  // order (a sentence misread as row prose is never lost to a plain one).
+  if (scores[best] <= 0) return items.join(" ");
+  return [findings[best], ...findings.filter((_, i) => i !== best)].join(" ");
 }
 
 /** Keys of an extraction that describe the source in prose (joined across parts, never one part's only). */
@@ -1331,6 +1502,48 @@ const LEASE_COMPOSITE_PARTS: Array<{ key: string; label: string }> = [
   { key: "leaseRenewalOptions", label: "Renewal options" },
 ];
 
+/** How an equipment lease's terms read once moved off the premises-lease keys. */
+const EQUIPMENT_LEASE_LABELS: Record<string, string> = {
+  monthlyRent: "Payment", rent: "Payment", annualRent: "Annual payment", leaseExpiry: "Expires", leaseTerm: "Term",
+  leaseStart: "Starts", leaseStartDate: "Starts", leaseRenewalOptions: "Options", landlord: "Lessor", leaseAddress: "Location",
+};
+
+/**
+ * An equipment or vehicle lease (a forklift, a tractor, a copier): the terms
+ * the reader filed under the premises-lease keys (leaseExpiry, monthlyRent,
+ * leaseDetails, …) move to one equipmentLeases / vehicleLeases line naming
+ * the source ("Equipment lease - Toyota forklift: Payment $1,150 per month;
+ * Expires March 31, 2027"). The premises lease's facts are never touched.
+ */
+function rerouteEquipmentLease(data: ExtractedDocumentData, title: string, sourceTitle: string | undefined, inferredKeys: Set<string>): void {
+  const target = equipmentLeaseKey(title);
+  const parts: string[] = [];
+  let summary: string | undefined;
+  let inferred = false;
+  for (const key of Object.keys(data)) {
+    if (key.startsWith("_")) continue;
+    const canonical = canonicalFieldName(key);
+    if (!PREMISES_LEASE_KEY.test(key) && !PREMISES_LEASE_KEY.test(canonical)) continue;
+    const value = data[key];
+    delete data[key];
+    if (typeof value !== "string" || !value.trim()) continue;
+    if (inferredKeys.has(key)) inferred = true;
+    if (canonical === "leaseDetails" || key === "leaseDetails" || canonical === "propertyInfo") summary = summary ? `${summary}; ${value.trim()}` : value.trim();
+    else {
+      const label = EQUIPMENT_LEASE_LABELS[key] ?? EQUIPMENT_LEASE_LABELS[canonical];
+      parts.push(label ? `${label}: ${value.trim()}` : value.trim());
+    }
+  }
+  // (A summary that already says a term is not repeated.)
+  const terms = [summary, ...parts.filter((p) => !summary || !summary.includes(p.replace(/^[^:]+:\s*/, "")))].filter(Boolean).join("; ");
+  if (!terms) return;
+  const name = (sourceTitle ?? "").trim();
+  const line = name && !terms.toLowerCase().includes(name.toLowerCase()) ? `${name}: ${terms}` : terms;
+  const existing = typeof data[target] === "string" ? (data[target] as string).trim() : "";
+  data[target] = existing ? `${existing}; ${line}` : line;
+  if (inferred) inferredKeys.add(target);
+}
+
 /** The latest fiscal period a normalised extraction's figures are for (its by-year maps and tagged headlines), if any. */
 function latestFigurePeriod(data: ExtractedDocumentData): string | undefined {
   const periods: string[] = Object.values((data._keyPeriods as Record<string, string> | undefined) ?? {});
@@ -1400,7 +1613,11 @@ export function mergeExtractedData(
   const o: MergeSource = typeof origin === "string" ? { documentId: origin } : origin ?? {};
   const kind: SourceKind = o.source ?? "document";
   const documentId = o.documentId;
-  const data = normaliseExtraction(incoming as Record<string, unknown>);
+  const data = { ...normaliseExtraction(incoming as Record<string, unknown>) };
+  // Staff-private matters again, now that the deal's people are known (the
+  // owner, staff another source named): the private part becomes the
+  // broker's note on the deal, never a fact (server/cim/staff-private.ts).
+  const staffNotes = routeStaffPrivateToNotes(data, staffContextFrom({ ...existing, ...data }));
   // A document that states no period end (older extractions) is for the
   // latest fiscal year its figures cover — FY2023 statements with FY2022
   // comparatives are a 2023 source, not an undated one.
@@ -1418,11 +1635,19 @@ export function mergeExtractedData(
   const keyPeriods = (data._keyPeriods as Record<string, string> | undefined) ?? {};
   const inferredKeys = new Set(String(data._inferredKeys ?? "").split(",").map((k) => k.trim()).filter(Boolean));
   const title = [o.title, typeof data._documentType === "string" ? data._documentType : ""].filter(Boolean).join(" · ");
+  // A forklift, truck or copier lease: its term and payment are that
+  // equipment's lease, never the premises lease's expiry and rent.
+  // (A street address or tenant / landlord terms in the lease's own facts
+  // outweigh an equipment word that only describes it.)
+  const leaseFacts = { ...(data as Record<string, unknown>) };
+  if (isEquipmentLeaseTitle(title, leaseFacts)) rerouteEquipmentLease(data, title, o.title, inferredKeys);
 
+  // The premises a lease document is for (its address, else the place its title names).
+  const premises = kind === "document" ? premisesKey(o.title ?? title, typeof data.leaseAddress === "string" ? data.leaseAddress : null) : undefined;
   const srcFor = (rawKey: string, key: string): FieldSource => ({
     ...base,
     ...(keyPeriods[rawKey] ? { period: keyPeriods[rawKey] } : {}),
-    ...(isSpecialistSource(key, title) ? { specialist: true } : {}),
+    ...(isSpecialistSource(key, title, leaseFacts) ? { specialist: true, ...(premises && PREMISES_LEASE_KEY.test(key) ? { premises } : {}) } : {}),
     ...(inferredKeys.has(rawKey) ? { valueInferred: true } : {}),
   });
 
@@ -1453,7 +1678,11 @@ export function mergeExtractedData(
     mergeScalarInto(merged, key, value, src, ctx);
   };
 
-  for (const [key, value] of Object.entries(data)) {
+  // The lease's address first: a second premises' lease is told from a
+  // disputed one by its address (noteConflict), so it must be on file
+  // before that lease's expiry and rent are weighed.
+  const entries = Object.entries(data).sort(([a], [b]) => Number(b === "leaseAddress") - Number(a === "leaseAddress"));
+  for (const [key, value] of entries) {
     if (!value || key.startsWith("_")) continue;
     mergeValue(key, canonicalFieldName(key), value);
   }
@@ -1512,5 +1741,12 @@ export function mergeExtractedData(
 
   // Headline figures follow the most authoritative, latest by-year figure.
   reconcileHeadlines(merged, ctx);
+  for (const note of staffNotes) {
+    addPrivateNote(merged, note, {
+      reason: o.title ? `From ${o.title} — ${STAFF_PRIVATE_NOTE_REASON}` : STAFF_PRIVATE_NOTE_REASON,
+      ...(documentId ? { documentId } : {}),
+      ...(o.brokerOnly ? { brokerOnly: true } : {}),
+    });
+  }
   return merged;
 }

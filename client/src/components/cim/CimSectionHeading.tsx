@@ -19,19 +19,22 @@ export function CimSectionHeading({
   number,
   aside,
   className,
+  attrs,
 }: {
   title: ReactNode;
   number?: number;
   /** Broker chrome shown at the right (e.g. "hidden"). */
   aside?: ReactNode;
   className?: string;
+  /** Reading-analytics attributes for the heading block (blocks.tsx). */
+  attrs?: Record<string, string>;
 }) {
   const theme = useCimTheme();
   const style = theme.headerStyle;
 
   if (style === "band") {
     return (
-      <div className={cn("mb-5 flex items-start justify-between gap-4", className)}>
+      <div {...attrs} className={cn("mb-5 flex items-start justify-between gap-4", className)}>
         <h2
           className="cim-heading flex-1 min-w-0 rounded-md px-4 py-2.5 text-lg sm:text-xl tracking-tight leading-snug break-words"
           style={{ backgroundColor: theme.accent, color: theme.onAccent }}
@@ -45,7 +48,7 @@ export function CimSectionHeading({
 
   if (style === "numbered" && number !== undefined) {
     return (
-      <div className={cn("mb-5 flex items-start justify-between gap-4", className)}>
+      <div {...attrs} className={cn("mb-5 flex items-start justify-between gap-4", className)}>
         <div className="flex items-baseline gap-3 sm:gap-4 min-w-0 flex-1 border-b pb-3" style={{ borderColor: theme.line }}>
           <span
             className="cim-display text-2xl sm:text-3xl leading-none tabular-nums shrink-0"
@@ -63,7 +66,7 @@ export function CimSectionHeading({
 
   if (style === "rule" || style === "numbered") {
     return (
-      <div className={cn("mb-5 flex items-start justify-between gap-4", className)}>
+      <div {...attrs} className={cn("mb-5 flex items-start justify-between gap-4", className)}>
         <div className="relative min-w-0 flex-1 pb-2.5">
           <h2 className="cim-heading text-xl tracking-tight leading-snug break-words">{title}</h2>
           <div className="absolute left-0 right-0 bottom-0 h-px" style={{ backgroundColor: theme.line }} />
@@ -75,7 +78,7 @@ export function CimSectionHeading({
   }
 
   return (
-    <div className={cn("mb-4 flex items-start justify-between gap-4", className)}>
+    <div {...attrs} className={cn("mb-4 flex items-start justify-between gap-4", className)}>
       <h2 className="cim-heading text-xl tracking-tight">{title}</h2>
       {aside}
     </div>

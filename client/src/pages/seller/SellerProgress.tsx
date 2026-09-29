@@ -10,6 +10,10 @@ import { useParams, Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircle,
+  BookOpenCheck,
+  ListTodo,
+  Search,
+  ShieldQuestion,
   Check,
   ChevronRight,
   Clock,
@@ -57,9 +61,22 @@ interface SellerProgressData {
     percentage: number;
     totalUploaded: number;
   };
+  /** Intake pages saved (Business Basics, Systems, Key People). */
+  intake?: { status: "not_started" | "in_progress" | "complete"; pagesDone: number; pagesTotal: number };
+  /** What the conversation asked them to do: documents to upload, things to look up. */
+  todo?: Array<{ id: string; kind: "document" | "follow_up"; title: string }>;
+  /** Questions the broker sent back after the conversation ended. */
+  followUpQuestions?: number;
+  /** The CIM waiting for their review (shared/seller-portal sellerReviewStage). */
+  cimReview?: { stage: "not_ready" | "content" | "design" | "waiting" | "approved"; canApprove?: boolean };
   pendingApprovals: number;
+  /** Buyer questions whose answer waits on the seller — each with its review link. */
+  pendingApprovalItems?: Array<{ id: string; question: string; href: string }>;
   broker: { name: string; email: string | null } | null;
 }
+
+/** To-dos shown before "Show all". */
+const TODO_VISIBLE = 4;
 
 const TIME_ESTIMATES: Record<string, string> = {
   intake: "~10 minutes",
@@ -71,6 +88,7 @@ const TIME_ESTIMATES: Record<string, string> = {
 export default function SellerProgress() {
   const { token } = useParams<{ token: string }>();
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showAllTodo, setShowAllTodo] = useState(false);
 
   const { data, isLoading, error, refetch, isFetching } = useQuery<SellerProgressData>({
     queryKey: [`/api/seller/${token}/progress`],
@@ -177,13 +195,69 @@ export default function SellerProgress() {
         </div>
       </div>
 
+      {/* Things waiting on the seller right now, whatever step they're on */}
+      {/* Only the owner's link signs off (an accountant's or attorney's link doesn't get the call to action). */}
+      {(data.cimReview?.stage === "content" || data.cimReview?.stage === "design") && data.cimReview.canApprove !== false && (
+        <CTACard
+          title={data.cimReview.stage === "design" ? "Your CIM is ready for your sign-off" : "Your CIM is ready for your review"}
+          description="Read the document buyers will see about your business, then approve it or tell your broker what should change. Nothing goes to buyers until you've signed off."
+          icon={BookOpenCheck}
+          buttonLabel="Review your CIM"
+          href={`/seller/${token}/review`}
+          testId="cta-cim-review"
+        />
+      )}
+      {(data.followUpQuestions ?? 0) > 0 && (
+        <CTACard
+          title={`Your broker has ${data.followUpQuestions === 1 ? "a follow-up question" : `${data.followUpQuestions} follow-up questions`} for you`}
+          description="A short conversation that picks up where you left off — nothing you already answered is asked again."
+          icon={MessageSquare}
+          buttonLabel="Answer now"
+          href={`/seller/${token}/interview?followup=1`}
+          testId="cta-follow-up-questions"
+        />
+      )}
+      {(data.pendingApprovalItems?.length ?? 0) > 0 && (
+        <div className="rounded-lg border border-teal/30 bg-teal/5 p-5" data-testid="card-pending-approvals">
+          <div className="flex items-start gap-3">
+            <div className="h-10 w-10 rounded-lg bg-teal/15 flex items-center justify-center shrink-0">
+              <ShieldQuestion className="h-5 w-5 text-teal" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-medium">
+                {data.pendingApprovalItems!.length === 1
+                  ? "A buyer's question needs your OK"
+                  : `${data.pendingApprovalItems!.length} buyer questions need your OK`}
+              </h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Your broker drafted the answers. Check each one before it goes to the buyer.
+              </p>
+              <ul className="mt-3 space-y-2">
+                {data.pendingApprovalItems!.map((q) => (
+                  <li key={q.id} className="flex flex-col gap-2 rounded-md border border-border bg-card p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm min-w-0 break-words">“{q.question}”</p>
+                    <Button asChild size="sm" className="shrink-0 bg-teal text-teal-foreground hover:bg-teal/90" data-testid={`button-review-answer-${q.id}`}>
+                      <a href={q.href}>Review answer</a>
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Current step CTA */}
       {currentStep === "intake" && (
         <CTACard
-          title="Complete your business information"
-          description="Tell us about your business basics, systems, and team. This takes about 10 minutes."
+          title={data.intake?.status === "in_progress" ? "Finish your business information" : "Complete your business information"}
+          description={
+            data.intake?.status === "in_progress"
+              ? `${data.intake.pagesDone} of ${data.intake.pagesTotal} pages saved. Finish your systems and key people — it takes a few minutes.`
+              : "Tell us about your business basics, systems, and team. This takes about 10 minutes."
+          }
           icon={FileText}
-          buttonLabel="Continue Setup"
+          buttonLabel={data.intake?.status === "in_progress" ? "Continue where you left off" : "Continue Setup"}
           href={`/seller/${token}`}
         />
       )}
@@ -200,7 +274,7 @@ export default function SellerProgress() {
       {currentStep === "documents" && (
         <CTACard
           title="Upload your documents"
-          description={`${documents.requiredUploaded} of ${documents.requiredTotal} required documents uploaded. Upload the rest to move forward.`}
+          description={`${documents.requiredUploaded} of ${documents.requiredTotal} required documents uploaded. Upload the rest — or tell your broker which ones you don't have.`}
           icon={Upload}
           buttonLabel="Upload Documents"
           href={`/seller/${token}/documents`}
@@ -211,17 +285,63 @@ export default function SellerProgress() {
           <div className="flex items-start gap-3">
             <Check className="h-5 w-5 text-teal mt-0.5" />
             <div>
-              <h3 className="font-medium">Everything looks good</h3>
+              <h3 className="font-medium">{(data.todo?.length ?? 0) > 0 || (data.pendingApprovalItems?.length ?? 0) > 0 ? "Nearly there" : "Everything looks good"}</h3>
               <p className="text-sm text-muted-foreground mt-1">
-                Your broker is reviewing your information. You'll be notified if anything else is needed.
-                {pendingApprovals > 0 && (
+                {data.cimReview?.stage === "approved"
+                  ? "You've signed off your CIM. Your broker takes it from here."
+                  : data.cimReview?.stage === "waiting"
+                    ? "You approved the CIM content. Your broker is finishing the design and will send it back for your sign-off."
+                    : "Your broker is reviewing your information and drafting your CIM. You'll be notified when it's ready for you to read."}
+                {((data.todo?.length ?? 0) > 0 || (data.pendingApprovalItems?.length ?? 0) > 0) && " Meanwhile, a few things below still need you."}
+                {pendingApprovals > 0 && !(data.pendingApprovalItems?.length) && (
                   <span className="block mt-2 text-teal">
-                    You have {pendingApprovals} pending {pendingApprovals === 1 ? "approval" : "approvals"} to review.
+                    You have {pendingApprovals} pending {pendingApprovals === 1 ? "approval" : "approvals"} — use the link in your email to review.
                   </span>
                 )}
               </p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* The interview's to-dos: what it promised to "note so it doesn't get lost" */}
+      {(data.todo?.length ?? 0) > 0 && (
+        <div className="rounded-lg border border-border bg-card p-5" data-testid="card-seller-todo">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-medium flex items-center gap-2">
+              <ListTodo className="h-4 w-4 text-teal" /> Your to-do
+            </h2>
+            <span className="text-xs text-muted-foreground tabular-nums">{data.todo!.length}</span>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">From your conversation — things you offered to send or look up.</p>
+          <ul className="mt-3 divide-y divide-border">
+            {(showAllTodo ? data.todo! : data.todo!.slice(0, TODO_VISIBLE)).map((t) => (
+              <li key={t.id} className="py-2.5 flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-2 min-w-0">
+                  {t.kind === "document" ? (
+                    <Upload className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />
+                  ) : (
+                    <Search className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />
+                  )}
+                  <span className="text-sm break-words">{t.title}</span>
+                </div>
+                <Link href={t.kind === "document" ? `/seller/${token}/documents` : `/seller/${token}/interview`}>
+                  <span className="text-xs text-teal hover:underline cursor-pointer shrink-0 pl-5 sm:pl-0">
+                    {t.kind === "document" ? "Upload" : "Answer in your overview"}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          {data.todo!.length > TODO_VISIBLE && (
+            <button
+              type="button"
+              className="mt-1 text-xs text-teal hover:underline"
+              onClick={() => setShowAllTodo((v) => !v)}
+            >
+              {showAllTodo ? "Show fewer" : `Show all ${data.todo!.length}`}
+            </button>
+          )}
         </div>
       )}
 
@@ -385,16 +505,18 @@ function CTACard({
   icon: Icon,
   buttonLabel,
   href,
+  testId,
 }: {
   title: string;
   description: string;
   icon: typeof FileText;
   buttonLabel: string;
   href: string;
+  testId?: string;
 }) {
   return (
-    <Link href={href}>
-      <div className="rounded-lg border border-teal/30 bg-teal/5 p-5 hover:bg-teal/8 transition-colors cursor-pointer group">
+    <Link href={href} className="block">
+      <div className="rounded-lg border border-teal/30 bg-teal/5 p-5 hover:bg-teal/8 transition-colors cursor-pointer group" data-testid={testId} aria-label={buttonLabel}>
         <div className="flex items-start gap-4">
           <div className="h-10 w-10 rounded-lg bg-teal/15 flex items-center justify-center shrink-0">
             <Icon className="h-5 w-5 text-teal" />

@@ -107,12 +107,14 @@ async function visibleMediaFor(token: string, access: BuyerAccess): Promise<Visi
   // and nothing from a CIM held for the broker's review (generation-jobs).
   if (deal && dealPublishedForBuyers(deal) && !ndaBlocksBuyer(deal, access) && !cimHeldFromBuyers(deal)) {
     const mode = cimModeForAccessLevel(access.accessLevel);
-    const [sections, overrides, media] = await Promise.all([
-      storage.getCimSectionsByDeal(deal.id),
-      mode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(deal.id, mode),
-      loadMediaAssets(deal.id),
-    ]);
-    const cim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections, overrides, media });
+    // (While a regenerated CIM waits for review, the kept copy buyers read;
+    // on a live CIM the versions its buyers actually get —
+    // shared/cim-published.ts, rows.published.)
+    const { buyerCimRows } = await import("./published-snapshot");
+    const [rows, media] = await Promise.all([buyerCimRows(deal, access.accessLevel), loadMediaAssets(deal.id)]);
+    const cim = rows.missing
+      ? { sections: [], preparing: true }
+      : buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: rows.sections, overrides: rows.overrides, media, published: rows.published });
     for (const s of cim.sections) {
       if (s.locked) continue;
       for (const id of mediaIdsIn(s.layoutType, s.layoutData)) ids.add(id);

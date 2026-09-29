@@ -7,6 +7,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs } from "../blocks";
 
 interface ListItem {
   title: string;
@@ -27,6 +28,7 @@ interface RendererProps {
 }
 
 export function NumberedListRenderer({ layoutData, content, branding, section }: RendererProps) {
+  const ba = useBlockAttrs();
   const data: NumberedListLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const items = data.items || [];
   const ordered = data.ordered !== false; // default true
@@ -41,7 +43,7 @@ export function NumberedListRenderer({ layoutData, content, branding, section }:
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       <div className="space-y-4">
         {items.map((item, i) => (
-          <div key={i} className="flex items-start gap-4">
+          <div key={i} {...ba(`item:${i}`)} className="flex items-start gap-4">
             {/* Number / Bullet */}
             <div className="flex-shrink-0 w-8 flex items-start justify-center pt-0.5">
               {ordered ? (

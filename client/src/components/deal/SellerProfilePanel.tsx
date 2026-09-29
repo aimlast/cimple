@@ -449,7 +449,7 @@ export function SellerProfilePanel({ dealId }: SellerProfilePanelProps) {
             <span className="text-muted-foreground/70 font-medium">
               Reason for selling:
             </span>{" "}
-            <span className="text-foreground/80">{profile.sellingReason}</span>
+            <span className="text-foreground/80">{profile.sellingReason === "unknown" ? "Not known yet" : profile.sellingReason}</span>
           </div>
         )}
 

@@ -18,7 +18,7 @@
 import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
-import { extractTextFromFile, UnreadableFormatError } from "./parser";
+import { extractTextWithPages, isPdfSource, UnreadableFormatError } from "./parser";
 import { newDocumentFileName, resolveDocumentPath } from "./document-path";
 import {
   extractDocumentData,
@@ -26,9 +26,12 @@ import {
   extractionRetryDelays,
   extractWithRetries,
   mergeExtractedData,
+  readFoundNothing,
+  SCANNED_REASON,
   unreadableExtraction,
   type ExtractedDocumentData,
   type MergeSource,
+  type TextLayout,
 } from "./extractor";
 import { releaseRequirementsFor } from "./requirements";
 import { recordFactSpeakers } from "../interview/fact-guards";
@@ -45,7 +48,7 @@ import type { Document, DocumentSourceMeta } from "@shared/schema";
 import { isHousekeepingNote, noteRecordedAsFact } from "@shared/private-notes";
 import { withDealFactsLock } from "./facts-lock";
 import { normalisePeriod, stampSourceDetails, type MergeConflict, type MergeContext } from "./merge-policy";
-import { recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
+import { applyRosterCounts, recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
 import { scheduleNotesReview } from "./private-notes-review";
 import { reconcileMirroredFacts } from "../information/deal-mirror";
 import { setBrokerFact } from "../information/facts";
@@ -432,11 +435,15 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
   try {
     await storage.updateDocument(doc.id, { status: "parsing" } as any);
     let text = "";
+    // How the text was laid out (a PDF's pages) — tells a scan from a readable file.
+    let layout: TextLayout = { pdf: isPdfSource(doc) };
     let problem: string | null = null;
     const filePath = resolveDocumentPath(doc);
     if (filePath && fs.existsSync(filePath)) {
       try {
-        text = await extractTextFromFile(filePath, doc.mimeType);
+        const parsed = await extractTextWithPages(filePath, doc.mimeType);
+        text = parsed.text;
+        layout = { pages: parsed.pages, pageTexts: parsed.pageTexts, pdf: parsed.pdf };
       } catch (err) {
         console.error(`[ingest] couldn't open doc ${doc.id}:`, (err as Error)?.message ?? err);
         problem = parseProblem(err);
@@ -450,6 +457,7 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
       : (await extractWithRetries(
           () => extractDocumentData(text, doc.category || "other", doc.subcategory, kind, {
             checklist: dealForChecklist ? extractionChecklist(dealForChecklist) : undefined,
+            ...layout,
           }),
           extractionRetryDelays(),
           (attempt, wait, why) => console.warn(`[ingest] read of doc ${doc.id} failed (${why}) — attempt ${attempt + 1} in ${Math.round(wait / 1000)}s`),
@@ -475,6 +483,12 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
         });
       }
       return { status: "failed", fieldsWritten: [] };
+    }
+    // Read, but nothing about the business came out of a text this thin (a
+    // scan with a typed cover page): it is not yet the checklist document it
+    // was uploaded for — the row asks for a readable copy again.
+    if (kind === "document" && !hadExtraction && readFoundNothing(extracted, text, layout)) {
+      await releaseRequirementsFor(doc.dealId, doc.id, { fileName: doc.originalName || doc.name, reason: SCANNED_REASON });
     }
     return await mergeExtractionIntoDeal(doc, extracted);
   } catch (err) {
@@ -520,6 +534,8 @@ export async function mergeExtractionIntoDeal(doc: Document, extracted: Extracte
       documents,
     );
     recordFactSpeakers(merged, extracted._speakers, doc.id); // who said it, on calls
+    // Head counts by role: the roster is the authority (decision A), across facts.
+    applyRosterCounts(merged, documents);
     // A note that only repeats a business fact this source recorded is not a note.
     addPrivateNotes(merged, extracted._privateNotes, doc, extracted as Record<string, unknown>);
     // The deal's own name, industry and listed price stay the broker's facts

@@ -33,8 +33,10 @@ import { BUYER_ACCESS_LEVELS } from "@shared/cim-layouts";
 import { useBuilderState } from "@/components/cim-builder/CimSummaryCard";
 import { useAiGate } from "@/components/cim-builder/useAiGate";
 import { builderRequest, errorText } from "@/components/cim-builder/api";
+import { useDdRun } from "@/components/cim-builder/useDdRun";
 import { CimReviewPanel } from "@/components/cim-builder/CimReviewPanel";
-import { regenerateBuyerImpact } from "@shared/cim-generation-warnings";
+import { HeldPrivateCard } from "@/components/cim-builder/HeldPrivateCard";
+import { regenerateBuyerImpact, reviewingUpdate } from "@shared/cim-generation-warnings";
 import { cn } from "@/lib/utils";
 import { CimDesignCard } from "@/components/cim-design/CimDesignCard";
 import type { CimSection } from "@shared/schema";
@@ -51,7 +53,7 @@ export function CimTab() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data, isLoading, error, refetch } = useBuilderState(dealId, { poll: true });
+  const { data, isLoading, error, refetch, dataUpdatedAt } = useBuilderState(dealId, { poll: true });
   const generation = useCimGeneration(dealId);
   const gate = useAiGate(dealId);
   // Enough information to write the CIM? The same rule as the Overview, the
@@ -73,14 +75,17 @@ export function CimTab() {
     },
   });
   const version = useMutation({
-    mutationFn: (mode: "blind" | "dd") => builderRequest("POST", `/api/deals/${dealId}/generate-${mode}`),
-    onSuccess: (_r, mode) => {
+    mutationFn: () => builderRequest("POST", `/api/deals/${dealId}/generate-blind`),
+    onSuccess: () => {
       refetch();
       qc.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      toast({ title: mode === "blind" ? "Blind version ready" : "Due-diligence version ready" });
+      toast({ title: "Blind version ready" });
     },
     onError: (e) => toast({ title: "Couldn't generate that version", description: errorText(e), variant: "destructive" }),
   });
+  // The DD version is written in the background; its real outcome is
+  // announced when this run's result arrives (useDdRun), never "ready" up front.
+  const ddRun = useDdRun(dealId, { dd: data?.dd, fetchedAt: dataUpdatedAt, refetch });
   // Held-back blind sections: clear their back-off and redo them now.
   const retryBlind = useMutation({
     mutationFn: () => builderRequest("POST", `/api/deals/${dealId}/cim-blind/refresh`),
@@ -127,7 +132,9 @@ export function CimTab() {
               ? `${sections.length} sections · ${approved} approved${hidden ? ` · ${hidden} hidden` : ""} · last generated ${when(data.deal.cimLayoutGeneratedAt)}`
               : "No CIM yet — generate one from the deal's information, then shape it in the builder."}
           </p>
-          {deal.isLive && <p className="text-xs text-success mt-1 flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Published — buyers with access can open it</p>}
+          {deal.isLive && (reviewingUpdate(deal)
+            ? <p className="text-xs text-amber-500 mt-1 flex items-center gap-1" data-testid="cim-tab-reviewing-update"><Eye className="h-3.5 w-3.5 shrink-0" /> Published — buyers are seeing the previous version until you publish the update</p>
+            : <p className="text-xs text-success mt-1 flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Published — buyers with access can open it</p>)}
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
           <Button className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5" onClick={() => openBuilder()} data-testid="button-open-cim-builder-tab">
@@ -154,6 +161,8 @@ export function CimTab() {
           onOpenSection={(id) => navigate(`/deal/${dealId}/design?section=${id}`)}
         />
       )}
+      {/* Private staff matters held out of every version — each with an Include switch. */}
+      <HeldPrivateCard dealId={dealId} />
       {gate.blockedReason && (
         <div className="space-y-3">
           <p className="text-xs text-red-400 flex items-center gap-1.5"><AlertTriangle className="h-3.5 w-3.5" /> {gate.blockedReason}</p>
@@ -207,7 +216,7 @@ export function CimTab() {
                 }
                 onPreview={() => openBuilder("teaser")}
                 action={!data.blind.generated
-                  ? { label: "Generate", busy: version.isPending && version.variables === "blind", onClick: () => version.mutate("blind") }
+                  ? { label: "Generate", busy: version.isPending, onClick: () => version.mutate() }
                   : data.blind.held > 0
                     ? { label: "Retry", busy: retryBlind.isPending, onClick: () => retryBlind.mutate() }
                     : undefined}
@@ -216,17 +225,29 @@ export function CimTab() {
                 icon={<ShieldCheck className="h-4 w-4" />}
                 title="Due diligence"
                 who="Due-diligence buyers"
-                status={!data.dd.generated
-                  ? <span className="text-muted-foreground">Not generated</span>
-                  : (data.dd.outOfDate ?? 0) > 0
-                    ? <span className="text-blue-400">{data.dd.outOfDate} section{data.dd.outOfDate === 1 ? "" : "s"} out of date</span>
-                    : <span className="text-success">Ready</span>}
+                status={ddRun.busy
+                  ? <span className="text-amber-500 inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Writing</span>
+                  : !data.dd.generated
+                    ? <span className="text-muted-foreground">Not generated</span>
+                    : (data.dd.outOfDate ?? 0) > 0
+                      ? <span className="text-blue-400">{data.dd.outOfDate} section{data.dd.outOfDate === 1 ? "" : "s"} out of date</span>
+                      : <span className="text-success">Ready</span>}
                 detail="The named CIM plus customer names and verification notes."
+                extra={!ddRun.busy && data.dd.lastRun && (data.dd.lastRun.error || data.dd.lastRun.warnings.length > 0) ? (
+                  <div className="text-[11px] text-amber-500 leading-snug space-y-1" role="status" data-testid="dd-last-run">
+                    {data.dd.lastRun.error
+                      ? <p className="flex items-start gap-1"><AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" /><span>{data.dd.lastRun.error}</span></p>
+                      : data.dd.lastRun.warnings.slice(0, 4).map((w, i) => (
+                        <p key={i} className="flex items-start gap-1"><AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" /><span>{w}</span></p>
+                      ))}
+                    {!data.dd.lastRun.error && data.dd.lastRun.warnings.length > 4 && <p>…and {data.dd.lastRun.warnings.length - 4} more.</p>}
+                  </div>
+                ) : undefined}
                 onPreview={() => openBuilder("due_diligence")}
                 action={{
                   label: data.dd.generated ? "Refresh" : "Generate",
-                  busy: version.isPending && version.variables === "dd",
-                  onClick: () => version.mutate("dd"),
+                  busy: ddRun.busy,
+                  onClick: ddRun.start,
                 }}
               />
             </div>

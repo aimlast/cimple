@@ -22,6 +22,12 @@ import { readerMaySeeRow, rowScope } from "@shared/buyer-qa-scope";
 import type { BuyerQuestion } from "@shared/schema";
 import { normalizeFinancialTable } from "@shared/financial-table";
 import { formatSqft, rentLabel, splitLeaseType } from "@shared/cim-location";
+import { buildBuyerCim, cimHeldFromBuyers } from "@shared/cim-buyer-view";
+import { isKnownFigure, knownFiguresFrom, parseFigures } from "../cim/figure-check";
+import { loadMediaAssets } from "../cim/media-store";
+import { buyerCimRows, servedBlindCodename } from "../cim/published-snapshot";
+import { listedAskingPrice } from "../information/deal-mirror";
+import { stripDdMarkers } from "../cim/dd-enrichment";
 
 type AnyRecord = Record<string, any>;
 
@@ -395,24 +401,202 @@ export interface QaReader {
   accessLevel: string | null | undefined;
 }
 
-type QaDeal = { id: string; businessName?: string | null; extractedInfo?: unknown; blindCodename?: string | null };
+type QaDeal = {
+  id: string;
+  businessName?: string | null;
+  extractedInfo?: unknown;
+  blindCodename?: string | null;
+  isLive?: boolean | null;
+  cimGeneration?: unknown;
+  askingPrice?: string | null;
+};
+
+// ── Answers the AI wrote from the CIM ─────────────────────────────────────
+
+/**
+ * A published answer the AI wrote from the CIM that nobody reviewed: the
+ * broker didn't draft or edit it and the seller didn't approve it. (A
+ * reviewed answer is the broker's word — it stays until they change it.)
+ */
+export function isUnreviewedAiAnswer(q: Pick<BuyerQuestion, "aiAnswer" | "publishedAnswer" | "brokerDraft" | "sellerApproved">): boolean {
+  if (!q.aiAnswer || q.sellerApproved || q.brokerDraft) return false;
+  return (q.publishedAnswer ?? q.aiAnswer) === q.aiAnswer;
+}
+
+/**
+ * The broker publishing an AI answer as it stands (PATCH isPublished with
+ * no draft) makes it their word: the answer is recorded as their draft, so
+ * it no longer counts as unreviewed and isn't withdrawn the next time any
+ * section changes — an approval tick included (free round 2 check, C4).
+ * Returns the draft to record, or null when there is nothing to record.
+ */
+export function endorsedDraftOnPublish(
+  existing: Pick<BuyerQuestion, "aiAnswer" | "publishedAnswer" | "brokerDraft" | "sellerApproved" | "status">,
+  body: { isPublished?: unknown; brokerDraft?: unknown; publishedAnswer?: unknown; status?: unknown },
+): string | null {
+  if (body.isPublished !== true || body.brokerDraft !== undefined) return null;
+  if (existing.brokerDraft || existing.sellerApproved) return null;
+  // Only a published answer: a draft on a question back with the broker reads as "sent back by the seller".
+  if ((typeof body.status === "string" ? body.status : existing.status) !== "published") return null;
+  const answer = typeof body.publishedAnswer === "string" ? body.publishedAnswer : existing.publishedAnswer ?? existing.aiAnswer;
+  return typeof answer === "string" && answer.trim() ? answer : null;
+}
+
+/** What a reader's CIM says now, for checking earlier AI answers against it. */
+export interface ReaderCim {
+  /** The text the answer step would read for this reader (their version, sections they may open). */
+  text: string;
+  /** The latest change to any of the deal's sections (content, visibility, access tier, a regenerate). */
+  changedAt: Date | null;
+  /** A regenerated CIM waiting for the broker: nothing is answered from it. */
+  held: boolean;
+}
+
+/** Figures an answer states (amounts, percentages, comma-written counts — not years). */
+function answerFigures(text: string) {
+  return parseFigures(text).filter((f) => f.kind !== "plain" || f.text.includes(","));
+}
+
+/**
+ * Does an earlier answer still hold for this reader's CIM? A reviewed
+ * answer always does. An unreviewed AI answer only when the CIM hasn't
+ * changed since it was written (a regenerate, an edit, a section hidden or
+ * moved to full access), the CIM isn't held for the broker's review, and
+ * every figure it states is still in what this reader can see — "2024
+ * revenue was $2.3M" stops being given out once the CIM says $1.82M, and a
+ * concentration answer stops reaching teasers once that section is
+ * full-access only (free round 2, C4).
+ */
+export function answerStillHolds(q: Pick<BuyerQuestion, "aiAnswer" | "publishedAnswer" | "brokerDraft" | "sellerApproved" | "createdAt" | "updatedAt">, cim: ReaderCim): boolean {
+  if (!isUnreviewedAiAnswer(q)) return true;
+  if (cim.held) return false;
+  const at = new Date((q.updatedAt ?? q.createdAt) as Date | string).getTime();
+  if (cim.changedAt && Number.isFinite(at) && at < cim.changedAt.getTime()) return false;
+  const figs = answerFigures(q.publishedAnswer || q.aiAnswer || "");
+  if (figs.length === 0) return true;
+  const known = knownFiguresFrom(cim.text);
+  return figs.every((f) => isKnownFigure(f, known));
+}
+
+function latestChange(sections: ReadonlyArray<{ updatedAt?: Date | string | null }>): Date | null {
+  return sections.reduce<Date | null>((m, s) => {
+    const t = s.updatedAt ? new Date(s.updatedAt) : null;
+    return t && (!m || t > m) ? t : m;
+  }, null);
+}
+
+/**
+ * The CIM a reader gets now, as the answer step reads it — the same
+ * authority as the view room (buildBuyerCim), so an answer is only ever
+ * checked against what this buyer may see.
+ */
+export async function readerCim(deal: QaDeal, reader: QaReader): Promise<ReaderCim> {
+  if (cimHeldFromBuyers(deal)) {
+    const sections = await storage.getCimSectionsByDeal(deal.id);
+    return { text: "", changedAt: latestChange(sections), held: true };
+  }
+  // While a live deal's regenerated CIM waits for review, buyers read the
+  // kept copy (published-snapshot.ts) — under the codename it was redacted
+  // with; a kept copy that isn't there serves nothing (held).
+  const [rows, media, codename] = await Promise.all([
+    buyerCimRows(deal, reader.accessLevel),
+    loadMediaAssets(deal.id),
+    servedBlindCodename(deal),
+  ]);
+  const changedAt = latestChange(rows.sections);
+  if (rows.missing) return { text: "", changedAt, held: true };
+  const cim = buildBuyerCim({
+    deal: codename ? { ...deal, blindCodename: codename } : deal,
+    accessLevel: reader.accessLevel,
+    sections: rows.sections,
+    overrides: rows.overrides,
+    media,
+    askingPrice: listedAskingPrice(deal as Parameters<typeof listedAskingPrice>[0]),
+    published: rows.published,
+  });
+  const text = stripDdMarkers(buildAnswerContext(cim.sections.filter((s) => !s.locked).map((s) => ({
+    title: s.sectionTitle,
+    body: s.brokerEditedContent || s.aiDraftContent || "",
+    layoutType: s.layoutType,
+    layoutData: s.layoutData,
+  }))));
+  return { text, changedAt, held: false };
+}
 
 /**
  * Published rows another buyer's question may be answered from, or shown
  * to `reader` in the feed: within the answer's scope (a teaser never gets
  * an answer drawn from full-access sections; nobody gets another buyer's
- * named-CIM answer), and — for a Blind reader — free of anything that
- * identifies the business (shared/buyer-qa-scope.ts).
+ * named-CIM answer), for a Blind reader free of anything that identifies
+ * the business (shared/buyer-qa-scope.ts), and — for an unreviewed AI
+ * answer — still true of the CIM this reader gets now (answerStillHolds).
+ * `cim` is the reader's CIM when the caller already has it.
  */
-export async function publishedQuestionsFor(deal: QaDeal, reader: QaReader): Promise<BuyerQuestion[]> {
-  const [all, accesses] = await Promise.all([storage.getQuestionsByDeal(deal.id), storage.getBuyerAccessByDeal(deal.id)]);
+export async function publishedQuestionsFor(deal: QaDeal, reader: QaReader, cim?: ReaderCim): Promise<BuyerQuestion[]> {
+  const [all, accesses, faqs] = await Promise.all([
+    storage.getQuestionsByDeal(deal.id),
+    storage.getBuyerAccessByDeal(deal.id),
+    // (The FAQ adds to what a buyer may read — failing to load it never takes the Q&A down.)
+    storage.getFaqsByDeal(deal.id).catch((err) => {
+      console.warn(`[qa] couldn't load the FAQ for deal ${deal.id}:`, err?.message || err);
+      return [];
+    }),
+  ]);
   const levelOf = new Map(accesses.map((a) => [a.id, a.accessLevel]));
   const terms = blindLeakTerms(deal, { codename: deal.blindCodename });
-  return all.filter((q) => {
+  // (FAQ rows are broker-written — never an unreviewed AI answer, so the
+  // staleness filter below always keeps them.)
+  const inScope = [...all, ...faqKnowledgeRows(deal.id, faqs)].filter((q) => {
     if (!q.isPublished || !(q.publishedAnswer || q.aiAnswer)) return false;
     const scope = rowScope(q, q.buyerAccessId && levelOf.has(q.buyerAccessId) ? levelOf.get(q.buyerAccessId) : false);
     return readerMaySeeRow(q, scope, reader, terms);
   });
+  if (!inScope.some(isUnreviewedAiAnswer)) return inScope;
+  const current = cim ?? (await readerCim(deal, reader));
+  return inScope.filter((q) => answerStillHolds(q, current));
+}
+
+/** Ids of FAQ rows in the Q&A knowledge base ("faq:<faq id>"). */
+export const FAQ_ROW_PREFIX = "faq:";
+
+/**
+ * The broker's pre-answered questions (Q&A tab → FAQ) as rows of the
+ * buyer Q&A knowledge base. The Q&A tab promised "Pre-answered questions
+ * the buyer assistant can use instantly", but nothing read them: a buyer
+ * asking about the lease term escalated to the broker and the seller
+ * anyway. A published FAQ is a broker-written answer published on purpose,
+ * so it is for every buyer ("all") — and, like any row, a Blind buyer only
+ * receives it when it names nothing identifying (readerMaySeeRow). Pure.
+ */
+export function faqKnowledgeRows(
+  dealId: string,
+  faqs: Array<{ id: string; question: string; answer: string; isPublished?: boolean | null; order?: number | null; createdAt: Date; updatedAt: Date }>,
+): BuyerQuestion[] {
+  return faqs
+    .filter((f) => f.isPublished !== false && f.question?.trim() && f.answer?.trim())
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    .map((f) => ({
+      id: `${FAQ_ROW_PREFIX}${f.id}`,
+      dealId,
+      buyerAccessId: null,
+      question: f.question.trim(),
+      aiAnswer: null,
+      brokerDraft: null,
+      sellerApproved: true,
+      sellerApprovedAt: null,
+      publishedAnswer: f.answer.trim(),
+      status: "published",
+      sellerApprovalToken: null,
+      addedToKnowledgeBase: true,
+      similarQuestionIds: [],
+      isPublished: true,
+      answerScope: "all",
+      // Not asked on any page of a served CIM (reading analytics).
+      sectionId: null,
+      renditionId: null,
+      createdAt: f.createdAt,
+      updatedAt: f.updatedAt,
+    }));
 }
 
 /**
@@ -422,8 +606,10 @@ export async function publishedQuestionsFor(deal: QaDeal, reader: QaReader): Pro
  * newest so the chat reads chronologically.
  */
 export async function buildBuyerQuestionFeed(deal: QaDeal, reader: QaReader): Promise<BuyerQuestionFeedItem[]> {
-  const [all, visible] = await Promise.all([storage.getQuestionsByDeal(deal.id), publishedQuestionsFor(deal, reader)]);
+  const [asked, visible] = await Promise.all([storage.getQuestionsByDeal(deal.id), publishedQuestionsFor(deal, reader)]);
   const visibleIds = new Set(visible.map((q) => q.id));
+  // The broker's FAQ entries this reader may see are part of the feed too.
+  const all = [...asked, ...visible.filter((q) => q.id.startsWith(FAQ_ROW_PREFIX))];
   const feed: BuyerQuestionFeedItem[] = [];
   for (const q of all) {
     const isMine = !!q.buyerAccessId && q.buyerAccessId === reader.id;

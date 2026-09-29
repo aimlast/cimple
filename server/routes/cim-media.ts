@@ -32,6 +32,7 @@ import { requireBroker, requireOwnedDeal, getOwnedDeal, sellerTokenMatchesDeal }
 import { invalidateBlind } from "../cim/blind-sync";
 import { historyWith } from "../cim/section-ops";
 import { withdrawApprovalsAfterChange } from "../cim/approvals";
+import { keepPublishedBeforeChange } from "../cim/published-versions";
 import {
   PRIVATE_MEDIA_DIR,
   canBuyerSeeMedia,
@@ -286,6 +287,9 @@ export function registerCimMediaRoutes(app: Express): void {
       for (const s of using) {
         const next = withoutMedia(s.layoutType, s.layoutData, row.id);
         if (!next) continue;
+        // A live CIM's buyers keep the approved version (without the deleted
+        // file — it is gone from the library) until this is approved.
+        await keepPublishedBeforeChange(s, deal);
         await db
           .update(cimSections)
           .set({ layoutData: next as any, contentHistory: historyWith(s, "Removed a photo or video"), brokerApproved: false, updatedAt: new Date() })

@@ -42,6 +42,8 @@ import {
   isSettledDiscrepancy,
 } from "@shared/discrepancy-sides";
 import { DiscrepancyHeaderLine } from "@/components/deal/DiscrepancyHeaderLine";
+import { useEmailSellerFollowUps } from "@/components/deal/NeverAskedFollowUps";
+import { routedButNeverAsked } from "@shared/discrepancy-gate";
 import {
   CheckCircle2, Loader2, Search, ChevronDown, ChevronRight, FileText, ArrowRight,
   MessageCircleQuestion, Undo2, Lock, Link2, RefreshCw,
@@ -82,6 +84,17 @@ type ResolveResponse = Discrepancy & {
   staleFacts: StaleFact[];
 };
 
+/** What routing to a seller who had finished the interview did (server/interview/seller-followups.ts). */
+interface SellerFollowUp {
+  interviewFinished: boolean;
+  waiting: number;
+  emailed: number;
+  addressed: number;
+  recentlyEmailed?: boolean;
+  /** Addressed seller-team members who turned email off (not emailed). */
+  optedOut?: number;
+}
+
 interface DiscrepancyPanelProps {
   dealId: string;
   onAllResolved?: () => void;
@@ -89,6 +102,8 @@ interface DiscrepancyPanelProps {
   sourceFilter?: string;
   /** Hide the "Run Verification Check" CTA (the financial analysis generates its own). */
   hideRunCheck?: boolean;
+  /** Open this row and scroll to it ("Resolve it yourself" on the Overview). */
+  focusId?: string | null;
 }
 
 const discrepanciesKey = (dealId: string) => ["/api/deals", dealId, "discrepancies"] as const;
@@ -100,14 +115,26 @@ function invalidateFacts(dealId: string) {
   queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "discrepancy-check-status"] });
 }
 
-export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunCheck }: DiscrepancyPanelProps) {
+export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunCheck, focusId }: DiscrepancyPanelProps) {
   const { toast } = useToast();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const emailSeller = useEmailSellerFollowUps(dealId);
   const [responses, setResponses] = useState<Record<string, string>>({});
   const [resolvedValues, setResolvedValues] = useState<Record<string, string>>({});
   const [linkFor, setLinkFor] = useState<DiscrepancyRow | null>(null);
   const [updateFor, setUpdateFor] = useState<DiscrepancyRow | null>(null);
 
+  // Whether the interview is finished decides what "Ask seller" does (a
+  // follow-up link instead of the running interview) — the deal is cached.
+  const { data: dealRow } = useQuery<{ interviewCompleted?: boolean | null }>({
+    queryKey: ["/api/deals", dealId],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load the deal");
+      return r.json();
+    },
+  });
+  const interviewFinished = !!dealRow?.interviewCompleted;
   const { data: allDiscrepancies = [], isLoading, error: loadError, refetch } = useQuery<DiscrepancyRow[]>({
     queryKey: discrepanciesKey(dealId),
     queryFn: async () => {
@@ -116,6 +143,14 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
       return r.json();
     },
   });
+
+  useEffect(() => {
+    if (!focusId) return;
+    setExpandedId(focusId);
+    // Once the row has rendered expanded.
+    const t = window.setTimeout(() => document.getElementById(`discrepancy-card-${focusId}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 60);
+    return () => window.clearTimeout(t);
+  }, [focusId, allDiscrepancies.length]);
 
   // Superseded rows are stale findings replaced by a newer run — never shown
   const discrepancies = allDiscrepancies.filter(
@@ -181,6 +216,32 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
     onSuccess: (data, vars) => {
       invalidateFacts(dealId);
       const priv = discrepancyHasPrivateSide(data);
+      const privateNote = priv.interview || priv.document ? " Your private notes are never shown or mentioned." : "";
+      // The seller had already finished the interview: say what actually happens.
+      const f = (data as { sellerFollowUp?: SellerFollowUp }).sellerFollowUp;
+      if (vars.status === "ask_seller" && f?.interviewFinished) {
+        toast(
+          f.addressed === 0 && !f.recentlyEmailed
+            ? {
+                title: "Nobody to send it to",
+                description: "The seller has finished the interview and has no emailed invite, so nothing reaches them. Send them their link, or resolve it here.",
+                variant: "destructive",
+              }
+            : {
+                title: "Sent to the seller as a follow-up",
+                description:
+                  (f.recentlyEmailed
+                    ? "They were already emailed a follow-up link in the last hour — this is added to it."
+                    : f.emailed > 0
+                      ? "They had finished the interview, so we emailed them a link to answer your follow-up questions."
+                      : f.optedOut && f.optedOut >= f.addressed
+                        ? "They had finished the interview and turned off email notifications, so nothing was emailed — their portal shows your follow-up questions. Let them know."
+                        : "They had finished the interview; their portal now shows your follow-up questions (nothing was emailed from here).") +
+                  " A critical conflict keeps the CIM locked until they answer or you resolve it." + privateNote,
+              },
+        );
+        return;
+      }
       toast({
         title: vars.status === "ask_seller" ? "Routed to seller interview" : "Returned to open",
         description: vars.status === "ask_seller"
@@ -342,6 +403,7 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
         return (
           <Card
             key={disc.id}
+            id={`discrepancy-card-${disc.id}`}
             className={`bg-card/50 transition-colors ${
               settled ? "border-emerald-500/20 opacity-70" :
               isRouted ? "border-blue-500/20" :
@@ -359,7 +421,7 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
               >
                 {isExpanded ? <ChevronDown className="h-3.5 w-3.5 mt-1 shrink-0 text-muted-foreground" aria-hidden="true" />
                   : <ChevronRight className="h-3.5 w-3.5 mt-1 shrink-0 text-muted-foreground" aria-hidden="true" />}
-                <DiscrepancyHeaderLine disc={disc} showSource={!sourceFilter} />
+                <DiscrepancyHeaderLine disc={disc} showSource={!sourceFilter} interviewFinished={interviewFinished} />
               </button>
 
               {/* Resolved: which fact it updated, and anything still saying the old value */}
@@ -410,10 +472,26 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
                   {/* Routed state note */}
                   {isRouted && (
                     <div className="flex flex-wrap items-center justify-between gap-2 rounded bg-blue-500/5 border border-blue-500/20 p-2.5">
-                      <p className="text-xs text-blue-400 flex items-center gap-1.5">
+                      <p className="text-xs text-blue-400 flex items-center gap-1.5" data-testid={`text-routed-${disc.id}`}>
                         <MessageCircleQuestion className="h-3.5 w-3.5 shrink-0" />
-                        The AI interview will raise this with the seller. You can still resolve it now below.
+                        {routedButNeverAsked(disc, interviewFinished)
+                          ? `Never asked — this was sent to the interview before it finished, when follow-up emails didn't exist yet.${disc.severity === "critical" ? " It doesn't lock the CIM until you email the seller." : ""} You can also resolve it now below.`
+                          : interviewFinished
+                            ? `Not asked yet — the seller had finished the interview, so they were sent a follow-up link.${disc.severity === "critical" ? " The CIM stays locked until they answer or you resolve it." : ""} You can still resolve it now below.`
+                            : "The AI interview will raise this with the seller. You can still resolve it now below."}
                       </p>
+                      {routedButNeverAsked(disc, interviewFinished) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 text-2xs gap-1 shrink-0"
+                          onClick={() => emailSeller.mutate()}
+                          disabled={emailSeller.isPending}
+                          data-testid={`button-email-seller-${disc.id}`}
+                        >
+                          {emailSeller.isPending && <Loader2 className="h-3 w-3 animate-spin" />} Email the seller
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="ghost"
@@ -484,7 +562,7 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
                             onClick={() => route.mutate({ id: disc.id, status: "ask_seller" })}
                             disabled={route.isPending}
                           >
-                            <MessageCircleQuestion className="h-3 w-3" /> Ask seller in interview
+                            <MessageCircleQuestion className="h-3 w-3" /> {interviewFinished ? "Send to the seller as a follow-up" : "Ask seller in interview"}
                           </Button>
                         )}
                       </div>

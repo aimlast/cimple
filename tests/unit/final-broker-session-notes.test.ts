@@ -181,7 +181,11 @@ test("the buyer's CIM never shows a session price as the asking price", () => {
     layoutData: { metrics: [{ label: "Asking Price", value: "$3,900,000" }] } };
   const cim = buildBuyerCim({ deal, accessLevel: "loi", sections: [cover, metrics], overrides: [], askingPrice: listedAskingPrice(deal) });
   assert.equal((cim.sections[0].layoutData as any).askingPrice, "Contact broker");
-  assert.equal((cim.sections[1].layoutData as any).metrics[0].value, "$3,900,000");
+  // With no listed price, a stored "Asking Price" figure is taken off rather
+  // than left in front of buyers (free round 2, C7) — and never replaced by
+  // the session price.
+  assert.deepEqual((cim.sections[1].layoutData as any).metrics, []);
+  assert.ok(!JSON.stringify(cim.sections).includes("3,900,000"));
 });
 
 test("the seller interview never sees a price from the broker's session (or the deal row)", () => {

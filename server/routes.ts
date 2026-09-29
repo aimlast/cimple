@@ -2,6 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
 import { newDocumentFileName } from "./documents/document-path";
+import { BULK_AI_CONCURRENCY, BULK_DRAFT_CONCURRENCY, BULK_OUTREACH_MAX, mapWithConcurrency } from "./security/bulk-limits";
 import path from "path";
 import fs from "fs";
 import { storage } from "./storage";
@@ -31,11 +32,11 @@ import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 import { buildBuyerCim, cimHeldFromBuyers, ndaBlocksBuyer, realSectionKeyMap } from "@shared/cim-buyer-view";
 import { dealPublishedForBuyers, notPublishedBody, NOT_PUBLISHED_BROKER_MESSAGE, NOT_PUBLISHED_CODE } from "@shared/buyer-publish-gate";
-import { askerScope } from "@shared/buyer-qa-scope";
+import { askerScope, MAX_BUYER_QUESTION_CHARS } from "@shared/buyer-qa-scope";
 import { blindLeakTerms, findBlindLeaks } from "@shared/blind-guard";
 import { invalidateBlind, redoLeakedBlind, regenerateAllBlind, regenerateAllBlindInBackground, scheduleBlindRefresh } from "./cim/blind-sync.js";
 import { patchCimSection, reorderDealSections } from "./cim/section-ops.js";
-import { cimModeForAccessLevel, isBuyerAccessLevel, isCimFallbackSection } from "@shared/cim-layouts";
+import { cimModeForAccessLevel, hasSampleData, isBuyerAccessLevel, isCimFallbackSection } from "@shared/cim-layouts";
 import { withApprovalRuleMark } from "@shared/cim-approvals";
 import multer from "multer";
 import { registerDealListRoutes, loadDealSideFacts, moneyValue, dealNextStep } from "./routes/deal-list.js";
@@ -47,12 +48,18 @@ import { checkCimGenerationGate, computeDealReadiness } from "./cim/generation-g
 import { registerCrmSellerRoutes } from "./routes/crm-seller.js";
 import { registerBuyerProfileRoutes } from "./routes/buyer-profiles.js";
 import { registerCimBuilderRoutes } from "./routes/cim-builder.js";
+import { registerCimHeldPrivateRoutes } from "./routes/cim-held-private.js";
 import { registerDiscrepancyRoutes } from "./routes/discrepancies.js";
 import { ensureDiscrepancyGate } from "./cim/discrepancy-check.js";
 import { settleMergeRowsQuietly } from "./documents/merge-conflicts.js";
 import { registerCimMediaRoutes } from "./routes/cim-media.js";
 import { loadMediaAssets } from "./cim/media-store.js";
 import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
+import { registerEngagementRoutes } from "./routes/engagement.js";
+import { registerEngagementInsightRoutes } from "./routes/engagement-insights.js";
+import { registerReadingRoutes } from "./routes/reading.js";
+import { recordRendition, variantForAccessLevel } from "./analytics/renditions.js";
+import { viewRoomStamp } from "./analytics/reading-ingest.js";
 import { notify, previewRecipients, sendDirectEmail } from "./notifications/service.js";
 import { escapeHtml } from "./notifications/email-escape";
 import { teamInviteCopy } from "./notifications/team-invite-copy";
@@ -63,14 +70,18 @@ import { registerBuyerAuthRoutes, inviteBuyerUser, reinviteBuyerWithoutPassword 
 import { buildApprovalInviteEmail, type ApprovalEmailVariant } from "./buyers/approval-emails.js";
 import { sellerReviewPayload } from "./buyers/seller-review-payload.js";
 import { outreachReplyTo, outreachFromName, brokerDisplayName } from "./buyers/outreach-reply.js";
+import { answerBuyerQuestion } from "./buyers/question-answer.js";
+import { mapWithLimit, withAiRetry } from "./ai-retry.js";
 import { answerNoticeDue, notifyBuyerQuestionAnswered } from "./qa/answer-notice.js";
 import { buyerNdaFor, signedNdaCopy, type BuyerNdaSignature } from "./buyers/buyer-nda.js";
 import { validSignerName } from "@shared/buyer-nda";
 import { registerBuyerNdaRoutes } from "./routes/buyer-nda.js";
+import { registerSellerReviewRoutes } from "./routes/seller-review.js";
 import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
 import { typedNumericValues } from "./interview/info-merger";
 import { splitFactsForCim, factValueText, CIM_LEADS_HEADING } from "./information/cim-facts";
-import { keepOutFromNotes, screenFactsForCim, type KeepOut } from "./cim/sensitive-facts";
+import { keepOutFromNotes, screenFactsForCim, screenText, type KeepOut } from "./cim/sensitive-facts";
+import { screenStaffPrivateText, staffContextFrom } from "./cim/staff-private";
 import { keepOutFor } from "./cim/keep-out";
 import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal, isDealOwnerSession } from "./broker-auth/routes.js";
 import {
@@ -88,6 +99,7 @@ import { isBuyerInBrokerList, filterBuyersInBrokerList } from "./buyers/profile-
 import { unsupportedFormatReason } from "./documents/parser.js";
 import { viewLinkProblem, viewLinkError, viewStampFor, isLinkableBuyerAccount } from "./buyers/view-access.js";
 import { ndaProfileAccount } from "./buyers/nda-profile.js";
+import { discrepancyBlocksCim, routedToSellerAt, withRoutedStamp } from "@shared/discrepancy-gate";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -184,6 +196,10 @@ async function generateSectionWithClaude(
   const keepOut = data.keepOut ?? keepOutFromNotes(data.extractedInfo);
   const confirmed = screenFactsForCim(split.confirmed, keepOut).safe;
   const leads = screenFactsForCim(split.leads, keepOut).safe;
+  // Free text (the raw questionnaire, the scrape): health details and staff-private sentences out too.
+  const staffCtx = keepOut.staff?.ctx ?? staffContextFrom(data.extractedInfo);
+  const staffIncluded = new Set(keepOut.staff?.included ?? []);
+  const screenFree = (v: unknown) => screenStaffPrivateText(screenText(String(v)), staffCtx, staffIncluded).text;
   if (confirmed.length > 0) {
     contextParts.push(
       `=== CONFIRMED (seller interview, broker, documents, questionnaire) ===\n` +
@@ -199,7 +215,7 @@ async function generateSectionWithClaude(
     if (qEntries.length > 0) {
       contextParts.push(
         `=== FROM QUESTIONNAIRE ===\n` +
-        qEntries.map(([k, v]) => `${k}: ${v}`).join("\n")
+        qEntries.map(([k, v]) => `${k}: ${screenFree(v)}`).filter((l) => !/: $/.test(l)).join("\n")
       );
     }
   }
@@ -209,7 +225,7 @@ async function generateSectionWithClaude(
     if (sEntries.length > 0) {
       contextParts.push(
         `=== PUBLICLY FOUND (treat as supporting context only) ===\n` +
-        sEntries.map(([k, v]) => `${k}: ${v}`).join("\n")
+        sEntries.map(([k, v]) => `${k}: ${screenFree(v)}`).filter((l) => !/: $/.test(l)).join("\n")
       );
     }
   }
@@ -266,14 +282,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     !!dealId && !!(await getOwnedDeal(dealId, req.session.brokerId));
 
   // Product rule: unresolved CRITICAL discrepancies block every CIM-producing
-  // step (content, layout, publish). "ask_seller" counts as handled.
-  const BLOCKING_DISCREPANCY_STATUSES = new Set(["open", "seller_responded"]);
+  // step (content, layout, publish). "ask_seller" counts as handled while
+  // the interview runs (shared/discrepancy-gate.ts discrepancyBlocksCim).
   const blockingCriticalDiscrepancies = async (dealId: string) => {
     // A merge row whose conflict no longer stands (its source deleted, its facts moved on) never blocks.
     await settleMergeRowsQuietly(dealId, "discrepancy-gate");
-    return (await storage.getDiscrepanciesByDeal(dealId)).filter(
-      (d) => d.severity === "critical" && BLOCKING_DISCREPANCY_STATUSES.has(d.status),
-    );
+    const gateDeal = await storage.getDeal(dealId);
+    return (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => discrepancyBlocksCim(d, gateDeal?.interviewCompleted));
   };
   const discrepancyBlockResponse = (res: Response, open: { id: string; field: string }[], verb: string) =>
     res.status(409).json({
@@ -734,17 +749,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updates = schema.parse(req.body);
       if (!(await isBuyerInBrokerList(brokerId, req.params.buyerId))) return res.status(404).json({ error: "Buyer not found" });
 
-      let contact = await storage.getBrokerBuyerContact(brokerId, req.params.buyerId);
-      if (!contact) {
-        // Auto-upsert so tags/notes can be set on buyers first seen via deal access
-        contact = await storage.upsertBrokerBuyerContact({
-          brokerId,
-          buyerUserId: req.params.buyerId,
-          source: "deal",
-          tags: [],
-          notes: null,
-        });
-      }
+      // A row so tags/notes can be set on buyers first seen via deal access.
+      // A buyer the broker removed (still listed through access) starts fresh:
+      // the notes and edits the removal set aside don't quietly come back.
+      const { ensureContact } = await import("./buyers/profile-data.js");
+      const contact = await ensureContact(brokerId, req.params.buyerId);
 
       const updated = await storage.updateBrokerBuyerContact(contact.id, {
         ...(updates.tags !== undefined ? { tags: updates.tags as any } : {}),
@@ -782,14 +791,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
-      const [scoredRaw, existingOutreach, existingAccess] = await Promise.all([
+      const [scoredRaw, existingOutreach, existingAccess, approvals] = await Promise.all([
         scoreBuyersForDeal(deal),
         storage.getDealOutreachByDeal(dealId),
         storage.getBuyerAccessByDeal(dealId),
+        storage.getBuyerApprovalRequestsByDeal(dealId),
       ]);
       // Matched on account id AND email: access rows aren't linked to the
-      // buyer's account until they verify, so id-only missed them.
-      const reached = reachedBuyers(existingOutreach, existingAccess);
+      // buyer's account until they verify, so id-only missed them. Buyers
+      // submitted for approval are further along the pipeline too.
+      const reached = reachedBuyers(existingOutreach, existingAccess, approvals);
       const deep = (deal.buyerDeepCheck as BuyerDeepCheck | null) || null;
       // One definition of who is suggested / deep-checked (suggestionPools),
       // shared with the deep-check job so every count agrees.
@@ -801,7 +812,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // A verdict is shown only for a buyer the list still suggests (an
         // older check may hold results for buyers who since got access).
         const aiCheck = inPool.has(buyerUser.id) ? deep?.results?.[buyerUser.id] ?? null : null;
-        const { alreadyHasAccess, alreadyContacted } = reached(buyerUser);
+        const { alreadyHasAccess, alreadyContacted, inApproval } = reached(buyerUser);
         const excluded = isExcludedBuyer(s);
         // With an AI verdict, rank on it (60%) blended with the lead score.
         const rankScore = aiCheck ? Math.round(aiCheck.fitScore * 0.6 + score.total * 0.4) : score.total;
@@ -819,6 +830,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           tags: contact?.tags ?? [],
           alreadyHasAccess,
           alreadyContacted,
+          inApproval,
           passesFirstPass: passesFirstPass(s),
           excluded,
           excludedBy: excluded ? (breakdown?.excludedBy ?? null) : null,
@@ -902,6 +914,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Fit of every buyer who has the CIM (Buyers tab → "Have the CIM"). Kept
+  // current automatically: re-scored by the rule-based engine whenever the
+  // buyer's criteria or the deal's facts changed since the stored score
+  // (server/matching/access-fit.ts). Never calls the AI.
+  app.get("/api/deals/:dealId/buyer-fit", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const { loadDealBuyerFits } = await import("./matching/access-fit.js");
+      const { fits } = await loadDealBuyerFits(deal);
+      res.json({ fits });
+    } catch (err) {
+      console.error("[buyer-fit] load failed:", err);
+      res.status(500).json({ error: "Couldn't work out buyer fit" });
+    }
+  });
+
+  // The broker's "Check fit with AI" on one buyer (uses the AI; rate-limited
+  // in server/index.ts). The AI-inclusive score is kept until the buyer's
+  // criteria or the deal's facts change.
+  app.post("/api/deals/:dealId/buyer-fit/:accessId/ai", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const access = await storage.getBuyerAccess(req.params.accessId);
+      if (!access || access.dealId !== deal.id || access.revokedAt) return res.status(404).json({ error: "Buyer not found" });
+      const { loadDealBuyerFits } = await import("./matching/access-fit.js");
+      const { fits, aiUnavailable } = await loadDealBuyerFits(deal, { withAIFor: access.id });
+      const fit = fits.find((f) => f.accessId === access.id) ?? null;
+      res.json({ fit, aiUnavailable: aiUnavailable ?? null });
+    } catch (err) {
+      console.error("[buyer-fit] AI check failed:", err);
+      res.status(500).json({ error: "Couldn't check fit with AI" });
+    }
+  });
+
+  // "Copy to their profile" (Fit dialog): criteria saved on this deal's access
+  // row by the old per-deal editor go into the broker's private edits of the
+  // buyer's profile — gap-fill only, never the buyer's own profile. No AI.
+  app.post("/api/deals/:dealId/buyer-fit/:accessId/copy-criteria", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const { copyDealCriteriaToProfile } = await import("./matching/access-fit.js");
+      const r = await copyDealCriteriaToProfile(deal, req.params.accessId);
+      if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.code ? { code: r.code } : {}) });
+      res.json({ buyerId: r.buyerId, copied: r.copied });
+    } catch (err) {
+      console.error("[buyer-fit] copy criteria failed:", err);
+      res.status(500).json({ error: "Couldn't copy these criteria" });
+    }
+  });
+
   // AI deep check of every buyer who passes the first-pass match (background).
   app.post("/api/deals/:dealId/buyer-deep-check", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
@@ -921,14 +986,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Draft outreach emails for selected buyers (AI-generated, never sent automatically).
   // Returns drafts in-memory; the broker reviews and edits before calling /send-outreach.
+  // Drafts are written a few at a time (the bulk ceiling in
+  // server/security/bulk-limits.ts); a rate-limited or overloaded draft is retried.
+  const OUTREACH_DRAFTS_AT_ONCE = BULK_DRAFT_CONCURRENCY;
+  const OUTREACH_RETRY_DELAYS_MS = [2_000, 8_000];
   app.post("/api/deals/:dealId/draft-outreach", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const schema = z.object({
-        buyerUserIds: z.array(z.string()).min(1),
-        template: z.string().optional(),  // optional broker template / instructions
+        buyerUserIds: z.array(z.string().max(100)).min(1),
+        template: z.string().max(4000).optional(),  // optional broker template / instructions
       });
-      const { buyerUserIds, template } = schema.parse(req.body);
+      const parsed = schema.parse(req.body);
+      const buyerUserIds = Array.from(new Set(parsed.buyerUserIds));
+      const { template } = parsed;
+      if (buyerUserIds.length > BULK_OUTREACH_MAX) {
+        return res.status(400).json({ error: `Draft up to ${BULK_OUTREACH_MAX} buyers at a time — select fewer and draft the rest next.`, code: "too_many_buyers" });
+      }
 
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
@@ -955,8 +1029,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Only buyers on this broker's own list can be drafted to.
       const listed = await filterBuyersInBrokerList(req.session.brokerId!, buyerUserIds);
 
-      // Draft each email in parallel
-      const drafts = await Promise.all(buyerUserIds.map(async (buyerUserId) => {
+      // A few drafts at a time, each retried on a rate limit or overload:
+      // one parallel call per selected buyer (81 at once) tripped the rate
+      // limit and quietly turned most drafts into the generic template.
+      const drafts = await mapWithLimit(buyerUserIds, OUTREACH_DRAFTS_AT_ONCE, async (buyerUserId) => {
         if (!listed.has(buyerUserId)) return null;
         const ownBuyer = await storage.getBuyerUser(buyerUserId);
         if (!ownBuyer) return null;
@@ -979,12 +1055,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Try to use Claude Sonnet to personalise; fall back to a deterministic
         // template if the API is unavailable or the draft isn't blind-safe.
         const defaultSubject = `Confidential opportunity: ${deal.industry}${dealSummary.region ? ` — ${dealSummary.region}` : ""}`;
-        const templateBody = () => `Hi ${buyer.name.split(" ")[0]},\n\nI'm reaching out because a ${deal.industry} business${dealSummary.region ? ` in ${dealSummary.region}` : ""} just came to market and it looks like a strong fit for your acquisition criteria${buyer.targetIndustries && (buyer.targetIndustries as string[]).length > 0 ? ` in ${(buyer.targetIndustries as string[]).slice(0, 2).join(" / ")}` : ""}.\n\nQuick highlights:\n• Industry: ${deal.industry}${dealSummary.subIndustry ? ` (${dealSummary.subIndustry})` : ""}\n${dealSummary.revenueBand ? `• Revenue: ${dealSummary.revenueBand}\n` : ""}${dealSummary.tenure ? `• ${dealSummary.tenure}\n` : ""}\nIf you'd like a closer look, just reply and I'll set up secure access to the full confidential overview.\n\nNo pressure either way — happy to answer questions if it's a fit.\n\nBest,\n${brokerName}${brokerCompany ? `\n${brokerCompany}` : ""}`;
+        // First name, past a title ("Dr. Priya Raman" → Priya, never "Hi Dr.,").
+        const firstName = buyer.name.replace(/^\s*(?:dr|mr|mrs|ms|mx|prof)\.?\s+/i, "").split(" ")[0] || buyer.name;
+        const templateBody = () => `Hi ${firstName},\n\nI'm reaching out because a ${deal.industry} business${dealSummary.region ? ` in ${dealSummary.region}` : ""} just came to market and it looks like a strong fit for your acquisition criteria${buyer.targetIndustries && (buyer.targetIndustries as string[]).length > 0 ? ` in ${(buyer.targetIndustries as string[]).slice(0, 2).join(" / ")}` : ""}.\n\nQuick highlights:\n• Industry: ${deal.industry}${dealSummary.subIndustry ? ` (${dealSummary.subIndustry})` : ""}\n${dealSummary.revenueBand ? `• Revenue: ${dealSummary.revenueBand}\n` : ""}${dealSummary.tenure ? `• ${dealSummary.tenure}\n` : ""}\nIf you'd like a closer look, just reply and I'll set up secure access to the full confidential overview.\n\nNo pressure either way — happy to answer questions if it's a fit.\n\nBest,\n${brokerName}${brokerCompany ? `\n${brokerCompany}` : ""}`;
         let subject = defaultSubject;
         let body = "";
+        // Why this draft is the generic template (shown on its card), if it is.
+        let templateReason: "ai_unavailable" | "identifying_details" | "unusable_draft" | null = null;
 
         try {
-          const aiResp = await anthropic.messages.create({
+          const aiResp = await withAiRetry(() => anthropic.messages.create({
             model: "claude-sonnet-4-5",
             max_tokens: 600,
             system: `You are an M&A broker drafting a personalised, low-pressure outreach email to a qualified buyer about a new business-for-sale opportunity. This email goes out BEFORE an NDA: it must be impossible to identify the business from it. Never state the business name, owner, street, city, or exact figures — refer to it by its codename or "a ${deal.industry} business", use only the region and the ranges provided. The tone is professional, warm, and concise — not salesy. Always include a clear, no-pressure invitation to learn more. Return ONLY a JSON object: {"subject": "...", "body": "..."}.`,
@@ -1017,10 +1097,15 @@ Requirements:
 
 Return JSON only.`,
             }],
-          });
+          }), OUTREACH_RETRY_DELAYS_MS);
 
-          const raw = aiResp.content[0].type === "text" ? aiResp.content[0].text : "";
-          const parsed = JSON.parse(raw.replace(/```json\s*/gi, "").replace(/```/g, "").trim());
+          const raw = aiResp.content[0]?.type === "text" ? aiResp.content[0].text : "";
+          let parsed: { subject?: unknown; body?: unknown } = {};
+          try {
+            parsed = JSON.parse(raw.replace(/```json\s*/gi, "").replace(/```/g, "").trim());
+          } catch {
+            templateReason = "unusable_draft";
+          }
           const aiSubject = typeof parsed.subject === "string" ? parsed.subject.trim() : "";
           const aiBody = typeof parsed.body === "string" ? parsed.body.trim() : "";
           const leaks = findBlindLeaks(`${aiSubject}\n${aiBody}`, outreachTerms);
@@ -1028,10 +1113,14 @@ Return JSON only.`,
             if (aiSubject) subject = aiSubject;
             body = aiBody;
           } else if (leaks.length > 0) {
+            templateReason = "identifying_details";
             console.warn("[outreach] AI draft named identifying details — discarded for the blind-safe template");
+          } else {
+            templateReason = templateReason ?? "unusable_draft";
           }
-        } catch (aiErr) {
-          console.warn("[outreach] AI draft failed for", buyer.email, "— falling back to template");
+        } catch (aiErr: any) {
+          templateReason = "ai_unavailable";
+          console.warn("[outreach] AI draft failed for", buyer.email, `(${aiErr?.status ?? aiErr?.message}) — falling back to template`);
         }
         if (!body) {
           subject = defaultSubject;
@@ -1044,8 +1133,11 @@ Return JSON only.`,
           buyerEmail: buyer.email,
           subject,
           body,
+          /** False = the generic template (templateReason says why) — the card says so. */
+          personalised: templateReason === null,
+          templateReason,
         };
-      }));
+      });
 
       const validDrafts = drafts.filter((d): d is NonNullable<typeof d> => !!d);
       // Where buyers' replies will land (the drafts say "just reply").
@@ -1066,16 +1158,22 @@ Return JSON only.`,
       const { dealId } = req.params;
       const schema = z.object({
         outreach: z.array(z.object({
-          buyerUserId: z.string(),
-          subject: z.string().min(1),
-          body: z.string().min(1),
+          buyerUserId: z.string().max(100),
+          subject: z.string().min(1).max(300),
+          body: z.string().min(1).max(20000),
           // Optional snapshot data captured at suggestion time
           qualifiedScore: z.number().optional(),
           matchScore: z.number().optional(),
-          topDimensions: z.array(z.string()).optional(),
+          topDimensions: z.array(z.string().max(80)).max(20).optional(),
         })).min(1),
       });
-      const { outreach } = schema.parse(req.body);
+      const parsedOutreach = schema.parse(req.body).outreach;
+      // One email per buyer per send, and a ceiling per request.
+      const seenBuyers = new Set<string>();
+      const outreach = parsedOutreach.filter((o) => !seenBuyers.has(o.buyerUserId) && !!seenBuyers.add(o.buyerUserId));
+      if (outreach.length > BULK_OUTREACH_MAX) {
+        return res.status(400).json({ error: `Send to up to ${BULK_OUTREACH_MAX} buyers at a time — send the rest in a second batch.`, code: "too_many_buyers" });
+      }
 
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
@@ -1100,7 +1198,7 @@ Return JSON only.`,
       const listed = await filterBuyersInBrokerList(req.session.brokerId!, outreach.map((o) => o.buyerUserId));
       const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
-      const results = await Promise.all(outreach.map(async (item) => {
+      const results = await mapWithConcurrency(outreach, BULK_AI_CONCURRENCY, async (item) => {
         const buyer = listed.has(item.buyerUserId) ? await storage.getBuyerUser(item.buyerUserId) : undefined;
         if (!buyer) {
           return { buyerUserId: item.buyerUserId, status: "failed", error: "Buyer not found" };
@@ -1159,7 +1257,7 @@ Return JSON only.`,
           buyerEmail: buyer.email,
           status: record.status,
         };
-      }));
+      });
 
       const sent = results.filter(r => r.status === "sent").length;
       res.json({
@@ -1226,15 +1324,17 @@ Return JSON only.`,
   app.post("/api/deals/:dealId/seller-profile/generate", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
-      const { generateSellerProfile, carryBrokerProfileEdits } = await import("./interview/eq-profiler");
-      const prior = ((await storage.getDeal(dealId))?.sellerProfile as Record<string, unknown> | null) || null;
-      // The broker's own notes and corrections survive a regenerate.
-      const profile = carryBrokerProfileEdits(await generateSellerProfile(dealId), prior);
-      // Store on deal record
-      await storage.updateDeal(dealId, { sellerProfile: profile } as any);
+      const { generateSellerProfile, saveRegeneratedSellerProfile } = await import("./interview/eq-profiler");
+      // The broker's own notes and corrections survive a regenerate — as they
+      // are when it lands (a note saved while it ran is kept).
+      const profile = await saveRegeneratedSellerProfile(dealId, await generateSellerProfile(dealId));
       res.json(profile);
     } catch (error: any) {
       console.error("[EQ profiler] Generation failed:", error);
+      // The AI service failed: the current profile was not touched.
+      if (error?.name === "SellerProfileUnavailableError") {
+        return res.status(503).json({ error: "The AI service is unavailable — your current profile was kept. Try again in a few minutes." });
+      }
       res.status(500).json({ error: error.message || "Failed to generate seller profile" });
     }
   });
@@ -1375,6 +1475,15 @@ Return JSON only.`,
         return res.status(401).json({ error: "Not authorized for this interview" });
       }
       const conductedBy = await interviewCallerMode(req, dealId);
+      // A website nobody has read yet is read now, in the background (later
+      // turns use it; the opening doesn't wait).
+      {
+        const scrapeDealRow = await storage.getDeal(dealId);
+        if (scrapeDealRow) {
+          const { scrapeInBackground } = await import("./scraper/auto-scrape");
+          scrapeInBackground(scrapeDealRow, "interview started");
+        }
+      }
       // A finished interview is continued only on an explicit request
       // ("Continue interview" / "Add more detail") — loading the page alone
       // returns its finished state and starts nothing.
@@ -1544,6 +1653,21 @@ Return JSON only.`,
       res.json({ ended: true });
     } catch (error: any) {
       res.status(500).json({ error: "Couldn't end the call" });
+    }
+  });
+
+  // The broker left the "Interview together" page (any way of running it —
+  // in person, a Cimple call, a Zoom/Meet/Teams notetaker): the sitting is
+  // marked left, so the seller's own link opens straight away instead of
+  // "your broker is going through this with you now" for half an hour.
+  // Nothing is closed; coming back resumes it.
+  app.post("/api/interview/:dealId/together/leave", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const { parkTogetherSessions } = await import("./interview/session-manager");
+      const parked = await parkTogetherSessions(req.params.dealId);
+      res.json({ parked });
+    } catch (error: any) {
+      res.status(500).json({ error: "Couldn't update the sitting" });
     }
   });
 
@@ -1970,15 +2094,18 @@ Return JSON only.`,
         console.warn("[deals] deal-detail facts not recorded:", e);
       }
 
-      // Auto-populate document requirements from industry intelligence
-      if (deal.industry) {
-        try {
-          const { populateDocumentRequirements } = await import("./documents/requirements");
-          await populateDocumentRequirements(deal.id, deal.industry);
-        } catch (e) {
-          // Non-fatal — deal still created, requirements can be populated later
-          console.warn("Auto-populate document requirements failed:", e);
-        }
+      // Auto-populate document requirements from industry intelligence (the
+      // label "Restaurant / Food Service" is resolved to its industry list).
+      // Non-fatal — the deal is created either way.
+      {
+        const { ensureIndustryDocumentRequirements } = await import("./documents/requirements");
+        await ensureIndustryDocumentRequirements(deal.id, deal.industry, deal.subIndustry);
+      }
+      // A website entered at creation is read in the background, so the
+      // interview starts informed (New Deal promises it).
+      {
+        const { scrapeInBackground } = await import("./scraper/auto-scrape");
+        scrapeInBackground(deal, "deal created");
       }
 
       res.json(deal);
@@ -2325,15 +2452,30 @@ Return JSON only.`,
         if (body[key] !== undefined) updates[key] = body[key];
       }
 
+      const { REQUIREMENT_STATUSES, SELLER_REQUIREMENT_STATUSES, withSellerUnavailableNote, withoutSellerUnavailableNote } = await import("@shared/seller-portal");
       if (updates.status !== undefined) {
-        // A seller may link an upload or take their own upload back off a
-        // row; only the broker verifies.
-        const validStatuses = isBrokerSession
-          ? ["missing", "uploaded", "verified"]
-          : ["missing", "uploaded"];
+        // A seller may link an upload, take their own upload back off a
+        // row, or say they don't have the document; only the broker verifies.
+        const validStatuses: readonly string[] = isBrokerSession ? REQUIREMENT_STATUSES : SELLER_REQUIREMENT_STATUSES;
         if (typeof updates.status !== "string" || !validStatuses.includes(updates.status)) {
           return res.status(400).json({ error: `Invalid status. Expected one of: ${validStatuses.join(", ")}` });
         }
+      }
+      // "I don't have this — tell my broker": the row stops counting against
+      // the seller and the reason is left for the broker (who decides: not
+      // needed, or ask again). Only an empty row — a file on it is removed first.
+      if (updates.status === "unavailable") {
+        if (existing.status === "uploaded") {
+          return res.status(409).json({ error: "Remove the file on this item first" });
+        }
+        const reason = typeof body.reason === "string" ? body.reason : "";
+        updates.notes = withSellerUnavailableNote(typeof updates.notes === "string" ? updates.notes : existing.notes, reason);
+        updates.uploadedFileId = null;
+        updates.uploadedBy = null;
+        updates.uploadedAt = null;
+      } else if (updates.status !== undefined && existing.status === "unavailable") {
+        // Asked again, or the seller found it after all: the "I don't have it" line goes.
+        updates.notes = withoutSellerUnavailableNote(typeof updates.notes === "string" ? updates.notes : existing.notes);
       }
       if (updates.uploadedFileId !== undefined && updates.uploadedFileId !== null && typeof updates.uploadedFileId !== "string") {
         return res.status(400).json({ error: "uploadedFileId must be a string" });
@@ -2347,7 +2489,7 @@ Return JSON only.`,
           return res.status(400).json({ error: "uploadedFileId must reference a document on this deal" });
         }
       }
-      if (!isBrokerSession && updates.uploadedBy !== undefined) {
+      if (!isBrokerSession && updates.uploadedBy !== undefined && updates.status !== "unavailable") {
         updates.uploadedBy = "seller";
       }
       if (!isBrokerSession && existing.status === "verified" && (updates.status !== undefined || updates.uploadedFileId !== undefined)) {
@@ -2449,7 +2591,7 @@ Return JSON only.`,
         return res.status(400).json({ error: "No industry set on deal and no industryCategory provided" });
       }
       const { populateDocumentRequirements } = await import("./documents/requirements");
-      const created = await populateDocumentRequirements(deal.id, industryCategory);
+      const created = await populateDocumentRequirements(deal.id, industryCategory, req.body.industryCategory ? null : deal.subIndustry);
       const requirements = await storage.getDocumentRequirementsByDeal(deal.id);
       res.json({ created, total: requirements.length, requirements });
     } catch (error: any) {
@@ -2558,10 +2700,13 @@ Return JSON only.`,
       const { insertDealSchema } = await import("@shared/schema");
 
       let allowedBody: Record<string, unknown> | null = null;
+      // The industry before this edit (a real change re-scopes the seller's document checklist).
+      let industryBefore: { industry: string | null; subIndustry: string | null } | null = null;
 
       if (req.session.brokerId) {
         const owned = await getOwnedDeal(req.params.id, req.session.brokerId);
         if (!owned) return res.status(404).json({ error: "Deal not found" });
+        industryBefore = { industry: owned.industry ?? null, subIndustry: owned.subIndustry ?? null };
         const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
         const { allowBackward, ...fields } = body;
         if ("brokerId" in fields || "id" in fields) {
@@ -2641,12 +2786,24 @@ Return JSON only.`,
         // A section the AI couldn't write is a placeholder of instructions to
         // the broker: it is never served, and the CIM doesn't go live with a
         // hole in it until each one is written, regenerated or deleted.
-        const placeholders = (await storage.getCimSectionsByDeal(req.params.id)).filter(isCimFallbackSection);
+        const publishSections = await storage.getCimSectionsByDeal(req.params.id);
+        const placeholders = publishSections.filter(isCimFallbackSection);
         if (placeholders.length > 0) {
           return res.status(409).json({
             error: `${placeholders.length === 1 ? "One section" : `${placeholders.length} sections`} couldn't be written by the AI (${placeholders.slice(0, 3).map((p) => `"${p.sectionTitle}"`).join(", ")}). Regenerate, write or delete ${placeholders.length === 1 ? "it" : "them"} in the CIM builder before publishing.`,
             code: "cim_placeholders",
             sections: placeholders.map((p) => ({ id: p.id, title: p.sectionTitle })),
+          });
+        }
+        // A blank layout's sample data ("Category A 60 / B 40") reads to a
+        // buyer as real figures: a shown section still holding it blocks
+        // publishing like a placeholder does.
+        const sample = publishSections.filter((s) => s.isVisible !== false && hasSampleData(s));
+        if (sample.length > 0) {
+          return res.status(409).json({
+            error: `${sample.length === 1 ? "One section still shows" : `${sample.length} sections still show`} the layout's sample data (${sample.slice(0, 3).map((p) => `"${p.sectionTitle}"`).join(", ")}). Replace it with the business's own figures, or hide or delete ${sample.length === 1 ? "the section" : "them"}, before publishing.`,
+            code: "cim_sample_data",
+            sections: sample.map((p) => ({ id: p.id, title: p.sectionTitle })),
           });
         }
         // Every shown section approved as it stands (shared/cim-approvals.ts)
@@ -2705,6 +2862,12 @@ Return JSON only.`,
       if (dealPatch.isLive === true && req.session.brokerId) {
         const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
         grantWaitingApprovals(req.params.id, baseUrl).catch((err) => console.error("[approvals] publish grants failed:", err));
+        // What goes live is the approved version buyers keep through later,
+        // unapproved changes (shared/cim-published.ts) — recorded now for any
+        // section approved before those records existed.
+        const { recordPublishedVersions } = await import("./cim/published-versions");
+        const shown = (await storage.getCimSectionsByDeal(req.params.id)).filter((s) => s.isVisible !== false && s.brokerApproved);
+        await recordPublishedVersions(shown.map((s) => s.id));
       }
       if (askingPriceSet) {
         const { setMirroredDealFact } = await import("./information/facts");
@@ -2724,6 +2887,23 @@ Return JSON only.`,
         const { MIRROR_NOTES } = await import("./information/deal-mirror");
         await setMirroredDealFacts(req.params.id, identityPatch, MIRROR_NOTES.edited);
         deal = (await storage.getDeal(req.params.id)) ?? deal;
+      }
+      // A changed industry brings its own document requests, and the old
+      // industry's untouched ones go (the broker corrected it). An edit that
+      // re-sends the same industry changes nothing.
+      if (
+        industryBefore &&
+        ("industry" in identityPatch || "subIndustry" in identityPatch) &&
+        ((deal.industry ?? null) !== industryBefore.industry || (deal.subIndustry ?? null) !== industryBefore.subIndustry)
+      ) {
+        const { switchIndustryDocumentRequirements } = await import("./documents/requirements");
+        const { removed, added } = await switchIndustryDocumentRequirements(deal.id, deal.industry, deal.subIndustry);
+        if (removed || added) console.log(`[requirements] industry changed on deal ${deal.id}: ${added} request(s) added, ${removed} untouched one(s) removed`);
+      }
+      // A website added later is read in the background too.
+      if (req.session.brokerId && "websiteUrl" in (validatedData as Record<string, unknown>)) {
+        const { scrapeInBackground } = await import("./scraper/auto-scrape");
+        scrapeInBackground(deal, "website added");
       }
       // Intake answers become facts (source "questionnaire") as soon as the
       // seller saves them — the broker's Information tab and the readiness
@@ -2761,7 +2941,11 @@ Return JSON only.`,
     try {
       const deal = await getOwnedDeal(req.params.id, req.session.brokerId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
-      await storage.deleteDeal(req.params.id);
+      // Everything: every row carrying the deal's id, its documents' files
+      // and its private media (server/deals/delete-deal.ts). The list-page
+      // "Archive" is the reversible option.
+      const { deleteDealEverywhere } = await import("./deals/delete-deal.js");
+      await deleteDealEverywhere(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error deleting deal:", error);
@@ -2775,8 +2959,10 @@ Return JSON only.`,
   
   app.get("/api/deals/:dealId/documents", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      const documents = await storage.getDocumentsByDeal(req.params.dealId);
-      res.json(documents);
+      // Without the extracted text (never shown, and polled every 2.5 s
+      // while a document is being read) — see documents/document-list.ts.
+      const { listDocumentsForBroker } = await import("./documents/document-list");
+      res.json(await listDocumentsForBroker(req.params.dealId));
     } catch (error: any) {
       console.error("Error fetching documents:", error);
       res.status(500).json({ error: "Failed to fetch documents" });
@@ -2839,15 +3025,12 @@ Return JSON only.`,
     try {
       const existingDoc = await storage.getDocument(req.params.id);
       if (!existingDoc || !(await ownsDeal(req, existingDoc.dealId))) return res.status(404).json({ error: "Document not found" });
-      await storage.deleteDocument(req.params.id);
-      // The dialog promises "any data extracted from it will be removed" —
-      // honour it via field provenance.
-      try {
-        const { removeSourceFacts } = await import("./documents/cleanup");
-        const removed = await removeSourceFacts(existingDoc.dealId, existingDoc.id);
-        return res.json({ success: true, removedFields: removed });
-      } catch (e) { console.warn("[documents] provenance cleanup failed:", e); }
-      res.json({ success: true });
+      // The dialog promises "any data extracted from it will be removed":
+      // the row, the facts it contributed (field provenance) AND the file on
+      // disk — deleting used to leave the PDF on the volume, still servable.
+      const { deleteDocumentAndProvenance } = await import("./documents/cleanup");
+      const removed = await deleteDocumentAndProvenance(existingDoc.id);
+      res.json({ success: true, removedFields: removed });
     } catch (error: any) {
       console.error("Error deleting document:", error);
       res.status(500).json({ error: "Failed to delete document" });
@@ -2878,8 +3061,8 @@ Return JSON only.`,
         cb(null, dir);
       },
       filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname);
-        cb(null, newDocumentFileName("doc", ext));
+        // Unguessable name (the old doc_<timestamp> could be enumerated).
+        cb(null, newDocumentFileName("doc", path.extname(file.originalname)));
       },
     }),
     limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
@@ -2947,6 +3130,18 @@ Return JSON only.`,
           return res.status(409).json({ error: "Your broker has already verified this document — ask them before replacing it" });
         }
       }
+      // A document the interview asked for (an open document request): the
+      // upload answers it, and the request closes.
+      const taskId = typeof req.body.taskId === "string" && req.body.taskId.trim() ? req.body.taskId.trim() : undefined;
+      let targetTask: Awaited<ReturnType<typeof storage.getTask>> | undefined;
+      if (taskId) {
+        const { sellerMaySatisfyTask } = await import("@shared/seller-portal");
+        targetTask = await storage.getTask(taskId);
+        if (!sellerMaySatisfyTask(targetTask, req.params.dealId, targetTask?.dealId)) {
+          fs.unlink(req.file.path, () => {});
+          return res.status(400).json({ error: "That request isn't open on this deal any more" });
+        }
+      }
       const requestedCategory = typeof req.body.category === "string" && req.body.category.trim() ? req.body.category.trim() : "";
       const category =
         requestedCategory && requestedCategory !== "other"
@@ -2956,7 +3151,7 @@ Return JSON only.`,
             : requestedCategory || "other";
 
       // Pasted text carries its own title; keep it verbatim as the display
-      // name. Only the on-disk filename (doc_<ts>.ext) needs sanitising.
+      // name. Only the on-disk filename (doc_<random>.ext) needs sanitising.
       const displayName = (rawTitle || decodeUploadName(req.file.originalname)).slice(0, 200);
       // Provenance v2: the broker says what kind of source this is (email,
       // call transcript, CRM note…) and who may see it. A seller's upload is
@@ -3021,8 +3216,28 @@ Return JSON only.`,
         }
       }
 
+      let satisfiedTask: { id: string; title: string } | null = null;
+      if (targetTask) {
+        const note = `${uploadedBy === "seller" ? "The seller" : "You"} uploaded "${displayName}" for this request.`;
+        // Copies of the same request an earlier turn re-created close with it
+        // (the seller's list shows them as one row — one would pop back up).
+        const { openItemTaskIds } = await import("@shared/seller-portal");
+        const dealTasks = await storage.getTasksByDeal(req.params.dealId);
+        const now = new Date();
+        for (const tid of openItemTaskIds(dealTasks, targetTask)) {
+          const t = tid === targetTask.id ? targetTask : dealTasks.find((x) => x.id === tid);
+          if (!t) continue;
+          await storage.updateTask(tid, {
+            status: "completed",
+            completedAt: now,
+            brokerNotes: t.brokerNotes ? `${t.brokerNotes}\n${note}` : note,
+          } as any);
+        }
+        satisfiedTask = { id: targetTask.id, title: targetTask.title };
+      }
+
       parseDocumentAsync(doc.id);
-      res.json({ ...doc, linkedRequirement });
+      res.json({ ...doc, linkedRequirement, satisfiedTask });
     } catch (error: any) {
       console.error("Upload error:", error);
       res.status(500).json({ error: "Upload failed" });
@@ -3306,16 +3521,13 @@ Return JSON only.`,
 
       // Create the "running" placeholder BEFORE responding so the client's
       // invalidation refetch always sees the new version and starts polling.
-      const { createAnalysisPlaceholder, runFinancialAnalysis } = await import("./financial/analyzer");
-      const placeholder = await createAnalysisPlaceholder(req.params.dealId, storage);
-
-      // Fire-and-forget: the heavy work runs in the background
-      runFinancialAnalysis(req.params.dealId, storage, { analysisId: placeholder.id }).catch((err: any) => {
-        console.error("Background financial analysis failed:", err);
-      });
+      // The heavy work runs in the background; one run per deal at a time.
+      const { startFinancialAnalysis } = await import("./financial/analyzer");
+      const placeholder = await startFinancialAnalysis(req.params.dealId, storage);
 
       res.json({ message: "Financial analysis started", dealId: req.params.dealId, analysisId: placeholder.id, version: placeholder.version });
     } catch (error: any) {
+      if (error?.status === 409) return res.status(409).json({ error: error.message });
       console.error("Error starting financial analysis:", error);
       res.status(500).json({ error: "Failed to start financial analysis" });
     }
@@ -3441,14 +3653,12 @@ Return JSON only.`,
         return res.status(404).json({ error: "Financial analysis not found" });
       }
 
-      const { createAnalysisPlaceholder, runFinancialAnalysis } = await import("./financial/analyzer");
-      const placeholder = await createAnalysisPlaceholder(req.params.dealId, storage);
-      runFinancialAnalysis(req.params.dealId, storage, { analysisId: placeholder.id }).catch((err: any) => {
-        console.error("Background financial re-analysis failed:", err);
-      });
+      const { startFinancialAnalysis } = await import("./financial/analyzer");
+      const placeholder = await startFinancialAnalysis(req.params.dealId, storage);
 
       res.json({ message: "Financial re-analysis started", dealId: req.params.dealId, analysisId: placeholder.id, version: placeholder.version });
     } catch (error: any) {
+      if (error?.status === 409) return res.status(409).json({ error: error.message });
       console.error("Error re-running financial analysis:", error);
       res.status(500).json({ error: "Failed to re-run financial analysis" });
     }
@@ -3547,7 +3757,8 @@ Return JSON only.`,
         const hadPrivate = privateContext || publicQuestion !== String(question.question).trim();
         discrepancy = await storage.createDiscrepancy({
           dealId: req.params.dealId,
-          ...(hadPrivate ? { sideSources: { interview: { kind: "crm", brokerOnly: true } } as any } : {}),
+          // (Stamped as routed under the follow-up rules — shared/discrepancy-gate.ts.)
+          sideSources: withRoutedStamp(hadPrivate ? { interview: { kind: "crm", brokerOnly: true } } : null) as any,
           field: publicQuestion.slice(0, 200),
           interviewValue: context,
           documentValue: null,
@@ -3563,7 +3774,7 @@ Return JSON only.`,
           status: "ask_seller",
         });
       } else if (discrepancy.status !== "ask_seller") {
-        discrepancy = (await storage.updateDiscrepancy(discrepancy.id, { status: "ask_seller" })) || discrepancy;
+        discrepancy = (await storage.updateDiscrepancy(discrepancy.id, { status: "ask_seller", sideSources: withRoutedStamp(discrepancy.sideSources) as any })) || discrepancy;
       }
 
       const updatedQuestions = questions.map((q) =>
@@ -3575,7 +3786,11 @@ Return JSON only.`,
         clarifyingQuestions: updatedQuestions,
       });
 
-      res.json({ analysis: updated, discrepancy });
+      // A seller who already finished the interview is told to come back
+      // (nothing would raise it otherwise).
+      const { notifySellerOfFollowUps } = await import("./interview/seller-followups");
+      const sellerFollowUp = await notifySellerOfFollowUps(req.params.dealId);
+      res.json({ analysis: updated, discrepancy, sellerFollowUp });
     } catch (error: any) {
       console.error("Error routing clarifying question to seller:", error);
       res.status(500).json({ error: "Failed to route question to the seller interview" });
@@ -3744,7 +3959,7 @@ Return JSON only.`,
       // Run analysis in background
       (async () => {
         try {
-          const { parseTransactionData, matchAddbacksToTransactions, identifyAddbacksFromTransactions, generateSellerQuestions } = await import("./financial/addback-verifier");
+          const { parseTransactionDataWithCoverage, matchAddbacksToTransactions, identifyAddbacksFromTransactions, generateSellerQuestions } = await import("./financial/addback-verifier");
 
           // Gather source documents — look for GL, bank statements, QB exports
           const allDocs = await storage.getDocumentsByDeal(req.params.dealId);
@@ -3771,6 +3986,8 @@ Return JSON only.`,
 
           // Parse all transaction data
           let allTransactions: any[] = [];
+          // Sources read only in part (a very long PDF statement): said on every add-back.
+          const partlyRead: string[] = [];
           for (const doc of sourceDocs) {
             if (!doc.extractedText) continue;
             const sourceType = doc.subcategory === "bank_statement"
@@ -3778,7 +3995,10 @@ Return JSON only.`,
               : doc.subcategory === "quickbooks_export" || doc.subcategory === "pnl_detail"
               ? "quickbooks"
               : "gl";
-            const parsed = await parseTransactionData(doc.extractedText, sourceType as any, doc.id);
+            const { transactions: parsed, readChars, totalChars } = await parseTransactionDataWithCoverage(doc.extractedText, sourceType as any, doc.id);
+            if (readChars < totalChars) {
+              partlyRead.push(`"${doc.name}" (the first ${Math.round((100 * readChars) / Math.max(1, totalChars))}% was read)`);
+            }
             if (parsed.length === 0) {
               console.warn(`[addback-verification] No transactions could be read from "${doc.name}" (${doc.id}, ${sourceType}, ${doc.extractedText.length} chars)`);
             }
@@ -3800,6 +4020,7 @@ Return JSON only.`,
 
           let updatedAddbacks: any[];
           let questions: any[];
+          const partlyReadNote = partlyRead.length > 0 ? `Only part of ${partlyRead.join(", ")} could be read for matching.` : "";
 
           if (verification.workflow === "provided") {
             // Workflow A — match existing addbacks
@@ -3823,11 +4044,17 @@ Return JSON only.`,
             updatedAddbacks = currentAddbacks.map((ab) => {
               const match = matchResults.find((m) => m.addbackId === ab.id);
               if (!match) return ab;
+              // A partial match stays partial ("Partly supported"), with what the
+              // linked transactions actually add up to — worked out in code.
+              const coverage = [match.coverageNote, partlyReadNote].filter(Boolean).join(" ");
               return {
                 ...ab,
-                verificationStatus: match.verificationStatus === "matched" ? "matched" : match.verificationStatus === "partial_match" ? "matched" : "no_match",
+                verificationStatus: partlyReadNote && match.verificationStatus === "no_match" ? "unverified" : match.verificationStatus,
                 matchedTransactions: match.matchedTransactions,
+                totalMatchedAmount: match.totalMatchedAmount,
+                claimedAmount: match.claimedAmount,
                 aiNotes: match.aiNotes,
+                coverageNote: coverage || null,
               };
             });
 
@@ -3853,7 +4080,7 @@ Return JSON only.`,
 
             updatedAddbacks = identified.map((ab) => ({
               ...ab,
-              verificationStatus: "matched",
+              coverageNote: [ab.coverageNote, partlyReadNote].filter(Boolean).join(" ") || null,
               sellerNotes: null,
             }));
 
@@ -3954,6 +4181,10 @@ Return JSON only.`,
       if (!picked.ok) return res.status(400).json({ error: picked.error, field: picked.field });
       const { insertTaskSchema } = await import("@shared/schema");
       const validatedData = insertTaskSchema.partial().parse(picked.data);
+      // Closed from the broker's open-items list: stamped by the server clock.
+      if ((validatedData.status === "completed" || validatedData.status === "authorized_skip") && !validatedData.completedAt) {
+        (validatedData as Record<string, unknown>).completedAt = new Date();
+      }
       const task = await storage.updateTask(req.params.id, validatedData);
       if (!task) {
         return res.status(404).json({ error: "Task not found" });
@@ -4319,10 +4550,11 @@ Return JSON only.`,
       // header's "Solid 60".
       const { assembleKnowledgeBase } = await import("./interview/knowledge-base");
       const kbDocuments = await storage.getDocumentsByDeal(deal.id);
+      const sellerTasks = sellerSideTasks(await storage.getTasksByDeal(deal.id));
       const progressKb = assembleKnowledgeBase(
         deal,
         kbDocuments,
-        sellerSideTasks(await storage.getTasksByDeal(deal.id)),
+        sellerTasks,
         sessions[0] ?? null,
         await storage.getResolvedDiscrepancies(deal.id),
       );
@@ -4340,36 +4572,45 @@ Return JSON only.`,
       const hasCompletedSession = sessions.some((s) => sessionFinishedInterview(s));
       const interviewCompleted = !!(deal as any).interviewCompleted || hasCompletedSession;
 
-      // Document requirements
+      // Document requirements. A row the seller says they don't have stops
+      // counting against them until the broker decides (shared/seller-portal).
+      const { checklistCounts, sellerIntakeState, sellerSteps, sellerTodoItems, sellerReviewStage } = await import("@shared/seller-portal");
       const docReqs = await storage.getDocumentRequirementsByDeal(deal.id);
-      const requiredDocs = docReqs.filter((r) => r.isRequired);
-      const uploadedRequired = requiredDocs.filter((r) => r.status !== "missing").length;
-      const totalRequired = requiredDocs.length;
-      const docPct = totalRequired > 0 ? Math.round((uploadedRequired / totalRequired) * 100) : 0;
+      const docCounts = checklistCounts(docReqs);
+      const docPct = docCounts.percentage;
 
       // Uploaded documents — broker-only sources (CRM notes, private emails)
       // never reach the seller.
       const allDocs = kbDocuments.filter((d) => (d as any).visibility !== "broker_only");
 
-      // Pending seller approvals
+      // Buyer questions waiting on the seller's approval — each with its own
+      // review link, on every step (the approval email can land in spam).
       const pendingQuestions = await db.select().from(buyerQuestions)
         .where(eqOp(buyerQuestions.dealId, deal.id));
-      const pendingSeller = pendingQuestions.filter((q) => q.status === "pending_seller");
+      // Only for a link whose holder approves buyer answers (the roles
+      // qa_needs_approval is routed to) — an accountant's or attorney's link
+      // never gets the buyer's question, the broker's draft or the publish
+      // link (shared/seller-link-rights.ts).
+      const { sellerLinkRights } = await import("@shared/seller-link-rights");
+      const linkRights = sellerLinkRights(invite, await storage.getDealMembers(deal.id));
+      const pendingSeller = linkRights.canApproveQa
+        ? pendingQuestions.filter((q) => q.status === "pending_seller")
+        : [];
 
-      // Step status
-      const intakeCompleted = !!(deal as any).questionnaireData;
-      type StepStatus = "completed" | "current" | "upcoming";
-      let currentStep: "intake" | "interview" | "documents" | "review" = "intake";
-      if (intakeCompleted && !interviewCompleted) currentStep = "interview";
-      else if (interviewCompleted && docPct < 100) currentStep = "documents";
-      else if (interviewCompleted && docPct >= 100) currentStep = "review";
+      // The interview's to-dos: documents it asked for and things to look up.
+      const todo = sellerTodoItems(sellerTasks);
 
-      const steps: Array<{ id: string; label: string; status: StepStatus; pct?: number }> = [
-        { id: "intake", label: "Business Info", status: intakeCompleted ? "completed" : currentStep === "intake" ? "current" : "upcoming" },
-        { id: "interview", label: "Business Overview", status: interviewCompleted ? "completed" : currentStep === "interview" ? "current" : "upcoming", pct: interviewPct },
-        { id: "documents", label: "Documents", status: docPct >= 100 ? "completed" : currentStep === "documents" ? "current" : "upcoming", pct: docPct },
-        { id: "review", label: "Review", status: currentStep === "review" ? "current" : "upcoming" },
-      ];
+      // Questions the broker routed back to the seller after the interview
+      // (a conflict to clear up). Only the count — the rows are the broker's.
+      const followUpQuestions = interviewCompleted
+        ? (await storage.getDiscrepanciesByDeal(deal.id)).filter((d) => d.status === "ask_seller" && !!routedToSellerAt(d)).length
+        : 0;
+
+      // Step status. Intake is complete when the last intake page (Key
+      // People) is saved — page 1 alone used to count.
+      const intake = sellerIntakeState(deal);
+      const { currentStep, steps } = sellerSteps({ intake, interviewCompleted, interviewPct, docPct });
+      const reviewStage = sellerReviewStage(deal);
 
       // Broker contact (their display name, else the brokerage — never the login username)
       const broker = await storage.getUser(deal.brokerId);
@@ -4391,9 +4632,11 @@ Return JSON only.`,
             status: s.status,
           })),
         },
+        intake,
         documents: {
-          requiredTotal: totalRequired,
-          requiredUploaded: uploadedRequired,
+          requiredTotal: docCounts.requiredTotal,
+          requiredUploaded: docCounts.requiredUploaded,
+          requiredUnavailable: docCounts.requiredUnavailable,
           percentage: docPct,
           totalUploaded: allDocs.length,
           requirements: docReqs.map((r) => {
@@ -4412,7 +4655,13 @@ Return JSON only.`,
             };
           }),
         },
+        todo,
+        followUpQuestions,
+        cimReview: { stage: reviewStage, canApprove: linkRights.canApproveCim },
         pendingApprovals: pendingSeller.length,
+        pendingApprovalItems: pendingSeller
+          .filter((q) => !!q.sellerApprovalToken)
+          .map((q) => ({ id: q.id, question: q.question, href: `/approve/${q.sellerApprovalToken}` })),
         broker: broker ? { name: brokerDisplayName(broker) || sellerBrokerCompany || "Your broker", email: broker.email } : null,
       });
     } catch (error: any) {
@@ -4531,7 +4780,10 @@ Return JSON only.`,
   /** Blind view rooms use neutral section keys — map them back to the real ones. */
   async function translateBlindSectionKeys(dealId: string, events: Array<{ sectionKey?: string | null }>): Promise<void> {
     if (!events.some((e) => typeof e?.sectionKey === "string" && /^s_[0-9a-z]{12}$/.test(e.sectionKey))) return;
-    const map = realSectionKeyMap(await storage.getCimSectionsByDeal(dealId));
+    // (While a regenerated CIM waits for review, buyers read the kept copy — its sections count too.)
+    const { buyerSectionsForAnalytics } = await import("./cim/published-snapshot");
+    const deal = await storage.getDeal(dealId);
+    const map = realSectionKeyMap(deal ? await buyerSectionsForAnalytics(deal) : await storage.getCimSectionsByDeal(dealId));
     for (const e of events) {
       if (typeof e?.sectionKey === "string" && map.has(e.sectionKey)) e.sectionKey = map.get(e.sectionKey)!;
     }
@@ -4572,9 +4824,13 @@ Return JSON only.`,
       // serves CIM content counts (viewStampFor) — the NDA gate and the
       // "preparing" state only move lastAccessedAt. Every return below goes
       // through stampAndBuild so the payload and the row agree.
+      // Views (viewCount) are now counted by the reading tracker, one per
+      // visit (server/analytics/reading-ingest.ts: a new visit with none on
+      // this link in the last 30 min); the GET still stamps firstViewedAt,
+      // which the reminders need even when a blocker stops the tracker.
       const now = new Date();
       const stampAndBuild = async (served: boolean) => {
-        const viewStamp = viewStampFor(access, served, now);
+        const viewStamp = viewRoomStamp(access, served, now);
         await storage.updateBuyerAccess(access.id, viewStamp as any);
         return { ...access, ...viewStamp };
       };
@@ -4613,7 +4869,12 @@ Return JSON only.`,
       // project codename (falls back to a neutral label if redaction hasn't
       // run yet, in which case we serve the "preparing" state below).
       const blindMode = cimMode === "blind";
-      const codename = deal.blindCodename || null;
+      // While buyers read the kept copy of an update under review, the deal
+      // keeps the codename that copy was redacted under.
+      const { servedBlindCodename } = await import("./cim/published-snapshot");
+      const keptCodename = await servedBlindCodename(deal);
+      const servedDeal = keptCodename ? { ...deal, blindCodename: keptCodename } : deal;
+      const codename = servedDeal.blindCodename || null;
       const displayName = blindMode ? (codename || "Confidential Opportunity") : deal.businessName;
 
       // Buyers get a minimal whitelisted deal payload — never the raw deal
@@ -4659,8 +4920,9 @@ Return JSON only.`,
       }
 
       // A regenerated CIM is held from every buyer until the broker reviews
-      // and publishes it (server/cim/generation-jobs.ts) — nothing from it,
-      // or from the one it replaced, is served meanwhile.
+      // and publishes it (server/cim/generation-jobs.ts). On a live deal the
+      // buyers keep the version last published (buyerCimRows serves the kept
+      // copy); on a deal that wasn't live nothing is served meanwhile.
       // A CIM held for the broker's review isn't viewed yet (not served):
       // the decision reminders, anchored to the first view, wait until it is
       // published.
@@ -4679,28 +4941,49 @@ Return JSON only.`,
 
       // Q&A feed: published answers plus this buyer's own pending questions
       // (whitelisted fields — never the seller-approval token or broker draft).
-      const [baseSections, publishedQuestions] = await Promise.all([
-        storage.getCimSectionsByDeal(deal.id),
+      const { buyerCimRows } = await import("./cim/published-snapshot");
+      const [rows, publishedQuestions] = await Promise.all([
+        buyerCimRows(deal, access.accessLevel),
         buildBuyerQuestionFeed(deal, { id: access.id, accessLevel: access.accessLevel }),
       ]);
-      if (cimMode === "normal" && baseSections.length === 0) publicDeal.cimContent = deal.cimContent ?? null;
+      // Serving a kept copy that isn't there: nothing (fail closed) — the same
+      // "being updated" state as a held CIM.
+      if (rows.missing) {
+        console.error(`[view] deal ${deal.id} serves the previously published CIM but no copy is on file — holding`);
+        return res.json({
+          access: accessPayload(await stampAndBuild(false)),
+          deal: publicDeal,
+          sections: [],
+          publishedQuestions: [],
+          branding,
+          design: gatedDesign,
+          cimMode,
+          updating: true,
+        });
+      }
+      const baseSections = rows.sections;
+      if (cimMode === "normal" && baseSections.length === 0 && !rows.fromSnapshot) publicDeal.cimContent = deal.cimContent ?? null;
 
       // Which sections this buyer may receive, in which form — hidden
       // sections, per-section access tiers and blind freshness are all
       // enforced here (shared/cim-buyer-view.ts). Buyers get only what
       // the renderer needs: never aiLayoutReasoning (internal AI notes that
       // name the owners), seller edits, approval flags or AI task state.
-      const [overrides, media] = await Promise.all([
-        cimMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(deal.id, cimMode),
-        // Media blocks: only this deal's uploads, blind-safe ones in blind mode.
-        loadMediaAssets(deal.id),
-      ]);
-      const buyerCim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal) });
+      // Media blocks: only this deal's uploads, blind-safe ones in blind mode.
+      const media = await loadMediaAssets(deal.id);
+      const overrides = rows.overrides;
+      // A live CIM's changes wait for the broker's approval: the approved
+      // versions are served meanwhile (shared/cim-published.ts; rows.published
+      // — [] after a failed read, so nothing unapproved is served). The kept
+      // copy of an update under review is already what buyers were served
+      // (published: null).
+      const buyerCim = buildBuyerCim({ deal: servedDeal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published });
       if (buyerCim.preparing) {
         // No redacted version exists yet. Do NOT serve the real, un-redacted
         // sections — that would leak identity to the first viewer. Serve a
         // "preparing" holding state and generate; the client polls back.
-        ensureBlindOverridesInBackground(deal);
+        // (A kept copy is never re-redacted: the draft is not what buyers see.)
+        if (!rows.fromSnapshot) ensureBlindOverridesInBackground(deal);
         return res.json({
           access: accessPayload(await stampAndBuild(false)),
           deal: publicDeal,
@@ -4716,13 +4999,26 @@ Return JSON only.`,
       // edited) are held back until re-redacted — make sure that is running.
       // A blind section that still names something identifying is withheld
       // too, and its redaction is redone.
-      if (buyerCim.leaked.length > 0) {
+      if (rows.fromSnapshot) {
+        // The kept copy is served as it was: a section held back stays back.
+        if (buyerCim.leaked.length > 0) console.warn(`[view] withheld ${buyerCim.leaked.length} blind section(s) of the kept CIM on deal ${deal.id} that still named identifying details`);
+      } else if (buyerCim.leaked.length > 0) {
         console.warn(`[view] withheld ${buyerCim.leaked.length} blind section(s) on deal ${deal.id} that still named identifying details — re-redacting`);
         redoLeakedBlind(deal.id, buyerCim.leaked, buyerCim.leakReasons).catch((err) => console.error("[view] blind redo failed:", err));
       } else if (buyerCim.heldBack > 0) scheduleBlindRefresh(deal.id, 0);
       // Every section held back (blind versions still being refreshed) is
       // the same as "preparing" for the buyer: nothing to read yet.
       const served = buyerCim.sections.length > 0 || publicDeal.cimContent != null;
+      // Reading analytics: record exactly what this buyer is served (the heat
+      // map is drawn on it) and hand the tracker its opaque id + page order.
+      // Not for the owning broker previewing the room (their reading isn't a buyer's).
+      const ownerPreview = !!req.session?.brokerId && req.session.brokerId === deal.brokerId;
+      const reading = buyerCim.sections.length > 0 && !ownerPreview
+        ? await recordRendition({
+            dealId: deal.id, mode: cimMode, variant: variantForAccessLevel(access.accessLevel),
+            cimLayoutVersion: deal.cimLayoutVersion ?? null, sections: buyerCim.sections, design, live: baseSections,
+          })
+        : null;
       res.json({
         access: accessPayload(await stampAndBuild(served)),
         deal: publicDeal,
@@ -4732,6 +5028,7 @@ Return JSON only.`,
         branding,
         design,
         cimMode,
+        ...(reading ? { reading } : {}),
       });
     } catch (error: any) {
       console.error("Error fetching buyer access:", error);
@@ -4785,6 +5082,11 @@ Return JSON only.`,
       const problem = viewLinkProblem(access);
       if (problem || !access) { const e = viewLinkError(problem ?? "not_found"); return res.status(e.status).json({ error: e.error }); }
       if (!dealPublishedForBuyers(await storage.getDeal(access.dealId))) return res.status(403).json(notPublishedBody());
+      // A signature is a record: who agreed to which terms, when, from where.
+      // Signing again used to overwrite it (and re-ran the AI criteria read).
+      if (access.ndaSigned) {
+        return res.status(409).json({ error: "You've already signed the NDA for this business.", code: "nda_already_signed", alreadySigned: true });
+      }
 
       // Signing the NDA and giving us your buyer profile are one step: either
       // a new/updated profile, or a confirmation of the one already on file.
@@ -4815,8 +5117,7 @@ Return JSON only.`,
         return res.status(409).json({ error: "The NDA terms have been updated. Please read the current version and sign again.", code: "nda_terms_changed" });
       }
 
-      const { applyNdaProfile } = await import("./buyers/nda-profile.js");
-      await applyNdaProfile(access, profile);
+      const { applyNdaProfile, ndaAccessFields } = await import("./buyers/nda-profile.js");
 
       const signedAt = new Date();
       const ip = req.ip || req.socket.remoteAddress || null;
@@ -4828,22 +5129,34 @@ Return JSON only.`,
         termsText: nda.text,
         termsSource: nda.source,
       };
-      // applyNdaProfile may have just written ndaProfile — keep its answers.
-      const afterProfile = await storage.getBuyerAccess(access.id);
-      const priorProfile = ((afterProfile ?? access).ndaProfile as Record<string, unknown> | null) ?? {};
       // On a deal that requires the NDA nothing was served before this
       // signature, so a view stamp already on the row came from the gate
       // (rows stamped before the gate stopped counting): clear it, and the
       // first real view that follows starts the reminder clock afresh.
       const gateStamped = !!ndaDeal.ndaRequired && !access.ndaSigned && !!access.firstViewedAt;
-      await storage.updateBuyerAccess(access.id, {
+      // The claim comes first and carries the answers with the signature:
+      // a concurrent second signing (both passed the ndaSigned check above)
+      // loses here and writes nothing — not to this row, not to the buyer's
+      // account — so it can't replace the signature record.
+      const recorded = await storage.recordBuyerNdaSignature(access.id, {
         ndaSigned: true,
         ndaSignedAt: signedAt,
         ndaSignedIp: ip,
         ndaVersion: nda.hash,
-        ndaProfile: { ...priorProfile, signature },
+        ...ndaAccessFields(access, profile, signature as unknown as Record<string, unknown>),
         ...(gateStamped ? { firstViewedAt: null, viewCount: 0, reminderStage: "none", lastReminderAt: null } : {}),
       } as any);
+      // A concurrent signing got there first: that signature stands.
+      if (!recorded) {
+        return res.status(409).json({ error: "You've already signed the NDA for this business.", code: "nda_already_signed", alreadySigned: true });
+      }
+      // The signature is on record; the buyer's account and the broker's
+      // buyer list follow. A failure there doesn't undo the signing.
+      try {
+        await applyNdaProfile(recorded, profile);
+      } catch (err) {
+        console.error("[nda-profile] applying the signed NDA's profile failed:", err);
+      }
       storage.createAnalyticsEvent({
         dealId: access.dealId, buyerAccessId: access.id, eventType: "nda_signed", sectionKey: null,
       } as any).catch(() => {});
@@ -5672,12 +5985,13 @@ Return JSON only.`,
 
       // Product rule: critical discrepancies block CIM generation until handled.
       // The client disabled the first "Generate" button but not "Regenerate";
-      // the server is now the authority. Only "open" and "seller_responded"
-      // block. "ask_seller" means the broker routed it to the seller interview,
-      // which counts as handled — otherwise a routed critical locked generation
-      // forever. When the interview ends, session-manager flips ask_seller →
-      // seller_responded so the broker reviews the transcript before generating.
-      // OverviewTab's generationBlocked mirrors this exact status list.
+      // the server is now the authority. "open" and "seller_responded" block.
+      // "ask_seller" means the broker routed it to the seller interview, which
+      // counts as handled while the interview runs; when it ends, session-
+      // manager flips ask_seller → seller_responded so the broker reviews the
+      // transcript before generating. Routed after the interview had finished,
+      // it blocks until the seller answers the follow-up (shared/discrepancy-gate.ts;
+      // OverviewTab's gate mirrors this rule).
       const openCritical = await blockingCriticalDiscrepancies(dealId);
       if (openCritical.length > 0) return discrepancyBlockResponse(res, openCritical, "generating the CIM");
 
@@ -5710,6 +6024,11 @@ Return JSON only.`,
           refs.find(r => r.sectionKey === target.sectionKey)!,
           { layoutType: target.layoutType, brief: typeof req.body.brief === "string" ? req.body.brief : undefined },
         );
+        // A live CIM's buyers keep the approved version until this is approved (shared/cim-published.ts).
+        {
+          const { keepPublishedBeforeChange } = await import("./cim/published-versions");
+          await keepPublishedBeforeChange(target, deal);
+        }
         const updatedSection = await storage.updateCimSection(String(target.id), {
           // Usually unchanged; a scorecard of words comes back as highlight cards.
           layoutType: regenerated.layoutType,
@@ -5766,6 +6085,8 @@ Return JSON only.`,
         const existingSections = await storage.getCimSectionsByDeal(dealId);
         const matchingSection = existingSections.find(s => s.sectionKey === sectionKey);
         if (matchingSection) {
+          const { keepPublishedBeforeChange } = await import("./cim/published-versions");
+          await keepPublishedBeforeChange(matchingSection, deal);
           await storage.updateCimSection(String(matchingSection.id), {
             aiDraftContent: content,
             brokerApproved: false,
@@ -5855,29 +6176,28 @@ Return JSON only.`,
       // DD context: shared documents only, CIM-safe facts, the computed
       // financial analysis (never the analyzer's raw JSON or its internal
       // questions) — see dd-enrichment buildDdContext.
-      const { generateDdOverrides, loadDdInputs, markDdFresh } = await import("./cim/dd-enrichment");
+      const { loadDdInputs, startFullDdGeneration, ddRunning } = await import("./cim/dd-enrichment");
+      // One DD run per deal (shared with the builder's "Refresh DD").
+      if (ddRunning.has(dealId)) return res.status(409).json({ error: "The due-diligence version is already being written." });
       const startedAt = new Date();
       const inputs = await loadDdInputs(deal);
-      const overrides = await generateDdOverrides(sections, { businessName: deal.businessName, industry: deal.industry }, inputs);
-
-      // Delete old DD overrides and insert new ones
-      await storage.deleteCimSectionOverrides(dealId, "dd");
-      for (const override of overrides) {
-        await storage.createCimSectionOverride({
-          dealId,
-          cimSectionId: override.cimSectionId,
-          mode: "dd",
-          layoutData: override.layoutData,
-          contentOverride: override.contentOverride,
-        });
+      // Runs in the background (the CIM tab polls the builder state for
+      // dd.running / dd.lastRun). A section the AI couldn't write keeps its
+      // current DD version; a run that wrote nothing changes nothing.
+      try {
+        startFullDdGeneration(deal, sections, inputs, startedAt);
+      } catch (err: any) {
+        if (err?.message === "running") return res.status(409).json({ error: "The due-diligence version is already being written." });
+        throw err;
       }
-      // Sections edited while this ran keep their stale mark.
-      await markDdFresh(dealId, startedAt);
-
-      const warnings = overrides.map((o) => o.warning).filter((w): w is string => !!w);
-      res.json({ success: true, overrideCount: overrides.length, warnings });
+      // startedAt identifies this run: the page announces the dd.lastRun
+      // whose startedAt matches — even one that failed before its first poll.
+      // (The run records the approved sections' DD versions when it writes —
+      // dd-enrichment dbRunWriter → recordPublishedDd.)
+      res.status(202).json({ started: true, sections: sections.length, startedAt: startedAt.toISOString() });
     } catch (error: any) {
       console.error("Error generating DD CIM:", error);
+      if (error?.name === "StaleFinancialAnalysisError") return res.status(409).json({ error: error.message });
       res.status(500).json({ error: error.message || "Failed to generate DD CIM" });
     }
   });
@@ -6187,6 +6507,17 @@ Return JSON only.`,
         const bid = q.buyerAccessId;
         if (bid && buyerStats[bid]) buyerStats[bid].questionCount += 1;
       }
+      // Reading time per buyer comes from the reading rollups (2026-09
+      // tracker; the broker's own previews excluded), falling back to the old
+      // events only for access rows with no measured visit: the same numbers
+      // as the Engagement tab and the buyer profile. Intent feeds the score.
+      const { engagementByAccess, readingIntentByAccess } = await import("./buyers/profile-data.js");
+      const [reading, intents] = await Promise.all([
+        engagementByAccess(buyers.map((b) => b.id)).catch(() => new Map() as Awaited<ReturnType<typeof engagementByAccess>>),
+        readingIntentByAccess(buyers.map((b) => ({ id: b.id, dealId: b.dealId }))).catch(() => new Map<string, number>()),
+      ]);
+      const questionsBy: Record<string, number> = {};
+      for (const q of questions) if (q.buyerAccessId) questionsBy[q.buyerAccessId] = (questionsBy[q.buyerAccessId] ?? 0) + 1;
       // For each buyer, look up their Cimple account (if linked) and compute
       // match fit against this deal. Match fit uses the SAME positive framing
       // as the buyer-side dashboard: raw criteria-matched count + dimension
@@ -6269,24 +6600,29 @@ Return JSON only.`,
         // Combines match-fit + profile completeness + engagement + proof of
         // funds into one broker-facing 0-100 score with hot/warm/cool/cold tier.
         const stats = buyerStats[b.id];
+        const read = reading.get(b.id);
+        const totalTimeSeconds = read ? read.seconds : stats?.totalSeconds ?? 0;
+        const sectionsViewedCount = read ? read.sectionsViewed : stats?.sectionsEntered.size ?? 0;
+        const questionCount = questionsBy[b.id] ?? 0;
         const qualifiedScore = buyerUser ? calculateQualifiedLeadScore({
           buyer: buyerUser,
           match: fullBreakdown,
-          engagement: stats ? {
+          engagement: read || stats ? {
+            intent: intents.get(b.id) ?? null,
             viewCount: b.viewCount ?? 0,
-            sectionsViewed: stats.sectionsEntered.size,
-            totalTimeSeconds: stats.totalSeconds,
-            questionCount: stats.questionCount,
+            sectionsViewed: sectionsViewedCount,
+            totalTimeSeconds,
+            questionCount,
             ndaSigned: !!b.ndaSignedAt,
           } : null,
         }) : null;
 
         return {
           ...b,
-          totalTimeSeconds: stats?.totalSeconds ?? 0,
-          sectionsViewedCount: stats?.sectionsEntered.size ?? 0,
+          totalTimeSeconds,
+          sectionsViewedCount,
           maxScrollDepth: stats?.maxScrollDepth ?? 0,
-          questionCount: stats?.questionCount ?? 0,
+          questionCount,
           hasAccount: !!b.buyerUserId,
           profile,
           match,
@@ -6585,12 +6921,13 @@ Return JSON only.`,
       };
       // One buyer failing (odd criteria, an AI hiccup, a write error) never
       // fails the batch — that buyer comes back with an error instead.
-      const results = await Promise.all(buyers.filter((b: any) => !b.revokedAt).map((buyer: any) =>
+      // A few buyers at a time: with AI on, each is a model call.
+      const results = await mapWithConcurrency(buyers.filter((b: any) => !b.revokedAt), BULK_AI_CONCURRENCY, (buyer: any) =>
         matchBuyerDealRow(buyer, dealForMatch, {
           skipAI: req.query.skipAI === "true",
           persist: (id, patch) => storage.updateBuyerAccess(id, patch as any).then(() => undefined),
         }),
-      ));
+      );
 
       results.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
       res.json(results);
@@ -7097,6 +7434,17 @@ Return JSON only.`,
       const { dealId } = req.params;
       const { question, accessToken } = req.body;
       if (typeof question !== "string" || !question.trim()) return res.status(400).json({ error: "Question required" });
+      // A question is a question: a page of text would ride into every
+      // later model call (and was once shown to every other buyer).
+      if (question.length > MAX_BUYER_QUESTION_CHARS) {
+        return res.status(400).json({ error: `Please keep your question under ${MAX_BUYER_QUESTION_CHARS.toLocaleString("en-US")} characters.`, code: "question_too_long" });
+      }
+      // Reading analytics: the page the buyer was on (a section id they were
+      // served) and the version — only well-formed ids, never text.
+      const askedOn = {
+        sectionId: typeof req.body?.sectionId === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(req.body.sectionId) ? req.body.sectionId : null,
+        renditionId: typeof req.body?.renditionId === "string" && /^[0-9a-f]{32}$/.test(req.body.renditionId) ? req.body.renditionId : null,
+      };
 
       // The buyer proves access with their view-room token. Previously this
       // endpoint was unauthenticated and answered from the UNREDACTED CIM —
@@ -7114,98 +7462,53 @@ Return JSON only.`,
         return res.status(403).json({ error: "Sign the NDA to ask questions about this business", code: "nda_required" });
       }
       const buyerAccessId = access.id;
-      const chatMode = cimModeForAccessLevel(access.accessLevel);
       // Who may later read this answer: a teaser's blind answer → everyone;
       // a full-access buyer's → full-access buyers and up (it may quote
       // sections locked for teasers); a named-CIM answer → the asker only.
       const scope = askerScope(access.accessLevel);
-      const blindTerms = blindLeakTerms(deal, { codename: deal.blindCodename });
-      /** Shared (published to other buyers) only within scope and only if it names nothing identifying. */
-      const shareableText = (answer: string) =>
-        scope !== "private" && findBlindLeaks([question, answer], blindTerms).length === 0;
+      // An answer the AI gives on its own is the asker's alone: the buyer's
+      // own words (who they are, their strategy, or text planted for other
+      // bidders) never reach another buyer or the knowledge base without a
+      // person approving them. The broker can share it from the Q&A tab
+      // (it then counts as the broker's answer); escalated questions are
+      // shared once the seller approves (shared/buyer-qa-scope.ts).
       const reader = { id: access.id, accessLevel: access.accessLevel };
-      storage.createAnalyticsEvent({
-        dealId, buyerAccessId, eventType: "question_asked", sectionKey: null,
-        eventData: { question: String(question).slice(0, 200) },
-      } as any).catch(() => {});
 
-      // ── Step 1: Check knowledge base — has a similar question been answered
-      // before? Only answers THIS buyer may read (scope + identity check):
-      // a teaser is never answered from a full-access buyer's answer.
-      const publishedQs = await publishedQuestionsFor(deal, reader);
-      if (publishedQs.length > 0) {
-        const kbContext = publishedQs
-          .map(q => `Q: ${q.question}\nA: ${q.publishedAnswer || q.aiAnswer}`)
-          .join("\n\n");
-
-        const similarityCheck = await anthropic.messages.create({
-          model: "claude-sonnet-4-5",
-          max_tokens: 600,
-          system: `You are a Q&A similarity matcher for a business CIM. Given a buyer's question and a knowledge base of previously answered questions, determine if any existing answer adequately addresses the new question.
-
-If an existing answer covers the question (even if worded differently), respond with:
-MATCH: <the existing answer, optionally rephrased to directly address the new question>
-
-If no existing answer covers it, respond with exactly: NO_MATCH`,
-          messages: [{
-            role: "user",
-            content: `KNOWLEDGE BASE:\n${kbContext}\n\nNEW QUESTION: ${question}`,
-          }],
-        });
-
-        const matchText = similarityCheck.content[0].type === "text" ? similarityCheck.content[0].text : "";
-        if (matchText.startsWith("MATCH:")) {
-          const matchedAnswer = matchText.slice(6).trim();
-          // Find the matched Q ID for linking
-          const matchedQ = publishedQs.find(q =>
-            matchedAnswer.includes((q.publishedAnswer || q.aiAnswer)?.slice(0, 50) || "___none___")
-          );
-          const share = shareableText(matchedAnswer);
-
-          const saved = await storage.createBuyerQuestion({
-            dealId,
-            buyerAccessId: buyerAccessId || null,
-            question,
-            aiAnswer: matchedAnswer,
-            status: "published",
-            isPublished: share,
-            publishedAnswer: matchedAnswer,
-            addedToKnowledgeBase: share,
-            answerScope: scope,
-            similarQuestionIds: matchedQ ? [matchedQ.id] : [],
-          } as any);
-
-          return res.json({
-            id: saved.id,
-            answer: matchedAnswer,
-            status: "published",
-            message: matchedAnswer,
-            fromKnowledgeBase: true,
-          });
+      // The CIM this buyer gets now (their version, the sections they may
+      // open, a live CIM's approved versions) — what earlier answers are
+      // checked against and what a new answer is written from. The SAME
+      // version of the CIM the buyer is allowed to see: Blind buyers get the
+      // redacted overrides; if redaction hasn't run yet, escalate rather than
+      // leak identity. Structured layoutData (metric grids, location cards,
+      // financial tables, two-column blocks) carries most of the facts in a
+      // bespoke CIM, so it is flattened into the context alongside the prose
+      // — otherwise "what is the monthly rent?" escalated even though the
+      // Facility section shows it. Same authority as the view room
+      // (shared/cim-buyer-view.ts): hidden, locked (above the buyer's tier)
+      // and not-yet-redacted sections never feed the answer. A CIM held for
+      // the broker's review answers nothing, not even from earlier answers
+      // (it escalates).
+      // (While a regenerated CIM waits for review, the kept copy buyers read
+      // — published-snapshot.ts buyerCimRows — with the codename it was
+      // redacted under; a kept copy that isn't there answers nothing.)
+      let held = cimHeldFromBuyers(deal);
+      let chatBaseSections: Array<{ updatedAt?: Date | string | null }> = [];
+      let chatSections: ReturnType<typeof buildBuyerCim>["sections"] = [];
+      if (!held) {
+        const { buyerCimRows, servedBlindCodename } = await import("./cim/published-snapshot");
+        const [chatRows, chatMedia, chatCodename] = await Promise.all([
+          buyerCimRows(deal, access.accessLevel),
+          loadMediaAssets(dealId),
+          servedBlindCodename(deal),
+        ]);
+        if (chatRows.missing) {
+          held = true;
+        } else {
+          chatBaseSections = chatRows.sections;
+          chatSections = buildBuyerCim({ deal: chatCodename ? { ...deal, blindCodename: chatCodename } : deal, accessLevel: access.accessLevel, sections: chatRows.sections, overrides: chatRows.overrides, media: chatMedia, askingPrice: listedAskingPrice(deal), published: chatRows.published }).sections;
         }
       }
-
-      // ── Step 2: Try to answer from CIM content — the SAME version the
-      // buyer is allowed to see. Blind buyers get the redacted overrides; if
-      // redaction hasn't run yet, escalate rather than leak identity.
-      // Only sections the buyer can actually see. Structured layoutData
-      // (metric grids, location cards, financial tables, two-column blocks)
-      // carries most of the facts in a bespoke CIM, so it is flattened into
-      // the context alongside the prose — otherwise "what is the monthly
-      // rent?" escalated even though the Facility section shows it.
-      // Same authority as the view room (shared/cim-buyer-view.ts):
-      // hidden, locked (above the buyer's tier) and not-yet-redacted
-      // sections never feed the answer.
-      const [chatBaseSections, chatOverrides, chatMedia] = await Promise.all([
-        storage.getCimSectionsByDeal(dealId),
-        chatMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(dealId, chatMode),
-        loadMediaAssets(dealId),
-      ]);
-      // A CIM held for the broker's review answers nothing (it escalates).
-      const chatCim = cimHeldFromBuyers(deal)
-        ? { sections: [] as ReturnType<typeof buildBuyerCim>["sections"] }
-        : buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: chatBaseSections, overrides: chatOverrides, media: chatMedia, askingPrice: listedAskingPrice(deal) });
-      const answerSections: AnswerSection[] = chatCim.sections
+      const answerSections: AnswerSection[] = chatSections
         .filter(s => !s.locked)
         .map(s => ({
           title: s.sectionTitle,
@@ -7215,37 +7518,49 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
         }));
       // DD overrides carry [[dd]] highlight sentinels for the renderer — plain text for the model.
       const cimText = stripDdMarkers(buildAnswerContext(answerSections));
+      const changedAt = chatBaseSections.reduce<Date | null>((m, s) => (s.updatedAt && (!m || new Date(s.updatedAt) > m) ? new Date(s.updatedAt) : m), null);
 
-      const aiResponse = cimText.trim().length === 0 ? { content: [] as any[] } : await anthropic.messages.create({
-        model: "claude-sonnet-4-5",
-        max_tokens: 500,
-        system: `You are answering buyer questions about a business for sale based strictly on the CIM document provided.
-If the answer is clearly in the CIM, answer concisely and professionally.
-If the answer is NOT in the CIM, respond with exactly: ESCALATE
-Do not speculate or add information not in the CIM.`,
-        messages: [{ role: "user", content: `CIM CONTENT:\n${cimText}\n\nBUYER QUESTION: ${question}` }],
+      // 1. a published answer this buyer may read (scope + identity check —
+      // a teaser is never answered from a full-access buyer's answer; an AI
+      // answer nobody reviewed is reused only while it still holds for this
+      // CIM — qa/cim-context answerStillHolds — never after the CIM changed,
+      // and never from a held CIM);
+      // 2. the CIM the buyer can see; 3. the broker. Each AI step fails soft
+      // (server/buyers/question-answer.ts): an AI outage forwards the
+      // question to the broker instead of losing it.
+      const result = await answerBuyerQuestion({
+        question,
+        published: held ? [] : await publishedQuestionsFor(deal, reader, { text: cimText, changedAt, held }),
+        ask: async ({ system, user, maxTokens }) => {
+          const r = await anthropic.messages.create({ model: "claude-sonnet-4-5", max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] });
+          return r.content[0]?.type === "text" ? r.content[0].text : "";
+        },
+        loadCimText: async () => cimText,
       });
 
-      const aiAnswer = cimText.trim().length === 0 ? null : (aiResponse.content[0].type === "text" ? aiResponse.content[0].text : null);
-      // The model sometimes writes "ESCALATE" and then explains — still an escalation.
-      const needsEscalation = !aiAnswer || /^\s*ESCALATE\b/.test(aiAnswer);
+      const needsEscalation = result.kind === "escalate";
+      const aiAnswer = result.kind === "escalate" ? null : result.answer;
 
-      // An answer drawn from the NAMED CIM (LOI / DD buyer) can hold the
-      // business name, address or people — it goes to the asker only, never
-      // into the shared feed / knowledge base that blind buyers read. A full-
-      // access buyer's answer is shared with full-access buyers only.
-      const shareable = !needsEscalation && shareableText(aiAnswer!);
+      // Answered for the asker only (see above). answer_scope still records
+      // what fed the answer, for when a person shares it later.
       const saved = await storage.createBuyerQuestion({
         dealId,
         buyerAccessId: buyerAccessId || null,
         question,
-        aiAnswer: needsEscalation ? null : aiAnswer,
+        aiAnswer,
         status: needsEscalation ? "pending_broker" : "published",
-        isPublished: shareable,
+        isPublished: false,
         publishedAnswer: needsEscalation ? null : aiAnswer,
-        addedToKnowledgeBase: shareable,
+        addedToKnowledgeBase: false,
         answerScope: scope,
+        ...(result.kind === "knowledge_base" ? { similarQuestionIds: result.matchedId ? [result.matchedId] : [] } : {}),
+        ...askedOn,
       } as any);
+      // Counted only once the question exists (a lost question used to be counted).
+      storage.createAnalyticsEvent({
+        dealId, buyerAccessId, eventType: "question_asked", sectionKey: null, pageId: askedOn.sectionId,
+        eventData: { question: String(question).slice(0, 200) },
+      } as any).catch(() => {});
 
       // Notify broker when question needs manual response
       if (needsEscalation) {
@@ -7259,13 +7574,13 @@ Do not speculate or add information not in the CIM.`,
 
       res.json({
         id: saved.id,
-        answer: needsEscalation ? null : aiAnswer,
+        answer: aiAnswer,
         status: needsEscalation ? "pending_broker" : "published",
-        message: needsEscalation
-          ? "Forwarded to your broker."
-          : aiAnswer,
+        message: needsEscalation ? "Forwarded to your broker." : aiAnswer,
+        ...(result.kind === "knowledge_base" ? { fromKnowledgeBase: true } : {}),
       });
     } catch (error: any) {
+      console.error("[buyer-qa] Failed to process question:", error);
       res.status(500).json({ error: "Failed to process question" });
     }
   });
@@ -7330,7 +7645,23 @@ Do not speculate or add information not in the CIM.`,
       if (isPublished !== undefined) updates.isPublished = isPublished;
       // Published by the broker on purpose → for every buyer (a Blind buyer
       // still never sees it if it names the business — buyer-qa-scope.ts).
-      if (isPublished === true) updates.answerScope = "all";
+      if (isPublished === true) {
+        updates.answerScope = "all";
+        // Sharing an AI answer makes it the broker's answer: recorded as
+        // their draft, which is what lets other buyers read it
+        // (approvedForSharing in shared/buyer-qa-scope.ts) — and it no
+        // longer counts as an unreviewed AI answer (qa/cim-context
+        // isUnreviewedAiAnswer / endorsedDraftOnPublish).
+        const adopted = (typeof brokerDraft === "string" && brokerDraft.trim()) || existingQ.brokerDraft
+          || (typeof publishedAnswer === "string" && publishedAnswer.trim()) || existingQ.publishedAnswer || existingQ.aiAnswer;
+        if (!adopted) return res.status(400).json({ error: "There is no answer to share yet" });
+        // Only on a published answer: a draft on a question back with the
+        // broker reads as "sent back by the seller" (endorsedDraftOnPublish).
+        const effectiveStatus = typeof status === "string" ? status : existingQ.status;
+        if (effectiveStatus === "published" && !existingQ.brokerDraft && brokerDraft === undefined) updates.brokerDraft = adopted;
+        if (!existingQ.publishedAnswer && publishedAnswer === undefined) updates.publishedAnswer = adopted;
+        updates.addedToKnowledgeBase = true;
+      }
 
       // Generate approval token when sending to seller
       if (status === "pending_seller") {
@@ -7529,16 +7860,23 @@ Do not speculate or add information not in the CIM.`,
         }>;
       };
 
-      const ip = req.ip || req.socket.remoteAddress || null;
-      const ua = req.headers["user-agent"] || null;
-
       // Authenticate with the buyer's view-room token; attribute every event
       // to THAT access row (never a caller-supplied id); validate types; cap size.
       const batchToken = (req.body as any)?.accessToken;
       const batchAccess = typeof batchToken === "string" ? await storage.getBuyerAccessByToken(batchToken) : undefined;
       if (!batchAccess || batchAccess.dealId !== dealId || viewLinkProblem(batchAccess)) return res.status(401).json({ error: "Invalid access token" });
-      if (!dealPublishedForBuyers(await storage.getDeal(dealId))) return res.status(403).json(notPublishedBody());
-      const ALLOWED_EVENTS = new Set(["view", "page_view", "section_enter", "section_exit", "scroll", "scroll_depth", "heat_map_sample", "element_hover", "download_attempt", "time_on_page", "nav_click"]);
+      const batchDeal = await storage.getDeal(dealId);
+      if (!dealPublishedForBuyers(batchDeal)) return res.status(403).json(notPublishedBody());
+      // Nothing is recorded before a required NDA is signed (the old client
+      // sampled the NDA form too).
+      if (ndaBlocksBuyer(batchDeal!, batchAccess)) return res.json({ received: 0 });
+      // The old tracker (replaced by POST /api/view/:token/reading) is still
+      // accepted from cached tabs until LEGACY_BATCH_UNTIL; after that only
+      // the few events nothing else records.
+      const LEGACY_BATCH_UNTIL = Date.parse("2026-10-13T00:00:00Z");
+      const ALLOWED_EVENTS = new Set(Date.now() < LEGACY_BATCH_UNTIL
+        ? ["view", "page_view", "section_enter", "section_exit", "scroll", "scroll_depth", "heat_map_sample", "element_hover", "download_attempt", "time_on_page", "nav_click"]
+        : ["view", "download_attempt"]);
       if (!Array.isArray(events)) return res.status(400).json({ error: "events must be an array" });
       const accepted = events.filter(e => e && ALLOWED_EVENTS.has(String(e.eventType))).slice(0, 200);
       // Blind views send neutral section keys (s_<id>); record the real key
@@ -7559,8 +7897,9 @@ Do not speculate or add information not in the CIM.`,
           viewportHeight: event.viewportHeight ?? null,
           elementId: event.elementId || null,
           eventData: event.eventData || null,
-          ipAddress: ip,
-          userAgent: ua,
+          // No raw network address or user agent on new rows.
+          ipAddress: null,
+          userAgent: null,
         } as any);
       }
 
@@ -7581,9 +7920,16 @@ Do not speculate or add information not in the CIM.`,
   registerCrmSellerRoutes(app);
   registerBuyerProfileRoutes(app);
   registerCimBuilderRoutes(app);
+  registerCimHeldPrivateRoutes(app);
   registerCimMediaRoutes(app);
   registerCimTemplateRoutes(app);
   registerBuyerNdaRoutes(app);
+  registerSellerReviewRoutes(app);
+  // Buyer reading analytics v2 (shared/analytics-v2.ts): capture → broker
+  // engagement APIs (capture stream) and cross-deal insights (intelligence stream).
+  registerReadingRoutes(app);
+  registerEngagementRoutes(app);
+  registerEngagementInsightRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;

@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { renderInline, renderProse, stripMarkup } from "../richText";
+import { useBlockAttrs } from "../blocks";
 
 interface ProseHighlightLayoutData {
   body?: string;
@@ -26,6 +27,7 @@ interface RendererProps {
 }
 
 export function ProseHighlightRenderer({ layoutData, content, branding, section }: RendererProps) {
+  const ba = useBlockAttrs();
   const data: ProseHighlightLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
 
   const body = section.brokerEditedContent || data.body || content || "";
@@ -45,7 +47,7 @@ export function ProseHighlightRenderer({ layoutData, content, branding, section 
         )}
         {body && (
           <div className="prose prose-sm max-w-none text-foreground/80 leading-relaxed">
-            {renderProse(body)}
+            {renderProse(body, { blockAttrs: ba })}
           </div>
         )}
       </div>
@@ -54,7 +56,7 @@ export function ProseHighlightRenderer({ layoutData, content, branding, section 
       {hasRight && (
         <div className="w-full md:w-[36%] md:flex-shrink-0 flex flex-col gap-4">
           {data.pullQuote && (
-            <div className="relative pl-4 border-l-2 border-teal">
+            <div {...ba("quote")} className="relative pl-4 border-l-2 border-teal">
               <p className="text-base font-medium text-foreground/90 leading-snug italic">
                 &ldquo;{renderInline(data.pullQuote, "pq")}&rdquo;
               </p>
@@ -63,7 +65,7 @@ export function ProseHighlightRenderer({ layoutData, content, branding, section 
           {data.highlights && data.highlights.length > 0 && (
             <div className="space-y-2">
               {data.highlights.map((hl, i) => (
-                <div key={i} className="flex items-start gap-2.5">
+                <div key={i} {...ba(`highlight:${i}`)} className="flex items-start gap-2.5">
                   <div className="w-1.5 h-1.5 rounded-full bg-teal flex-shrink-0 mt-1.5" />
                   <p className="text-xs text-foreground/75 leading-relaxed">{renderInline(hl, `hl${i}`)}</p>
                 </div>

@@ -5,6 +5,7 @@
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback, stripMarkup } from "../richText";
+import { useBlockAttrs } from "../blocks";
 
 interface Tag {
   label?: string;
@@ -22,6 +23,7 @@ interface RendererProps {
 const SIZE = ["text-xs", "text-xs", "text-sm", "text-sm", "text-base", "text-base"];
 
 export function TagCloudRenderer({ layoutData, content }: RendererProps) {
+  const ba = useBlockAttrs();
   const tags = (Array.isArray(layoutData?.tags) ? layoutData.tags : []).filter(
     (t): t is Tag => !!t && typeof t.label === "string" && t.label.trim().length > 0,
   );
@@ -34,7 +36,7 @@ export function TagCloudRenderer({ layoutData, content }: RendererProps) {
   }
 
   return (
-    <div className="space-y-4">
+    <div {...ba("tags")} className="space-y-4">
       {layoutData.title && (
         <p className="text-xs font-semibold text-teal uppercase tracking-widest">{stripMarkup(layoutData.title)}</p>
       )}

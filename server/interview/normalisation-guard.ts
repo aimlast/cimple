@@ -13,8 +13,11 @@
  * single corrective rewrite, the polish pass's removal and hand-off line,
  * chips, rationale) runs on that one detector. Questions to the seller
  * ("are there personal expenses run through the company?") are never
- * matched here; hand-off lines and the one safe general statement the
- * rules allow are excepted in reply-guards.
+ * matched here; hand-off lines are excepted in reply-guards. (There is no
+ * "safe" treatment statement any more: "a market-rate owner salary is the
+ * classic add-back" told a seller asking "my salary gets added back,
+ * right?" yes — while the CIM's adjusted EBITDA keeps a market salary as a
+ * cost. Salary is handed off like every other item — review F2-INT-7.)
  * Pure.
  */
 
@@ -29,13 +32,7 @@ const NORMALISATION_RE =
  * "totals", "brings it to", a dollar figure.
  */
 const ASSERTION_RE =
-  /\b(?:is|are|was|were|it's|that's|they're)\s+(?:(?:already|all|both|also)\s+)*(?:included|in there|on (?:our|the|your|his|her|morgan's|the broker's) list|counted|captured|factored(?: in)?|part of|in the (?:add[- ]?backs?|recast|sde|numbers?)|one of the (?:add[- ]?backs?|items))\b|\b(?:(?:your|the) broker(?:'s)?|broker's|(?:he|she|they)(?:'s| is| are| has| have)?)\s+(?:already\s+)?(?:working (?:from|with|off)|worked (?:from|with|off|in)|counting|counted|including|included|treating|treated|using|used|listing|listed|adding|added|taking out|took out|pulling out|pulled out)\b|\bitems? (?:like|such as)\b|\b(?:typical|typically|common|commonly|standard|usual|usually|normal|normally)\s+(?:an?\s+)?(?:add[- ]?backs?|added back|normali[sz]ed)\b|\b(?:gets?|get|will be|would be|is being|are being)\s+added back\b|\bcomes? back in\b|\b(?:landed|lands|came|comes|works? out|worked out|brings? it|totals?|totalled|totaled|adds up)\s*(?:at|to|up to)?\s*\$?\d|\$\s?\d|\b\d[\d,.]*\s?(?:k|m|million|thousand)\b/i;
-
-/**
- * The one safe general statement the rules allow (prompts/boundaries.md:
- * "a market-rate owner salary on the P&L is the classic addback").
- */
-export const SAFE_GENERAL_RE = /market[- ]rate (?:owner'?s? )?salary[^.?!]{0,60}\bclassic add[- ]?back\b|\bclassic add[- ]?back\b[^.?!]{0,60}market[- ]rate/i;
+  /\b(?:is|are|was|were|it's|that's|they're)\s+(?:(?:already|all|both|also)\s+)*(?:included|in there|on (?:our|the|your|his|her|morgan's|the broker's) list|counted|captured|factored(?: in)?|part of|in the (?:add[- ]?backs?|recast|sde|numbers?)|one of the (?:add[- ]?backs?|items))\b|\b(?:(?:your|the) broker(?:'s)?|broker's|(?:he|she|they)(?:'s| is| are| has| have)?)\s+(?:already\s+)?(?:working (?:from|with|off)|worked (?:from|with|off|in)|counting|counted|including|included|treating|treated|using|used|listing|listed|adding|added|taking out|took out|pulling out|pulled out)\b|\bitems? (?:like|such as)\b|\b(?:typical|typically|classic|classically|common|commonly|standard|usual|usually|normal|normally)\s+(?:an?\s+)?(?:add[- ]?backs?|added back|normali[sz]ed)\b|\b(?:gets?|get|will be|would be|is being|are being)\s+added back\b|\bcomes? back in\b|\b(?:landed|lands|came|comes|works? out|worked out|brings? it|totals?|totalled|totaled|adds up)\s*(?:at|to|up to)?\s*\$?\d|\$\s?\d|\b\d[\d,.]*\s?(?:k|m|million|thousand)\b/i;
 
 /** Sentences (a "." inside "$1.5M" or "e.g." doesn't end one). */
 function sentences(text: string): string[] {
@@ -50,7 +47,6 @@ export function brokerWorkAssertions(text: string): string[] {
   return sentences(text).filter((s) => {
     if (/\?\s*$/.test(s)) return false; // a question to the seller
     if (!NORMALISATION_RE.test(s)) return false;
-    if (SAFE_GENERAL_RE.test(s)) return false;
     return ASSERTION_RE.test(s);
   });
 }

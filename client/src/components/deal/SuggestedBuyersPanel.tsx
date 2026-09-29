@@ -35,10 +35,11 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import {
   Sparkles, Send, Loader2, CheckCircle2, ShieldCheck,
   ChevronDown, ChevronUp, Mail, TrendingUp, Zap,
-  AlertCircle, Clock, Target,
+  AlertCircle, AlertTriangle, Clock, Target,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useLocation } from "wouter";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Tier = "hot" | "warm" | "cool" | "cold";
@@ -57,6 +58,8 @@ interface SuggestedBuyer {
   tags: string[];
   alreadyHasAccess: boolean;
   alreadyContacted: boolean;
+  /** Submitted for approval on this deal — further along the pipeline, never suggested. */
+  inApproval?: boolean;
   match: {
     criteriaMatched: number;
     criteriaTested: number;
@@ -119,7 +122,17 @@ interface Draft {
   buyerEmail: string;
   subject: string;
   body: string;
+  /** False = the generic template, not written for this buyer (templateReason says why). */
+  personalised?: boolean;
+  templateReason?: "ai_unavailable" | "identifying_details" | "unusable_draft" | null;
 }
+
+/** Why a draft is the generic template, in the broker's words. */
+const TEMPLATE_REASON: Record<string, string> = {
+  ai_unavailable: "The AI service was busy, so this is the standard template — not written for this buyer. Edit it, or draft again later.",
+  identifying_details: "The AI's draft named details that could identify the business, so it was replaced with the standard template. Edit it before sending.",
+  unusable_draft: "The AI's draft couldn't be used, so this is the standard template — not written for this buyer. Edit it before sending.",
+};
 
 interface OutreachHistoryItem {
   id: string;
@@ -166,7 +179,9 @@ function formatRelative(iso: string | null): string {
 }
 
 // ── Main panel ─────────────────────────────────────────────────────────────
-export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
+/** `embedded`: shown as the Buyers tab's "Send it to next" stage, which already titles and explains it. */
+export function SuggestedBuyersPanel({ dealId, embedded = false }: { dealId: string; embedded?: boolean }) {
+  const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -216,10 +231,17 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
       setDrafts(resp.drafts);
       setReplyTo(resp.replyTo ?? null);
       setDraftSheetOpen(true);
-      toast({ description: `Drafted ${resp.drafts.length} email${resp.drafts.length === 1 ? "" : "s"} — review and edit before sending.` });
+      const generic = resp.drafts.filter((d) => d.personalised === false).length;
+      toast({
+        description: `Drafted ${resp.drafts.length} email${resp.drafts.length === 1 ? "" : "s"}${generic > 0 ? ` — ${generic} use${generic === 1 ? "s" : ""} the standard template (marked)` : ""} — review and edit before sending.`,
+      });
     },
-    onError: () => {
-      toast({ variant: "destructive", description: "Failed to draft outreach. Try again." });
+    onError: (e: Error) => {
+      // Show the server's own words (e.g. "Draft up to 50 buyers at a time").
+      const m = /^\d{3}: ([\s\S]*)$/.exec(e.message || "");
+      let description = "Failed to draft outreach. Try again.";
+      try { description = (m ? JSON.parse(m[1]).error : null) || description; } catch { /* keep default */ }
+      toast({ variant: "destructive", description });
     },
   });
 
@@ -273,11 +295,11 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
   // toggle filters within that set, so it must stay reachable even when it
   // hides every row — otherwise contacted buyers could never be revisited.
   const candidates = useMemo(
-    () => (data?.suggested ?? []).filter(b => !b.alreadyHasAccess && !b.excluded),
+    () => (data?.suggested ?? []).filter(b => !b.alreadyHasAccess && !b.inApproval && !b.excluded),
     [data],
   );
   const excludedBuyers = useMemo(
-    () => (data?.suggested ?? []).filter(b => !b.alreadyHasAccess && b.excluded),
+    () => (data?.suggested ?? []).filter(b => !b.alreadyHasAccess && !b.inApproval && b.excluded),
     [data],
   );
   const [showExcluded, setShowExcluded] = useState(false);
@@ -333,12 +355,18 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
       {/* Header — stacks on phones so the buttons never push the tab sideways */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-teal" />
-            Suggested buyers
-          </h3>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {data?.deepCheck
+          {!embedded && (
+            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-teal" />
+              Suggested buyers
+            </h3>
+          )}
+          <p className={`text-xs text-muted-foreground ${embedded ? "" : "mt-0.5"}`}>
+            {embedded
+              ? data?.deepCheck
+                ? "Ranked by the AI deep check, then by how well each buyer fits and how ready they are to buy."
+                : "Ranked by how well each buyer fits and how ready they are to buy. The AI deep check reads each match against the full CIM."
+              : data?.deepCheck
               ? "Ranked by the AI deep check, then qualified-lead score. Cimple drafts the email — you review, edit, and send."
               : "Ranked by qualified-lead score. Cimple drafts the email — you review, edit, and send."}
           </p>
@@ -448,21 +476,27 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
                 <>
                   <p className="text-sm text-muted-foreground" data-testid="text-all-have-access">
                     {excludedBuyers.length > 0
-                      ? "No one left to suggest — the rest of your list already has access or rules out this industry"
-                      : "Every candidate already has access to this deal"}
+                      ? "No one left to suggest — the rest of your list already has the CIM, is waiting for approval, or rules out this industry"
+                      : "Everyone on your list already has the CIM or is waiting for approval"}
                   </p>
                   <p className="text-xs text-muted-foreground/70 mt-1">
-                    Add more buyers to your contact list to see new suggestions.
+                    Add more buyers to your list, or find new ones on the web in step 1.
                   </p>
+                  <Button variant="outline" size="sm" className="mt-3" onClick={() => setLocation("/broker/buyers")} data-testid="button-go-buyer-list">
+                    Open my buyer list
+                  </Button>
                 </>
               ) : (
                 <>
                   <p className="text-sm text-muted-foreground" data-testid="text-no-candidates">
-                    No suggested buyers yet
+                    No one in your buyer list yet
                   </p>
                   <p className="text-xs text-muted-foreground/70 mt-1">
-                    Add buyers to your contact list to see ranked suggestions for this deal.
+                    Add buyers (or import them from your CRM) and Cimple ranks who fits this deal best.
                   </p>
+                  <Button variant="outline" size="sm" className="mt-3" onClick={() => setLocation("/broker/buyers")} data-testid="button-go-buyer-list">
+                    Add buyers to my list
+                  </Button>
                 </>
               )
             ) : (
@@ -603,6 +637,12 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
                     </div>
                     <span className="text-2xs text-muted-foreground">{i + 1} / {drafts.length}</span>
                   </div>
+                  {d.personalised === false && (
+                    <p className="text-2xs text-amber-500 leading-snug flex items-start gap-1" role="status" data-testid={`draft-template-${d.buyerUserId}`}>
+                      <AlertTriangle className="h-3 w-3 mt-px shrink-0" />
+                      <span>{TEMPLATE_REASON[d.templateReason ?? "unusable_draft"] ?? TEMPLATE_REASON.unusable_draft}</span>
+                    </p>
+                  )}
                   <div className="space-y-1.5">
                     <Label className="text-2xs text-muted-foreground">Subject</Label>
                     <Input
@@ -730,7 +770,16 @@ function BuyerRow({
       onClick={onToggle}
       data-testid={`suggested-buyer-${buyer.buyerUserId}`}
     >
-      <Checkbox checked={selected} onCheckedChange={onToggle} className="mt-1" />
+      {/* The row's own click toggles; the checkbox click must not bubble up
+          to it too, or the selection flips twice and nothing changes. */}
+      <Checkbox
+        checked={selected}
+        onCheckedChange={onToggle}
+        onClick={(e) => e.stopPropagation()}
+        className="mt-1"
+        aria-label={`Select ${buyer.name}`}
+        data-testid={`checkbox-suggested-${buyer.buyerUserId}`}
+      />
 
       <div className="flex-1 min-w-0 space-y-1.5">
         {/* Top row: name + tier + already contacted badge */}
@@ -821,7 +870,7 @@ function BuyerRow({
       </div>
 
       {/* Right column: profile completion */}
-      <div className="shrink-0 flex flex-col items-end gap-1 text-2xs text-muted-foreground">
+      <div className="shrink-0 hidden sm:flex flex-col items-end gap-1 text-2xs text-muted-foreground">
         <div className="flex items-center gap-1">
           <TrendingUp className="h-2.5 w-2.5" />
           <span className="tabular-nums">{buyer.profileCompletionPct}%</span>

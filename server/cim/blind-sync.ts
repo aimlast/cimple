@@ -36,6 +36,7 @@ import { cimSections, cimSectionOverrides, type CimSection, type CimSectionAiTas
 import { getCimLayout } from "@shared/cim-layouts";
 import { carryCodename, currentCodename, ensureDealCodename, withCodenameLock } from "./codenames";
 import { generateBlindOverrides, redactOneSection, redactionErrorMessage, type RedactionResult } from "./redaction-engine";
+import { dropPublishedBlind, recordPublishedBlind } from "./published-versions";
 
 // ── Per-deal serial queue ────────────────────────────────────────────────
 const chains = new Map<string, Promise<unknown>>();
@@ -174,7 +175,7 @@ async function commitUnlocked(section: CimSection, result: RedactionResult): Pro
       eq(cimSections.id, section.id),
       stale ? eq(cimSections.blindStaleAt, stale) : isNull(cimSections.blindStaleAt),
     ))
-    .returning({ id: cimSections.id });
+    .returning({ id: cimSections.id, brokerApproved: cimSections.brokerApproved });
   if (updated.length === 0) return false;
   await db.delete(cimSectionOverrides).where(and(
     eq(cimSectionOverrides.cimSectionId, section.id),
@@ -187,6 +188,9 @@ async function commitUnlocked(section: CimSection, result: RedactionResult): Pro
     layoutData: result.layoutData,
     contentOverride: result.contentOverride,
   });
+  // The section is approved as it stands: this is the Blind version a live
+  // CIM's blind buyers keep through a later unapproved change.
+  await recordPublishedBlind({ id: section.id, dealId: section.dealId, brokerApproved: updated[0].brokerApproved }, { layoutData: result.layoutData, contentOverride: result.contentOverride }, result.sectionTitle || null);
   return true;
 }
 
@@ -278,6 +282,9 @@ async function dropBlindOverrides(sectionIds: string[]): Promise<void> {
     inArray(cimSectionOverrides.cimSectionId, sectionIds),
     eq(cimSectionOverrides.mode, "blind"),
   ));
+  // A blind version being redone (it leaked, or the broker asked) is never
+  // served again from the approved-version record either.
+  await dropPublishedBlind(sectionIds);
 }
 
 /**

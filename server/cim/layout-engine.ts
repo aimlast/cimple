@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { isGenericSectionType } from "./learning-loop";
 import type { CimLayoutSection, CimDocument, LayoutType } from "./layout-types.js";
 import {
   CIM_FALLBACK_REASONING,
@@ -21,7 +22,8 @@ import { analysisHeadlines, cimGrowth, knownBridges, renderCimFinancialsBlock, r
 import { checkSectionFigures, figureWarningText, isUntracedIssue, knownFiguresFrom, parseFigures, withoutUntracedFigures, type KnownFigures } from "./figure-check";
 import {
   keepOutFromNotes,
-  mentionsHeldName,
+  mentionsHeldPerson,
+  neutralBridgeLabel,
   screenConfidentialText,
   screenFactsForCim,
   screenText,
@@ -29,9 +31,12 @@ import {
   type HeldFact,
   type KeepOut,
 } from "./sensitive-facts";
+import { includedStaffPrivate, screenStaffPrivateText, staffContextFrom, staffPrivateWarning } from "./staff-private";
+import type { StaffPrivateItem } from "@shared/staff-private";
 import { hasRelativeTime, repairInferredYears, staleTargets } from "./fact-dates";
 import { canonLines, earningsCanon, earningsWarnings, offCanon, screenEarningsFacts, type EarningsCanon, type EarningsHold } from "./earnings-canon";
 import { normalizeSpokenFigures } from "./spoken-figures";
+import { describeAiFailure } from "../ai-retry";
 import {
   addbackCompanions,
   consistencyKnowledge,
@@ -120,10 +125,14 @@ const MODEL = agentConfig.models.supportingAgents;
  * cache instead of re-paying for it per section.
  */
 export interface EngagementInsightInput {
+  /** A page role ("financials") or role/content kind ("financials/tables") — never a deal's section key. */
   sectionType: string;
   layoutType: string;
+  /** Reading time per reader. */
   avgTimeSpentSeconds: number;
   sampleCount: number;
+  /** Read-through: reading time ÷ expected reading time, % (capped at 100). */
+  completionRate?: number | null;
 }
 
 interface ManifestEntry {
@@ -179,7 +188,7 @@ export interface CimLayoutParams {
    * the turn that recorded the fact, and when — so a year the seller never
    * said is taken out before the writer sees it (fact-dates.ts).
    */
-  factSourceWords?: Record<string, { words: string; at: string }> | null;
+  factSourceWords?: Record<string, { words: string; at: string; documentWords?: string }> | null;
   /**
    * What must stay out of buyer-facing text beyond the facts' own notes: the
    * broker's private notes and the AI review (keep-out.ts keepOutFor). When
@@ -202,6 +211,8 @@ interface SharedSystem extends SystemBlock {
   heldNames: string[];
   /** The broker's earnings figure overrules the analysis add-backs: no EBITDA/SDE bridge may be planned. */
   noBridge: boolean;
+  /** Staff-private matters held out of the knowledge base (staff-private.ts), for the broker. */
+  heldPrivate: StaffPrivateItem[];
 }
 
 /** The figure check's reference for an assembled knowledge base. */
@@ -232,6 +243,7 @@ function buildSharedSystem(params: CimLayoutParams): SharedSystem {
     today: params.today ?? new Date(),
     heldNames: kb.heldNames,
     noBridge: kb.canon?.override?.withheld === "bridge",
+    heldPrivate: kb.staffPrivate,
   };
 }
 
@@ -281,6 +293,16 @@ export async function generateCimLayout(
       ),
     );
     generated.push(...results);
+    // The AI service is down (credits out, an overload burst): when not one
+    // section of the first batch could be written, stop instead of retrying
+    // every remaining section — the job fails and the deal's CIM stays.
+    if (i === 0 && results.length > 0 && results.every(isFallback)) {
+      // Say why when the service told us (credits out or a rejected key won't
+      // come right by trying again in a few minutes).
+      const cause = runAiErrors.get(sharedSystem);
+      const why = cause ? describeAiFailure(cause) : null;
+      throw new Error(`The AI service failed${why ? ` (${why.reason})` : ""} while writing the first ${results.length} sections, so the run was stopped. Nothing was changed — ${why?.advice ?? "try again in a few minutes"}.`);
+    }
   }
 
   // ── Phase 3: every figure must trace to the deal's data ────────────────
@@ -352,6 +374,8 @@ export async function generateCimLayout(
     generatedAt: new Date().toISOString(),
     version: 1,
     warnings: warnings.length > 0 ? warnings : undefined,
+    aiError: slimAiError(runAiErrors.get(sharedSystem)),
+    ...(sharedSystem.heldPrivate.length > 0 ? { heldPrivate: sharedSystem.heldPrivate } : {}),
   };
 }
 
@@ -556,6 +580,18 @@ function nothingLeft(s: CimLayoutSection): boolean {
   return false;
 }
 
+/**
+ * The last AI service error of a run (keyed by the run's shared system
+ * block), so a run the service failed can say why — e.g. credits out, where
+ * trying again in a few minutes won't help.
+ */
+const runAiErrors = new WeakMap<object, unknown>();
+function slimAiError(err: unknown): CimDocument["aiError"] {
+  if (!err) return undefined;
+  const e = err as { status?: unknown; message?: unknown };
+  return { status: typeof e.status === "number" ? e.status : undefined, message: String(e.message ?? "").slice(0, 300) };
+}
+
 function isFallback(s: CimLayoutSection): boolean {
   return s.aiLayoutReasoning === FALLBACK_REASONING;
 }
@@ -702,7 +738,7 @@ export function scrubHeldNames(
   if (heldNames.length === 0) return null;
   const names = new Set<string>();
   const note = (s: string) => {
-    const n = mentionsHeldName(s, heldNames);
+    const n = mentionsHeldPerson(s, heldNames);
     if (n) names.add(n);
     return n;
   };
@@ -749,29 +785,9 @@ export function scrubHeldNames(
   return names.size > 0 ? { layoutData, aiDraftContent, names: Array.from(names) } : null;
 }
 
-/**
- * A bridge step's label without the confidential name: the name and the
- * words that only pointed at it go ("Salary paid to Maria Chen" → "Salary
- * paid"; "Maria Chen — owner's spouse wages" → "Owner's spouse wages").
- * When nothing descriptive is left: "Other add-back" / "Other deduction".
- */
-export function neutralBridgeLabel(label: string, heldNames: readonly string[], type = ""): string {
-  let t = label;
-  for (const name of heldNames) {
-    const words = name.trim().split(/\s+/).map(escapeRegExp).join(String.raw`\s+`);
-    t = t.replace(new RegExp(String.raw`(?<![\p{L}\p{N}])${words}(?:'s|’s)?(?![\p{L}\p{N}])`, "giu"), " ");
-  }
-  t = t
-    .replace(/\(\s*\)/g, " ")
-    .replace(/\s+(?:to|for|of|by|from|with|re|—|–|-|:|,)\s*$/i, "")
-    .replace(/^\s*(?:—|–|-|:|,)\s*/, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-  // Trailing connectors can stack ("paid to" after "for").
-  for (let i = 0; i < 2; i++) t = t.replace(/\s+(?:to|for|of|by|from|with)$/i, "").trim();
-  if (!/[A-Za-z]{3,}/.test(t)) return type === "subtract" ? "Other deduction" : "Other add-back";
-  return t.charAt(0).toUpperCase() + t.slice(1);
-}
+// A bridge step's label without the confidential name — shared with the DD
+// context (dd-enrichment.ts), so it lives in sensitive-facts.ts.
+export { neutralBridgeLabel };
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -944,7 +960,9 @@ ${def.aiSpec}
   if (!result) throw new Error("The AI couldn't rewrite this section. Nothing was changed — please try again.");
   const scrubbed = scrubHeldNames({ ...result, layoutType }, sharedSystem.heldNames);
   const final = scrubbed ? { layoutData: scrubbed.layoutData, aiDraftContent: scrubbed.aiDraftContent } : result;
-  return { ...final, layoutData: finalizeLayoutData(layoutType, final.layoutData, sharedSystem.today) };
+  // The writer is told the reclassification footnote is added for it — so
+  // it is, here too (known-4: a rewritten or converted table had none).
+  return { ...final, layoutData: withReclassificationNote(layoutType, finalizeLayoutData(layoutType, final.layoutData, sharedSystem.today), params.financials) };
 }
 
 /**
@@ -979,7 +997,7 @@ Rules:
   if (!result) throw new Error("The AI couldn't convert this section. The current layout was kept — please try again.");
   const scrubbed = scrubHeldNames({ ...result, layoutType: target }, sharedSystem.heldNames);
   const final = scrubbed ? { layoutData: scrubbed.layoutData, aiDraftContent: scrubbed.aiDraftContent } : result;
-  return { ...final, layoutData: finalizeLayoutData(target, final.layoutData, sharedSystem.today) };
+  return { ...final, layoutData: withReclassificationNote(target, finalizeLayoutData(target, final.layoutData, sharedSystem.today), params.financials) };
 }
 
 // ── Phase 1: manifest ──────────────────────────────────────────────────────
@@ -1194,9 +1212,12 @@ async function writeSectionContent(
     }
   } catch (err) {
     console.error(`[layout-engine] Section "${entry.sectionKey}" generation error:`, err);
+    runAiErrors.set(sharedSystem, err);
     try {
       result = await attempt(true);
-    } catch { /* fall through */ }
+    } catch (retryErr) {
+      runAiErrors.set(sharedSystem, retryErr);
+    }
   }
   return result;
 }
@@ -1314,7 +1335,7 @@ TRUTH RULES (a buyer relies on every figure; a wrong one costs the broker the de
 19. NAMES. Customers, suppliers, employees, advisors and partners are named only exactly as the knowledge base names them. A chart or list of customers uses the names on file (or the facts' own description, such as "dairy co-op", where no name is given) — never an invented or guessed company name, and never a share that isn't on file. A customer's rank or badge ("Top 5", "#2", "second-largest"), its region, what it buys and its contract terms come only from the facts about THAT customer: an aggregate ("top 5 = 47%") says nothing about which customers are in the top five.
 20. DATES AND TENSE. TODAY is given at the top of the knowledge base. A relative date in a fact ("in May", "last year", "next spring", "within one year", "before his next birthday") is resolved only against the date the fact was recorded (shown as [recorded Mon YYYY]) — if it can't be pinned down, keep it relative ("recently", "planned for May") and never guess a year. A target TODAY has reached or passed (a fact marked [date has arrived]) is never presented as a future target: restate it from the recorded date ("the owner planned to sell within a year of late 2025") or leave the date out. Keep tense: what the seller plans or intends stays a plan, never "completed".
 21. The cover's "Prepared by" and date are added by the system from the brokerage's settings — never fill them. Never name the seller's accountant, lawyer, banker or other advisors as the author of the CIM.
-22. PRIVATE MATTERS. Never mention an owner's or family member's health, medical history or personal circumstances, even as a reason for sale — say "retirement" or "succession" instead.
+22. PRIVATE MATTERS. Never mention an owner's or family member's health, medical history or personal circumstances, even as a reason for sale — say "retirement" or "succession" instead. Never write about an employee's private matters — an interest in equity or buying in, pay requests, a possible departure, performance or discipline, their health or family, a private conversation with the owner — and never build a buyer profile, risk or transition point on one, unless the knowledge base states it in so many words.
 23. FACTS ONLY — NO OUTSIDE KNOWLEDGE. Write only what the knowledge base says about this business. Never add market statistics, industry sizes, port or traffic volumes, equipment prices, typical costs, competitor counts, customer tenures or any other "general knowledge", even as background or as a round figure — a buyer reads every sentence as a claim about this deal. Describe the market and competition only through the facts on file.
 24. PEOPLE. Never assume anyone's gender. Use the person's name or role (or "they") unless the knowledge base itself says he or she for that person.
 25. THE SELLER'S WORDS. Facts are often recorded as the seller said them. Write them as clean, buyer-facing figures without changing the meaning ("six-point-something years" → "just over six years"; never quote casual phrasing). Give a growth rate only with the period the knowledge base states for it (GROWTH lists the exact periods) — a two-year change is never "year-over-year".
@@ -1348,6 +1369,9 @@ const UNFINISHED_FACT_WARNING = (keys: string[]) =>
 const YEAR_FIX_WARNING = (items: string[]) =>
   `Year left out of the CIM: ${items.join(", ")}. The seller named the month but never that year, so the CIM gives the month only. Correct the fact on the Information tab if you know the year.`;
 
+const YEAR_HELD_WARNING = (items: string[]) =>
+  `Held out of the CIM: ${items.join("; ")}. The seller named the month but not the year, and without the year the sentence would be ambiguous (the same month twice). Add the year to the fact on the Information tab if you know it, then regenerate.`;
+
 const PERSONAL_DETAIL_WARNING = (keys: string[]) =>
   `Held back from the CIM for your review: ${keys.map((k) => `"${formatKey(k)}"`).join(", ")} ${keys.length === 1 ? "mentions" : "mention"} a personal health or family detail. The CIM was written without it. If a buyer may see it, move it into a fact yourself; otherwise record it as a private note.`;
 
@@ -1378,6 +1402,8 @@ export interface AssembledKb {
   heldNames: string[];
   /** Counts from facts whose counts and rates disagree (consistency-check.ts): never stated. */
   suspectCounts: SuspectCount[];
+  /** Staff-private matters held back (staff-private.ts) — each one listed for the broker. */
+  staffPrivate: StaffPrivateItem[];
 }
 
 /**
@@ -1443,6 +1469,12 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
   const confidential: ConfidentialHold[] = [];
   let heldNames: string[] = [];
   let suspectCounts: SuspectCount[] = [];
+  // Staff-private matters (staff-private.ts): the deal's people and the
+  // broker's include decisions — for the facts and every free-text block.
+  const staffPrivate: StaffPrivateItem[] = [];
+  const staffCtx = params.keepOut?.staff?.ctx ?? staffContextFrom(params.extractedInfo ?? {});
+  const staffIncluded = new Set(params.keepOut?.staff?.included ?? Array.from(includedStaffPrivate(params.extractedInfo)));
+  const screenStaff = (text: string) => screenStaffPrivateText(text, staffCtx, staffIncluded).text;
   if (params.extractedInfo && Object.keys(params.extractedInfo).length > 0) {
     // "_"-prefixed keys (broker-private notes, provenance) and per-source
     // notes (a source's summary / red flags / to-dos) never feed CIM
@@ -1466,6 +1498,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     });
     held.push(...screened.held.map((h) => ({ ...h, key: untag(h.key) })));
     confidential.push(...screened.confidential.map((h) => ({ ...h, key: untag(h.key) })));
+    staffPrivate.push(...screened.staffPrivate);
     heldNames = screened.heldNames;
     const earn = screenEarningsFacts(screened.safe, canon, (k) => formatKey(untag(k)));
     earningsHeld.push(...earn.held);
@@ -1473,6 +1506,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     const leadsSafe = earn.safe.filter(([k]) => k.startsWith("l:")).map(([k, v]) => [untag(k), v] as [string, unknown]);
     const sources = getFieldSources(params.extractedInfo);
     const yearFixes: string[] = [];
+    const yearHeld: string[] = [];
     const stale: string[] = [];
     const line = (key: string, value: unknown, confirmed = false) => {
       // The seller's spoken figures as clean wording ("six-point-something
@@ -1482,12 +1516,20 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
       // the writer gets their sentence for the tense and never adds a year.
       let said = "";
       const src = params.factSourceWords?.[key];
-      const fix = src ? repairInferredYears(text, src.words) : null;
+      const fix = src ? repairInferredYears(text, src.words, src.documentWords ?? "") : null;
       if (fix) {
         text = fix.text;
-        const quote = screenText(fix.quotes.join(" … ")).trim();
-        said = ` [the seller named the month but no year — never add one${quote ? `; keep their tense: "${quote}"` : ""}]`;
-        yearFixes.push(`"${formatKey(key)}" (${fix.changes.join("; ")})`);
+        if (fix.changes.length > 0) {
+          const quote = screenStaff(screenText(fix.quotes.join(" … "))).trim();
+          said = ` [the seller named the month but no year — never add one${quote ? `; keep their tense: "${quote}"` : ""}]`;
+          yearFixes.push(`"${formatKey(key)}" (${fix.changes.join("; ")})`);
+        }
+        // Without the year these would be ambiguous: held out, the broker told.
+        if (fix.held.length > 0) {
+          const quoted = fix.held.map((h) => h.replace(/[.;]\s*$/, "")).map((h) => `"${h.length > 140 ? `${h.slice(0, 137)}…` : h}"`);
+          yearHeld.push(`"${formatKey(key)}": ${quoted.join("; ")}`);
+        }
+        if (!text) return null;
       }
       const when = !fix && hasRelativeTime(text) ? recordedMonth(sources[key]?.dated ?? sources[key]?.at) : null;
       // A target TODAY has reached ("before next birthday (fall 2026)" read
@@ -1518,13 +1560,20 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     const usable = confirmedSafe.filter(([k]) => !unfinished.includes(k) && !inconsistent.includes(k));
     if (usable.length > 0) {
       parts.push("\n--- INTERVIEW DATA (the deal's facts: seller interview, broker, documents, questionnaire) ---");
-      for (const [key, value] of usable) parts.push(line(key, value, true));
+      for (const [key, value] of usable) {
+        const l = line(key, value, true);
+        if (l) parts.push(l);
+      }
     }
     if (leadsSafe.length > 0) {
       pushOther(`\n--- ${CIM_LEADS_HEADING} ---`);
-      for (const [key, value] of leadsSafe) pushOther(line(key, value));
+      for (const [key, value] of leadsSafe) {
+        const l = line(key, value);
+        if (l) pushOther(l);
+      }
     }
     if (yearFixes.length > 0) warnings.push(YEAR_FIX_WARNING(yearFixes));
+    if (yearHeld.length > 0) warnings.push(YEAR_HELD_WARNING(yearHeld));
     if (stale.length > 0) warnings.push(STALE_TIMELINE_WARNING(stale));
   }
 
@@ -1533,7 +1582,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
   // and the broker is told), and a confidential one stays out.
   const resolved = (params.resolvedDiscrepancies ?? []).filter((n) => {
     const text = `${n.year ? `${n.year} ` : ""}${n.field}: ${n.resolvedValue}`;
-    if (mentionsHeldName(text, heldNames)) return false;
+    if (mentionsHeldPerson(text, heldNames)) return false;
     if (!canon) return true;
     const read = /ebitda|sde|discretionary/i.test(text) ? text : "";
     if (read && offCanon(read, canon).length > 0) {
@@ -1543,7 +1592,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     return true;
   });
   const resolvedBlock = renderResolvedBlock(resolved);
-  if (resolvedBlock) parts.push("\n" + screenText(resolvedBlock));
+  if (resolvedBlock) parts.push("\n" + screenStaff(screenText(resolvedBlock)));
 
   const financialsBlock = renderCimFinancialsBlock(fin);
   if (financialsBlock) parts.push("\n" + financialsBlock);
@@ -1552,7 +1601,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
   // Earlier drafts and the scrape are read by the writer too: no confidential
   // sentence and no off-bridge earnings figure survives in them.
   const cleanFreeText = (text: string) => {
-    let t = screenConfidentialText(screenText(text), heldNames);
+    let t = screenConfidentialText(screenStaff(screenText(text)), heldNames);
     if (canon) {
       t = t
         .split(/\n{2,}/)
@@ -1617,19 +1666,25 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     pushOther(`\n--- HOUSE STYLE (how this brokerage's CIMs read — match it) ---\n${params.sectionOutline.toneNotes}`);
   }
 
-  if (params.engagementInsights && params.engagementInsights.length > 0) {
-    pushOther("\n--- BUYER ENGAGEMENT DATA (use to bias layout choices) ---");
-    pushOther("The following layouts have been measured for buyer engagement in similar deals in this industry.");
-    pushOther("Higher avg_time_seconds = buyers read more carefully. Use high-performing layouts for important content.");
-    const top = [...params.engagementInsights]
-      .sort((a, b) => b.avgTimeSpentSeconds - a.avgTimeSpentSeconds)
-      .slice(0, 15);
+  // Reading data from other CIMs in this industry: only generic rows (a page
+  // role, or role/content kind, measured on ≥ 3 deals — learning-loop.ts);
+  // legacy rows keyed by a deal's own section slug are never printed.
+  const learned = (params.engagementInsights ?? []).filter((i) => isGenericSectionType(i.sectionType) && (i.sampleCount ?? 0) > 0);
+  if (learned.length > 0) {
+    pushOther("\n--- WHAT BUYERS READ IN THIS INDUSTRY (measured on other CIMs; use to bias layout choices) ---");
+    pushOther("Reading time buyers gave each kind of page, by layout. Read-through = the share of a page's expected reading time buyers actually spent on it (100% = read in full). Prefer layouts with high read-through for the pages that matter most; the \"pages · kind\" rows say which content inside those pages holds attention.");
+    const top = [...learned]
+      .sort((a, b) => (b.completionRate ?? 0) - (a.completionRate ?? 0) || b.avgTimeSpentSeconds - a.avgTimeSpentSeconds)
+      .slice(0, 20);
     for (const insight of top) {
-      pushOther(`${insight.sectionType} → ${insight.layoutType}: avg ${insight.avgTimeSpentSeconds}s (n=${insight.sampleCount})`);
+      const rt = insight.completionRate != null ? `read-through ${insight.completionRate}%, ` : "";
+      pushOther(`${insight.sectionType.replace("/", " pages · ")} → ${insight.layoutType}: ${rt}${insight.avgTimeSpentSeconds}s per reader (n=${insight.sampleCount} readers)`);
     }
   }
 
   const heldKeys = held.map((h) => h.key);
+  const staffWarning = staffPrivateWarning(staffPrivate);
+  if (staffWarning) warnings.unshift(staffWarning);
   if (confidential.length > 0) warnings.unshift(CONFIDENTIAL_WARNING(confidential));
   if (heldKeys.length > 0) warnings.unshift(PERSONAL_DETAIL_WARNING(heldKeys));
   if (canon) warnings.push(...earningsWarnings(canon, earningsHeld));
@@ -1643,6 +1698,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     growth: cimGrowth(fin, canon),
     heldNames,
     suspectCounts,
+    staffPrivate,
   };
 }
 

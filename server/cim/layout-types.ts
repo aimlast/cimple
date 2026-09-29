@@ -323,4 +323,8 @@ export interface CimDocument {
   // Branding applied at render time (not stored here)
   /** Non-fatal generation problems (e.g. a section fell back to prose) */
   warnings?: string[];
+  /** The run's last AI service error, if any (why sections became placeholders; never stored). */
+  aiError?: { status?: number; message: string };
+  /** Staff-private matters held out of the writer's inputs (server/cim/staff-private.ts). */
+  heldPrivate?: import("@shared/staff-private").StaffPrivateItem[];
 }

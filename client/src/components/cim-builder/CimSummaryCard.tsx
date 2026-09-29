@@ -18,7 +18,7 @@ export function useBuilderState(dealId: string, opts: { poll?: boolean } = {}) {
     refetchInterval: (q) => {
       if (!opts.poll) return false;
       const s = q.state.data as BuilderState | undefined;
-      return s && (s.blind.running || s.sections.some((x) => x.aiTask?.status === "running")) ? 4000 : false;
+      return s && (s.blind.running || !!s.dd?.running || s.sections.some((x) => x.aiTask?.status === "running")) ? 4000 : false;
     },
   });
 }
@@ -53,6 +53,7 @@ export function CimSummaryCard({ dealId }: { dealId: string }) {
             : "not generated yet"}
         </span>
       </div>
+      <CimStaleNotice state={data} />
       <div className="flex flex-wrap gap-2">
         <Button size="sm" className="h-8 text-xs gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => navigate(`/deal/${dealId}/design`)} data-testid="button-open-cim-builder">
           <Wand2 className="h-3.5 w-3.5" /> Open CIM builder
@@ -62,6 +63,28 @@ export function CimSummaryCard({ dealId }: { dealId: string }) {
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Facts corrected since the CIM was written that sections still show the old
+ * value of (server/cim/cim-staleness.ts), said outside the builder too: a
+ * live CIM kept the old figures with nothing on the Overview (F5).
+ */
+export function CimStaleNotice({ state }: { state: BuilderState | undefined }) {
+  if (!state) return null;
+  const stale = state.sections.filter((x) => (x.factsChanged?.length ?? 0) > 0).length;
+  const notesChanged = !!state.review?.facts?.notesChanged;
+  if (stale === 0 && !notesChanged) return null;
+  return (
+    <p className="text-xs text-amber-500 flex items-start gap-1.5" data-testid="cim-stale-notice">
+      <AlertTriangle className="h-3.5 w-3.5 mt-px shrink-0" />
+      <span>
+        {stale > 0
+          ? `${stale === 1 ? "1 section still shows" : `${stale} sections still show`} a fact that has changed since the CIM was written${state.deal.isLive ? " — buyers are reading the old value" : ""}. Regenerate or edit ${stale === 1 ? "it" : "them"} in the CIM builder.`
+          : "Your private notes changed since the CIM was written — check that nothing they keep out of the CIM is in it."}
+      </span>
+    </p>
   );
 }
 

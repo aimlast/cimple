@@ -243,3 +243,94 @@ export const CONTEXT: Array<{ prevAi: string; message: string; stop: boolean }> 
   { prevAi: "Anything else about the lease I should know?", message: "Nothing else on the lease, the landlord handles maintenance.", stop: false },
   { prevAi: "Is there anything else about your customers buyers should know?", message: "No, that's about it for customers.", stop: false },
 ];
+
+// ── Short breaks and returns (review F2-INT-2) ──────────────────────────
+/** The interviewer's offer of a short break (prompts/handling-difficulty.md, emotional-intelligence.md). */
+export const PAUSE_OFFER = "Want to take a few minutes? Everything so far is saved, and we'll carry on from here when you're back.";
+/** Stepping away for a moment — a pause, never a stop. */
+export const PAUSES: string[] = [
+  "brb",
+  "Be right back",
+  "Give me five minutes",
+  "Hang on, let me grab the lease. It's in the office.",
+  "Sorry, I have to take this call — back in 10.",
+  "Can we take a quick break?",
+  "One sec, a customer just walked in.",
+  "Hold on, let me look that up.",
+];
+/** Accepting the interviewer's offer (after PAUSE_OFFER). */
+export const PAUSE_ACCEPTS: string[] = ["yes, a short break would help", "Yes please", "Sure, that would help", "A few minutes would help"];
+/** The stop's one closing turn the returns below answer. */
+export const CLOSING_PREV =
+  "Before you go, the one thing I'd most like to pin down is your asking-price expectation — a rough number now, or shall we start there next time?";
+/** Back from a break (after CLOSING_PREV): carrying on, never the closing turn's answer. */
+export const RETURNS: string[] = [
+  "OK I'm back. The lease runs to 2031 with two five-year renewals.",
+  "Back now. Got the lease — it runs to 2031.",
+  "Ok, ready.",
+  "Sorry about that — where were we?",
+];
+/** Right after a short break's "take your time": an apology for the wait opens a return too. */
+export const RETURNS_AFTER_PAUSE: string[] = ["Sorry about that. Asking price — around $2.5M.", "Sorry for the wait — the corporation holds the lease."];
+/** Answers to the closing turn (after CLOSING_PREV): the interview ends — including answers that only mention being back (review F2-INT-2, round 2). */
+export const CLOSING_ANSWERS: string[] = [
+  "Around $2.5M.",
+  "Let's start there next time.",
+  "Next time is fine.",
+  "Revenue is back now to where it was pre-covid, about $2M.",
+  "Since my knee surgery I'm back full-time, and revenue has been flat at about $1.9M.",
+  "Sorry about that. It dipped in 2020 and has grown about 8% a year since.",
+  "Sorry about that, the asking price is around $2.5M.",
+  "Ready to sell as soon as possible, honestly.",
+];
+/**
+ * Not a break (review F2-INT-2, round 2): the seller's own questions and
+ * objections that open with a pause word, one question set aside, and
+ * business sentences — each used to get "take your time" in place of an
+ * answer.
+ */
+export const NOT_PAUSES: string[] = [
+  "Hang on, why do you need that?",
+  "Hold on, that's not what I said.",
+  "Wait a minute, I never said that.",
+  "Just a sec, what do you mean by recurring revenue?",
+  "One moment — who will see this?",
+  "Hold on — who's going to read this?",
+  "Wait a sec, is this going to buyers?",
+  "Hang on, didn't I already tell you that?",
+  "Hold on. I already answered that.",
+  "Let me check and get back to you.",
+  "Let me check the numbers and come back to you on that.",
+  "Let me get the exact figure from Donna and circle back.",
+  "Let me dig up the lease later and send it over.",
+  "Let me look that up after the call.",
+  "Let me check with Donna.",
+  "Let me pull up the P&L and send it to you.",
+  "Let me get this straight: we own the building, the opco leases it.",
+  "Give me a few minutes of anyone's time and I'll sell them a furnace.",
+  "Hold on to your hat — we grew 40% last year.",
+  "We never take a break in July, it's our busiest month.",
+  "The crew takes five at 10 and lunch at noon.",
+  "We have to take the call from dispatch at any hour.",
+  "I need to take this call seriously, a buyer asked about the lease.",
+  "brb is what my staff text me all day",
+  "Stop. Hang on.",
+  // Refusals, re-ask complaints and hand-offs behind a pause word, and a
+  // bare "let me check" (review F2-FINAL-1: the canned "take your time…
+  // answer the question above" pushed the seller to answer what they had
+  // just declined).
+  "Hold on, I'm not comfortable sharing that.",
+  "One moment — that's confidential, I'd rather not say.",
+  "Wait a second, you asked me that already",
+  "Just a moment, my wife handles that side.",
+  "Hang on, I told you that last week.",
+  "Hold on, we went over this.",
+  "One sec — that's private.",
+  "Just a minute, I'd prefer not to get into that.",
+  "Hang on, why does that matter?",
+  "Let me check.",
+  "Let me get that for you.",
+  "Let me look that up.",
+];
+/** A question about the business's own breaks — not the interviewer offering one. */
+export const BUSINESS_BREAK_Q = "Do your therapists take a break between patient blocks?";

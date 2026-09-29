@@ -32,7 +32,7 @@ export interface CimGenerationWarning {
 
 const PLACEHOLDER = /could not be generated/i;
 const FIGURES = /^Check the figures in "/;
-const REMOVED = /^(?:Removed from|Taken out of) "|taken out:|Kept out of the CIM/i;
+const REMOVED = /^(?:Removed from|Taken out of) "|taken out:|Kept out of the CIM|^Held back from the CIM:/i;
 const HIDDEN = /is hidden from buyers/i;
 
 export function classifyGenerationWarning(text: string): CimGenerationWarning {
@@ -87,8 +87,21 @@ export function regenerateBuyerImpact(state: { isLive?: boolean | null; openBuye
   const buyers = Math.max(0, state.openBuyers ?? 0);
   if (!state.isLive && buyers === 0 && !state.approved) return null;
   const who = buyers > 0 ? `the ${buyers === 1 ? "buyer" : `${buyers} buyers`} with access` : "buyers";
+  if (state.isLive) {
+    return [
+      `The deal stays live: ${who} keep seeing the version you published (including its Blind and due-diligence versions) while you review the new one.`,
+      "The new CIM reaches them only when you approve it and publish the update. Its content and design approvals are cleared.",
+    ].join(" ");
+  }
   return [
     `The new CIM is not shown to ${who} until you review it, approve it and publish it again — until then they see a notice that the document is being updated.`,
-    state.isLive ? "The deal comes off live, and its content and design approvals are cleared." : "Its content and design approvals are cleared.",
+    "Its content and design approvals are cleared.",
   ].join(" ");
+}
+
+/** A live deal's regenerated CIM is waiting for review while buyers read the published one. */
+export function reviewingUpdate(deal: { isLive?: boolean | null; cimGeneration?: unknown } | null | undefined): { since: string; buyers: number; ddCleared: boolean } | null {
+  const hold = (deal?.cimGeneration as { buyerHold?: { servingPublished?: boolean; since?: string; buyers?: number; ddCleared?: boolean } } | null | undefined)?.buyerHold;
+  if (!deal?.isLive || !hold?.servingPublished) return null;
+  return { since: String(hold.since ?? ""), buyers: Math.max(0, Number(hold.buyers ?? 0)), ddCleared: !!hold.ddCleared };
 }

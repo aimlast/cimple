@@ -7,6 +7,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs } from "../blocks";
 
 interface TimelineEvent {
   date?: string;
@@ -30,6 +31,7 @@ interface RendererProps {
 }
 
 export function TimelineRenderer({ layoutData, content, branding, section }: RendererProps) {
+  const ba = useBlockAttrs();
   const data: TimelineLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const events = data.events || [];
 
@@ -49,7 +51,7 @@ export function TimelineRenderer({ layoutData, content, branding, section }: Ren
           {events.map((event, i) => {
             const dateLabel = event.date || event.year || "";
             return (
-              <div key={i} className="relative flex gap-0 group">
+              <div key={i} {...ba(`event:${i}`)} className="relative flex gap-0 group">
                 {/* Date column */}
                 <div className="w-[88px] flex-shrink-0 flex items-start justify-end pr-5 pt-[13px]">
                   {dateLabel && (

@@ -13,6 +13,15 @@
  * keep the tense ("is being promoted in May"), and the broker is told to
  * correct the fact.
  *
+ * Two limits (Lakeshore rebuild, 2026-09-28: "renewed November 2024, valid
+ * until November 2025" became "renewed November, valid until November"):
+ *  - a year a DOCUMENT on file states for that month is kept — the licence
+ *    summary's "renews 2025-11-30" backs "November 2025" whatever the seller
+ *    said; only a year nobody wrote down is taken out;
+ *  - a sentence that taking the year out would leave ambiguous (the same
+ *    month twice — which November?) is held out of what the writer gets,
+ *    and the broker is told, instead of printing nonsense.
+ *
  * Pure: no database, no AI.
  */
 
@@ -37,12 +46,79 @@ function sentenceWithMonth(words: string, month: number): string | null {
 }
 
 export interface YearRepair {
-  /** The fact text with the unsaid year(s) taken out. */
+  /** The fact text with the unsaid year(s) taken out (and any held sentence left out). */
   text: string;
   /** What was changed, for the broker ("May 2025 → May"). */
   changes: string[];
   /** The seller's own sentence(s), for the writer (tense). */
   quotes: string[];
+  /** Sentences of the fact held out because, without the year, they'd be ambiguous (as written). */
+  held: string[];
+}
+
+/** Does a document's wording state that month in that year ("November 2025", "Nov. 30, 2025", "2025-11-30", "11/2025")? */
+export function writtenMonthYear(text: string, month: number, year: string): boolean {
+  if (!text || month < 0) return false;
+  const name = MONTHS[month];
+  const mm = String(month + 1).padStart(2, "0");
+  const re = new RegExp(
+    [
+      String.raw`\b(?:${name}|${name.slice(0, 3)}\.?)(?:\s+\d{1,2}(?:st|nd|rd|th)?)?,?\s+${year}\b`,
+      String.raw`\b${year}-${mm}(?:-\d{2})?\b`,
+      String.raw`\b${month + 1}\/\d{1,2}\/${year}\b|\b${mm}\/${year}\b|\b${month + 1}\/${year}\b`,
+    ].join("|"),
+    "i",
+  );
+  return re.test(text);
+}
+
+/**
+ * Sentences of a fact. A decimal doesn't end one, and neither does an
+ * abbreviation's dot — "Sept. 2024", "Nov. 30, 2024", "Dr. Park", "Ltd." —
+ * or a month-year inside it would never be checked.
+ */
+function factSentences(text: string): string[] {
+  return text.split(/(?<!\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|Mr|Mrs|Ms|Dr|St|No|Inc|Ltd|Co|Corp|Jr|Sr|approx|vs|e\.g|i\.e)\.)(?<=[.;!?])\s+(?=[A-Z0-9"(])/);
+}
+
+/** Words too common to tie a document's sentence to a fact's. */
+const COMMON_WORDS = new Set(
+  ("about above after again against along also among another around because before being below between both company business could customer customers during every first from have having into their there these those through under until using where which while whose would years months since other owner seller buyer total annual year month").split(" "),
+);
+const distinctiveWords = (s: string) =>
+  new Set((s.toLowerCase().match(/[a-z][a-z'-]{4,}/g) ?? []).filter((w) => !COMMON_WORDS.has(w) && !MONTHS.includes(w) && w !== "sept"));
+
+/**
+ * The sentences of the deal's written sources (documents, emails, the
+ * questionnaire — never broker-only material) that state a month-year one of
+ * the fact's sentences states, about the same thing: the document sentence
+ * shares two distinctive words with the fact's ("July 2023: acquired … Pembury"
+ * backs "acquired Pembury in July 2023" wherever the document's facts were
+ * filed). Joined, for repairInferredYears' documentWords.
+ */
+export function documentSentencesDating(factText: string, writtenTexts: readonly string[]): string {
+  if (!factText || writtenTexts.length === 0) return "";
+  const wanted: Array<{ month: number; year: string; words: Set<string> }> = [];
+  for (const sentence of factSentences(factText)) {
+    MONTH_YEAR.lastIndex = 0;
+    for (const m of Array.from(sentence.matchAll(MONTH_YEAR))) {
+      const month = monthIndex(m[1]);
+      if (month >= 0) wanted.push({ month, year: m[3], words: distinctiveWords(sentence) });
+    }
+  }
+  MONTH_YEAR.lastIndex = 0;
+  if (wanted.length === 0) return "";
+  const out: string[] = [];
+  for (const text of writtenTexts) {
+    if (!text || !wanted.some((w) => text.includes(w.year))) continue;
+    for (const s of text.split(/(?<=[.!?])\s+|\n+/)) {
+      if (s.length > 600) continue;
+      const hit = wanted.find((w) => s.includes(w.year) && writtenMonthYear(s, w.month, w.year) && Array.from(distinctiveWords(s)).filter((x) => w.words.has(x)).length >= 2);
+      if (hit && !out.includes(s)) out.push(s.trim());
+      if (out.length >= 20) return out.join("\n");
+    }
+  }
+  return out.join("\n");
 }
 
 /**
@@ -50,25 +126,50 @@ export interface YearRepair {
  * the seller said on that turn. Returns null when nothing needs changing
  * (the seller said that year, or didn't name the month on that turn).
  */
-export function repairInferredYears(valueText: string, sellerWords: string): YearRepair | null {
+export function repairInferredYears(valueText: string, sellerWords: string, documentWords = ""): YearRepair | null {
   if (!valueText || !sellerWords) return null;
   const changes: string[] = [];
   const quotes: string[] = [];
-  const text = valueText.replace(MONTH_YEAR, (whole, monthTok: string, day: string | undefined, yearTok: string) => {
-    const m = monthIndex(monthTok);
-    if (m < 0) return whole;
-    // The seller said that year on that turn: the fact's year is theirs.
-    if (sellerWords.includes(yearTok)) return whole;
-    const sentence = sentenceWithMonth(sellerWords, m);
-    if (!sentence) return whole;
-    const kept = `${monthTok}${day ?? ""}`;
-    changes.push(`${whole.trim()} → ${kept}`);
-    const q = sentence.trim().replace(/\s+/g, " ");
-    const short = q.length > 220 ? `${q.slice(0, 217)}…` : q;
-    if (!quotes.includes(short)) quotes.push(short);
-    return kept;
-  });
-  return changes.length > 0 ? { text, changes, quotes } : null;
+  const held: string[] = [];
+  const kept: string[] = [];
+  for (const sentence of factSentences(valueText)) {
+    const local: string[] = [];
+    const stripped: number[] = [];
+    const out = sentence.replace(MONTH_YEAR, (whole, monthTok: string, day: string | undefined, yearTok: string, at: number) => {
+      const m = monthIndex(monthTok);
+      if (m < 0) return whole;
+      // The seller said that year on that turn: the fact's year is theirs.
+      if (sellerWords.includes(yearTok)) return whole;
+      // A document on file states it: the year is the document's, not a guess.
+      if (writtenMonthYear(documentWords, m, yearTok)) return whole;
+      const said = sentenceWithMonth(sellerWords, m);
+      if (!said) return whole;
+      // An abbreviation keeps its dot ("Sept. 2024" → "Sept."; "Nov. 30, 2024" → "Nov. 30").
+      const dot = whole.slice(monthTok.length).startsWith(".") && (!!day || sentence[at + whole.length] !== ".") ? "." : "";
+      const without = `${monthTok}${dot}${day ?? ""}`;
+      local.push(`${whole.trim()} → ${without}`);
+      stripped.push(m);
+      const q = said.trim().replace(/\s+/g, " ");
+      const short = q.length > 220 ? `${q.slice(0, 217)}…` : q;
+      if (!quotes.includes(short)) quotes.push(short);
+      return without;
+    });
+    if (stripped.length === 0) {
+      kept.push(sentence);
+      continue;
+    }
+    // Without its year, a month that appears again in the same sentence is
+    // ambiguous ("renewed November, valid until November [2025]").
+    const mentions = (m: number) => (sentence.match(new RegExp(String.raw`\b(?:${MONTHS[m]}|${MONTHS[m].slice(0, 3)}\.?)(?![a-z])`, "gi")) ?? []).length;
+    if (stripped.some((m) => mentions(m) > 1)) {
+      held.push(sentence.trim());
+      continue;
+    }
+    changes.push(...local);
+    kept.push(out);
+  }
+  if (changes.length === 0 && held.length === 0) return null;
+  return { text: kept.join(" ").trim(), changes, quotes, held };
 }
 
 /** Does a value state a "Month YYYY"? (The facts worth checking.) */

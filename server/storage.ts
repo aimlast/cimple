@@ -29,7 +29,7 @@ import {
   integrations, integrationEmails, financialAnalyses, addbackVerifications,
   cimSectionOverrides, discrepancies,
   dealMembers, notifications, buyerApprovalRequests, buyerUsers, brokerBuyerContacts, dealOutreach,
-  dealDocumentRequirements,
+  dealDocumentRequirements, dealMedia,
   calculateBuyerProfileCompletion
 } from "@shared/schema";
 import { randomUUID } from "crypto";
@@ -37,7 +37,9 @@ import { db } from "./db";
 import { eq, ne, desc, sql, count, avg, sum, inArray, and } from "drizzle-orm";
 import { REVOKED_INVITE_STATUS } from "@shared/seller-invite-revocation";
 import { withApprovalRuleMark } from "@shared/cim-approvals";
+import { PUBLISHED_MODES } from "@shared/cim-published";
 import { resetTokenLookupValues } from "./buyer-auth/reset-token";
+import { deleteDealRows } from "./deals/delete-deal";
 
 // Buyer profile fields that feed calculateBuyerProfileCompletion — an update
 // touching any of these recomputes profileCompletionPct (see updateBuyerUser).
@@ -110,6 +112,13 @@ export interface IStorage {
   getCimSectionsByDeal(dealId: string): Promise<CimSection[]>;
   updateCimSection(id: string, updates: Partial<InsertCimSection>): Promise<CimSection | undefined>;
   deleteCimSectionsForDeal(dealId: string): Promise<void>;
+  /**
+   * Replace a deal's whole CIM in ONE transaction: the deal update (e.g. the
+   * buyer hold, off-live, cleared approvals, layout version), the old
+   * sections and their Blind/DD overrides out, the new sections in. A crash
+   * or DB error part-way leaves the old CIM exactly as it was.
+   */
+  replaceDealCim(dealId: string, sections: InsertCimSection[], dealUpdates: Partial<InsertDeal>): Promise<void>;
 
   // Buyer Q&A operations
   createBuyerQuestion(question: InsertBuyerQuestion): Promise<BuyerQuestion>;
@@ -142,7 +151,7 @@ export interface IStorage {
     industry: string,
     sectionType: string,
     layoutType: string,
-    metrics: { timeSeconds: number; scrollDepth?: number }
+    metrics: { timeSeconds: number; scrollDepth?: number; sampleCount?: number; completionRate?: number }
   ): Promise<void>;
 
   // FAQ operations
@@ -188,6 +197,13 @@ export interface IStorage {
   createDiscrepancy(data: InsertDiscrepancy): Promise<Discrepancy>;
   getDiscrepanciesByDeal(dealId: string): Promise<Discrepancy[]>;
   updateDiscrepancy(id: string, updates: Partial<InsertDiscrepancy>): Promise<Discrepancy | undefined>;
+  /**
+   * Writes only while the row's status is still one of `statuses` (checked in
+   * the same statement). Returns the updated row, or undefined when the row
+   * is gone or its status moved on — a broker's resolution or routing made
+   * while a long AI run held an older copy is never overwritten.
+   */
+  updateDiscrepancyIfStatus(id: string, statuses: readonly string[], updates: Partial<InsertDiscrepancy>): Promise<Discrepancy | undefined>;
   getResolvedDiscrepancies(dealId: string): Promise<Discrepancy[]>;
 
   // Deal members (team management)
@@ -422,6 +438,7 @@ export class MemStorage implements IStorage {
   async getCimSectionsByDeal(): Promise<CimSection[]> { return []; }
   async updateCimSection(): Promise<CimSection | undefined> { return undefined; }
   async deleteCimSectionsForDeal(): Promise<void> {}
+  async replaceDealCim(): Promise<void> { throw new Error("Use DbStorage"); }
   async createBuyerQuestion(): Promise<BuyerQuestion> { throw new Error("Use DbStorage"); }
   async getQuestionsByDeal(): Promise<BuyerQuestion[]> { return []; }
   async getPublishedQuestions(): Promise<BuyerQuestion[]> { return []; }
@@ -463,6 +480,7 @@ export class MemStorage implements IStorage {
   async createDiscrepancy(): Promise<Discrepancy> { throw new Error("Use DbStorage"); }
   async getDiscrepanciesByDeal(): Promise<Discrepancy[]> { return []; }
   async updateDiscrepancy(): Promise<Discrepancy | undefined> { return undefined; }
+  async updateDiscrepancyIfStatus(): Promise<Discrepancy | undefined> { return undefined; }
   async getResolvedDiscrepancies(): Promise<Discrepancy[]> { return []; }
 
   // Deal members stubs
@@ -593,8 +611,14 @@ export class DbStorage implements IStorage {
     return result;
   }
 
+  /** The deal and every row that carries its id (server/deals/delete-deal.ts). Files: deleteDealEverywhere. */
   async deleteDeal(id: string): Promise<void> {
-    await db.delete(deals).where(eq(deals.id, id));
+    // (Includes the kept copy of a live CIM — cim_published_snapshots — which
+    // has no foreign key and would outlive the deal with the CIM buyers were
+    // given, and the reading analytics — visits, rollups, served versions and
+    // the deal's anonymous benchmarks, which stop feeding other brokers'
+    // benchmarks and layout hints.)
+    await deleteDealRows(db, id);
   }
 
   // Document operations
@@ -622,6 +646,33 @@ export class DbStorage implements IStorage {
   async getDocumentsByDeal(dealId: string): Promise<Document[]> {
     const result = await db.select().from(documents).where(eq(documents.dealId, dealId)).orderBy(desc(documents.createdAt));
     return result;
+  }
+
+  /** Every stored file path any documents row points at (the orphan-file sweep). */
+  async getAllDocumentFileUrls(): Promise<Array<string | null>> {
+    const rows = await db.select({ fileUrl: documents.fileUrl }).from(documents);
+    return rows.map((r) => r.fileUrl);
+  }
+
+  /**
+   * Documents rows whose deal no longer exists (a deal delete used to take
+   * only the deals row). Never answers while the deals table is empty — a
+   * misread database must not look like every deal was deleted.
+   */
+  async getDocumentsOfDeletedDeals(): Promise<Document[]> {
+    return db.select().from(documents).where(sql`NOT EXISTS (SELECT 1 FROM ${deals} WHERE ${deals.id} = ${documents.dealId}) AND EXISTS (SELECT 1 FROM ${deals})`);
+  }
+
+  /** A deal's photo/video rows, deleted; returns what they were (their files are the caller's). */
+  async deleteDealMediaRows(dealId: string): Promise<Array<{ id: string; dealId: string; fileUrl: string }>> {
+    return db.delete(dealMedia).where(eq(dealMedia.dealId, dealId)).returning({ id: dealMedia.id, dealId: dealMedia.dealId, fileUrl: dealMedia.fileUrl });
+  }
+
+  /** The ids of deals that are gone but still have photo/video rows (same empty-table guard as above). */
+  async getDeletedDealIdsWithMedia(): Promise<string[]> {
+    const rows = await db.selectDistinct({ dealId: dealMedia.dealId }).from(dealMedia)
+      .where(sql`NOT EXISTS (SELECT 1 FROM ${deals} WHERE ${deals.id} = ${dealMedia.dealId}) AND EXISTS (SELECT 1 FROM ${deals})`);
+    return rows.map((r) => r.dealId);
   }
 
   async updateDocument(id: string, updates: Partial<InsertDocument>): Promise<Document | undefined> {
@@ -717,6 +768,31 @@ export class DbStorage implements IStorage {
       sql`(${buyerAccess.decision} = 'under_review' OR (${buyerAccess.decision} IS NULL AND ${buyerAccess.reminderStage} = 'none'))`,
     );
     return result.filter(b => !b.revokedAt && b.firstViewedAt);
+  }
+
+  /**
+   * Records the NDA signature only if this link has not signed yet — one
+   * atomic update, so two concurrent signings can't both write (the second
+   * gets undefined). A signature is never overwritten.
+   */
+  async recordBuyerNdaSignature(id: string, updates: Partial<InsertBuyerAccess>): Promise<BuyerAccess | undefined> {
+    const result = await db.update(buyerAccess)
+      .set({ ...updates, ndaSigned: true } as any)
+      .where(and(eq(buyerAccess.id, id), sql`${buyerAccess.ndaSigned} IS NOT TRUE`))
+      .returning();
+    return result[0];
+  }
+
+  /**
+   * Marks the NDA answers on this link as read into matching criteria (the
+   * background read succeeded for exactly these words). Merged into
+   * nda_profile by the database, so the signature record beside it is never
+   * rewritten.
+   */
+  async markNdaCriteriaRead(id: string, readOf: string): Promise<void> {
+    await db.update(buyerAccess)
+      .set({ ndaProfile: sql`coalesce(${buyerAccess.ndaProfile}, '{}'::jsonb) || jsonb_build_object('criteriaReadOf', ${readOf}::text)` } as any)
+      .where(eq(buyerAccess.id, id));
   }
 
   async updateBuyerAccess(id: string, updates: Partial<InsertBuyerAccess>): Promise<BuyerAccess | undefined> {
@@ -903,6 +979,9 @@ export class DbStorage implements IStorage {
   }
 
   async deleteBuyerAccess(id: string): Promise<void> {
+    // Reading analytics of this link go with it.
+    await db.execute(sql`DELETE FROM reading_rollups WHERE buyer_access_id = ${id}`);
+    await db.execute(sql`DELETE FROM buyer_visits WHERE buyer_access_id = ${id}`);
     await db.delete(buyerAccess).where(eq(buyerAccess.id, id));
   }
 
@@ -933,6 +1012,20 @@ export class DbStorage implements IStorage {
 
   async deleteCimSectionsForDeal(dealId: string): Promise<void> {
     await db.delete(cimSections).where(eq(cimSections.dealId, dealId));
+  }
+
+  async replaceDealCim(dealId: string, sections: InsertCimSection[], dealUpdates: Partial<InsertDeal>): Promise<void> {
+    await db.transaction(async (tx) => {
+      // First, so a failed hold write changes nothing (and it commits with the sections).
+      await tx.update(deals).set({ ...dealUpdates, updatedAt: new Date() }).where(eq(deals.id, dealId));
+      // Blind/DD versions and the approved (published*) versions on record were of the sections being replaced.
+      await tx.delete(cimSectionOverrides).where(and(eq(cimSectionOverrides.dealId, dealId), inArray(cimSectionOverrides.mode, ["blind", "dd", ...PUBLISHED_MODES])));
+      await tx.delete(cimSections).where(eq(cimSections.dealId, dealId));
+      if (sections.length > 0) {
+        // Under the per-section approval rule from the start (shared/cim-approvals).
+        await tx.insert(cimSections).values(sections.map((s) => ({ ...s, contentHistory: withApprovalRuleMark(s.contentHistory) })));
+      }
+    });
   }
 
   async getBrandingByBroker(brokerId: string): Promise<BrandingSettings | undefined> {
@@ -1015,49 +1108,70 @@ export class DbStorage implements IStorage {
       .orderBy(desc(engagementInsights.avgTimeSpentSeconds));
   }
 
+  /**
+   * Atomic per (industry, sectionType, layoutType): the table has no unique
+   * key, so a transaction-scoped advisory lock serialises writers of one
+   * row — concurrent refreshes can't lose an update or insert a duplicate.
+   * With `sampleCount` the metrics are ABSOLUTE (the learning loop recomputes
+   * them from reading_benchmarks); without it, the legacy rolling average.
+   */
   async upsertEngagementInsight(
     industry: string,
     sectionType: string,
     layoutType: string,
-    metrics: { timeSeconds: number; scrollDepth?: number }
+    metrics: { timeSeconds: number; scrollDepth?: number; sampleCount?: number; completionRate?: number }
   ): Promise<void> {
-    // Query-then-update: no unique constraint, use rolling weighted average
-    const existing = await db.select()
-      .from(engagementInsights)
-      .where(
-        sql`${engagementInsights.industry} = ${industry}
-          AND ${engagementInsights.sectionType} = ${sectionType}
-          AND ${engagementInsights.layoutType} = ${layoutType}`
-      )
-      .limit(1);
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`engagement_insight|${industry}|${sectionType}|${layoutType}`}))`);
+      const existing = await tx.select()
+        .from(engagementInsights)
+        .where(
+          sql`${engagementInsights.industry} = ${industry}
+            AND ${engagementInsights.sectionType} = ${sectionType}
+            AND ${engagementInsights.layoutType} = ${layoutType}`
+        )
+        .limit(1);
 
-    if (existing.length > 0) {
-      const row = existing[0];
-      const n = (row.sampleCount ?? 0) + 1;
-      const newAvgTime = Math.round(((row.avgTimeSpentSeconds ?? 0) * (n - 1) + metrics.timeSeconds) / n);
-      const newAvgScroll = metrics.scrollDepth != null
-        ? Math.round(((row.avgScrollDepthPercent ?? 0) * (n - 1) + metrics.scrollDepth) / n)
-        : row.avgScrollDepthPercent;
-      await db.update(engagementInsights)
-        .set({
-          avgTimeSpentSeconds: newAvgTime,
-          avgScrollDepthPercent: newAvgScroll ?? 0,
-          sampleCount: n,
+      if (metrics.sampleCount != null) {
+        const values = {
+          avgTimeSpentSeconds: Math.round(metrics.timeSeconds),
+          completionRate: Math.round(metrics.completionRate ?? 0),
+          sampleCount: metrics.sampleCount,
           updatedAt: new Date(),
-        })
-        .where(eq(engagementInsights.id, row.id));
-    } else {
-      await db.insert(engagementInsights).values({
-        industry,
-        sectionType,
-        layoutType,
-        avgTimeSpentSeconds: metrics.timeSeconds,
-        avgScrollDepthPercent: metrics.scrollDepth ?? 0,
-        completionRate: 0,
-        returnVisitRate: 0,
-        sampleCount: 1,
-      });
-    }
+        };
+        if (existing.length > 0) await tx.update(engagementInsights).set(values).where(eq(engagementInsights.id, existing[0].id));
+        else await tx.insert(engagementInsights).values({ industry, sectionType, layoutType, avgScrollDepthPercent: 0, returnVisitRate: 0, ...values });
+        return;
+      }
+
+      if (existing.length > 0) {
+        const row = existing[0];
+        const n = (row.sampleCount ?? 0) + 1;
+        const newAvgTime = Math.round(((row.avgTimeSpentSeconds ?? 0) * (n - 1) + metrics.timeSeconds) / n);
+        const newAvgScroll = metrics.scrollDepth != null
+          ? Math.round(((row.avgScrollDepthPercent ?? 0) * (n - 1) + metrics.scrollDepth) / n)
+          : row.avgScrollDepthPercent;
+        await tx.update(engagementInsights)
+          .set({
+            avgTimeSpentSeconds: newAvgTime,
+            avgScrollDepthPercent: newAvgScroll ?? 0,
+            sampleCount: n,
+            updatedAt: new Date(),
+          })
+          .where(eq(engagementInsights.id, row.id));
+      } else {
+        await tx.insert(engagementInsights).values({
+          industry,
+          sectionType,
+          layoutType,
+          avgTimeSpentSeconds: metrics.timeSeconds,
+          avgScrollDepthPercent: metrics.scrollDepth ?? 0,
+          completionRate: 0,
+          returnVisitRate: 0,
+          sampleCount: 1,
+        });
+      }
+    });
   }
 
   // ── Integration operations ──
@@ -1219,6 +1333,15 @@ export class DbStorage implements IStorage {
     const result = await db.update(discrepancies)
       .set(updates)
       .where(eq(discrepancies.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async updateDiscrepancyIfStatus(id: string, statuses: readonly string[], updates: Partial<InsertDiscrepancy>): Promise<Discrepancy | undefined> {
+    if (statuses.length === 0) return undefined;
+    const result = await db.update(discrepancies)
+      .set(updates)
+      .where(and(eq(discrepancies.id, id), inArray(discrepancies.status, [...statuses])))
       .returning();
     return result[0];
   }
@@ -1400,7 +1523,7 @@ export class DbStorage implements IStorage {
     const result = await db.select().from(buyerUsers).where(
       sql`(LOWER(${buyerUsers.email}) LIKE ${`%${q}%`} OR LOWER(${buyerUsers.name}) LIKE ${`%${q}%`})
         AND (
-          ${buyerUsers.id} IN (SELECT ${brokerBuyerContacts.buyerUserId} FROM ${brokerBuyerContacts} WHERE ${brokerBuyerContacts.brokerId} = ${brokerId})
+          ${buyerUsers.id} IN (SELECT ${brokerBuyerContacts.buyerUserId} FROM ${brokerBuyerContacts} WHERE ${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.removedAt} IS NULL)
           OR ${buyerUsers.id} IN (SELECT ${buyerAccess.buyerUserId} FROM ${buyerAccess} JOIN ${deals} ON ${deals.id} = ${buyerAccess.dealId} WHERE ${deals.brokerId} = ${brokerId} AND ${buyerAccess.buyerUserId} IS NOT NULL)
           OR LOWER(${buyerUsers.email}) IN (SELECT LOWER(${buyerAccess.buyerEmail}) FROM ${buyerAccess} JOIN ${deals} ON ${deals.id} = ${buyerAccess.dealId} WHERE ${deals.brokerId} = ${brokerId})
         )`
@@ -1465,15 +1588,36 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  /** The broker's contact row for a buyer — only while the buyer is on the list (not removed). */
   async getBrokerBuyerContact(brokerId: string, buyerUserId: string): Promise<BrokerBuyerContact | undefined> {
     const result = await db.select().from(brokerBuyerContacts).where(
-      sql`${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.buyerUserId} = ${buyerUserId}`
+      sql`${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.buyerUserId} = ${buyerUserId} AND ${brokerBuyerContacts.removedAt} IS NULL`
     );
     return result[0];
   }
 
+  /** The row the broker removed this buyer with (soft delete), if any. */
+  async getRemovedBrokerBuyerContact(brokerId: string, buyerUserId: string): Promise<BrokerBuyerContact | undefined> {
+    const result = await db.select().from(brokerBuyerContacts).where(
+      sql`${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.buyerUserId} = ${buyerUserId} AND ${brokerBuyerContacts.removedAt} IS NOT NULL`
+    ).orderBy(desc(brokerBuyerContacts.removedAt));
+    return result[0];
+  }
+
+  /** Every buyer this broker removed from their list (the CRM buyer sync skips them). */
+  async getRemovedBrokerBuyerContacts(brokerId: string): Promise<BrokerBuyerContact[]> {
+    // A buyer who is back on the list (added back, re-imported) isn't
+    // "removed" because an older removal row survived a race.
+    return db.select().from(brokerBuyerContacts).where(
+      sql`${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.removedAt} IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM broker_buyer_contacts a WHERE a.broker_id = broker_buyer_contacts.broker_id AND a.buyer_user_id = broker_buyer_contacts.buyer_user_id AND a.removed_at IS NULL)`
+    );
+  }
+
   async getBrokerBuyerContacts(brokerId: string): Promise<BrokerBuyerContact[]> {
-    return db.select().from(brokerBuyerContacts).where(eq(brokerBuyerContacts.brokerId, brokerId));
+    return db.select().from(brokerBuyerContacts).where(
+      sql`${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.removedAt} IS NULL`
+    );
   }
 
   async upsertBrokerBuyerContact(data: InsertBrokerBuyerContact): Promise<BrokerBuyerContact> {
@@ -1482,6 +1626,11 @@ export class DbStorage implements IStorage {
     // stays idempotent with manual additions and CSV imports.
     const existing = await this.getBrokerBuyerContact(data.brokerId, data.buyerUserId);
     if (existing) return existing;
+    // A buyer the broker removed and is now adding again (by hand, a CSV,
+    // access to a deal, an NDA they signed): their row comes back with the
+    // broker's own notes and edits.
+    const removed = await this.getRemovedBrokerBuyerContact(data.brokerId, data.buyerUserId);
+    if (removed) return (await this.updateBrokerBuyerContact(removed.id, { removedAt: null })) ?? removed;
     return this.createBrokerBuyerContact(data);
   }
 
@@ -1548,8 +1697,8 @@ export class DbStorage implements IStorage {
       }
     }
 
-    // Step 3: manually added contacts (may include buyers with zero deal access yet)
-    const contacts = await db.select().from(brokerBuyerContacts).where(eq(brokerBuyerContacts.brokerId, brokerId));
+    // Step 3: manually added contacts (may include buyers with zero deal access yet) — never ones the broker removed
+    const contacts = await this.getBrokerBuyerContacts(brokerId);
     const contactMap = new Map<string, BrokerBuyerContact>();
     for (const c of contacts) {
       contactMap.set(c.buyerUserId, c);

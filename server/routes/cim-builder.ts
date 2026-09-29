@@ -11,7 +11,7 @@
  */
 import type { Express, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { cimSections, type CimGenerationStatus, type CimSection, type CimSectionAiTask, type Deal } from "@shared/schema";
@@ -37,7 +37,8 @@ import {
   redoLeakedBlind,
   dealHasBlindVersion,
 } from "../cim/blind-sync";
-import { buildBuyerCim } from "@shared/cim-buyer-view";
+import { buildBuyerCim, buyersReadWorkingCopy } from "@shared/cim-buyer-view";
+import { discrepancyBlocksCim } from "@shared/discrepancy-gate";
 import { factAmounts, withStatedChartTotal } from "@shared/cim-chart-values";
 import { codenameProblem, renameDealCodename } from "../cim/codenames";
 import {
@@ -57,7 +58,7 @@ import {
   startSectionTask,
 } from "../cim/section-tasks";
 import { REWRITE_TONES } from "../cim/layout-engine";
-import { refreshSectionDd } from "../cim/dd-enrichment";
+import { refreshSectionDd, ddRunning, lastDdRun, DdUnavailableError } from "../cim/dd-enrichment";
 import { cimFinancialsFor, StaleFinancialAnalysisError } from "../cim/cim-financials";
 
 /**
@@ -78,13 +79,16 @@ async function staleFinancialsBlock(dealId: string): Promise<string | null> {
 import { dealStreetAddress } from "@shared/cim-media";
 import { lastGenerationFacts, openBuyerLinks } from "../cim/generation-jobs";
 import { cimStaleness, writerFactsSnapshot } from "../cim/cim-staleness";
+import { heldPrivateStateForDeal, servedHeldPrivateForDeal } from "../cim/held-private";
 import { backfillLegacyLiveApprovals, withdrawApprovalsAfterChange } from "../cim/approvals";
+import { keepPublishedBeforeChange } from "../cim/published-versions";
+import { listedAskingPrice } from "../information/deal-mirror";
 import { historySnapshots } from "@shared/cim-approvals";
 
 const NO_AI_MEDIA = "The AI can't choose photos or videos — add them yourself in the section's editor.";
 
-/** Deals whose out-of-date DD sections are being refreshed right now. */
-const ddRefreshRunning = new Set<string>();
+/** Deals with a DD run in progress — shared with the CIM tab's full DD run (dd-enrichment). */
+const ddRefreshRunning = ddRunning;
 
 /** Context for a blank section's starting data (a map starts at the deal's address). */
 function blankContext(deal: Deal, title: string | null) {
@@ -100,13 +104,25 @@ const aiLimiter = rateLimit({
   message: { error: "Too many requests. Please slow down and try again shortly." },
 });
 
-/** Critical discrepancies block every AI step that writes CIM content. */
-async function discrepancyBlock(dealId: string): Promise<string | null> {
-  const open = (await storage.getDiscrepanciesByDeal(dealId)).filter(
-    (d) => d.severity === "critical" && (d.status === "open" || d.status === "seller_responded"),
-  );
-  if (open.length === 0) return null;
-  return `${open.length} critical discrepanc${open.length === 1 ? "y" : "ies"} must be resolved before the AI writes CIM content`;
+/**
+ * Critical discrepancies block every AI step that writes CIM content — the
+ * one rule every gate uses (shared/discrepancy-gate.ts, also the builder's
+ * useAiGate): open or awaiting review, and a critical routed to a seller who
+ * had already finished the interview, until they answer.
+ */
+async function discrepancyBlock(deal: Pick<Deal, "id" | "interviewCompleted">): Promise<string | null> {
+  const blocking = (await storage.getDiscrepanciesByDeal(deal.id)).filter((d) => discrepancyBlocksCim(d, deal.interviewCompleted));
+  return discrepancyBlockMessage(blocking);
+}
+
+/** The 409 text for the rows discrepancyBlocksCim picked (null = nothing blocks). Pure. */
+export function discrepancyBlockMessage(blocking: Array<{ status: string }>): string | null {
+  if (blocking.length === 0) return null;
+  const withSeller = blocking.filter((d) => d.status === "ask_seller").length;
+  if (withSeller === blocking.length) {
+    return `Waiting on the seller to answer ${withSeller} critical question${withSeller === 1 ? "" : "s"} you sent them — or resolve ${withSeller === 1 ? "it" : "them"} on the Overview tab — before the AI writes CIM content`;
+  }
+  return `${blocking.length} critical discrepanc${blocking.length === 1 ? "y" : "ies"} must be resolved before the AI writes CIM content`;
 }
 
 /** Load a section the session broker owns (via its deal), or answer 404. */
@@ -222,12 +238,28 @@ export function registerCimBuilderRoutes(app: Express): void {
           })
         : null;
       const staleBy = new Map((staleness?.sections ?? []).map((x) => [x.id, x.facts]));
+      // Sections that still state a private staff matter now held back (a CIM
+      // written before the screen, or words typed in) — regenerate or edit.
+      let privateShowing: Map<string, string[]> = new Map();
+      // …and what buyers of a live CIM are still SERVED that states one (the
+      // kept copy during an update's review, or a changed section's approved
+      // version) — the draft scan can't see it.
+      let privateServed: { source: string | null; showing: Array<{ id: string; title: string; descriptions: string[] }> } = { source: null, showing: [] };
+      try {
+        const held = heldPrivateStateForDeal(deal, sections);
+        privateShowing = new Map(held.showing.map((x) => [x.id, x.descriptions]));
+        privateServed = await servedHeldPrivateForDeal(deal, sections, held.items);
+      } catch (err) {
+        console.warn("[cim-builder] held-private scan failed:", err);
+      }
       // The same chart totals buyers get (a chart written before it carried its stated total).
       const amounts = factAmounts(deal.extractedInfo);
       const rows = sections.map((s) => ({
         ...toBuilderSection(withStatedChartTotal(s, amounts), blindGenerated, withOverride.has(s.id), { generated: ddGenerated, has: withDd.has(s.id) }),
         /** Changed facts whose old value this section still shows. */
         factsChanged: staleBy.get(s.id) ?? [],
+        /** Private staff matters (held back from the CIM) this section still states. */
+        privateStaff: privateShowing.get(s.id) ?? [],
       }));
       const generation = deal.cimGeneration as CimGenerationStatus | null | undefined;
       const active = buyers.filter((b) => !b.revokedAt);
@@ -253,11 +285,19 @@ export function registerCimBuilderRoutes(app: Express): void {
           /** Sections whose DD version is out of date or missing — DD buyers see the named content for them. */
           outOfDate: rows.filter((r) => r.ddStatus === "stale" || r.ddStatus === "missing").length,
           running: ddRefreshRunning.has(deal.id),
+          /** The last full DD run: what couldn't be written, or why nothing changed. */
+          lastRun: lastDdRun(deal.id),
         },
         // `total` = links that can open the CIM now (not revoked, not expired):
         // the count the regenerate dialogs quote and the hold is decided on.
         buyers: { total: openBuyerLinks(buyers), byLevel },
-        deal: { isLive: !!deal.isLive, cimLayoutGeneratedAt: deal.cimLayoutGeneratedAt ?? null },
+        deal: {
+          isLive: !!deal.isLive,
+          cimLayoutGeneratedAt: deal.cimLayoutGeneratedAt ?? null,
+          // The price buyers see on the cover and key numbers (the view room
+          // applies it at view time) — the previews show the same.
+          listedAskingPrice: listedAskingPrice(deal),
+        },
         // What the broker must look at before publishing: the last run's
         // notes, placeholders, a hold from buyers, facts changed since.
         review: {
@@ -265,6 +305,12 @@ export function registerCimBuilderRoutes(app: Express): void {
           warnings: generation?.status === "done" ? generation.warnings ?? [] : [],
           warningsAt: generation?.status === "done" ? generation.finishedAt ?? null : null,
           placeholders: rows.filter((r) => r.placeholder).length,
+          /** Sections still stating a private staff matter that is now held back. */
+          privateStaffSections: rows.filter((r) => r.privateStaff.length > 0).length,
+          /** Sections buyers are still served (not the draft) that state a held staff matter. */
+          privateStaffServed: privateServed.showing.map((s) => ({ id: s.id, title: s.title, descriptions: s.descriptions })),
+          /** Where that served text comes from: "kept_copy" | "approved_version". */
+          privateStaffServedFrom: privateServed.showing.length > 0 ? privateServed.source : null,
           facts: staleness && (staleness.changes.length > 0 || staleness.notesChanged)
             ? {
                 changes: staleness.changes.slice(0, 12).map((c) => ({ label: c.label, before: clip(c.before), after: clip(c.after) })),
@@ -294,7 +340,7 @@ export function registerCimBuilderRoutes(app: Express): void {
       if (mode === "ai" && !canAiWriteLayout(body.layoutType)) return res.status(400).json({ error: NO_AI_MEDIA });
       const brief = typeof body.brief === "string" ? body.brief.trim().slice(0, 1500) : "";
       if (mode === "ai") {
-        const blocked = await discrepancyBlock(deal.id);
+        const blocked = await discrepancyBlock(deal);
         if (blocked) return res.status(409).json({ error: blocked });
       }
       const position = body.position === "start"
@@ -315,8 +361,9 @@ export function registerCimBuilderRoutes(app: Express): void {
             tags: [] as any,
             brokerApproved: false,
             // A live CIM doesn't show a half-finished section: it starts
-            // hidden and the broker shows it when it's ready.
-            isVisible: !deal.isLive,
+            // hidden and the broker shows it when it's ready. (While buyers
+            // read the kept copy of an update under review, it's draft.)
+            isVisible: !buyersReadWorkingCopy(deal),
             accessTier: body.accessTier === "full" ? "full" : "teaser",
             blindStaleAt: new Date(),
           },
@@ -331,10 +378,10 @@ export function registerCimBuilderRoutes(app: Express): void {
 
       if (mode === "ai") {
         const task = await startSectionTask(created, deal, "write", { brief: brief || undefined });
-        return res.status(202).json({ section: { ...created, aiTask: task }, task, startedHidden: !!deal.isLive });
+        return res.status(202).json({ section: { ...created, aiTask: task }, task, startedHidden: buyersReadWorkingCopy(deal) });
       }
       scheduleBlindRefresh(deal.id);
-      res.status(201).json({ section: created, startedHidden: !!deal.isLive });
+      res.status(201).json({ section: created, startedHidden: buyersReadWorkingCopy(deal) });
     } catch (err) {
       console.error("[cim-builder] add section failed:", err);
       res.status(500).json({ error: "Couldn't add the section" });
@@ -362,8 +409,9 @@ export function registerCimBuilderRoutes(app: Express): void {
     try {
       const owned = await ownedSection(req, res);
       if (!owned) return;
-      const copy = await duplicateSection(owned.section, { hidden: !!owned.deal.isLive });
-      res.status(201).json({ section: copy, startedHidden: !!owned.deal.isLive });
+      const hidden = buyersReadWorkingCopy(owned.deal);
+      const copy = await duplicateSection(owned.section, { hidden });
+      res.status(201).json({ section: copy, startedHidden: hidden });
     } catch (err) {
       console.error("[cim-builder] duplicate failed:", err);
       res.status(500).json({ error: "Couldn't duplicate the section" });
@@ -384,6 +432,9 @@ export function registerCimBuilderRoutes(app: Express): void {
       const how = req.body?.convert === "ai" && canAiWriteLayout(layoutType) ? "ai" : "blank";
 
       if (sameLayoutFamily(section.layoutType, layoutType) || how === "blank") {
+        // On a live CIM buyers keep the approved version (a blank layout's
+        // sample data never reaches them) until the broker approves this.
+        await keepPublishedBeforeChange(section, deal);
         const [updated] = await db
           .update(cimSections)
           .set({
@@ -404,7 +455,7 @@ export function registerCimBuilderRoutes(app: Express): void {
         return res.json({ section: withStaleStamps(updated, at) });
       }
 
-      const blocked = await discrepancyBlock(deal.id);
+      const blocked = await discrepancyBlock(deal);
       if (blocked) return res.status(409).json({ error: blocked });
       const task = await startSectionTask(section, deal, "convert", { layoutType });
       res.status(202).json({ task });
@@ -419,7 +470,7 @@ export function registerCimBuilderRoutes(app: Express): void {
       const owned = await ownedSection(req, res);
       if (!owned) return;
       if (!canAiWriteLayout(owned.section.layoutType)) return res.status(400).json({ error: NO_AI_MEDIA });
-      const blocked = await discrepancyBlock(owned.deal.id);
+      const blocked = await discrepancyBlock(owned.deal);
       if (blocked) return res.status(409).json({ error: blocked });
       const brief = typeof req.body?.brief === "string" ? req.body.brief.trim().slice(0, 1500) : "";
       // A section whose first write failed is retried as a write.
@@ -449,7 +500,7 @@ export function registerCimBuilderRoutes(app: Express): void {
       if (!instructions && tones.length === 0 && length === "same") {
         return res.status(400).json({ error: "Tell the AI what to change — type an instruction, or pick a tone or length." });
       }
-      const blocked = await discrepancyBlock(owned.deal.id);
+      const blocked = await discrepancyBlock(owned.deal);
       if (blocked) return res.status(409).json({ error: blocked });
       const task = await startSectionTask(owned.section, owned.deal, "rewrite", { instructions, tones, length });
       res.status(202).json({ task });
@@ -529,7 +580,7 @@ export function registerCimBuilderRoutes(app: Express): void {
         return res.status(400).json({ error: "This CIM has no due-diligence version yet — generate it first." });
       }
       if (isTaskRunning(section.id)) return res.status(409).json({ error: "The AI is working on this section — wait for it to finish." });
-      const blocked = (await discrepancyBlock(deal.id)) ?? (await staleFinancialsBlock(deal.id));
+      const blocked = (await discrepancyBlock(deal)) ?? (await staleFinancialsBlock(deal.id));
       if (blocked) return res.status(409).json({ error: blocked });
       const { warning } = await refreshSectionDd(section, deal);
       res.json({ success: true, warning: warning ?? null });
@@ -537,6 +588,7 @@ export function registerCimBuilderRoutes(app: Express): void {
       if (err?.message === "changed") {
         return res.status(409).json({ error: "The section changed while its DD version was being written. Refresh it again." });
       }
+      if (err instanceof DdUnavailableError) return res.status(503).json({ error: err.message });
       if (err instanceof StaleFinancialAnalysisError) return res.status(409).json({ error: err.message });
       console.error("[cim-builder] DD refresh failed:", err);
       res.status(500).json({ error: "Couldn't refresh the DD version" });
@@ -553,7 +605,7 @@ export function registerCimBuilderRoutes(app: Express): void {
         storage.getCimSectionOverrides(deal.id, "dd"),
       ]);
       if (ddOverrides.length === 0) return res.status(400).json({ error: "This CIM has no due-diligence version yet — generate it first." });
-      const blocked = (await discrepancyBlock(deal.id)) ?? (await staleFinancialsBlock(deal.id));
+      const blocked = (await discrepancyBlock(deal)) ?? (await staleFinancialsBlock(deal.id));
       if (blocked) return res.status(409).json({ error: blocked });
       const withDd = new Set(ddOverrides.map((o) => o.cimSectionId));
       const todo = sections.filter((s) => {
@@ -626,10 +678,14 @@ export function registerCimBuilderRoutes(app: Express): void {
       if (!Array.isArray(ids) || ids.some((i) => typeof i !== "string")) return res.status(400).json({ error: "sectionIds must be a list" });
       let changed = 0;
       for (const id of ids as string[]) {
+        // A tier change is a change to what buyers read (a teaser stops
+        // seeing the section): updatedAt moves, as it does through PATCH, so
+        // an unreviewed AI answer drawn from it is withdrawn (qa/cim-context
+        // answerStillHolds). A section already at that tier is left alone.
         const r = await db
           .update(cimSections)
-          .set({ accessTier: tier })
-          .where(and(eq(cimSections.id, id), eq(cimSections.dealId, deal.id)))
+          .set({ accessTier: tier, updatedAt: new Date() })
+          .where(and(eq(cimSections.id, id), eq(cimSections.dealId, deal.id), sql`${cimSections.accessTier} is distinct from ${tier}`))
           .returning({ id: cimSections.id });
         changed += r.length;
       }

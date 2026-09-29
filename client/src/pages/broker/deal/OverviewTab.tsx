@@ -18,6 +18,13 @@ import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
 import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadinessCard";
 import { InterviewOutlineCard } from "@/components/deal/InterviewOutlineCard";
 import { ReopenInterviewButton } from "@/components/deal/ReopenInterviewButton";
+import { OpenInterviewItemsCard } from "@/components/deal/OpenInterviewItemsCard";
+import { SellerChecklistCard } from "@/components/deal/SellerChecklistCard";
+import { SellerReviewControls } from "@/components/deal/SellerReviewControls";
+import { sellerIntakeState } from "@shared/seller-portal";
+import { discrepancyBlocksCim, routedButNeverAsked } from "@shared/discrepancy-gate";
+import { discrepancyFieldLabel } from "@shared/discrepancy-sides";
+import { NeverAskedFollowUpsNotice } from "@/components/deal/NeverAskedFollowUps";
 import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
 import { ChecklistStepTitle } from "@/components/deal/ChecklistStepTitle";
 import { AddSourceDialog, type AddSourcePreset } from "@/components/information/AddSourceDialog";
@@ -83,13 +90,14 @@ import {
 } from "lucide-react";
 import { PHASES, getPhaseIndex } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
-import { CimSummaryCard, useBuilderState } from "@/components/cim-builder/CimSummaryCard";
-import { regenerateBuyerImpact } from "@shared/cim-generation-warnings";
+import { CimStaleNotice, CimSummaryCard, useBuilderState } from "@/components/cim-builder/CimSummaryCard";
+import { regenerateBuyerImpact, reviewingUpdate } from "@shared/cim-generation-warnings";
+import { PublishedVersionBanner } from "@/components/deal/PublishedVersionBanner";
 import { publishReadiness, sectionsAwaitingApproval } from "@shared/cim-approvals";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { ReadyToBuildCta } from "@/components/deal/ReadyToBuildCta";
 import { DiscrepancyCheckNotice } from "@/components/deal/DiscrepancyCheckNotice";
-import { DealAnalyticsWidget } from "@/components/deal/DealAnalyticsWidget";
+import { BuyerPulseCard } from "@/components/engagement/BuyerPulseCard";
 import type {
   Deal,
   SellerInvite,
@@ -610,10 +618,15 @@ Signed electronically via the Cimple platform.`;
     },
   });
 
+  // Onboarding is complete when the seller saves the last intake page (Key
+  // People) — page 1 alone used to read as "complete" (shared/seller-portal).
+  const intake = sellerIntakeState(deal);
   const inviteStatus = !activeInvite
     ? null
-    : deal.questionnaireData
+    : intake.status === "complete" && deal.questionnaireData
       ? "Seller active — onboarding complete"
+      : intake.status === "in_progress"
+        ? `Seller started onboarding — ${intake.pagesDone} of ${intake.pagesTotal} pages saved`
       : activeInvite.acceptedAt
         ? "Link opened — seller in progress"
         : activeInvite.sentAt
@@ -640,7 +653,7 @@ Signed electronically via the Cimple platform.`;
 
   const sellerLinkButtons = activeInvite && (
     <div className="flex flex-wrap items-center gap-2 mt-2">
-      {!deal.questionnaireData && (
+      {intake.status !== "complete" && (
         <Button
           size="sm"
           variant="outline"
@@ -745,13 +758,15 @@ Signed electronically via the Cimple platform.`;
     {
       key: "sq",
       label: "Seller Questionnaire",
-      desc: deal.questionnaireData
-        ? "Completed by the seller"
-        : deal.sqCompleted
-          ? "Received outside Cimple — marked by you"
-          : "The seller fills this in from their invite link — it completes automatically.",
+      desc: deal.sqCompleted && !deal.questionnaireData
+        ? "Received outside Cimple — marked by you"
+        : intake.status === "complete"
+          ? "Completed by the seller"
+          : intake.status === "in_progress"
+            ? `The seller has started — ${intake.pagesDone} of ${intake.pagesTotal} pages saved. It completes when they save Key People.`
+            : "The seller fills this in from their invite link — it completes automatically.",
       who: deal.sqCompleted && !deal.questionnaireData ? "broker" : "seller",
-      done: !!deal.questionnaireData || !!deal.sqCompleted,
+      done: intake.status === "complete",
       testId: "button-mark-questionnaire-complete",
       secondaryAction: () => update.mutate({ sqCompleted: true }),
       secondaryLabel: "Mark as Received (collected outside Cimple)",
@@ -1109,13 +1124,15 @@ function Phase2Center() {
   const [reviewingDiscrepancies, setReviewingDiscrepancies] = useState(false);
   // The "next step" card must not say "Ready to build" while a critical
   // discrepancy blocks generation (same rule as the server and Phase 3).
-  const { criticalUnresolved, discrepanciesError } = useDiscrepancyGate(dealId);
+  const { criticalUnresolved, waitingOnSeller, discrepanciesError } = useDiscrepancyGate(dealId);
 
   const { data: invites = [], error: invitesError } = useInvites(dealId);
   const activeInvite = pickPrimaryInvite(invites);
   const inviteUrl = activeInvite
     ? `${window.location.origin}/seller/${activeInvite.token}`
     : null;
+  const intake = sellerIntakeState(deal);
+  const intakeDone = intake.status === "complete";
 
   // Advance Platform Intake → Content Creation. Without this, a broker who
   // finished the interview had no visible way to reach the Generate CIM step
@@ -1194,22 +1211,26 @@ function Phase2Center() {
         </p>
       </div>
 
-      {/* Onboarding */}
+      {/* Onboarding — complete once the last intake page (Key People) is saved */}
       <div
-        className={`rounded-lg border p-4 ${deal.questionnaireData ? "border-success/30 bg-success-muted/40" : "border-border bg-card"}`}
+        className={`rounded-lg border p-4 ${intakeDone ? "border-success/30 bg-success-muted/40" : "border-border bg-card"}`}
       >
         <div className="flex items-center gap-3">
-          {deal.questionnaireData ? (
+          {intakeDone ? (
             <CheckCircle2 className="h-[1.125rem] w-[1.125rem] text-success shrink-0" />
           ) : (
             <Circle className="h-[1.125rem] w-[1.125rem] text-muted-foreground/30 shrink-0" />
           )}
           <div className="flex-1 min-w-0">
             {/* Same rule as Phase 1: a finished step isn't waiting on anyone. */}
-            <ChecklistStepTitle label="Seller onboarding" done={!!deal.questionnaireData} who="seller" />
+            <ChecklistStepTitle label="Seller onboarding" done={intakeDone} who="seller" />
             <p className="text-xs text-muted-foreground">
-              {deal.questionnaireData
-                ? "Systems, key people, business basics — completed by the seller"
+              {intakeDone
+                ? deal.sqCompleted && !deal.questionnaireData
+                  ? "Questionnaire received outside Cimple — marked by you"
+                  : "Systems, key people, business basics — completed by the seller"
+                : intake.status === "in_progress"
+                  ? `Seller started onboarding — ${intake.pagesDone} of ${intake.pagesTotal} pages saved (business basics, systems, key people).`
                 : activeInvite
                   ? activeInvite.acceptedAt
                     ? "Seller opened their link and is working through onboarding."
@@ -1218,7 +1239,7 @@ function Phase2Center() {
                     ? "Couldn't load the seller's invite status — retry from Phase 1."
                     : "No seller invited yet — invite them from Phase 1 to unlock onboarding."}
             </p>
-            {activeInvite && !deal.questionnaireData && (
+            {activeInvite && !intakeDone && (
               <div className="flex flex-wrap items-center gap-2 mt-2">
                 <Button
                   size="sm"
@@ -1259,7 +1280,9 @@ function Phase2Center() {
             <p className="text-xs text-muted-foreground mt-0.5">
               {isScraped
                 ? `${plural(scrapedFieldCount, "field")} found via ${scrapeSource === "website_and_internet" ? "website + internet search" : scrapeSource === "internet_search" ? "internet search" : "website"} on ${scrapedDate} — AI will verify with seller during interview`
-                : "Pulls publicly available info from the business website or internet before the interview starts."}
+                : deal.websiteUrl && !(deal as any).demoKey
+                  ? "Cimple reads the website on file automatically (it may be running now). Search here to run it again, or with a different address."
+                  : "Pulls publicly available info from the business website or internet before the interview starts."}
             </p>
             {!isScraped && (
               <div className="mt-3 flex gap-2">
@@ -1455,6 +1478,9 @@ function Phase2Center() {
         </div>
       </div>
 
+      {/* What the interview promised to follow up on */}
+      <OpenInterviewItemsCard dealId={dealId} />
+
       {/* Advance to Content Creation — the clear next step once the interview
           is done. Previously there was no path from here to CIM generation.
           Hidden once the deal is past Seller Intake (it would move it back). */}
@@ -1463,12 +1489,13 @@ function Phase2Center() {
           <ReadyToBuildCta
             criticalCount={criticalUnresolved.length}
             gateError={!!discrepanciesError}
+            waitingOnSeller={waitingOnSeller.length}
             pending={advanceToContent.isPending}
             onContinue={() => advanceToContent.mutate()}
             onReview={() => setReviewingDiscrepancies((v) => !v)}
             reviewing={reviewingDiscrepancies}
           />
-          {reviewingDiscrepancies && (criticalUnresolved.length > 0 || !!discrepanciesError) && (
+          {reviewingDiscrepancies && (criticalUnresolved.length > 0 || waitingOnSeller.length > 0 || !!discrepanciesError) && (
             <DiscrepancyPanel dealId={dealId} />
           )}
         </div>
@@ -1483,12 +1510,14 @@ function Phase2Center() {
  * a 409 on the deal PATCH and the generate endpoints; this mirrors it so the
  * buttons explain themselves instead of failing.
  *
- * Mirrors the server's status list exactly: only "open" and "seller_responded"
- * block. "ask_seller" is routed to the interview and counts as handled (the
- * interview hands it back as seller_responded when it ends, which re-blocks
- * until the broker resolves it).
+ * Mirrors the server's rule exactly (shared/discrepancy-gate.ts): "open" and
+ * "seller_responded" block. "ask_seller" counts as handled while the
+ * interview is running (the interview hands it back as seller_responded when
+ * it ends, which re-blocks until the broker resolves it) — but once the
+ * interview is finished it blocks until the seller answers the follow-up.
  */
 function useDiscrepancyGate(dealId: string) {
+  const { deal } = useDeal();
   const {
     data: discrepancyList = [],
     error: discrepanciesError,
@@ -1501,21 +1530,29 @@ function useDiscrepancyGate(dealId: string) {
       return r.json();
     },
   });
-  const criticalUnresolved = discrepancyList.filter(
-    (d) =>
-      d.severity === "critical" &&
-      (d.status === "open" || d.status === "seller_responded"),
-  );
+  // The server's rule (shared/discrepancy-gate.ts): a critical row routed to
+  // a seller who had already finished the interview blocks until they answer.
+  const blocking = discrepancyList.filter((d) => discrepancyBlocksCim(d, deal.interviewCompleted));
+  const waitingOnSeller = blocking.filter((d) => d.status === "ask_seller");
+  const criticalUnresolved = blocking.filter((d) => d.status !== "ask_seller");
+  // Routed before follow-up emails existed and never put to the seller: not
+  // blocking, but the broker is asked to email the seller or resolve them.
+  const neverAsked = discrepancyList.filter((d) => routedButNeverAsked(d, deal.interviewCompleted));
+  // "“2024 Revenue”", "“A” and “B”", or a count.
+  const named = (rows: Discrepancy[]) =>
+    rows.length <= 2 ? rows.map((d) => `“${discrepancyFieldLabel(d)}”`).join(" and ") : `${rows.length} critical questions`;
   // If the gate itself couldn't load we can't prove it's clear — block, and
   // say so, rather than letting a failed fetch unlock the step.
-  const blocked = criticalUnresolved.length > 0 || !!discrepanciesError;
+  const blocked = blocking.length > 0 || !!discrepanciesError;
   const reasonFor = (verb: string): string | null =>
     discrepanciesError
       ? "Couldn't load discrepancies — this step stays locked until they load."
       : criticalUnresolved.length > 0
         ? `Resolve ${criticalUnresolved.length} critical discrepanc${criticalUnresolved.length === 1 ? "y" : "ies"} before ${verb}.`
-        : null;
-  return { discrepancyList, criticalUnresolved, discrepanciesError, refetchDiscrepancies, blocked, reasonFor };
+        : waitingOnSeller.length > 0
+          ? `Waiting on the seller to answer ${named(waitingOnSeller)} you sent them — or resolve ${waitingOnSeller.length === 1 ? "it" : "them"} yourself below — before ${verb}.`
+          : null;
+  return { discrepancyList, criticalUnresolved, waitingOnSeller, neverAsked, discrepanciesError, refetchDiscrepancies, blocked, reasonFor };
 }
 
 /* ═══════════════════════════════════════════
@@ -1557,8 +1594,11 @@ function Phase3Center() {
     refetchDiscrepancies,
     blocked: generationBlocked,
     reasonFor,
+    neverAsked,
   } = useDiscrepancyGate(dealId);
   const blockReason = reasonFor("generating");
+  // "Resolve it yourself" on a never-asked question: open it in the panel.
+  const [focusDiscrepancy, setFocusDiscrepancy] = useState<string | null>(null);
 
   const extractedCount = Object.keys(
     (deal.extractedInfo as object) || {},
@@ -1708,10 +1748,12 @@ function Phase3Center() {
           </div>
         )}
 
+        <NeverAskedFollowUpsNotice dealId={dealId} rows={neverAsked} onResolve={setFocusDiscrepancy} />
+
         {discrepanciesError ? (
           <PanelError what="discrepancies" onRetry={() => refetchDiscrepancies()} />
         ) : (
-          <DiscrepancyPanel dealId={dealId} />
+          <DiscrepancyPanel dealId={dealId} focusId={focusDiscrepancy} />
         )}
 
         <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-5 text-center">
@@ -1773,7 +1815,7 @@ function Phase3Center() {
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
+        <div className="min-w-0 sm:flex-1 sm:min-w-[16rem]">
           <h2 className="text-lg font-semibold tracking-tight">
             Your CIM
           </h2>
@@ -1794,7 +1836,7 @@ function Phase3Center() {
             </p>
           )}
         </div>
-        <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           {deal.contentApprovedByBroker && deal.contentApprovedBySeller ? (
             deal.phase === "phase4_design_finalization" ? (
               <span className="text-xs font-medium text-success flex items-center gap-1">
@@ -1816,17 +1858,16 @@ function Phase3Center() {
               </Button>
             )
           ) : deal.contentApprovedByBroker ? (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 text-xs"
-              onClick={() => approve.mutate("seller")}
-              disabled={approve.isPending || generationBlocked}
-              title={reasonFor("approving") ?? undefined}
-              data-testid="button-content-approve-seller"
-            >
-              Approve as Seller
-            </Button>
+            // The seller reads and approves it on their own review page;
+            // approving for them is an explicit, confirmed override.
+            <SellerReviewControls
+              dealId={dealId}
+              stage="content"
+              onApproveOnBehalf={() => approve.mutate("seller")}
+              approving={approve.isPending}
+              disabled={generationBlocked}
+              disabledReason={reasonFor("approving")}
+            />
           ) : (
             <Button
               size="sm"
@@ -1906,11 +1947,13 @@ function Phase3Center() {
           broker the panel to resolve them (or take one back from the seller)
           right here instead of sending them hunting for it. */}
       {/* Also after a run stopped to show new conflicts — the broker reviews them right here. */}
-      {(generationBlocked || (!generation.isRunning && generation.job?.stoppedBy === "discrepancies")) && (
+      {/* Questions routed before follow-up emails existed: the broker emails the seller or resolves them. */}
+      <NeverAskedFollowUpsNotice dealId={dealId} rows={neverAsked} onResolve={setFocusDiscrepancy} />
+      {(generationBlocked || focusDiscrepancy || (!generation.isRunning && generation.job?.stoppedBy === "discrepancies")) && (
         discrepanciesError ? (
           <PanelError what="discrepancies" onRetry={() => refetchDiscrepancies()} />
         ) : (
-          <DiscrepancyPanel dealId={dealId} />
+          <DiscrepancyPanel dealId={dealId} focusId={focusDiscrepancy} />
         )
       )}
 
@@ -1966,7 +2009,9 @@ function Phase4Center() {
     refetchDiscrepancies,
     blocked: publishBlocked,
     reasonFor,
+    neverAsked,
   } = useDiscrepancyGate(dealId);
+  const [focusDiscrepancy, setFocusDiscrepancy] = useState<string | null>(null);
 
   // Approvals cover the CIM as it stands: a section regenerated, rewritten
   // or edited since needs approving again (shared/cim-approvals.ts — the
@@ -1982,6 +2027,10 @@ function Phase4Center() {
   const readiness = publishReadiness(deal, sections);
   // A failed load can't prove every section is approved: Publish stays off.
   const publishReady = readiness.ready && !sectionsError;
+  // Facts corrected since the CIM was written (the builder's staleness check).
+  const builderState = useBuilderState(dealId);
+  // Live, with a regenerated CIM waiting: buyers read the published version until this one is published.
+  const update = reviewingUpdate(deal);
 
   const publish = useMutation({
     mutationFn: () =>
@@ -1989,8 +2038,8 @@ function Phase4Center() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       toast({
-        title: "CIM published",
-        description: "Now live for invited buyers.",
+        title: update ? "Update published" : "CIM published",
+        description: update ? "Buyers now see the new version." : "Now live for invited buyers.",
       });
     },
     onError: (e: Error) =>
@@ -2040,15 +2089,18 @@ function Phase4Center() {
           Open CIM builder
         </Button>
       </div>
-      {publishBlocked && (
+      <NeverAskedFollowUpsNotice dealId={dealId} rows={neverAsked} onResolve={setFocusDiscrepancy} />
+      {(publishBlocked || focusDiscrepancy) && (
         <div className="space-y-3">
-          <p className="text-xs text-red-400" data-testid="text-publish-blocked">
-            {reasonFor("approving or publishing")}
-          </p>
+          {publishBlocked && (
+            <p className="text-xs text-red-400" data-testid="text-publish-blocked">
+              {reasonFor("approving or publishing")}
+            </p>
+          )}
           {discrepanciesError ? (
             <PanelError what="discrepancies" onRetry={() => refetchDiscrepancies()} />
           ) : (
-            <DiscrepancyPanel dealId={dealId} />
+            <DiscrepancyPanel dealId={dealId} focusId={focusDiscrepancy} />
           )}
         </div>
       )}
@@ -2074,7 +2126,7 @@ function Phase4Center() {
         ].map((item) => (
           <div
             key={item.label}
-            className={`rounded-lg border p-4 flex items-center gap-3 ${item.done ? "border-success/30 bg-success-muted/40" : "border-border bg-card"}`}
+            className={`rounded-lg border p-4 flex flex-wrap items-center gap-3 ${item.done ? "border-success/30 bg-success-muted/40" : "border-border bg-card"}`}
           >
             {item.done ? (
               <CheckCircle2 className="h-[1.125rem] w-[1.125rem] text-success shrink-0" />
@@ -2086,7 +2138,25 @@ function Phase4Center() {
             >
               {item.label}
             </span>
-            {!item.done && item.action && (
+            {!item.done && item.action === "seller" && (
+              // The seller signs off on their own review page (sent from
+              // here); approving for them is an explicit override.
+              deal.designApprovedByBroker ? (
+                <div className="flex flex-wrap items-center gap-2 justify-end">
+                  <SellerReviewControls
+                    dealId={dealId}
+                    stage="design"
+                    onApproveOnBehalf={() => designApprove.mutate("seller")}
+                    approving={designApprove.isPending}
+                    disabled={publishBlocked}
+                    disabledReason={reasonFor("approving the design")}
+                  />
+                </div>
+              ) : (
+                <span className="text-[11px] text-muted-foreground">Sent to the seller once you've approved it</span>
+              )
+            )}
+            {!item.done && item.action === "broker" && (
               <Button
                 size="sm"
                 variant="outline"
@@ -2096,7 +2166,8 @@ function Phase4Center() {
                 title={reasonFor("approving the design") ?? undefined}
                 data-testid={`button-design-approve-${item.action}`}
               >
-                Approve as {item.action === "broker" ? "Broker" : "Seller"}
+                {/* Live: the CIM was approved when published; what is left is the changes since. */}
+                {deal.isLive && !update && item.action === "broker" ? "Approve the changes" : `Approve as ${item.action === "broker" ? "Broker" : "Seller"}`}
               </Button>
             )}
           </div>
@@ -2105,33 +2176,36 @@ function Phase4Center() {
       {sectionsError && (
         <PanelError what="CIM sections" onRetry={() => refetchSections()} />
       )}
+      <CimStaleNotice state={builderState.data} />
       {!sectionsError && readiness.awaiting.length > 0 && (
         <SectionsAwaitingApproval
           awaiting={readiness.awaiting}
-          live={!!deal.isLive}
+          // (While an update waits for review, buyers read the kept copy and
+          // these approvals are the update's, as before publishing.)
+          live={!!deal.isLive && !update}
           onOpen={() => navigate(`/deal/${dealId}/design`)}
         />
       )}
       {publishReady &&
-        !deal.isLive && (
-          <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-4 flex items-center justify-between">
+        (!deal.isLive || update) && (
+          <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-medium text-teal">
-                Ready to publish
+                {update ? "Ready to publish the update" : "Ready to publish"}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                All approvals received.
+                {update ? "All approvals received. Publishing replaces the version buyers see now." : "All approvals received."}
               </p>
             </div>
             <Button
               size="sm"
-              className="bg-teal text-teal-foreground hover:bg-teal/90"
+              className="bg-teal text-teal-foreground hover:bg-teal/90 self-start sm:self-center"
               onClick={() => publish.mutate()}
               disabled={publish.isPending || publishBlocked}
               title={reasonFor("publishing") ?? undefined}
               data-testid="button-publish-cim"
             >
-              Publish CIM
+              {update ? "Publish update" : "Publish CIM"}
             </Button>
           </div>
         )}
@@ -2141,7 +2215,7 @@ function Phase4Center() {
           <div>
             <p className="text-sm font-medium text-success">CIM is live</p>
             <p className="text-xs text-muted-foreground">
-              Shared with invited buyers.
+              {update ? "Buyers see the version you published before the CIM was regenerated." : "Shared with invited buyers."}
             </p>
           </div>
         </div>
@@ -2178,7 +2252,7 @@ function SectionsAwaitingApproval({
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {live
-                ? `${one ? "It has" : "They have"} changed since the CIM was approved, or ${one ? "hasn't" : "haven't"} been approved yet. Check ${one ? "it" : "them"} in the CIM builder.`
+                ? `${one ? "It has" : "They have"} changed since the CIM was approved, or ${one ? "hasn't" : "haven't"} been approved yet. Buyers keep seeing the approved version until you approve ${one ? "it" : "them"} in the CIM builder.`
                 : `${one ? "It has" : "They have"} changed since the CIM was approved, or ${one ? "hasn't" : "haven't"} been approved yet. Check ${one ? "it" : "them"} in the CIM builder, then approve the design again as broker and for the seller.`}
             </p>
             <ul className="mt-2 space-y-1">
@@ -2427,6 +2501,7 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-6 space-y-3">
+      <PublishedVersionBanner deal={deal} />
       {PHASES.map((phase, idx) => {
         const isCurrentPhase = deal.phase === phase.key;
         const isComplete = currentPhaseIdx > idx;
@@ -2548,6 +2623,8 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
             </p>
           </div>
           <CrmLinkCard dealId={dealId} variant="compact" />
+          {/* What the seller is asked to upload — verify, waive, ask again */}
+          <SellerChecklistCard dealId={dealId} />
           <DocumentUploadCard openSignal={uploadSignal} />
           <IntegrationPromptCard
             onOpenTranscripts={() =>
@@ -2564,9 +2641,9 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
       {/* Document table below phases */}
       <DocumentTable />
 
-      {/* Quick analytics summary */}
+      {/* Buyer pulse: who is reading, who to call first (replaces the old analytics widget) */}
       <div className="mt-6 pt-6 border-t border-border">
-        <DealAnalyticsWidget dealId={dealId} />
+        <BuyerPulseCard dealId={dealId} />
       </div>
     </div>
   );

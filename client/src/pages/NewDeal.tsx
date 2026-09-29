@@ -298,7 +298,7 @@ export default function NewDeal() {
                 data-testid="input-website-url"
               />
               <p className="text-xs text-muted-foreground/60 leading-snug">
-                If provided, the AI will scrape public information before the interview starts.
+                If provided, Cimple reads the public website as soon as the deal is created, so the interview starts informed. Nothing from it is used until the seller confirms it.
               </p>
             </div>
 

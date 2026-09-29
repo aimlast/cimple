@@ -18,8 +18,10 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { axisWidthFor, formatAxisTick, formatFullValue } from "./chartFormat";
-import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { lineChartRows } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
+import { NotCharted } from "./NotCharted";
+import { useBlockAttrs, useChartPointReporter } from "../blocks";
 
 interface SeriesConfig {
   key: string;
@@ -74,16 +76,16 @@ function CustomTooltip({ active, payload, label, unit, series }: CustomTooltipPr
 
 export function LineChartRenderer({ layoutData, content, branding, section }: RendererProps) {
   const theme = useCimTheme();
+  const ba = useBlockAttrs();
+  const point = useChartPointReporter();
   const data: LineChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const series = data.series || [];
-  // Series values written as text ("$3,596,200") are read as numbers; one
-  // that isn't a number leaves a gap in the line rather than a false zero.
-  const scale = unitScale(data.unit);
-  const chartData = (data.data || []).map((row) => {
-    const out: Record<string, number | string | null> = { ...row };
-    for (const s of series) if (s.key in row && typeof row[s.key] === "string") out[s.key] = parseChartNumber(row[s.key], scale);
-    return out;
-  });
+  // Series values written as text ("$3,596,200", "$1,850,000 (9 months
+  // YTD)") are read as numbers, a note moving onto the point's name; one
+  // that isn't an amount ("TBD") leaves a gap in the line rather than a
+  // false zero, and is listed under the chart as written.
+  const lines = lineChartRows(data.data || [], series, data.unit);
+  const chartData = lines.rows as Array<Record<string, number | string | null>>;
 
   if (chartData.length === 0 || series.length === 0) {
     if (!content) return null;
@@ -100,6 +102,7 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
   return (
     <div>
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+      <div {...ba("chart")}>
       {data.yLabel && (
         // Axis caption sits above the plot — a rotated label inside the axis
         // column collides with the tick numbers (worst on phones).
@@ -109,6 +112,8 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
         <LineChart
           data={chartData}
           margin={{ top: 4, right: 16, left: 4, bottom: data.xLabel ? 24 : 8 }}
+          onMouseMove={(s) => point(s?.activeTooltipIndex)}
+          onMouseLeave={() => point(null)}
         >
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
@@ -162,6 +167,8 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
           ))}
         </LineChart>
       </ResponsiveContainer>
+      <NotCharted items={lines.unreadable} />
+      </div>
     </div>
   );
 }

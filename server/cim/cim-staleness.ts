@@ -59,7 +59,10 @@ export function factsSnapshotOf(info: Record<string, unknown>, askingPrice: stri
     if (!text) continue;
     values[key] = /\d/.test(text) || text.length <= WORDS_CAP ? text.slice(0, VALUE_CAP) : `#${hash(text)}`;
   }
-  const notes = JSON.stringify([info._brokerPrivateNotes ?? null, info._sellerKeepOut ?? null]);
+  // The broker's staff-private include switches count too — added only when
+  // set, so a CIM written before them doesn't read as changed.
+  const included = Array.isArray(info._cimIncludedPrivate) && info._cimIncludedPrivate.length > 0 ? [[...(info._cimIncludedPrivate as string[])].sort()] : [];
+  const notes = JSON.stringify([info._brokerPrivateNotes ?? null, info._sellerKeepOut ?? null, ...included]);
   return { values, askingPrice: askingPrice?.trim() || null, notesKey: hash(notes) };
 }
 

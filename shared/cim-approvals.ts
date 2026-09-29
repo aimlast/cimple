@@ -34,11 +34,17 @@
  *    after publishing still needs approving. "Untouched" = written before
  *    PER_SECTION_APPROVAL_SINCE and never changed by this code: every write
  *    here that un-ticks a section marks its history (approvalRule).
+ *  - On a live CIM the tick decides what buyers get: a changed section is
+ *    served in its last approved version until approved again
+ *    (shared/cim-published.ts) — the deal's approvals themselves stay.
+ *  - A section still showing its blank layout's sample data ("Category A
+ *    60 / B 40") is never approved as it stands (hasSampleData): the design
+ *    approval doesn't tick it and publishing waits for it.
  *
  * Pure — no server or browser dependencies.
  */
 import { designApprovalState, phaseIndex } from "./deal-progress";
-import { isCimFallbackSection } from "./cim-layouts";
+import { hasSampleData, isCimFallbackSection } from "./cim-layouts";
 
 export type DealApprovalFlag =
   | "contentApprovedByBroker"
@@ -48,6 +54,8 @@ export type DealApprovalFlag =
 
 export interface ApprovalDeal {
   isLive?: boolean | null;
+  /** The generation status: a live deal whose regenerated CIM waits for review edits a draft, not what buyers see. */
+  cimGeneration?: unknown;
   phase?: string | null;
   contentApprovedByBroker?: boolean | null;
   contentApprovedBySeller?: boolean | null;
@@ -64,6 +72,9 @@ export interface ApprovalSection {
   contentHistory?: unknown;
   /** Last write to the section (ISO string from the API, Date on the server). */
   updatedAt?: string | Date | null;
+  /** For the sample-data check (hasSampleData); absent = not checked. */
+  layoutType?: string | null;
+  layoutData?: unknown;
 }
 
 export interface SectionAwaitingApproval {
@@ -79,7 +90,10 @@ export interface SectionAwaitingApproval {
  * nothing is to be cleared.
  */
 export function approvalsWithdrawnByChange(deal: ApprovalDeal): Partial<Record<DealApprovalFlag, false>> {
-  if (deal.isLive) return {};
+  // (A live deal whose buyers read the previously published version while
+  // its regenerated CIM waits for review: the approvals cover the draft.)
+  const reviewingUpdate = !!(deal.cimGeneration as { buyerHold?: { servingPublished?: boolean } } | null | undefined)?.buyerHold?.servingPublished;
+  if (deal.isLive && !reviewingUpdate) return {};
   const out: Partial<Record<DealApprovalFlag, false>> = {};
   if (deal.designApprovedByBroker) out.designApprovedByBroker = false;
   if (deal.designApprovedBySeller) out.designApprovedBySeller = false;
@@ -198,7 +212,7 @@ export function legacyLiveApprovedIds(deal: ApprovalDeal | null | undefined, sec
   const since = Date.parse(PER_SECTION_APPROVAL_SINCE);
   return sections
     .filter((s) => {
-      if (s.isVisible === false || s.brokerApproved || isCimFallbackSection(s)) return false;
+      if (s.isVisible === false || s.brokerApproved || isCimFallbackSection(s) || hasSampleData(s)) return false;
       const written = toMs(s.updatedAt);
       if (!Number.isFinite(written) || written >= since) return false;
       if (markedByApprovalRule(s.contentHistory)) return false;
@@ -216,8 +230,11 @@ export function legacyLiveApprovedIds(deal: ApprovalDeal | null | undefined, sec
 export function sectionsAwaitingApproval(sections: readonly ApprovalSection[], deal?: ApprovalDeal | null): SectionAwaitingApproval[] {
   const legacy = new Set(legacyLiveApprovedIds(deal, sections));
   return sections
-    .filter((s) => s.isVisible !== false && !s.brokerApproved && !isCimFallbackSection(s) && !legacy.has(s.id))
+    // A section still showing its blank layout's sample data ("Category A
+    // 60 / B 40") is never approved as it stands, ticked or not.
+    .filter((s) => s.isVisible !== false && !isCimFallbackSection(s) && ((!s.brokerApproved && !legacy.has(s.id)) || hasSampleData(s)))
     .map((s) => {
+      if (hasSampleData(s)) return { id: s.id, title: s.sectionTitle, lastChange: "Still shows sample data" };
       const history = historySnapshots<{ reason?: unknown }>(s.contentHistory);
       const last = history[history.length - 1];
       return {
@@ -228,9 +245,9 @@ export function sectionsAwaitingApproval(sections: readonly ApprovalSection[], d
     });
 }
 
-/** Sections the broker's design approval ticks: every shown, written section. */
+/** Sections the broker's design approval ticks: every shown, written section (never one still showing sample data). */
 export function sectionsApprovedWithDesign<T extends ApprovalSection>(sections: readonly T[]): T[] {
-  return sections.filter((s) => s.isVisible !== false && !s.brokerApproved && !isCimFallbackSection(s));
+  return sections.filter((s) => s.isVisible !== false && !s.brokerApproved && !isCimFallbackSection(s) && !hasSampleData(s));
 }
 
 export interface PublishReadiness {

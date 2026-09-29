@@ -47,6 +47,12 @@ interface Props {
   draft?: { id: string; layoutData: Record<string, any> } | null;
   /** The deal's design (template + branding); Classic Paper when absent. */
   design?: CimDesignPayload | null;
+  /**
+   * The listed asking price buyers see now (null = none listed; undefined =
+   * unknown) — the buyer preview shows it on the cover and key numbers, as
+   * the view room does.
+   */
+  askingPrice?: string | null;
 }
 
 export function CimCanvas(props: Props) {
@@ -173,13 +179,15 @@ function EditorSheetBody({ sections, branding, selectedId, onSelect, onAddAfter,
   );
 }
 
-function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId, onSelect, media, design: designPayload }: Props) {
+function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId, onSelect, media, design: designPayload, askingPrice }: Props) {
   const view = buildBuyerCim({
     deal,
     accessLevel: previewAs,
     sections: sections as unknown as CimSection[],
     overrides,
     media: media ?? [],
+    // The price as buyers see it (the view room applies the listed price at view time).
+    ...(askingPrice !== undefined ? { askingPrice } : {}),
   });
   if (view.preparing) return null; // the page shows the "not generated yet" banner
   const shown = view.sections as unknown as CimSection[];

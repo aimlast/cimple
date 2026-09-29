@@ -20,6 +20,10 @@
  * holdConfidentialFacts below.
  */
 import { SELLER_KEEP_OUT_REASON_RE, getSellerKeepOut, privatePiecesOf, type SellerKeepOutEntry } from "../interview/seller-keep-out";
+import { GIVEN_NAMES } from "@shared/blind-given-names";
+import { isCommonWord } from "@shared/blind-vocabulary";
+import { includedStaffPrivate, screenStaffPrivatePairs, staffContextFrom, type StaffContext } from "./staff-private";
+import type { StaffPrivateItem, StaffPrivateKind } from "@shared/staff-private";
 
 const PERSON = String.raw`(?:his|her|my|their|the owner'?s|owner'?s|founder'?s|seller'?s|vendor'?s|wife'?s|husband'?s|spouse'?s|partner'?s|son'?s|daughter'?s|father'?s|mother'?s)`;
 
@@ -123,11 +127,14 @@ function screenValue(value: unknown): { value: unknown; changed: boolean; droppe
 }
 
 /**
- * Screen fact pairs for the CIM writer: personal details cut (`held`), and
- * clauses marked confidential held out with the names they concern
- * (`confidential`, `heldNames` — every buyer-facing path: writer and DD).
- * `keepOut` adds what the broker's private notes and the AI review found
- * (keep-out.ts keepOutFor).
+ * Screen fact pairs for the CIM writer: personal details cut (`held`),
+ * staff-private matters held unless the broker included them
+ * (`staffPrivate` — staff-private.ts), and clauses marked confidential held
+ * out with the names they concern (`confidential`, `heldNames` — every
+ * buyer-facing path: writer and DD). `keepOut` adds what the broker's
+ * private notes and the AI review found (keep-out.ts keepOutFor) and carries
+ * the broker's include decisions; without it the staff screen reads the
+ * people from the pairs and includes nothing.
  */
 export function screenFactsForCim(
   pairs: Array<[string, unknown]>,
@@ -137,10 +144,16 @@ export function screenFactsForCim(
   held: HeldFact[];
   confidential: ConfidentialHold[];
   heldNames: string[];
+  staffPrivate: StaffPrivateItem[];
 } {
   const personal = screenPersonal(pairs);
-  const conf = holdConfidentialFacts(personal.safe, plainText, keepOut);
-  return { safe: conf.safe, held: personal.held, confidential: conf.holds, heldNames: conf.heldNames };
+  const staff = screenStaffPrivatePairs(personal.safe, {
+    ctx: keepOut?.staff?.ctx ?? staffContextFrom(Object.fromEntries(pairs)),
+    included: new Set(keepOut?.staff?.included ?? []),
+    aiClauses: keepOut?.staff?.aiClauses ?? [],
+  });
+  const conf = holdConfidentialFacts(staff.safe, plainText, keepOut);
+  return { safe: conf.safe, held: personal.held, confidential: conf.holds, heldNames: conf.heldNames, staffPrivate: staff.items };
 }
 
 function plainText(v: unknown): string {
@@ -297,6 +310,17 @@ export interface KeepOut {
   clauses: Array<{ key: string; text: string }>;
   names: string[];
   pairs: Array<{ name: string; attribute: string }>;
+  /**
+   * Staff-private matters (staff-private.ts): the deal's people, the ids the
+   * broker switched back in, and clauses the AI review found.
+   */
+  staff?: StaffKeepOut;
+}
+
+export interface StaffKeepOut {
+  ctx: StaffContext;
+  included: string[];
+  aiClauses: Array<{ key: string; text: string; kind?: StaffPrivateKind }>;
 }
 
 const lower = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
@@ -350,12 +374,26 @@ export function holdConfidentialFacts(
   // ("Alderbrook pricing is confidential") holds no party.
   const allText = first.map(([, v]) => valueText(v).toLowerCase());
   const usedElsewhere = (name: string) => allText.filter((t) => t.includes(name.toLowerCase())).length;
+  // The deal's own owner, shareholders and management are never a held
+  // party: a confidential clause about them ("Harjit Grewal was approached
+  // by Kinder Freight about a sale (confidential)") holds that clause only —
+  // holding the owner's name took their role, transition plan and the
+  // key-person facts out of the named CIM and DD (final review F2-CIMTRUTH-1).
+  const own = ownPeople(pairs, valueText);
   const fromClauses = holds.flatMap((h) =>
     h.clauses
       .filter((c) => !attributeHolds.includes(c))
       .flatMap((c) => namesIn(c).filter((name, i) => (i === 0 ? usedElsewhere(name) < 3 : usedElsewhere(name) === 0))),
   );
-  const heldNames = Array.from(new Set([...fromClauses, ...(keepOut?.names ?? [])]));
+  const heldNames = Array.from(new Set([...fromClauses, ...(keepOut?.names ?? [])])).filter((n) => !own.some((o) => samePerson(n, o)));
+  // A held person's given name alone is matched only when no one else on
+  // file shares it (the owner "Harjit Grewal" and a held "Harjit Sandhu").
+  const people = peopleOnFile(pairs, valueText);
+  const ambiguous = new Set(heldNames.filter((n) => {
+    const g = givenOf(n);
+    return !!g && people.some((p) => givenOf(p) === g && !samePerson(p, n));
+  }));
+  if (ambiguous.size > 0) GIVEN_ALONE_OFF.set(heldNames, ambiguous);
   if (heldNames.length === 0) return { safe: first, holds, heldNames };
 
   // A clause elsewhere that names a held party goes too ("… potential new
@@ -379,6 +417,49 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Facts that name the deal's own people (owner, shareholders, management). */
+const OWN_PEOPLE_KEY =
+  /^(?:owner(?:s|Name|Names|FullName)?|ownerNames?|sellerName|sellers?|shareholders?|shareholderNames?|founders?|founderNames?|principals?|partners?|management|managementTeam|keyManagement|managers?|officers?|directors?)$/i;
+
+/** The names in the facts about the deal's own people. */
+function ownPeople(pairs: Array<[string, unknown]>, valueText: (v: unknown) => string): string[] {
+  return pairs
+    .filter(([k]) => OWN_PEOPLE_KEY.test(k))
+    .flatMap(([, v]) => namesIn(` ${valueText(v)}`))
+    .filter((n) => n.split(/\s+/).length >= 2);
+}
+
+/** Every person-like name on file (two or more words, starting with a known given name). */
+function peopleOnFile(pairs: Array<[string, unknown]>, valueText: (v: unknown) => string): string[] {
+  return Array.from(new Set(pairs.flatMap(([, v]) => namesIn(` ${valueText(v)}`)).filter((n) => !!givenOf(n))));
+}
+
+const personWords = (n: string) => n.toLowerCase().split(/\s+/).filter((w) => w && !PERSON_TITLE.test(w)).map((w) => w.replace(/[.'’]+$/, ""));
+
+/** The same person: one name's words all in the other's ("Harjit Grewal" / "Harjit S. Grewal"). */
+function samePerson(a: string, b: string): boolean {
+  const x = personWords(a);
+  const y = personWords(b);
+  if (x.length === 0 || y.length === 0) return false;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.length >= 2 ? short.every((w) => long.includes(w)) : false;
+}
+
+/** A person's given name (lower-case), when the name starts with a known one. */
+function givenOf(name: string): string | null {
+  const words = name.trim().split(/\s+/).filter((w) => !PERSON_TITLE.test(w));
+  if (words.length < 2) return null;
+  const folded = words[0].normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  return GIVEN_NAMES.has(folded) ? folded : null;
+}
+
+/**
+ * Held names whose given name alone must not be matched (someone else on
+ * file shares it), keyed by the heldNames list holdConfidentialFacts
+ * returned — the list travels to the writer's scrub and the DD check as is.
+ */
+const GIVEN_ALONE_OFF = new WeakMap<readonly string[], ReadonlySet<string>>();
+
 /** The held name a text mentions (whole words, any case), if any. */
 export function mentionsHeldName(text: string, heldNames: readonly string[]): string | null {
   if (!text || heldNames.length === 0) return null;
@@ -389,8 +470,49 @@ export function mentionsHeldName(text: string, heldNames: readonly string[]): st
   return null;
 }
 
+const PERSON_TITLE = /^(?:dr|mr|mrs|ms|miss|mx|prof)\.?$/i;
+/** Given names that are also everyday words ("Grace period", "Will assist", "Frank discussion"): never matched alone. */
+const EVERYDAY_GIVEN = new Set(`
+grace will bill mark rose summer may june april august joy hope faith dawn sky amber ruby pearl iris ivy lily holly daisy
+jade crystal autumn frank grant dean chase drew earl gene guy jack jay max miles pat ray rich rob sandy sue victor wade
+hunter carter mason jordan brook cliff dale glen heath lane reed sage stone harper parker page sterling forest river
+rocky candy cherry destiny charity patience mercy honor noble royal king prince major bishop art gay robin wren penny
+`.split(/\s+/).filter(Boolean));
+
+/**
+ * A held person's given name written on its own: "Wages paid to Maria
+ * (owner's spouse)" for the held "Maria Chen" reached the DD context and
+ * passed the check, which matched only the full name (free round 2, C2).
+ * Only for a held name that starts with a known given name (a person, not a
+ * company) that isn't also an everyday word ("Grace", "Mark"); capitalised
+ * as a name, and not followed by another capitalised word — "Maria Lopez"
+ * is someone else. Null when the held name has no such form.
+ */
+function givenNameRe(name: string, flags = "u"): RegExp | null {
+  const words = name.trim().split(/\s+/).filter((w) => !PERSON_TITLE.test(w));
+  if (words.length < 2) return null;
+  const given = words[0];
+  const folded = given.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (!new RegExp(String.raw`^\p{Lu}[\p{Ll}'’-]{2,}$`, "u").test(given) || !GIVEN_NAMES.has(folded) || isCommonWord(folded) || EVERYDAY_GIVEN.has(folded)) return null;
+  return new RegExp(String.raw`(?<![\p{L}\p{N}])${escapeRe(given)}(?:['’]s)?(?![\p{L}\p{N}])(?!\s+\p{Lu})`, flags);
+}
+
+/**
+ * The held name a text mentions, in full or — for a person — by their given
+ * name alone (givenNameRe). Used wherever text is screened for the CIM (the
+ * named CIM's facts and scrub, the DD version); the keep-out bookkeeping
+ * that decides WHICH names are held still matches full names only.
+ */
+export function mentionsHeldPerson(text: string, heldNames: readonly string[]): string | null {
+  const full = mentionsHeldName(text, heldNames);
+  if (full || !text) return full;
+  const off = GIVEN_ALONE_OFF.get(heldNames);
+  for (const name of heldNames) if (!off?.has(name) && givenNameRe(name)?.test(text)) return name;
+  return null;
+}
+
 function holdInValue(value: unknown, heldNames: readonly string[], note: (part: string) => boolean): { value: unknown; clauses: string[]; dropped: boolean } {
-  const isHeld = (s: string) => note(s) || !!mentionsHeldName(s, heldNames);
+  const isHeld = (s: string) => note(s) || !!mentionsHeldPerson(s, heldNames);
   if (typeof value === "string") {
     const parts = clausesOf(value);
     if (!parts.some(isHeld)) return { value, clauses: [], dropped: false };
@@ -424,13 +546,13 @@ function holdInValue(value: unknown, heldNames: readonly string[], note: (part: 
 /** Free text (earlier drafts, the scrape): sentences with a confidentiality note or a held name removed. */
 export function screenConfidentialText(text: string, heldNames: readonly string[]): string {
   if (!text) return text;
-  if (!hasConfidentialNote(text) && !mentionsHeldName(text, heldNames)) return text;
+  if (!hasConfidentialNote(text) && !mentionsHeldPerson(text, heldNames)) return text;
   return text
     .split(/\n{2,}/)
     .map((para) =>
       para
         .split(/(?<=[.!?])\s+/)
-        .filter((s) => !hasConfidentialNote(s) && !mentionsHeldName(s, heldNames))
+        .filter((s) => !hasConfidentialNote(s) && !mentionsHeldPerson(s, heldNames))
         .join(" "),
     )
     .filter((p) => p.trim())
@@ -568,6 +690,7 @@ export function keepOutFromNotes(info: Record<string, unknown> | null | undefine
   const seller = sellerKeepOutHolds(info ?? {}, facts);
   out.clauses.push(...seller.clauses);
   out.names = Array.from(new Set([...out.names, ...seller.names]));
+  out.staff = { ctx: staffContextFrom(info), included: Array.from(includedStaffPrivate(info)), aiClauses: [] };
   return out;
 }
 
@@ -605,7 +728,49 @@ export function mergeKeepOut(...parts: Array<KeepOut | null | undefined>): KeepO
     out.clauses.push(...p.clauses);
     out.names.push(...p.names);
     out.pairs.push(...p.pairs);
+    if (p.staff) {
+      out.staff = out.staff
+        ? {
+            ctx: out.staff.ctx,
+            included: Array.from(new Set([...out.staff.included, ...p.staff.included])),
+            aiClauses: [...out.staff.aiClauses, ...p.staff.aiClauses],
+          }
+        : { ctx: p.staff.ctx, included: [...p.staff.included], aiClauses: [...p.staff.aiClauses] };
+    }
   }
   out.names = Array.from(new Set(out.names));
   return out;
+}
+
+// ── Labels that name a held party ─────────────────────────────────────────
+
+/**
+ * A bridge step's (or statement line's) label without the confidential
+ * name: the name and the words that only pointed at it go ("Salary paid to
+ * Maria Chen" → "Salary paid"; "Maria Chen — owner's spouse wages" →
+ * "Owner's spouse wages"). When nothing descriptive is left: "Other
+ * add-back" / "Other deduction". Used by the named CIM's scrub
+ * (layout-engine scrubHeldNames) and the DD writer's context.
+ */
+export function neutralBridgeLabel(label: string, heldNames: readonly string[], type = ""): string {
+  let t = label;
+  const off = GIVEN_ALONE_OFF.get(heldNames);
+  for (const name of heldNames) {
+    const words = name.trim().split(/\s+/).map(escapeRe).join(String.raw`\s+`);
+    t = t.replace(new RegExp(String.raw`(?<![\p{L}\p{N}])${words}(?:'s|’s)?(?![\p{L}\p{N}])`, "giu"), " ");
+    const given = off?.has(name) ? null : givenNameRe(name, "gu");
+    if (given) t = t.replace(given, " ");
+  }
+  t = t
+    .replace(/\(\s*\)/g, " ")
+    // "Salary paid to (owner's wife)": the connector pointed at the name.
+    .replace(/\s+(?:to|for|of|by|from|with|re)\s+(?=\()/gi, " ")
+    .replace(/\s+(?:to|for|of|by|from|with|re|—|–|-|:|,)\s*$/i, "")
+    .replace(/^\s*(?:—|–|-|:|,)\s*/, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  // Trailing connectors can stack ("paid to" after "for").
+  for (let i = 0; i < 2; i++) t = t.replace(/\s+(?:to|for|of|by|from|with)$/i, "").trim();
+  if (!/[A-Za-z]{3,}/.test(t)) return type === "subtract" ? "Other deduction" : "Other add-back";
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }

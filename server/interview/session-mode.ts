@@ -101,13 +101,50 @@ export const TOGETHER_LIVE_MS = 30 * 60_000;
 export function togetherSessionLive(
   session: SessionLike & { id?: string; status?: string | null; lastActivityAt?: Date | string | null; startedAt?: Date | string | null },
   now: number = Date.now(),
+  deal?: TogetherCallState | null,
 ): boolean {
   if (sessionModeOf(session) !== "broker_with_seller") return false;
   if (session.status !== "active" && session.status !== "paused") return false;
   if (session.id && turnInFlight(session.id)) return true;
   const raw = session.lastActivityAt ?? session.startedAt;
   const last = raw instanceof Date ? raw.getTime() : Date.parse(String(raw ?? ""));
-  return !Number.isNaN(last) && now - last < TOGETHER_LIVE_MS;
+  if (Number.isNaN(last) || now - last >= TOGETHER_LIVE_MS) return false;
+  // The sitting is over once its call ended (or the broker left the page)
+  // after its last exchange: the seller's own link opens at once instead of
+  // "your broker is going through this with you now" for half an hour
+  // (review F2-INT-5). An exchange after that (the broker carrying on in
+  // the room) makes it live again.
+  const ended = togetherEndedAt(session, deal ?? null, now);
+  return ended === null || ended < last;
+}
+
+/** What togetherSessionLive reads of the deal: its Cimple call and Zoom/Meet/Teams notetaker. */
+export interface TogetherCallState {
+  interviewCall?: { endedAt?: string | null; expiresAt?: string | null } | null;
+  interviewBot?: { endedAt?: string | null } | null;
+}
+
+/**
+ * When the sitting's call ended, or null while one is still running (or
+ * none ever ran and the broker hasn't left the page): the latest of the
+ * deal's call / notetaker end, and the session's own `_leftAt` (the broker
+ * left the "Interview together" page — parkTogetherSessions).
+ */
+export function togetherEndedAt(session: SessionLike, deal: TogetherCallState | null, now: number = Date.now()): number | null {
+  const at = (v: unknown) => {
+    const t = typeof v === "string" ? Date.parse(v) : NaN;
+    return Number.isNaN(t) ? null : t;
+  };
+  const call = deal?.interviewCall ?? null;
+  const bot = deal?.interviewBot ?? null;
+  const callRunning = !!call && !call.endedAt && !((at(call.expiresAt) ?? Infinity) < now);
+  const botRunning = !!bot && !bot.endedAt;
+  if (callRunning || botRunning) return null;
+  const meta = (session.extractedInfo as Record<string, unknown> | null | undefined) ?? {};
+  // (A room that ran out without being ended ended at its expiry.)
+  const callEnd = call ? at(call.endedAt) ?? at(call.expiresAt) : null;
+  const ends = [callEnd, at(bot?.endedAt), at(meta._leftAt)].filter((t): t is number => t !== null);
+  return ends.length ? Math.max(...ends) : null;
 }
 
 /**
@@ -227,4 +264,32 @@ export function withSessionTurnLock<T>(sessionId: string, fn: () => Promise<T>):
 /** Is a turn running (or waiting) on this session in this process? */
 export function turnInFlight(sessionId: string): boolean {
   return turnLocks.has(sessionId);
+}
+
+/**
+ * A write of the whole transcript from outside a turn (the resume path
+ * re-polishing the pending question) lands only if no turn has written
+ * since it was read: never while a turn is running, and — inside the turn
+ * lock, after a fresh read — only when the transcript still has the length
+ * and last message it had. It used to overwrite the exchange a turn in
+ * flight had just saved (a reload mid-turn: the seller's answer and the
+ * reply vanished from the transcript, and the question was asked again —
+ * review F2-INT-3). Skipping costs only the cosmetic re-polish.
+ */
+export async function writeIfTranscriptUnchanged(args: {
+  sessionId: string;
+  /** The transcript as it was read. */
+  expected: Array<{ timestamp?: string }>;
+  /** The transcript now (a fresh read). */
+  read: () => Promise<Array<{ timestamp?: string }> | null>;
+  write: () => Promise<void>;
+}): Promise<"written" | "turn_in_flight" | "changed"> {
+  if (turnInFlight(args.sessionId)) return "turn_in_flight";
+  return withSessionTurnLock(args.sessionId, async () => {
+    const now = await args.read();
+    const exp = args.expected;
+    if (!now || now.length !== exp.length || now[now.length - 1]?.timestamp !== exp[exp.length - 1]?.timestamp) return "changed" as const;
+    await args.write();
+    return "written" as const;
+  });
 }

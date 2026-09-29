@@ -28,7 +28,9 @@ import {
   type CheckDocument,
 } from "./discrepancy-engine";
 import { dropReason, differentYears } from "./discrepancy-filter";
-import { settleMergeRowsQuietly } from "../documents/merge-conflicts";
+import { applyHeadCountAuthority, settleMergeRowsQuietly } from "../documents/merge-conflicts";
+import { updateDiscrepancyIfStill } from "./discrepancy-cas";
+import { BLOCKING_DISCREPANCY_STATUSES, discrepancyBlocksCim, keepRoutedStamp } from "@shared/discrepancy-gate";
 
 export { recordsSameDispute };
 
@@ -187,17 +189,21 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
         // Rows raised by the fact merge or the financial analysis are theirs
         // to rewrite; a verification row keeps the broker's routing/status and
         // its original field name and gets fresh evidence.
+        // Only while the row is as this run found it: one the broker
+        // resolved or routed during the model call keeps what they decided.
         if (isCheckRow(openMatch)) {
-          await storage.updateDiscrepancy(openMatch.id, {
+          const wrote = await updateDiscrepancyIfStill(storage, openMatch.id, [openMatch.status], {
             ...values,
+            // (A routed row keeps its routing stamp — shared/discrepancy-gate.ts.)
+            sideSources: keepRoutedStamp(openMatch.sideSources, values.sideSources) as any,
             // Keep a fact key the broker already linked.
             factKey: openMatch.factKey || values.factKey,
             factYear: openMatch.factKey ? openMatch.factYear ?? values.factYear : values.factYear,
           });
-          refreshed++;
+          if (wrote) refreshed++;
         } else if (severityRank(item.severity) > severityRank(openMatch.severity)) {
           // Their row stands for this very dispute, so it carries the higher severity.
-          await storage.updateDiscrepancy(openMatch.id, { severity: item.severity });
+          await updateDiscrepancyIfStill(storage, openMatch.id, [openMatch.status], { severity: item.severity });
         }
         continue;
       }
@@ -218,8 +224,9 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
       const row = existing.find((d) => d.id === id);
       if (!row || touched.has(id) || (row.status !== "open" && row.status !== "seller_responded")) continue;
       if (row.source === "merge") continue;
-      await storage.updateDiscrepancy(id, { status: "superseded" });
-      cleared++;
+      // Still the status this run saw — a row the broker settled or routed
+      // meanwhile is never closed by the check.
+      if (await updateDiscrepancyIfStill(storage, id, [row.status], { status: "superseded" })) cleared++;
     }
 
     // One conflict, one row: an open row of this check that the financial
@@ -301,10 +308,11 @@ export async function supersedeCheckDuplicates(
 
 // ── Gate before a full CIM generation ──
 
-export const BLOCKING_DISCREPANCY_STATUSES = new Set(["open", "seller_responded"]);
+export { BLOCKING_DISCREPANCY_STATUSES };
 
-export function blockingCritical(rows: Pick<Discrepancy, "severity" | "status">[]): boolean {
-  return rows.some((d) => d.severity === "critical" && BLOCKING_DISCREPANCY_STATUSES.has(d.status));
+/** (shared/discrepancy-gate.ts — a routed critical row blocks once the interview has ended.) */
+export function blockingCritical(rows: Pick<Discrepancy, "severity" | "status">[], interviewCompleted?: boolean | null): boolean {
+  return rows.some((d) => discrepancyBlocksCim(d, interviewCompleted));
 }
 
 export class DiscrepancyGateError extends Error {
@@ -351,10 +359,22 @@ export async function ensureDiscrepancyGate(
     }
     ranCheck = true;
   }
+  // Head counts the roster gives differently from the seller (no AI): the
+  // roster's count is applied and the dispute raised — a deal whose facts
+  // were merged before the rule gets it here (Lakeshore's 24 vs 22).
+  const before = new Set((await storage.getDiscrepanciesByDeal(dealId)).map((d) => d.id));
+  try {
+    await applyHeadCountAuthority(dealId);
+  } catch (err) {
+    console.error(`[discrepancy-gate] head-count check failed for ${dealId}:`, err);
+  }
   // A merge row whose conflict no longer stands never blocks.
   await settleMergeRowsQuietly(dealId, "discrepancy-gate");
   const rows = await storage.getDiscrepanciesByDeal(dealId);
-  const blocking = rows.filter((d) => d.severity === "critical" && BLOCKING_DISCREPANCY_STATUSES.has(d.status));
+  // A merge row the head-count check just raised is new too (reviewed once before writing).
+  created = [...created, ...rows.filter((d) => !before.has(d.id) && d.source === "merge" && d.status === "open")];
+  const gateDeal = await storage.getDeal(dealId);
+  const blocking = rows.filter((d) => discrepancyBlocksCim(d, gateDeal?.interviewCompleted));
   if (blocking.length > 0) throw new DiscrepancyGateError(blocking.map((d) => ({ id: d.id, field: d.field })));
   const fresh = created.filter((d) => REVIEW_BEFORE_WRITING.has(d.severity));
   if (fresh.length > 0) throw new DiscrepancyGateError(fresh.map((d) => ({ id: d.id, field: d.field })), "new");

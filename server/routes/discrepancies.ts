@@ -13,6 +13,8 @@ import { requireBroker, requireOwnedDeal, getOwnedDeal } from "../broker-auth/ro
 import type { Discrepancy } from "@shared/schema";
 import { discrepancyFieldLabel, discrepancySideValue, discrepancyHasPrivateSide, getSideSources } from "@shared/discrepancy-sides";
 import { runAndPersistDiscrepancyCheck, getDiscrepancyCheckStatus } from "../cim/discrepancy-check";
+import { notifySellerOfFollowUps, emailNeverAskedFollowUps } from "../interview/seller-followups";
+import { keepRoutedStamp, routedToSellerAt, withRoutedStamp } from "@shared/discrepancy-gate";
 import { settleMergeRowsQuietly } from "../documents/merge-conflicts";
 import {
   applyDiscrepancyResolution,
@@ -176,6 +178,19 @@ export function registerDiscrepancyRoutes(app: Express) {
     }
   });
 
+  // "Email the seller": questions routed to the interview before follow-up
+  // emails existed were never put to the seller (discrepancy-gate.ts). The
+  // broker's click sends the follow-up link (demo deals never email) and, once
+  // someone was addressed, stamps the rows — a critical one then locks the
+  // CIM until the seller answers. Never sent without this click.
+  app.post("/api/deals/:dealId/discrepancies/email-seller-followups", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      res.json(await emailNeverAskedFollowUps(req.params.dealId));
+    } catch (error: any) {
+      res.status(500).json({ error: "Couldn't email the seller" });
+    }
+  });
+
   // Update a discrepancy (resolve, respond, route, link to a fact).
   app.patch("/api/discrepancies/:id", requireBroker, async (req, res) => {
     try {
@@ -204,6 +219,15 @@ export function registerDiscrepancyRoutes(app: Express) {
               ...(priv.interview ? { interview: { ...(sides.interview ?? { kind: "crm" }), brokerOnly: true } } : {}),
               ...(priv.document ? { document: { ...(sides.document ?? { kind: "crm" }), brokerOnly: true } } : {}),
             };
+          }
+          // Routed under the follow-up rules (a finished interview emails
+          // the seller): stamped, so it locks the CIM until they answer —
+          // unlike a routing from before those rules (discrepancy-gate.ts).
+          const prevStamp = routedToSellerAt(existingDisc);
+          if (existingDisc.status !== "ask_seller" || !prevStamp) {
+            updates.sideSources = withRoutedStamp(updates.sideSources ?? existingDisc.sideSources);
+          } else if (updates.sideSources) {
+            updates.sideSources = keepRoutedStamp(existingDisc.sideSources, updates.sideSources);
           }
         }
       }
@@ -286,7 +310,14 @@ export function registerDiscrepancyRoutes(app: Express) {
           console.warn("[discrepancies] couldn't write the resolution into the deal's facts:", e);
         }
       }
-      res.json({ ...updated, factWrite, staleFacts });
+      // Routed to a seller who has already finished the interview: nothing
+      // would raise it, so the seller is told (their own link) and the
+      // broker learns it waits on them (seller-followups.ts).
+      const sellerFollowUp =
+        status === "ask_seller" && existingDisc.status !== "ask_seller"
+          ? await notifySellerOfFollowUps(updated.dealId)
+          : undefined;
+      res.json({ ...updated, factWrite, staleFacts, ...(sellerFollowUp ? { sellerFollowUp } : {}) });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to update discrepancy" });
     }

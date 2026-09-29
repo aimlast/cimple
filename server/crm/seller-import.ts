@@ -24,12 +24,12 @@
  * a changed one replaces its old source (and the facts that came from it).
  */
 import fs from "fs";
-import { newDocumentFileName } from "../documents/document-path";
 import path from "path";
 import { createHash } from "crypto";
+import { newDocumentFileName } from "../documents/document-path";
 import { storage } from "../storage";
 import { createAndIngestSource } from "../documents/ingest";
-import { removeSourceFacts } from "../documents/cleanup";
+import { deleteDocumentAndProvenance } from "../documents/cleanup";
 import {
   pdAll,
   pdData,
@@ -771,9 +771,15 @@ async function runImport(dealId: string, token: string, link: DealCrmLink, statu
     const existingDocs = await storage.getDocumentsByDeal(dealId);
     const docsById = new Map(existingDocs.map((d) => [d.id, d]));
     const docsByKey = new Map<string, Document>();
+    // Every row per item: an import cut off by a restart mid-read left a row
+    // it never recorded in crmLink.imported — it goes when the item is next
+    // imported (one source per CRM item, never a duplicate "Couldn't read").
+    const allByKey = new Map<string, Document[]>();
     for (const d of existingDocs) {
       const k = docKey(d);
-      if (k) docsByKey.set(k, d);
+      if (!k) continue;
+      docsByKey.set(k, d);
+      allByKey.set(k, [...(allByKey.get(k) ?? []), d]);
     }
 
     status.total = items.length;
@@ -800,10 +806,14 @@ async function runImport(dealId: string, token: string, link: DealCrmLink, statu
           return;
         }
         const doc = await createAndIngestSource({ ...input, uploadedBy: "broker" });
+        // Rows an interrupted import left for this item (neither the source
+        // kept nor the one just created).
+        const strays = (allByKey.get(item.key) ?? []).filter((d) => d.id !== doc.id && d.id !== existingDoc?.id);
         if (doc.status === "failed" && existingDoc) {
           // The new version couldn't be read — keep the old source (and its
           // facts); the next import tries again.
           await retireDocument(doc);
+          for (const d of strays) await retireDocument(d);
           status.failed = (status.failed ?? 0) + 1;
           return;
         }
@@ -811,6 +821,7 @@ async function runImport(dealId: string, token: string, link: DealCrmLink, statu
         // stated: a value the new version repeats is a corroboration and
         // survives; a value it changed was kept as an alternate and steps in.
         if (existingDoc) await retireDocument(existingDoc);
+        for (const d of strays) await retireDocument(d);
         imported[item.key] = { documentId: doc.id, version: item.version };
         if (doc.status === "failed") status.failed = (status.failed ?? 0) + 1;
         else {
@@ -873,15 +884,16 @@ function summarise(s: CrmImportStatus): string {
   return parts.join(" · ");
 }
 
-/** Deletes a superseded source and the facts only it contributed. */
-async function retireDocument(doc: Document): Promise<void> {
+/** Deletes a superseded source, its file and the facts only it contributed. */
+export async function retireDocument(doc: Document): Promise<void> {
   try {
-    await storage.deleteDocument(doc.id);
-    // Facts the new version repeats were recorded as corroborations when it
+    // The same clean-up as a broker's delete (deleteDocumentAndProvenance):
+    // facts the new version repeats were recorded as corroborations when it
     // was ingested, so they stay; only what the old version alone said goes,
-    // and what it leaves empty is refilled by the merge's own authority
-    // (removeSourceFacts — the same clean-up as a broker's delete).
-    await removeSourceFacts(doc.dealId, doc.id);
+    // and what it leaves empty is refilled by the merge's own authority. The
+    // file goes too (unless another row shares it) — a superseded CRM file
+    // no row points at used to stay on the volume indefinitely.
+    await deleteDocumentAndProvenance(doc.id);
   } catch (err) {
     console.warn(`[crm-seller] couldn't retire superseded source ${doc.id}:`, err);
   }

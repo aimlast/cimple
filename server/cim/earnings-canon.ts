@@ -24,7 +24,12 @@
  * last moved THAT figure — the same metric and year
  * (CimFinancials.bridgeChangedAt) — was decided against a bridge figure that
  * no longer exists, so it doesn't overrule the newer one — the broker is
- * told, and can enter it again.
+ * told, and can enter it again. Only a change the BROKER made or approved
+ * counts: their own add-back edit, or an analysis they marked reviewed (from
+ * the review on). A newer run nobody reviewed never overrules the broker's
+ * figure (Pacific rebuild 2026-09-28: an unreviewed re-run's $4,222,200
+ * would have replaced the broker's resolved $3,900,000) — the broker is told
+ * the unreviewed run differs.
  * Where the broker's figure and the bridge disagree, the broker's figure is
  * used and the part of the bridge it contradicts is left out of the CIM (a
  * waterfall that doesn't end at the CIM's figure can't be shown): the whole
@@ -94,6 +99,11 @@ export interface EarningsCanon {
    * disagreeing with it: the later add-back change wins (not used).
    */
   staleBrokerFigures?: Array<{ figure: BrokerFigure; bridge: number }>;
+  /**
+   * Broker figures an analysis run the broker hasn't reviewed moved past:
+   * the broker's figure stands (it is used), and the broker is told.
+   */
+  unreviewedNewer?: Array<{ figure: BrokerFigure; bridge: number; version: number }>;
   /** The analysis as the CIM uses it: the overruled part of the bridge left out (null = no analysis). */
   financials: CimFinancials | null;
 }
@@ -143,12 +153,23 @@ export function earningsCanon(
     return iso ? Date.parse(iso) : NaN;
   };
   const staleBrokerFigures: NonNullable<EarningsCanon["staleBrokerFigures"]> = [];
+  const unreviewedNewer: NonNullable<EarningsCanon["unreviewedNewer"]> = [];
   const isStale = (f: BrokerFigure): boolean => {
     const bv = bridgeSeries[f.metric][f.year];
     const at = f.at ? Date.parse(f.at) : NaN;
     const changedAt = changedAtOf(f);
     if (typeof bv !== "number" || Number.isNaN(changedAt) || Number.isNaN(at) || at >= changedAt) return false;
     if (within(f.value, Math.max(f.tolerance, Math.abs(bv) * 0.005), bv)) return false;
+    // A newer bridge the broker made (an add-back edit) or approved (the
+    // analysis is marked reviewed) outranks the older figure; a newer run
+    // nobody reviewed doesn't — the broker's figure stands, and they're told.
+    // (Beacon: the reviewed v1 is OLDER than the broker's resolved $780,052,
+    // so the broker's figure stands there too.)
+    const byBroker = !!fin?.bridgeChangedByBroker?.[`${f.metric}|${f.year}`];
+    if (!byBroker && !fin?.reviewed) {
+      unreviewedNewer.push({ figure: f, bridge: bv, version: fin?.version ?? 0 });
+      return false;
+    }
     staleBrokerFigures.push({ figure: f, bridge: bv });
     return true;
   };
@@ -219,6 +240,7 @@ export function earningsCanon(
     unconfirmed,
     brokerConflicts: conflicts,
     ...(staleBrokerFigures.length > 0 ? { staleBrokerFigures } : {}),
+    ...(unreviewedNewer.length > 0 ? { unreviewedNewer } : {}),
     financials: fin ? withBridgeOverride(fin, override) : null,
   };
 }
@@ -757,6 +779,14 @@ export function earningsWarnings(c: EarningsCanon, held: EarningsHold[]): string
   }
   for (const u of c.unconfirmed) {
     out.push(`Earnings: no ${metricLabel(u)} is confirmed now that the analysis bridge is left out, so the CIM states none. Add the figure on the Information tab if buyers should see it.`);
+  }
+  const toldUnreviewed = new Set<string>();
+  for (const u of c.unreviewedNewer ?? []) {
+    const f = u.figure;
+    // One line per metric and year (the broker's decision and the fact it wrote are one figure).
+    if (toldUnreviewed.has(`${f.metric}|${f.year}`)) continue;
+    toldUnreviewed.add(`${f.metric}|${f.year}`);
+    out.push(`Earnings: the financial analysis v${u.version} gives ${money(u.bridge)} for ${metricLabel(f.metric)} FY${f.year}, but you haven't reviewed it, so the CIM keeps your ${f.text} (${f.from}). If the analysis is right, mark it reviewed on the Financials tab and regenerate.`);
   }
   for (const s of c.staleBrokerFigures ?? []) {
     const f = s.figure;

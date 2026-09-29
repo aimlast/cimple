@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, integer, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, integer, boolean, bigint, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -181,6 +181,12 @@ export interface CimGenerationStatus {
     buyers: number;
     /** The due-diligence version was cleared with the old sections. */
     ddCleared: boolean;
+    /**
+     * The deal stayed live: buyers keep seeing the version last published
+     * (cim_published_snapshots) until the broker publishes the new one.
+     * Absent on holds from before 2026-09-29 — those took the deal off live.
+     */
+    servingPublished?: boolean;
   };
   /**
    * The facts the finished run wrote from (server/cim/cim-staleness.ts):
@@ -189,6 +195,12 @@ export interface CimGenerationStatus {
    * generation-status responses.
    */
   factsAt?: { values: Record<string, string>; askingPrice: string | null; notesKey: string };
+  /**
+   * Staff-private matters the finished run held out of every CIM input
+   * (server/cim/staff-private.ts) — the CIM tab lists them with an include
+   * switch. Kept so an item only the AI review found is still shown later.
+   */
+  heldPrivate?: import("./staff-private").StaffPrivateItem[];
 }
 
 /** One buyer's AI deep-check verdict for a deal. */
@@ -607,6 +619,11 @@ export const cimSections = pgTable("cim_sections", {
   // version was written. The DD override is kept (not deleted) but a DD
   // buyer is served the current Normal content until it is refreshed.
   ddStaleAt: timestamp("dd_stale_at"),
+  // @anchor:cim-sections-cols:analytics
+  // Reading analytics: the section this one continues across a CIM
+  // regeneration (server/analytics/lineage.ts), so page-level reading history
+  // survives new section ids. Null = its own id.
+  analyticsLineage: text("analytics_lineage"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -694,6 +711,11 @@ export const buyerQuestions = pgTable("buyer_questions", {
   // Who may read the answer (shared/buyer-qa-scope.ts): "all" | "full" |
   // "private". Null on rows answered before scopes were recorded.
   answerScope: text("answer_scope"),
+  // @anchor:buyer-questions-cols:analytics
+  // The CIM page the buyer was on when asking (a section id, or
+  // "cim-disclaimer"/"cim-contact") and the rendition they were reading.
+  sectionId: text("section_id"),
+  renditionId: text("rendition_id"),
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -823,7 +845,7 @@ export const buyerAccess = pgTable("buyer_access", {
   // Decision prompt pacing — first visit is a breathing period (no prompt),
   // subsequent visits show the decision panel, reminder emails escalate.
   firstViewedAt: timestamp("first_viewed_at"),
-  reminderStage: text("reminder_stage").default("none"), // none | reminder_sent | warning_sent
+  reminderStage: text("reminder_stage").default("none"), // none | reminder_sent | warning_sent | email_undeliverable
   lastReminderAt: timestamp("last_reminder_at"),
 
   expiresAt: timestamp("expires_at"),
@@ -877,9 +899,24 @@ export const analyticsEvents = pgTable("analytics_events", {
 
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
-  
+
+  // @anchor:analytics-events-cols:analytics
+  // Reading analytics v2 (shared/analytics-v2.ts): discrete interactions
+  // (expand, financial_view, locked_click…) of a visit. (visit_id,
+  // client_seq) is unique, so a resent event is stored once. New rows leave
+  // ip_address / user_agent empty.
+  visitId: varchar("visit_id"),
+  renditionId: text("rendition_id"),
+  pageId: text("page_id"),
+  blockKey: text("block_key"),
+  clientSeq: integer("client_seq"),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("analytics_events_deal_created_idx").on(t.dealId, t.createdAt),
+  index("analytics_events_access_idx").on(t.buyerAccessId),
+  uniqueIndex("analytics_events_visit_seq_uq").on(t.visitId, t.clientSeq).where(sql`${t.visitId} IS NOT NULL`),
+]);
 
 export const insertAnalyticsEventSchema = createInsertSchema(analyticsEvents).omit({
   id: true,
@@ -1229,6 +1266,13 @@ export const conversationMessageSchema = z.object({
   /** AI turns: the answer chips offered with the question. Persisted so a
    *  resumed session shows them again for the still-pending question. */
   suggestedAnswers: z.array(z.string()).optional(),
+  /** AI turns: the reply to a short break ("take your time") — the question
+   *  before it is still the one the seller is answering. */
+  pause: z.boolean().optional(),
+  /** AI turns: the technical-fault notice of a turn the model couldn't
+   *  answer — the seller's message before it was saved but not yet
+   *  processed; the client offers Continue instead of a retype. */
+  degraded: z.boolean().optional(),
   /** Seller turns: set when this message corrects an earlier answer (the
    *  "Edit" flow). Carries the earlier message's timestamp + text so the
    *  transcript can link the two and the agent knows it is an update. */
@@ -1603,6 +1647,14 @@ export const NOTIFICATION_ROUTING: Record<string, { teams: string[]; roles?: str
   buyer_approval_rejected: { teams: ["broker"], roles: ["lead", "associate"] },
   // The seller finished (or ended) their AI interview.
   interview_complete: { teams: ["broker"], roles: ["lead", "associate"] },
+  // New events only (free round 2) — no existing event's recipients change.
+  // The broker routed questions to a seller who had finished the interview.
+  seller_followup_questions: { teams: ["seller"], roles: ["owner", "representative"] },
+  // The seller answered those follow-up questions (a session on the finished interview ended).
+  seller_followups_answered: { teams: ["broker"], roles: ["lead", "associate"] },
+  // The seller's answer on the CIM review page (/seller/:token/review).
+  cim_seller_approved: { teams: ["broker"], roles: ["lead", "associate"] },
+  cim_changes_requested: { teams: ["broker"], roles: ["lead", "associate"] },
 };
 
 // Buyer decision next-step options (shown after "interested in moving forward")
@@ -1901,6 +1953,10 @@ export const brokerBuyerContacts = pgTable("broker_buyer_contacts", {
   brokerProfileMeta: jsonb("broker_profile_meta"),     // { field: { at } }
   interestStatus: text("interest_status"),             // hot | warm | cold | not_interested | null
   aiSummary: jsonb("ai_summary"),                      // { text, at, key }
+  // Removed from this broker's list (soft delete): off the list, matching,
+  // deep check and outreach, and the CRM buyer sync never adds them back.
+  // The broker's own edits are kept, so "Add back" restores them.
+  removedAt: timestamp("removed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -2245,12 +2301,21 @@ export type BuyerInterestStatus = (typeof BUYER_INTEREST_STATUSES)[number];
 
 export interface BuyerAiSummary { text: string; at: string; key: string }
 
-/** One broker action on a buyer_access row (buyer_access.access_events). */
+/**
+ * One event on a buyer_access row (buyer_access.access_events): a broker
+ * action, or a decision-reminder email refused for good (the pipeline stops
+ * and the broker follows up — server/reminders/decision-reminders.ts).
+ */
 export interface BuyerAccessEvent {
-  type: "extended" | "level_changed" | "revoked";
+  // "contacted" = the broker's "Mark contacted" on the Engagement tab
+  // (POST /api/deals/:dealId/engagement/buyers/:accessId/contacted).
+  type: "extended" | "level_changed" | "revoked" | "reminder_undeliverable" | "contacted";
   at: string;
   expiresAt?: string | null;
   accessLevel?: string | null;
+  /** reminder_undeliverable: which email, and the email service's HTTP status. */
+  stage?: "reminder" | "warning";
+  status?: number | null;
 }
 
 /** "other" = on the buyer's global profile, written by someone other than this broker or the buyer (never named). */
@@ -2615,4 +2680,152 @@ export type CimTemplateRow = typeof cimTemplates.$inferSelect;
 // @anchor:schema-tail:h-findisc
 // @anchor:schema-tail:h-interview
 // @anchor:schema-tail:h-cim
+
+/**
+ * The CIM buyers were last given — its sections and Blind / DD versions as
+ * they stood — kept while a regenerated CIM waits for the broker's review
+ * (server/cim/published-snapshot.ts). Buyers keep reading this until the
+ * broker publishes the new one; then it is deleted. One row per deal.
+ */
+export const cimPublishedSnapshots = pgTable("cim_published_snapshots", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  /** cim_sections rows as they stood (JSON). */
+  sections: jsonb("sections").notNull(),
+  /** cim_section_overrides rows, mode "blind" / "dd". */
+  blindOverrides: jsonb("blind_overrides").notNull(),
+  ddOverrides: jsonb("dd_overrides").notNull(),
+  blindCodename: text("blind_codename"),
+  takenAt: timestamp("taken_at").defaultNow().notNull(),
+});
+export type CimPublishedSnapshot = typeof cimPublishedSnapshots.$inferSelect;
 // @anchor:schema-tail:h-misc
+
+// @anchor:schema-tail:analytics
+// ── Buyer reading analytics v2 (shared/analytics-v2.ts) ────────────────────
+// What each buyer actually read, as reading time per page part, replacing
+// the cursor-sample heat map. No raw IP or user agent is stored here.
+
+/**
+ * Exactly what a buyer was served (the buildBuyerCim output after every
+ * blind guard, locked stubs included) — the broker's heat-map viewer
+ * renders this, so the heat sits on the version the buyer saw. id = first
+ * 32 hex of sha256 over {mode, variant, design, sections}: identical
+ * servings share a row. Deleted with the deal; unread ones pruned after 30 days.
+ */
+export const cimRenditions = pgTable("cim_renditions", {
+  id: varchar("id").primaryKey(),
+  dealId: varchar("deal_id").notNull(),
+  mode: text("mode").notNull(),           // blind | normal | dd
+  variant: text("variant").notNull(),     // teaser | full
+  cimLayoutVersion: integer("cim_layout_version"),
+  sections: jsonb("sections").notNull(),  // BuyerSection[] as served
+  design: jsonb("design"),                // the view room's `design` payload
+  pageIndex: jsonb("page_index").notNull().$type<import("./analytics-v2").RenditionPage[]>(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("cim_renditions_deal_created_idx").on(t.dealId, t.createdAt),
+]);
+export type CimRendition = typeof cimRenditions.$inferSelect;
+export type InsertCimRendition = typeof cimRenditions.$inferInsert;
+
+/**
+ * One buyer visit to the view room (a gap of 30 min starts a new one).
+ * id is the client's visit uuid. Clocks are cumulative ms, merged with
+ * GREATEST so resends and out-of-order beacons can't corrupt them.
+ */
+export const buyerVisits = pgTable("buyer_visits", {
+  id: varchar("id").primaryKey(),
+  dealId: varchar("deal_id").notNull(),
+  buyerAccessId: varchar("buyer_access_id").notNull(),
+  renditionId: varchar("rendition_id"),
+  mode: text("mode"),                     // blind | normal | dd
+  accessLevel: text("access_level"),
+  deviceClass: text("device_class"),      // desktop | tablet | phone
+  viewportW: integer("viewport_w"),
+  viewportH: integer("viewport_h"),
+  uaFamily: text("ua_family"),            // "Chrome/Mac" — never the raw user agent
+  // Keyed HMAC of the network address (ANALYTICS_HASH_KEY, else derived from
+  // SESSION_SECRET) — only for "opened from N places". Never the raw IP.
+  ipHash: text("ip_hash"),
+  startedAt: timestamp("started_at").defaultNow().notNull(),
+  // The last moment the buyer was actively READING (advances only when
+  // active_ms grows — an open, idle tab never moves it). Drives "Reading now",
+  // recency and the date filters.
+  lastSeenAt: timestamp("last_seen_at").defaultNow().notNull(),
+  wallMs: integer("wall_ms").notNull().default(0),
+  activeMs: integer("active_ms").notNull().default(0),
+  idleMs: integer("idle_ms").notNull().default(0),
+  hiddenMs: integer("hidden_ms").notNull().default(0),
+  awayMs: integer("away_ms").notNull().default(0),
+  outsideMs: integer("outside_ms").notNull().default(0),
+  // Furthest page reached (index in the rendition's page order); null = none yet.
+  maxPageIndex: integer("max_page_index"),
+  // [[secondsSinceStart, pageId], …] — dominant page changes, ≤ 2,000 entries.
+  path: jsonb("path").$type<Array<[number, string]>>().default(sql`'[]'::jsonb`),
+  selfView: boolean("self_view").notNull().default(false),   // the owning broker previewing
+  clamped: boolean("clamped").notNull().default(false),      // scaled to the server's elapsed time
+  legacy: boolean("legacy").notNull().default(false),        // backfilled from section_exit events
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("buyer_visits_deal_seen_idx").on(t.dealId, t.lastSeenAt),
+  index("buyer_visits_access_idx").on(t.buyerAccessId),
+]);
+export type BuyerVisit = typeof buyerVisits.$inferSelect;
+export type InsertBuyerVisit = typeof buyerVisits.$inferInsert;
+
+/**
+ * Reading time per (visit, page, block). block_key "" = on the page but
+ * outside every block. Upserted with GREATEST per measure (cumulative
+ * counters) on the unique (visit_id, page_id, block_key) — ON CONFLICT
+ * (visit_id, page_id, block_key). Usually < 100 rows per visit.
+ * (A surrogate id + unique index rather than a composite primary key:
+ * drizzle-kit push re-creates composite keys on every deploy.)
+ */
+export const readingRollups = pgTable("reading_rollups", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  visitId: varchar("visit_id").notNull(),
+  pageId: text("page_id").notNull(),
+  blockKey: text("block_key").notNull().default(""),
+  dealId: varchar("deal_id").notNull(),
+  buyerAccessId: varchar("buyer_access_id").notNull(),
+  renditionId: varchar("rendition_id"),
+  lineageId: text("lineage_id"),
+  attentionMs: integer("attention_ms").notNull().default(0),
+  skimMs: integer("skim_ms").notNull().default(0),
+  visibleMs: integer("visible_ms").notNull().default(0),
+  pointerMs: integer("pointer_ms").notNull().default(0),
+  firstAt: timestamp("first_at").defaultNow().notNull(),
+  lastAt: timestamp("last_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("reading_rollups_visit_page_block_uq").on(t.visitId, t.pageId, t.blockKey),
+  index("reading_rollups_deal_rendition_page_idx").on(t.dealId, t.renditionId, t.pageId),
+  index("reading_rollups_deal_lineage_idx").on(t.dealId, t.lineageId),
+]);
+export type ReadingRollup = typeof readingRollups.$inferSelect;
+export type InsertReadingRollup = typeof readingRollups.$inferInsert;
+
+/**
+ * Cross-deal learning input, per deal (recomputed from that deal's rollups,
+ * so it is idempotent and deleted with the deal): reading time by page role,
+ * layout and block kind. Never a section key, title or any CIM text — only
+ * these generic dimensions reach other brokers' layout prompts, and only
+ * aggregated over enough deals. Demo deals never write here.
+ */
+export const readingBenchmarks = pgTable("reading_benchmarks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  industry: text("industry").notNull(),
+  pageRole: text("page_role").notNull(),
+  layoutType: text("layout_type").notNull(),
+  blockKind: text("block_kind").notNull(),
+  readers: integer("readers").notNull().default(0),
+  blocks: integer("blocks").notNull().default(0),
+  attentionMs: bigint("attention_ms", { mode: "number" }).notNull().default(0),
+  expectedMs: bigint("expected_ms", { mode: "number" }).notNull().default(0),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("reading_benchmarks_deal_dims_uq").on(t.dealId, t.pageRole, t.layoutType, t.blockKind),
+  index("reading_benchmarks_industry_idx").on(t.industry, t.pageRole),
+]);
+export type ReadingBenchmark = typeof readingBenchmarks.$inferSelect;

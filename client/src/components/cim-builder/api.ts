@@ -23,6 +23,19 @@ export interface BuilderSection extends Omit<CimSection, "aiTask" | "contentHist
   placeholder?: boolean;
   /** Facts changed since the CIM was written whose old value this section still shows. */
   factsChanged?: string[];
+  /** Private staff matters now held back from the CIM that this section still states (regenerate or edit it). */
+  privateStaff?: string[];
+}
+
+/** One full DD run (POST generate-dd), kept in server memory until the next. */
+export interface DdRunSummary {
+  /** Matches the startedAt the generate-dd response returned for this run. */
+  startedAt?: string;
+  finishedAt: string;
+  error?: string;
+  written: number;
+  notWritten: number;
+  warnings: string[];
 }
 
 /** What the broker must look at before publishing (GET …/cim-builder `review`). */
@@ -33,6 +46,11 @@ export interface CimReview {
   warnings: string[];
   warningsAt: string | null;
   placeholders: number;
+  /** Sections still stating a private staff matter that is now held back. */
+  privateStaffSections?: number;
+  /** Sections buyers are still served (the kept copy, or a changed section's approved version) that state a held staff matter. */
+  privateStaffServed?: Array<{ id: string; title: string; descriptions: string[] }>;
+  privateStaffServedFrom?: "kept_copy" | "approved_version" | null;
   /** Facts changed since the CIM was written (null = none). */
   facts: {
     changes: Array<{ label: string; before: string | null; after: string | null }>;
@@ -53,9 +71,16 @@ export interface BuilderState {
    */
   blind: { generated: boolean; codename: string | null; codenameProblem?: string | null; running: boolean; error: string | null; updating: number; held: number };
   /** outOfDate: sections whose DD version is stale or missing; running: a refresh is under way. */
-  dd: { generated: boolean; outOfDate: number; running: boolean };
+  dd: {
+    generated: boolean;
+    outOfDate: number;
+    running: boolean;
+    /** The last full DD run (server memory): why nothing changed, or what couldn't be written. */
+    lastRun?: DdRunSummary | null;
+  };
   buyers: { total: number; byLevel: Record<string, number> };
-  deal: { isLive: boolean; cimLayoutGeneratedAt: string | null };
+  /** listedAskingPrice: the price buyers see now (null = none listed); the previews apply it like the view room. */
+  deal: { isLive: boolean; cimLayoutGeneratedAt: string | null; listedAskingPrice?: string | null };
   review?: CimReview;
 }
 

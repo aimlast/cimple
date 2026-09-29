@@ -5,12 +5,14 @@ import pg from "pg";
 import path from "path";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import { createHash } from "crypto";
 import * as Sentry from "@sentry/node";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { startReminderScheduler } from "./reminders/decision-reminders";
 import { formatRequestLogLine, scrubSentryEvent } from "./log-redact";
 import { AI_LIMIT, applyInterviewRateLimits } from "./rate-limit-scope";
+import { applyBulkRateLimits } from "./security/bulk-limits";
 
 // Error monitoring — activates only when SENTRY_DSN is set (free tier is
 // plenty for beta). Without it this is a no-op.
@@ -146,6 +148,7 @@ for (const p of [
   "/api/buyer-auth/login",
   "/api/buyer-auth/signup",
   "/api/buyer-auth/request-reset",
+  "/api/buyer-auth/send-verification",
   "/api/early-access",
 ]) {
   app.use(p, authLimiter);
@@ -177,6 +180,22 @@ app.use("/api/deals/:dealId/generate-content", aiLimiter);
 app.use("/api/deals/:dealId/generate-blind", aiLimiter);
 app.use("/api/deals/:dealId/generate-dd", aiLimiter);
 app.use("/api/deals/:dealId/generate-layout", aiLimiter);
+// Bulk buyer actions: drafting / AI matching on the AI limit, sending on
+// the email limit (server/security/bulk-limits.ts).
+applyBulkRateLimits(app, aiLimiter);
+app.use("/api/deals/:dealId/buyer-fit/:accessId/ai", aiLimiter);
+// Buyer reading analytics: the optional AI brief is model-running; the
+// view room's reading tracker (a flush every ~15 s per tab) gets its own
+// roomy per-link ceiling, keyed by a hash of the link — never the AI limiter.
+app.use("/api/deals/:dealId/engagement/buyers/:accessId/brief", aiLimiter);
+app.use("/api/view/:token/reading", rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `reading:${createHash("sha256").update(String(req.params.token ?? "")).digest("hex").slice(0, 32)}`,
+  message: { error: "Too many requests" },
+}));
 
 // Session type augmentation
 declare module "express-session" {
@@ -263,6 +282,13 @@ app.use((req, res, next) => {
       import("./crm/buyer-sync").then((m) => m.startBuyerSyncScheduler()).catch((err) => console.error("[buyer-sync] scheduler failed to start:", err));
       // Sources a redeploy cut off mid-read are marked "couldn't read" (with "Read it again").
       import("./documents/ingest").then((m) => m.startInterruptedReadRecovery()).catch((err) => console.error("[ingest] interrupted-read recovery failed:", err));
+      // Once per volume: files earlier deletes left behind (no row points at them) leave the volume.
+      if (process.env.NODE_ENV === "production") {
+        // First what deleted deals left (their rows made their files look in use), then files no row points at.
+        import("./documents/cleanup")
+          .then(async (m) => { await m.sweepDeletedDealLeftoversOnce(); await m.sweepOrphanDocumentFilesOnce(); })
+          .catch((err) => console.error("[documents] orphan-file sweep failed:", err));
+      }
     }
   });
 

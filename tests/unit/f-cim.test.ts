@@ -217,9 +217,11 @@ test("the hold is what every buyer path checks", () => {
   assert.equal(cimHeldFromBuyers({}), false);
 });
 test("both confirm dialogs say plainly what happens to buyers", () => {
+  // A live deal stays live: buyers keep the published version until the update is published (2026-09-29).
   const t = regenerateBuyerImpact({ isLive: true, openBuyers: 13 })!;
-  assert.match(t, /not shown to the 13 buyers with access until you review it, approve it and publish it again/);
-  assert.match(t, /comes off live/);
+  assert.match(t, /stays live: the 13 buyers with access keep seeing the version you published/);
+  assert.match(t, /only when you approve it and publish the update/);
+  assert.match(regenerateBuyerImpact({ isLive: false, openBuyers: 2 })!, /not shown to the 2 buyers with access until you review it, approve it and publish it again/);
   assert.equal(regenerateBuyerImpact({ isLive: false, openBuyers: 0, approved: false }), null);
 });
 
@@ -346,6 +348,7 @@ test("the handler checks the gate before loading DD inputs", () => {
   assert.ok(gate > 0, "gate present");
   assert.ok(body.indexOf("discrepancyBlockResponse(res, openCritical") > gate);
   assert.ok(gate < body.indexOf("loadDdInputs(deal)"), "before the DD inputs");
+  assert.ok(gate < body.indexOf("startFullDdGeneration("), "before the run starts");
 });
 
 // ── F10: expandable financial tables ─────────────────────────────────────

@@ -34,6 +34,7 @@ import {
 import { invalidateBlind } from "./blind-sync";
 import { displayedProse, historyWith, withStaleStamps } from "./section-ops";
 import { withdrawApprovalsAfterChange } from "./approvals";
+import { keepPublishedBeforeChange } from "./published-versions";
 import { reconcileRelatedSections } from "./related-sections";
 import { isMediaLayout } from "@shared/cim-media";
 import { withApprovalRuleMark } from "@shared/cim-approvals";
@@ -186,6 +187,9 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
     const row = await stillCurrent(section.id, task.id);
     if (!row) return;
     const reason = task.kind === "convert" ? "Converted layout with AI" : task.kind === "regenerate" ? "Regenerated with AI" : "Written with AI";
+    // On a live CIM the AI's version waits for the broker's approval: buyers
+    // keep the approved one (shared/cim-published.ts).
+    await keepPublishedBeforeChange(row, await storage.getDeal(deal.id));
     await db
       .update(cimSections)
       .set({
@@ -261,6 +265,7 @@ export async function startSectionTask(
 export async function applyRewrite(section: CimSection): Promise<CimSection | null> {
   const task = normalizeTask(section.id, section.aiTask);
   if (!task || task.kind !== "rewrite" || task.status !== "ready" || !task.proposal) return null;
+  await keepPublishedBeforeChange(section, await storage.getDeal(section.dealId));
   const [updated] = await db
     .update(cimSections)
     .set({

@@ -15,6 +15,8 @@ import { Globe, Mail, MapPin, Phone, ShieldCheck, UserRound } from "lucide-react
 import { DEFAULT_DISCLAIMER } from "@shared/cim-theme";
 import { useCimDesign, useThemeStyle } from "./CimDesignContext";
 import { CimSectionHeading } from "./CimSectionHeading";
+import { CimBlockScope, useBlockAttrs, useCimInteraction, usePageAttrs } from "./blocks";
+import { CONTACT_PAGE_ID, DISCLAIMER_PAGE_ID } from "@shared/cim-blocks";
 
 export type CimPageItem<S> =
   | { kind: "section"; key: string; section: S }
@@ -51,8 +53,11 @@ export function CimDisclaimerPage() {
   const t = design.theme;
   const text = design.brokerage.disclaimer?.trim() || DEFAULT_DISCLAIMER;
   const paragraphs = text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  // Reading analytics: the whole page is one block (blocks.tsx; no-op elsewhere).
+  const pageAttrs = usePageAttrs(DISCLAIMER_PAGE_ID);
+  const ba = useBlockAttrs();
   return (
-    <div className="cim-doc cim-section relative" style={style} data-section-key="cim-disclaimer" data-layout-type="disclaimer_page">
+    <div className="cim-doc cim-section relative" style={style} data-section-key="cim-disclaimer" data-layout-type="disclaimer_page" {...pageAttrs} {...ba("page")}>
       <div className="rounded-lg border px-6 py-7 sm:px-10 sm:py-10" style={{ borderColor: t.line, backgroundColor: t.card }}>
         <div className="flex items-center gap-2 mb-5">
           <ShieldCheck className="h-4 w-4 shrink-0" style={{ color: t.accent }} />
@@ -74,8 +79,9 @@ export function CimDisclaimerPage() {
   );
 }
 
-function ContactLine({ icon, children, href }: { icon: React.ReactNode; children: React.ReactNode; href?: string }) {
+function ContactLine({ icon, children, href, kind }: { icon: React.ReactNode; children: React.ReactNode; href?: string; kind?: "email" | "phone" | "website" }) {
   const t = useCimDesign().theme;
+  const interaction = useCimInteraction();
   const inner = (
     <span className="flex items-start gap-3 min-w-0">
       <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full" style={{ backgroundColor: t.accentSoft, color: t.accentSoftText }}>
@@ -84,7 +90,7 @@ function ContactLine({ icon, children, href }: { icon: React.ReactNode; children
       <span className="text-sm leading-relaxed break-words min-w-0 pt-1" style={{ color: t.ink }}>{children}</span>
     </span>
   );
-  return href ? <a href={href} className="block hover:underline" target={href.startsWith("http") ? "_blank" : undefined} rel="noreferrer noopener">{inner}</a> : inner;
+  return href ? <a href={href} onClick={() => kind && interaction("contact_click", "page", kind)} className="block hover:underline" target={href.startsWith("http") ? "_blank" : undefined} rel="noreferrer noopener">{inner}</a> : inner;
 }
 
 export function CimContactPage() {
@@ -95,8 +101,11 @@ export function CimContactPage() {
   const [logoFailed, setLogoFailed] = useState(false);
   const website = b.website ? (b.website.startsWith("http") ? b.website : `https://${b.website}`) : null;
   const hasDetails = !!(b.contactName || b.phone || b.email || b.website || b.address);
+  const pageAttrs = usePageAttrs(CONTACT_PAGE_ID);
+  const ba = useBlockAttrs();
   return (
-    <div className="cim-doc cim-section relative" style={style} data-section-key="cim-contact" data-layout-type="contact_page">
+    <CimBlockScope pageId={CONTACT_PAGE_ID}>
+    <div className="cim-doc cim-section relative" style={style} data-section-key="cim-contact" data-layout-type="contact_page" {...pageAttrs} {...ba("page")}>
       <CimSectionHeading title="Contact" />
       <div className="rounded-lg border overflow-hidden" style={{ borderColor: t.line, backgroundColor: t.card }}>
         <div className="h-1.5" style={{ backgroundColor: t.accent }} />
@@ -112,9 +121,9 @@ export function CimContactPage() {
           </div>
           <div className="space-y-3.5 min-w-0">
             {b.contactName && <ContactLine icon={<UserRound className="h-3.5 w-3.5" />}>{b.contactName}</ContactLine>}
-            {b.phone && <ContactLine icon={<Phone className="h-3.5 w-3.5" />} href={`tel:${b.phone.replace(/[^\d+]/g, "")}`}>{b.phone}</ContactLine>}
-            {b.email && <ContactLine icon={<Mail className="h-3.5 w-3.5" />} href={`mailto:${b.email}`}>{b.email}</ContactLine>}
-            {website && <ContactLine icon={<Globe className="h-3.5 w-3.5" />} href={website}>{b.website!.replace(/^https?:\/\//, "").replace(/\/$/, "")}</ContactLine>}
+            {b.phone && <ContactLine icon={<Phone className="h-3.5 w-3.5" />} href={`tel:${b.phone.replace(/[^\d+]/g, "")}`} kind="phone">{b.phone}</ContactLine>}
+            {b.email && <ContactLine icon={<Mail className="h-3.5 w-3.5" />} href={`mailto:${b.email}`} kind="email">{b.email}</ContactLine>}
+            {website && <ContactLine icon={<Globe className="h-3.5 w-3.5" />} href={website} kind="website">{b.website!.replace(/^https?:\/\//, "").replace(/\/$/, "")}</ContactLine>}
             {b.address && <ContactLine icon={<MapPin className="h-3.5 w-3.5" />}>{b.address}</ContactLine>}
             {!hasDetails && (
               <p className="text-sm" style={{ color: t.inkMuted }}>Contact your broker for more information.</p>
@@ -123,5 +132,6 @@ export function CimContactPage() {
         </div>
       </div>
     </div>
+    </CimBlockScope>
   );
 }

@@ -10,6 +10,8 @@
  */
 import { storage } from "../storage";
 import { notify } from "./service";
+import { escapeHtml } from "./email-escape";
+import { openInterviewItems } from "@shared/seller-portal";
 
 export function shouldAnnounceInterviewComplete(opts: {
   wasCompleted: boolean | null | undefined;
@@ -28,15 +30,36 @@ export async function notifyInterviewComplete(
   if (!deal) return;
   const invites = await storage.getSellerInvitesByDealId(dealId).catch(() => []);
   const seller = invites.find((i) => i.sellerName)?.sellerName?.trim() || "The seller";
+  const open = openInterviewItems(await storage.getTasksByDeal(dealId).catch(() => []));
   await notify(dealId, "interview_complete", {
     title: `Seller interview finished — ${deal.businessName}`,
     body:
-      (how === "seller_ended"
-        ? `${seller} ended the AI interview.`
-        : `${seller} finished the AI interview.`) +
-      ` What they said is on the deal's Interview Review tab, and the facts are on the Information tab.`,
+      escapeHtml(
+        (how === "seller_ended"
+          ? `${seller} ended the AI interview.`
+          : `${seller} finished the AI interview.`) +
+        ` What they said is on the deal's Interview Review tab, and the facts are on the Information tab.`,
+      ) + openItemsHtml(open),
     actionUrl: `/deal/${dealId}/interview-review`,
     businessName: deal.businessName,
-    metadata: { how },
+    metadata: { how, openItems: open.length },
   });
+}
+
+const ITEM_KIND: Record<string, string> = {
+  document_request: "Document",
+  follow_up: "Follow up",
+  skipped_question: "Not answered",
+};
+
+/**
+ * The interview's open to-dos (documents it asked for, things to follow
+ * up, questions it couldn't cover) — the interview promised the seller
+ * they would be noted "so they don't get lost". Plain text, escaped.
+ */
+export function openItemsHtml(items: Array<{ type: string; title: string }>, max = 10): string {
+  if (items.length === 0) return "";
+  const lines = items.slice(0, max).map((t) => `• ${escapeHtml(ITEM_KIND[t.type] ?? "To do")}: ${escapeHtml(t.title)}`);
+  const more = items.length > max ? `<br>…and ${items.length - max} more on the deal's Interview Review tab.` : "";
+  return `<br><br><strong>Open items from the interview (${items.length}):</strong><br>${lines.join("<br>")}${more}`;
 }

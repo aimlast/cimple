@@ -82,6 +82,7 @@ every path.
 | `/seller/:token/interview` | SellerInterview | FullscreenLayout | AI interview (fullscreen, seller mode) |
 | `/seller/:token/progress` | SellerProgress | SellerLayout | Seller progress dashboard |
 | `/seller/:token/documents` | SellerDocuments | SellerLayout | Seller document upload |
+| `/seller/:token/review` | SellerReview | SellerLayout | Seller reads the CIM and approves it or asks for changes (once the broker approved it) |
 | `/approve/:token` | SellerApprovalPage | FullscreenLayout | Seller approves Q&A answer (different token table) |
 | `/sign-nda/:token` | SellerNdaPage | FullscreenLayout | Seller signs the engagement NDA electronically (standalone token page) |
 

@@ -23,7 +23,7 @@ import type { CimGrowth } from "./cim-financials";
 import { isKnownFigure, parseFiguresAt, type Figure, type KnownFigures } from "./figure-check";
 import { spelledNumbers, CASUAL_FIGURE } from "./spoken-figures";
 import { staleTargets } from "./fact-dates";
-import { mentionsHeldName } from "./sensitive-facts";
+import { mentionsHeldPerson } from "./sensitive-facts";
 import { genderOfGivenName } from "./given-name-gender";
 import { yearOfFigure } from "./consistency-check";
 
@@ -804,6 +804,98 @@ function earningsIssues(section: { layoutType: string; layoutData: unknown }, te
   return out;
 }
 
+// ── A stated count and the list that follows it ─────────────────────────
+
+const COUNT_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+};
+const COUNT_TOKEN = String.raw`(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)`;
+/** Units that say how long or how much, not how many of something ("in the last three years"). */
+const NOT_COUNTED = /^(?:years?|yrs?|months?|mos?|weeks?|wks?|days?|hours?|hrs?|minutes?|mins?|seconds?|secs?|decades?|times?|percent|per|%|x|million|thousand|billion|k|m|km|kms|kilometres|kilometers|miles?|feet|ft|sq|lbs?|kg|tons?|tonnes?|litres?|liters?|gallons?)$/i;
+const countOf = (tok: string): number | null => {
+  const t = tok.toLowerCase();
+  if (/^\d+$/.test(t)) return Number(t);
+  return COUNT_WORDS[t] ?? null;
+};
+
+/**
+ * A sentence that states a count and then lists the items — "Only two
+ * technicians have been lost in the last three years: one retired, one moved
+ * to Alberta, and one was terminated" (Lakeshore rebuild, 2026-09-28) — must
+ * list as many as it says. Read only where the list is unmistakable: after a
+ * colon, a dash or an opening parenthesis, and either every item is counted
+ * ("one …, one …, and one …" — summed) or the list follows the counted words
+ * directly ("three locations: Hamilton, Burlington and Oakville"). A list
+ * "including" or "such as" some of them is a subset, never a mismatch.
+ */
+export function countListMismatches(text: string): string[] {
+  const out: string[] = [];
+  if (!text) return out;
+  for (const { s } of sentences(text)) {
+    const open = s.search(/:\s|\s[—–-]\s|\s\(/);
+    if (open < 0) continue;
+    const head = s.slice(0, open);
+    // Plain (uncounted) items only after a colon: a dash or a bracket is as
+    // often an aside ("5 growth levers — tap to see all …").
+    const afterColon = s[open] === ":";
+    let list = s.slice(open).replace(/^\s*[:—–(-]\s*/, "").replace(/\)\s*[.;]?\s*$/, "").replace(/[.;]\s*$/, "");
+    // A bracket's list is what is inside it ("46 reefers (14 from 2011–2014), and 20 chassis").
+    if (s[open + 1] === "(") list = list.split(")")[0];
+    if (/\b(?:including|includes|such as|among them|e\.g\.|for example|like)\b/i.test(head.slice(-40) + " " + list.slice(0, 20))) continue;
+    // The count: the last number in the lead-in that counts things (not "three years").
+    const counts = Array.from(head.matchAll(new RegExp(String.raw`\b${COUNT_TOKEN}\s+((?:[a-z][\w-]*\s+){0,3}?[a-z][\w-]*s)\b`, "gi")))
+      .filter((m) => !NOT_COUNTED.test(m[2].split(/\s+/)[0]) && !NOT_COUNTED.test(m[2].split(/\s+/).pop() ?? ""));
+    const stated = counts[counts.length - 1];
+    if (!stated) continue;
+    const n = countOf(stated[1]);
+    if (n === null || n < 2) continue;
+    // Stop the list at the end of the enumeration (a following clause after ";").
+    // A numbered list ("(1) Financial …; (2) Legal …") counts its numbers.
+    const markers = Array.from(new Set(Array.from(list.matchAll(/(?:^|\s)\(?(\d{1,2})\)\s/g)).map((m) => m[1])));
+    list = list.split(/;\s/)[0];
+    // Asides inside an item ("Dave Kowalczyk (G1, since 2010)") are not more items.
+    const flat = list.replace(/\([^()]*\)?/g, " ");
+    const words = (x: string) => x.split(/\s+/).filter(Boolean).length;
+    // "one retired", "2 moved away" — a count of people or things, not "60%" or "16 years".
+    const quantity = (x: string) => {
+      const m = new RegExp(String.raw`^${COUNT_TOKEN}\s+(?!percent\b|per\b|years?\b|yrs?\b|months?\b|weeks?\b|days?\b|hours?\b)[a-z]`, "i").exec(x);
+      return m ? countOf(m[1]) : null;
+    };
+    const counted = flat.split(/,\s+(?:and\s+|or\s+)?|\s+and\s+|\s+or\s+/i).map((x) => x.trim()).filter(Boolean);
+    let listed: number;
+    if (markers.length >= 2) {
+      listed = markers.length;
+    } else if (counted.length >= 2 && counted.every((x) => quantity(x) !== null && words(x) <= 9)) {
+      listed = counted.reduce((a, x) => a + (quantity(x) as number), 0);
+    } else {
+      // An aside in brackets is rarely a list ("5 growth levers (tap to see all …)").
+      if (!afterColon || markers.length === 1) continue;
+      // Plain items only when the list follows the counted words directly,
+      // is one flat list (no "including …" inside it), and "and" joins only
+      // the last item ("hormone creams and troches" is one item).
+      const tail = head.slice(stated.index! + stated[0].length).trim();
+      if (words(tail) > 2 || /\b(?:including|includes|such as|plus|as well as|e\.g\.)\b/i.test(flat)) continue;
+      const raw = flat.split(/,\s+/).map((x) => x.trim()).filter(Boolean);
+      const oxford = raw.length > 1 && /^(?:and|or)\s/i.test(raw[raw.length - 1]);
+      const parts = raw.map((x) => x.replace(/^(?:and|or)\s+/i, ""));
+      // "Hamilton, Burlington and Oakville": the last "and" joins the last two items.
+      const last = parts[parts.length - 1] ?? "";
+      const cut = oxford ? null : /^(.*)\s+(?:and|or)\s+(.+)$/i.exec(last);
+      const items = cut ? [...parts.slice(0, -1), cut[1], cut[2]] : parts;
+      if (items.length < 2 || items.some((x) => words(x) > 9 || quantity(x) !== null)) continue;
+      // Without an Oxford comma the last "and" may be inside an item
+      // ("Newfoundland and Labrador"): either reading that matches is fine.
+      if (cut && parts.length === n) continue;
+      listed = items.length;
+    }
+    if (listed === n) continue;
+    const said = `${stated[1]} ${stated[2]}`;
+    const word = (k: number) => Object.keys(COUNT_WORDS).find((w) => COUNT_WORDS[w] === k) ?? String(k);
+    out.push(`says "${said}" but lists ${word(listed)} (${clip(list)}) — make the count and the list agree with the facts`);
+  }
+  return out;
+}
+
 /** Every prose problem in a section (empty = nothing found). */
 export function proseProblems(
   section: { sectionTitle: string; layoutType: string; layoutData: unknown; tags?: unknown; aiDraftContent?: unknown },
@@ -823,12 +915,13 @@ export function proseProblems(
     issues.push(...wrongGrowthPeriod(t.text, pk.growth ?? []));
     if (pk.today) for (const st of staleTargets(t.text, pk.today)) issues.push(`"${st.phrase}" is not in the future any more — today is ${pk.today.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })}; restate the timeline from the recorded date or leave the date out`);
     issues.push(...guessedGender(t.text, pk));
-    const held = mentionsHeldName(t.text, pk.heldNames ?? []);
+    const held = mentionsHeldPerson(t.text, pk.heldNames ?? []);
     if (held) issues.push(`mentions "${held}", which the facts mark confidential — leave it out`);
     const casual = CASUAL_FIGURE.exec(t.text);
     if (casual) issues.push(`"${casual[0]}" is the seller's spoken wording — write it as a clean figure without changing its meaning`);
     issues.push(...placesOutOfContext(t.text, pk));
     issues.push(...annualFromOneYear(t.text, pk));
+    issues.push(...countListMismatches(t.text));
   }
   issues.push(...partyItems(section, pk));
   if (pk.earnings) issues.push(...earningsIssues(section, texts, pk.earnings));

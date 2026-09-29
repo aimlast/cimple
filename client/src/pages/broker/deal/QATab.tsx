@@ -194,7 +194,7 @@ export function QATab() {
               FAQ
             </h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Pre-answered questions the buyer assistant can use instantly — no seller approval loop.
+              Pre-answered questions buyers see in their Q&amp;A list and the buyer assistant answers from instantly — no seller approval loop. Blind-CIM buyers only see entries that don't name the business.
             </p>
           </div>
           <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={startNew} disabled={editing === "new"}>

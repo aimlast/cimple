@@ -8,6 +8,7 @@ import type { CimSection } from "@shared/schema";
 import { formatSqft, rentLabel, splitLeaseType } from "@shared/cim-location";
 import { ProseFallback, renderInline } from "../richText";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs } from "../blocks";
 
 interface Location {
   label?: string;
@@ -69,6 +70,7 @@ function KVRow({ label, value }: { label: string; value: string }) {
 export { formatSqft, splitLeaseType, rentLabel };
 
 export function LocationCardRenderer({ layoutData, content, branding, section }: RendererProps) {
+  const ba = useBlockAttrs();
   const data: LocationCardLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const locations = data.locations || [];
 
@@ -91,7 +93,7 @@ export function LocationCardRenderer({ layoutData, content, branding, section }:
           const lease = splitLeaseType(loc.leaseType);
           const terms = [lease.terms, typeof loc.leaseTerms === "string" ? loc.leaseTerms.trim() : ""].filter(Boolean).join(" ");
           return (
-          <div key={i} className="bg-card border border-card-border rounded-lg p-4 min-w-0">
+          <div key={i} {...ba(`loc:${i}`)} className="bg-card border border-card-border rounded-lg p-4 min-w-0">
             {/* Header — the lease badge sits under the address, never beside
                 it, so a long label can't squeeze the address or cover the name. */}
             <div className="mb-3 min-w-0">
@@ -143,7 +145,7 @@ export function LocationCardRenderer({ layoutData, content, branding, section }:
 
       {/* Footer: total sqft */}
       {data.totalSqft != null && (
-        <div className="mt-4 pt-3 border-t border-border flex items-center gap-2">
+        <div {...ba("foot")} className="mt-4 pt-3 border-t border-border flex items-center gap-2">
           <span className="text-xs text-muted-foreground">Total Space:</span>
           <span className="text-sm font-semibold tabular-nums">
             {formatSqft(data.totalSqft)}

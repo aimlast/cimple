@@ -19,6 +19,7 @@
  * KnownFigures.prose).
  */
 import { proseKnowledge, proseProblems, type ProseKnowledge } from "./prose-check";
+import { readChartValue, unitScale } from "@shared/cim-chart-values";
 import { consistencyProblems, type ConsistencyKnowledge } from "./consistency-check";
 
 export interface Figure {
@@ -666,7 +667,8 @@ export function checkSectionFigures(section: SectionLike, known: KnownFigures): 
   const issues = [
     ...unknownFigures(section, known).map((m) => `no source for ${m}`),
     ...(section.layoutType === "financial_table" ? reconcileTable(section) : []),
-    ...(section.layoutType === "waterfall_chart" ? [...reconcileWaterfall(section), ...bridgeLines(section, known)] : []),
+    ...(section.layoutType === "waterfall_chart" ? [...reconcileWaterfall(section), ...bridgeLines(section, known), ...bridgeSigns(section)] : []),
+    ...unreadableValues(section),
     ...unknownNames(section, known),
     ...proseProblems(section, known),
     ...consistencyProblems(section, known.consistency),
@@ -807,9 +809,60 @@ export function withoutUntracedFigures<T extends SectionLike>(
 
 /** Checks that need no knowledge base: tables that don't add up, bridges that don't reach their totals. */
 export function structuralFigureProblems(section: SectionLike): string[] {
-  if (section.layoutType === "financial_table") return reconcileTable(section);
-  if (section.layoutType === "waterfall_chart") return reconcileWaterfall(section);
-  return [];
+  const out = unreadableValues(section);
+  if (section.layoutType === "financial_table") out.push(...reconcileTable(section));
+  if (section.layoutType === "waterfall_chart") out.push(...reconcileWaterfall(section), ...bridgeSigns(section));
+  return out;
+}
+
+const DRAWN_SERIES = new Set(["bar_chart", "horizontal_bar_chart", "pie_chart", "donut_chart"]);
+
+/**
+ * Chart values that aren't one readable amount ("TBD", "$1.1–1.2M"): the
+ * renderer can't draw them (it lists them under the chart), so the broker is
+ * told which. An amount with a note ("$1,850,000 (9 months YTD)") is fine.
+ */
+function unreadableValues(section: SectionLike): string[] {
+  const d = (section.layoutData ?? {}) as Record<string, any>;
+  const scale = unitScale(d.unit);
+  const out: string[] = [];
+  if (DRAWN_SERIES.has(section.layoutType)) {
+    for (const r of asArr(d.data)) {
+      const v = r?.value;
+      if (v === null || v === undefined || str(v).trim() === "") continue;
+      if (readChartValue(v, scale).value === null) out.push(`chart value "${str(v).trim()}" for "${str(r?.name)}" isn't one amount, so it can't be drawn`);
+    }
+  } else if (section.layoutType === "line_chart") {
+    // A point that isn't an amount is a gap in the line (listed under it).
+    const keys = asArr(d.series).map((s: any) => str(s?.key)).filter(Boolean);
+    for (const r of asArr(d.data)) {
+      for (const k of keys) {
+        const v = r?.[k];
+        if (v === null || v === undefined || str(v).trim() === "") continue;
+        if (readChartValue(v, scale).value === null) out.push(`chart value "${str(v).trim()}" for "${str(r?.name)}" isn't one amount, so it can't be drawn`);
+      }
+    }
+  } else if (section.layoutType === "waterfall_chart") {
+    for (const it of asArr(d.items)) {
+      const v = it?.value;
+      if (v === null || v === undefined || str(v).trim() === "") continue;
+      if (readChartValue(v, scale).value === null) out.push(`bridge step "${str(it?.label)}" has no readable amount ("${str(v).trim()}")`);
+    }
+  }
+  return out;
+}
+
+/** A bridge step typed as an add-back whose amount is negative: it is drawn as the deduction it is — named so the broker can check the type. */
+function bridgeSigns(section: SectionLike): string[] {
+  const d = (section.layoutData ?? {}) as Record<string, any>;
+  const scale = unitScale(d.unit);
+  const out: string[] = [];
+  for (const it of asArr(d.items)) {
+    if (str(it?.type) !== "add") continue;
+    const v = readChartValue(it?.value, scale).value;
+    if (v !== null && v < 0) out.push(`bridge step "${str(it?.label)}" is marked as an add-back but its amount is negative — it is shown as a deduction`);
+  }
+  return out;
 }
 
 /** Everything a section shows, as one text (for "is the flagged figure still there?"). */

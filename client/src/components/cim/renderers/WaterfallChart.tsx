@@ -21,8 +21,9 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { axisWidthFor, compactFigure, formatAxisTick, useElementWidth } from "./chartFormat";
-import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { parseChartNumber, readChartValue, unitScale } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs, useChartPointReporter } from "../blocks";
 
 /** Below this container width the build-up is drawn as labelled horizontal rows. */
 const NARROW_WIDTH = 520;
@@ -65,11 +66,16 @@ export function buildWaterfallData(items: WaterfallItem[], unit?: string): Water
 
   for (const item of items) {
     // "$78,000", "-$78K", "(78,000)" are numbers too (parseFloat read "$…" as 0).
-    const parsed = parseChartNumber(item.value, scale) ?? 0;
+    // "$36,000 (est.)" is its amount; a step with no amount at all is flagged
+    // for the broker by the figure check (figure-check.ts unreadableValues).
+    const parsed = readChartValue(item.value, scale).value ?? 0;
     const type = item.type || (result.length === 0 ? "start" : items.indexOf(item) === items.length - 1 ? "total" : parsed >= 0 ? "add" : "subtract");
-    // The step's direction is its type: a "subtract" written as 64000 still
-    // takes 64,000 off (it was drawn as an addback).
-    const numValue = type === "subtract" ? -Math.abs(parsed) : type === "add" ? Math.abs(parsed) : parsed;
+    // A "subtract" written as 64000 still takes 64,000 off (it was drawn as
+    // an add-back). An "add" step keeps its sign: "-$36,000" typed "add" is
+    // a deduction (a below-market rent normalised down) — drawn down and
+    // labelled −$36K, the way the figure check reads it
+    // (figure-check.ts reconcileWaterfall), never as a +$36K add-back.
+    const numValue = type === "subtract" ? -Math.abs(parsed) : parsed;
 
     if (type === "start") {
       runningTotal = numValue;
@@ -228,6 +234,8 @@ function WaterfallTooltip({ active, payload, currency, unit }: CustomTooltipProp
 
 export function WaterfallChartRenderer({ layoutData, content, branding, section }: RendererProps) {
   const theme = useCimTheme();
+  const ba = useBlockAttrs();
+  const point = useChartPointReporter();
   const { ref: widthRef, width } = useElementWidth<HTMLDivElement>();
   const data: WaterfallLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const items = data.items || [];
@@ -269,6 +277,7 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
   return (
     <div ref={widthRef}>
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+      <div {...ba("chart")}>
       {narrow ? (
         <WaterfallRows data={waterfallData} colorMap={colorMap} currency={data.currency} unit={data.unit} />
       ) : (
@@ -277,6 +286,8 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
           data={waterfallData}
           margin={{ top: 22, right: 16, left: 8, bottom: 4 }}
           barCategoryGap="25%"
+          onMouseMove={(s) => point(s?.activeTooltipIndex)}
+          onMouseLeave={() => point(null)}
         >
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
@@ -348,6 +359,7 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
           <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: primaryColor }} />
           <span className="text-[11px] text-muted-foreground">Total</span>
         </div>
+      </div>
       </div>
     </div>
   );

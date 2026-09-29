@@ -34,14 +34,67 @@ const SHORT_LEASE_TYPE = (t: string) => t.length <= 32 && t.split(/\s+/).length 
 export function splitLeaseType(v: unknown): { badge: string | null; terms: string | null } {
   const t = String(v ?? "").trim();
   if (!t) return { badge: null, terms: null };
-  if (SHORT_LEASE_TYPE(t)) return { badge: t, terms: null };
+  const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+  // The kind first, then words about it: "Net lease with related party …",
+  // "Leased from the owner's holding company …", "Lease: 10 years from 2019"
+  // — the kind is the badge, the rest the terms (a bracketed aside is read
+  // below). They showed no badge, or a badge holding the whole phrase.
+  // "Owned by the seller's holding company and leased to the business at
+  // $8,000 per month": the business rents it — an "Owned" pill was wrong
+  // (free round 2 check, known-2). Owned by someone else, with no lease
+  // named, isn't the business's own either: no badge, the text as written.
+  if (/^owned\b/i.test(t) && !/^owned\s*$/i.test(t)) {
+    if (LEASED_TO_BUSINESS.test(t) && !/\b(?:no|not|without|free of)\s+(?:\w+\s+)?(?:rent|lease)|\brent[- ]free\b/i.test(t)) return { badge: "Leased", terms: t };
+    if (/^owned\s+by\b/i.test(t) && !/^owned\s+by\s+(?:the\s+)?(?:business|company|corporation|operating\s+company)\b/i.test(t)) return { badge: null, terms: t };
+  }
+  const kind = t.match(LEASE_KIND_FIRST);
+  if (kind && kind[2].trim() && !kind[2].trim().startsWith("(")) {
+    return { badge: leaseBadgeText(kind[1]), terms: cap(kind[2].trim().replace(/^[:;,—–-]\s*/, "")) };
+  }
+  if (SHORT_LEASE_TYPE(t)) return { badge: leaseBadgeText(t), terms: null };
   const m = t.match(/^([^(:;—–]+?)\s*(?:\(|:|;|—|–|\s-\s)\s*([\s\S]+?)\)?\s*$/);
   const head = m?.[1]?.trim() ?? "";
   if (head && SHORT_LEASE_TYPE(head)) {
     const rest = (m?.[2] ?? "").trim();
-    return { badge: head, terms: rest ? rest.charAt(0).toUpperCase() + rest.slice(1) : null };
+    return { badge: leaseBadgeText(head), terms: rest ? cap(rest) : null };
   }
   return { badge: null, terms: t };
+}
+
+/**
+ * Words saying the BUSINESS is the one that leases or rents the premises:
+ * "leased to the business", "leased back to the company", "the business
+ * pays rent", "rented to the operating company", "sale-leaseback". Any
+ * lease word used to do: "Owned — the upper floor is rented to a tenant",
+ * "Owned; second unit leased to a dental practice", "part of the building is
+ * sublet", "available by lease or purchase", "rental income", "leasehold
+ * improvements" each showed "Leased" for premises the business owns (free
+ * round 2 check, known-2).
+ */
+const BUSINESS_WORD = String.raw`(?:the\s+|our\s+|its\s+)?(?:business|company|corporation|operating\s+(?:company|entity)|opco|operator|practice|pharmacy|clinic|dealership|store|restaurant|shop|firm|tenant\s+business)`;
+const LEASED_TO_BUSINESS = new RegExp(
+  String.raw`\b(?:leased|rented|sub-?let|let)\s+(?:back\s+)?to\s+${BUSINESS_WORD}\b` +
+    String.raw`|\b${BUSINESS_WORD}\s+(?:pays|paid|is\s+paying|leases|rents|is\s+charged)\b` +
+    String.raw`|\brent\s+(?:is\s+)?(?:paid|charged)\s+(?:by|to)\s+${BUSINESS_WORD}\b` +
+    String.raw`|\b(?:sale[- ])?lease-?back\b|\bleases?\s+(?:it|them|the\s+(?:premises|building|property|space|unit))\s+(?:back\s+)?to\s+${BUSINESS_WORD}\b`,
+  "i",
+);
+
+/** A lease kind at the start of the text, and what follows it. */
+const LEASE_KIND_FIRST =
+  /^((?:(?:absolute|triple|double|single|modified|semi)[- ]?)?(?:net|gross)\s+lease|ground\s+lease|percentage\s+lease|leased|lease|owned|rented|month[- _]to[- _]month)(?![a-z-])\s*([:;,—–-]\s*.+|\s.+)$/i;
+
+/**
+ * A lease kind as a badge reads: a stored code ("month_to_month", "leased")
+ * in words ("Month-to-month", "Leased"); "Lease" alone says the premises are
+ * leased. Written text ("Triple-net lease", "NNN") is kept.
+ */
+export function leaseBadgeText(kind: string): string {
+  const t = kind.trim();
+  if (/^lease$/i.test(t)) return "Leased";
+  if (!/^[a-z][a-z _-]*$/.test(t)) return t;
+  const words = t.replace(/_/g, t.includes(" ") ? " " : "-");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /**
@@ -55,7 +108,7 @@ export function splitLeaseType(v: unknown): { badge: string | null; terms: strin
  * keeps its field's label.
  */
 const RENT_UNITS: Array<[string, RegExp]> = [
-  ["Base Rent", /(?:\bper|\/)\s*(?:sq\.?\s*(?:ft|feet|foot|m)|square\s+(?:foot|feet|metre|meter)|m²|m2)\b|\bpsf\b|\bper\s+(?:rentable|usable)\b/],
+  ["Base Rent", /(?:\bper|\/)\s*(?:sq\.?\s*(?:ft|feet|foot|m)|square\s+(?:foot|feet|metre|meter)|m²|m2|ft²|ft2|sf|s\.f\.?)(?![a-z])|\bpsf\b|\bper\s+(?:rentable|usable)\b/],
   ["Monthly Rent", /(?:\bper|\/|\ba)\s*(?:month|mo)\b|\bmonthly\b/],
   ["Annual Rent", /(?:\bper|\/|\ba)\s*(?:year|yr|annum)\b|\bannual(?:ly)?\b|\bp\.?a\.?(?:\s|$)/],
 ];
