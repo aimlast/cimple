@@ -14,7 +14,7 @@
  * with a deal id is added to shared/schema.ts without being listed here.
  */
 import fs from "fs";
-import { eq, inArray, and, not } from "drizzle-orm";
+import { eq, inArray, and, not, sql, type SQL } from "drizzle-orm";
 import {
   deals, documents, tasks, interviewSessions, cimSections, buyerQuestions, sellerInvites, buyerAccess,
   analyticsEvents, faqItems, integrationEmails, dealKnowledgeSources, financialAnalyses, addbackVerifications,
@@ -56,6 +56,17 @@ export const DEAL_CHILD_TABLES = {
 } as const;
 
 type Db = typeof import("../db").db;
+
+/**
+ * The WHERE clause for "this row points at a deal that no longer exists",
+ * on `table.column` — used by the orphan clean-up for its dry-run count AND
+ * for what --apply deletes or detaches, so the two can never differ. A row
+ * with no deal id at all is not an orphan and is never touched.
+ */
+export function orphanedRowsWhere(table: string, column: string): SQL {
+  return sql`${sql.identifier(table)}.${sql.identifier(column)} IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM deals x WHERE x.id = ${sql.identifier(table)}.${sql.identifier(column)})`;
+}
 
 /** The deal row and everything listed above, in one transaction. */
 export async function deleteDealRows(db: Db, dealId: string): Promise<void> {

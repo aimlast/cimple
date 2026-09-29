@@ -201,7 +201,8 @@ function ndaAnswerRows(ctx: Ctx) {
     .map((a) => {
       // The signature record (typed name + the full agreement text) is not
       // an "answer": report who signed, and keep the text out of the payload.
-      const { signature, ...p } = a.ndaProfile as NdaBuyerProfile & { submittedAt?: string; signature?: { signerName?: string } };
+      // (criteriaReadOf is internal: which words the criteria read succeeded on.)
+      const { signature, criteriaReadOf: _readOf, ...p } = a.ndaProfile as NdaBuyerProfile & { submittedAt?: string; signature?: { signerName?: string }; criteriaReadOf?: string };
       return {
         dealId: a.dealId,
         businessName: ctx.dealById.get(a.dealId)?.businessName ?? "Deal",

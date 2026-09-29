@@ -734,6 +734,18 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  /**
+   * Marks the NDA answers on this link as read into matching criteria (the
+   * background read succeeded for exactly these words). Merged into
+   * nda_profile by the database, so the signature record beside it is never
+   * rewritten.
+   */
+  async markNdaCriteriaRead(id: string, readOf: string): Promise<void> {
+    await db.update(buyerAccess)
+      .set({ ndaProfile: sql`coalesce(${buyerAccess.ndaProfile}, '{}'::jsonb) || jsonb_build_object('criteriaReadOf', ${readOf}::text)` } as any)
+      .where(eq(buyerAccess.id, id));
+  }
+
   async updateBuyerAccess(id: string, updates: Partial<InsertBuyerAccess>): Promise<BuyerAccess | undefined> {
     // Drizzle throws "No values to set" on an empty update — nothing to change
     // means the row as it stands.

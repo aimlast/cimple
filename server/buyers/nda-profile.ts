@@ -56,8 +56,36 @@ async function resolveBuyerUser(access: BuyerAccess, profile: NdaBuyerProfile | 
 }
 
 /**
- * Record the signed NDA's profile. With `profile` null the buyer confirmed
- * the profile already on file — only the links are made.
+ * The access-row fields of a signing, written together with the signature
+ * by storage.recordBuyerNdaSignature — one atomic claim, so a concurrent
+ * second signing (which is refused) can never replace the answers or the
+ * signature record. With `profile` null the buyer confirmed the profile on
+ * file: the row's earlier answers, if any, are kept.
+ */
+export function ndaAccessFields(
+  access: Pick<BuyerAccess, "buyerCompany" | "ndaProfile">,
+  profile: NdaBuyerProfile | null,
+  signature: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!profile) {
+    const prior = (access.ndaProfile as Record<string, unknown> | null) ?? {};
+    return { ndaProfile: { ...prior, signature } };
+  }
+  return {
+    buyerName: profile.name,
+    buyerCompany: profile.company ?? access.buyerCompany,
+    buyerType: storedBuyerType(profile),
+    proofOfFunds: profile.proofOfFunds === "yes",
+    ndaProfile: { ...profile, submittedAt: new Date().toISOString(), signature },
+  };
+}
+
+/**
+ * Apply a signed NDA's profile to the buyer's account: the buyer's own
+ * profile, the account link and the broker's buyer list. Called only after
+ * this signing won the atomic claim (ndaAccessFields), so a refused second
+ * signing never reaches the buyer's account. With `profile` null the buyer
+ * confirmed the profile already on file — only the links are made.
  */
 export async function applyNdaProfile(access: BuyerAccess, profile: NdaBuyerProfile | null): Promise<void> {
   const deal = await storage.getDeal(access.dealId);
@@ -102,25 +130,28 @@ export async function applyNdaProfile(access: BuyerAccess, profile: NdaBuyerProf
     buyer = (await storage.updateBuyerUser(buyer.id, withFieldSources(buyer, updates, "nda", access.dealId, brokerId))) || buyer;
   }
 
+  // The answers themselves (ndaProfile, name, type, proof of funds) were
+  // written with the signature in one atomic step (ndaAccessFields); this
+  // write never touches ndaProfile, so it can't replace the signature record.
   await storage.updateBuyerAccess(access.id, {
     // Linked to the usable account — and unlinked from one that isn't (a
     // link made before accounts had to prove their inbox).
     ...(buyer ? { buyerUserId: buyer.id } : access.buyerUserId ? { buyerUserId: null } : {}),
-    ...(profile ? {
-      buyerName: profile.name,
-      buyerCompany: profile.company ?? access.buyerCompany,
-      buyerType: storedBuyerType(profile),
-      proofOfFunds: profile.proofOfFunds === "yes",
-      ndaProfile: { ...profile, submittedAt: new Date().toISOString() },
-      buyerCriteria: buyer?.buyerCriteria ?? criteriaFromProfile ?? access.buyerCriteria,
-    } : {}),
+    ...(profile ? { buyerCriteria: buyer?.buyerCriteria ?? criteriaFromProfile ?? access.buyerCriteria } : {}),
   } as any);
 
   if (buyer && brokerId) {
     await storage.upsertBrokerBuyerContact({ brokerId, buyerUserId: buyer.id, source: "nda", tags: [] as any, notes: null } as any);
   }
 
-  if (buyer && profile && wordsBefore !== extractionInputFromProfile(profile)) {
+  const readOf = profile ? extractionInputFromProfile(profile) : null;
+  // Skipped only when these exact words were already read successfully (a
+  // marker on an earlier signed link). The same words after a read that
+  // failed are read again.
+  const alreadyRead = !!buyer && readOf != null && wordsBefore === readOf
+    && (await storage.getBuyerAccessByBuyerUser(buyer.id)).some((a) => a.id !== access.id && ndaCriteriaReadOf(a) === readOf);
+
+  if (buyer && profile && readOf != null && !alreadyRead) {
     const buyerId = buyer.id;
     void extractCriteria(profile)
       .then(async (x) => {
@@ -135,9 +166,16 @@ export async function applyNdaProfile(access: BuyerAccess, profile: NdaBuyerProf
           liquidFunds: current.liquidFunds || x.liquidFunds || null,
           buyerCriteria: criteria as any,
         }, "nda", access.dealId, brokerId));
+        await storage.markNdaCriteriaRead(access.id, readOf);
       })
       .catch((err) => console.error("[nda-profile] criteria extraction failed:", err));
   }
+}
+
+/** The words a signed link's NDA answers were successfully read from, if any. */
+export function ndaCriteriaReadOf(a: Pick<BuyerAccess, "ndaProfile">): string | null {
+  const v = ((a.ndaProfile as Record<string, unknown> | null) ?? {}).criteriaReadOf;
+  return typeof v === "string" ? v : null;
 }
 
 /** What the criteria read depends on, from the NDA answers. */

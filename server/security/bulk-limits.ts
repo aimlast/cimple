@@ -12,6 +12,13 @@ import rateLimit from "express-rate-limit";
 export const BULK_OUTREACH_MAX = 50;
 /** Model calls a bulk action runs at once. */
 export const BULK_AI_CONCURRENCY = 4;
+/**
+ * Outreach drafts are short (≤600 output tokens each) and the broker waits
+ * on them, so drafting runs a few more at once: 50 buyers take about a
+ * minute instead of about two at 4 — still a fixed ceiling, never the
+ * whole selection at once.
+ */
+export const BULK_DRAFT_CONCURRENCY = 8;
 
 /** Like Promise.all(items.map(fn)), at most `limit` running at once; results keep their order. */
 export async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {

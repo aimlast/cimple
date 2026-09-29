@@ -2,7 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
 import { newDocumentFileName } from "./documents/document-path";
-import { BULK_AI_CONCURRENCY, BULK_OUTREACH_MAX, mapWithConcurrency } from "./security/bulk-limits";
+import { BULK_AI_CONCURRENCY, BULK_DRAFT_CONCURRENCY, BULK_OUTREACH_MAX, mapWithConcurrency } from "./security/bulk-limits";
 import path from "path";
 import fs from "fs";
 import { storage } from "./storage";
@@ -963,7 +963,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Draft the emails a few at a time (one model call each): all at once
       // could hit the organisation's model rate limit mid-interview.
-      const drafts = await mapWithConcurrency(buyerUserIds, BULK_AI_CONCURRENCY, async (buyerUserId) => {
+      const drafts = await mapWithConcurrency(buyerUserIds, BULK_DRAFT_CONCURRENCY, async (buyerUserId) => {
         if (!listed.has(buyerUserId)) return null;
         const ownBuyer = await storage.getBuyerUser(buyerUserId);
         if (!ownBuyer) return null;
@@ -4834,8 +4834,7 @@ Return JSON only.`,
         return res.status(409).json({ error: "The NDA terms have been updated. Please read the current version and sign again.", code: "nda_terms_changed" });
       }
 
-      const { applyNdaProfile } = await import("./buyers/nda-profile.js");
-      await applyNdaProfile(access, profile);
+      const { applyNdaProfile, ndaAccessFields } = await import("./buyers/nda-profile.js");
 
       const signedAt = new Date();
       const ip = req.ip || req.socket.remoteAddress || null;
@@ -4847,25 +4846,33 @@ Return JSON only.`,
         termsText: nda.text,
         termsSource: nda.source,
       };
-      // applyNdaProfile may have just written ndaProfile — keep its answers.
-      const afterProfile = await storage.getBuyerAccess(access.id);
-      const priorProfile = ((afterProfile ?? access).ndaProfile as Record<string, unknown> | null) ?? {};
       // On a deal that requires the NDA nothing was served before this
       // signature, so a view stamp already on the row came from the gate
       // (rows stamped before the gate stopped counting): clear it, and the
       // first real view that follows starts the reminder clock afresh.
       const gateStamped = !!ndaDeal.ndaRequired && !access.ndaSigned && !!access.firstViewedAt;
+      // The claim comes first and carries the answers with the signature:
+      // a concurrent second signing (both passed the ndaSigned check above)
+      // loses here and writes nothing — not to this row, not to the buyer's
+      // account — so it can't replace the signature record.
       const recorded = await storage.recordBuyerNdaSignature(access.id, {
         ndaSigned: true,
         ndaSignedAt: signedAt,
         ndaSignedIp: ip,
         ndaVersion: nda.hash,
-        ndaProfile: { ...priorProfile, signature },
+        ...ndaAccessFields(access, profile, signature as unknown as Record<string, unknown>),
         ...(gateStamped ? { firstViewedAt: null, viewCount: 0, reminderStage: "none", lastReminderAt: null } : {}),
       } as any);
       // A concurrent signing got there first: that signature stands.
       if (!recorded) {
         return res.status(409).json({ error: "You've already signed the NDA for this business.", code: "nda_already_signed", alreadySigned: true });
+      }
+      // The signature is on record; the buyer's account and the broker's
+      // buyer list follow. A failure there doesn't undo the signing.
+      try {
+        await applyNdaProfile(recorded, profile);
+      } catch (err) {
+        console.error("[nda-profile] applying the signed NDA's profile failed:", err);
       }
       storage.createAnalyticsEvent({
         dealId: access.dealId, buyerAccessId: access.id, eventType: "nda_signed", sectionKey: null,

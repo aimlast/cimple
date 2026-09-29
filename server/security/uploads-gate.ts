@@ -41,6 +41,11 @@ export function classifyUploadsPath(rawPath: string): UploadsPath {
     return { kind: "blocked" };
   }
   if (decoded.includes("\0")) return { kind: "blocked" };
+  // Every name Cimple writes under /uploads is printable ASCII. Anything else
+  // is refused outright: a case-insensitive disk folds more than
+  // toLowerCase() does (macOS APFS folds "ſ" U+017F to "s", so "docſ" would
+  // open docs/), and no real file needs it.
+  if (/[^\x20-\x7e]/.test(decoded)) return { kind: "blocked" };
   const norm = path.posix.normalize("/" + decoded.replace(/\\/g, "/"));
   const lower = norm.toLowerCase();
   // "/docs" itself, "/docs/…", and anything whose first segment is "docs"

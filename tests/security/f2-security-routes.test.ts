@@ -58,8 +58,10 @@ const modelCalls: any[] = [];
 let inFlight = 0;
 let maxInFlight = 0;
 let modelReply: (params: any) => string = () => "ESCALATE";
+let modelThrows = false;
 Anthropic.Messages.prototype.create = async function (params: any) {
   modelCalls.push(params);
+  if (modelThrows) throw new Error("test: model overloaded");
   inFlight++;
   maxInFlight = Math.max(maxInFlight, inFlight);
   await new Promise((r) => setTimeout(r, 25));
@@ -111,6 +113,8 @@ stub("getBuyerAccess", (id) => copy(access.get(id)));
 stub("getBuyerAccessByDeal", (dealId) => Array.from(access.values()).filter((a) => a.dealId === dealId).map((a) => ({ ...a })));
 stub("updateBuyerAccess", (id, u) => { const a = access.get(id); if (!a) return undefined; Object.assign(a, u); return { ...a }; });
 stub("recordBuyerNdaSignature", (id, u) => { const a = access.get(id); if (!a || a.ndaSigned) return undefined; Object.assign(a, u, { ndaSigned: true }); return { ...a }; });
+stub("getBuyerAccessByBuyerUser", (bid) => Array.from(access.values()).filter((a) => a.buyerUserId === bid).map((a) => ({ ...a })));
+stub("markNdaCriteriaRead", (id, readOf) => { const a = access.get(id); if (a) a.ndaProfile = { ...(a.ndaProfile ?? {}), criteriaReadOf: readOf }; });
 stub("createAnalyticsEvent", (e) => e);
 stub("getQuestionsByDeal", (dealId) => Array.from(questions.values()).filter((q) => q.dealId === dealId).map((q) => ({ ...q })));
 stub("createBuyerQuestion", (q) => { const row = { id: `q${++qSeq}`, createdAt: new Date(Date.now() + qSeq), updatedAt: new Date(), brokerDraft: null, sellerApproved: false, ...q }; questions.set(row.id, row); return { ...row }; });
@@ -271,6 +275,9 @@ const bypasses = [
   `/uploads/Docs/${DOC}`,
   `/uploads/docs/./${DOC}`,
   `/uploads/docs//${DOC}`,
+  // A case-insensitive disk (macOS APFS) folds U+017F "ſ" to "s": "docſ" opens docs/.
+  `/uploads/doc%C5%BF/${DOC}`,
+  `/uploads/DOC%C5%BF/${DOC}`,
 ];
 await check("S1: no path spelling reaches a document without the broker session or the seller token", async () => {
   const served: string[] = [];
@@ -380,6 +387,76 @@ await check("S3: a second signature is refused; the first signature stands; no r
   assert.equal(JSON.stringify(access.get("accN").ndaProfile.signature), firstSig, "the first signature was overwritten");
   assert.equal(modelCalls.length, readsAfterFirst, "signing again ran another AI criteria read");
 });
+await check("S3: two tabs signing at once — one signature, kept whole; the refused tab writes nothing", async () => {
+  access.set("accR", { id: "accR", dealId: "D1", accessToken: "tokR", buyerEmail: "rae@buyer.invalid", buyerName: "Rae", accessLevel: "full", ndaSigned: false, revokedAt: null, expiresAt: new Date(Date.now() + 864e5), buyerUserId: null, ndaProfile: null, firstViewedAt: null });
+  // Both requests read the link (unsigned) before either records a signature.
+  const realByToken = (storage as any).getBuyerAccessByToken;
+  let reads = 0;
+  let bothRead!: () => void;
+  const bothReadP = new Promise<void>((r) => (bothRead = r));
+  (storage as any).getBuyerAccessByToken = async (t: string) => {
+    const row = await realByToken(t);
+    if (t === "tokR" && ++reads <= 2) { if (reads === 2) bothRead(); await bothReadP; }
+    return row;
+  };
+  try {
+    const nda = await buyerNdaFor(deals.get("D1"), access.get("accR"));
+    const [a, b] = await Promise.all([
+      call("POST", "/api/view/tokR/sign-nda", { profile: { ...profile, name: "Tab A" }, signerName: "Rae Tab-A", termsHash: nda.hash }),
+      call("POST", "/api/view/tokR/sign-nda", { profile: { ...profile, name: "Tab B" }, signerName: "Rae Tab-B", termsHash: nda.hash }),
+    ]);
+    await settle();
+    assert.deepEqual([a.status, b.status].sort(), [200, 409], `statuses ${a.status}/${b.status}`);
+    const winner = a.status === 200 ? "A" : "B";
+    const row = access.get("accR");
+    assert.equal(row.ndaSigned, true);
+    assert.ok(row.ndaProfile?.signature, "the signature record was wiped");
+    assert.equal(row.ndaProfile.signature.signerName, `Rae Tab-${winner}`);
+    assert.equal(row.ndaProfile.name, `Tab ${winner}`, "the refused tab's answers replaced the signer's");
+    const copyRes = await call("GET", "/api/view/tokR/nda.txt");
+    assert.equal(copyRes.status, 200, "the buyer's signed copy is gone");
+    const accounts = Array.from(buyers.values()).filter((u) => u.email === "rae@buyer.invalid");
+    assert.equal(accounts.length, 1);
+    assert.equal(accounts[0].name, `Tab ${winner}`, "the refused tab's answers reached the buyer's account");
+  } finally {
+    (storage as any).getBuyerAccessByToken = realByToken;
+  }
+});
+await check("S3: the same words are read again after a read that failed; skipped only after one that worked", async () => {
+  buyers.set("U-ret", { id: "U-ret", email: "ret@buyer.invalid", passwordHash: "h", emailVerified: true, name: "Ret", background: profile.background, buyerCriteria: { lookingFor: profile.lookingFor }, targetIndustries: [], targetLocations: [] });
+  const mk = (n: number) => {
+    const id = `accRet${n}`;
+    access.set(id, { id, dealId: "D1", accessToken: `tokRet${n}`, buyerEmail: "ret@buyer.invalid", buyerName: "Ret", accessLevel: "full", ndaSigned: false, revokedAt: null, expiresAt: new Date(Date.now() + 864e5), buyerUserId: null, ndaProfile: null, firstViewedAt: null });
+    return id;
+  };
+  const sign = async (id: string) => {
+    const acc = access.get(id);
+    const nda = await buyerNdaFor(deals.get("D1"), acc);
+    const r = await call("POST", `/api/view/${acc.accessToken}/sign-nda`, { profile: { ...profile, name: "Ret" }, signerName: "Ret Buyer", termsHash: nda.hash });
+    assert.equal(r.status, 200, r.text);
+    await settle();
+  };
+  const reads = () => modelCalls.filter((c) => c.tool_choice?.name === "buyer_criteria").length;
+  // 1. Words on file equal the NDA's, but they were never read: read, and it fails.
+  const id1 = mk(1);
+  modelThrows = true;
+  let before = reads();
+  try { await sign(id1); } finally { modelThrows = false; }
+  assert.equal(reads() - before, 1, "the unread words were not read");
+  assert.equal(access.get(id1).ndaProfile.criteriaReadOf, undefined, "a failed read was marked as read");
+  // 2. Same words again: the failed read is retried, and this time it works.
+  const id2 = mk(2);
+  before = reads();
+  await sign(id2);
+  assert.equal(reads() - before, 1, "the same words after a failed read were never read again");
+  assert.ok(access.get(id2).ndaProfile.criteriaReadOf, "a successful read was not marked");
+  assert.ok(access.get(id2).ndaProfile.signature, "marking the read touched the signature");
+  // 3. Same words once more: already read — no repeat AI call.
+  const id3 = mk(3);
+  before = reads();
+  await sign(id3);
+  assert.equal(reads() - before, 0, "words already read were read again");
+});
 deals.get("D1").ndaRequired = false;
 
 // ════ S4 — deleting a document deletes its file ═══════════════════════
@@ -437,13 +514,14 @@ await check("S6: drafting for 51 buyers is refused before any model call", async
   assert.equal(r.status, 400, `status ${r.status}`);
   assert.equal(modelCalls.length, 0);
 });
-await check("S6: drafting for 12 buyers runs at most 4 model calls at once", async () => {
+await check("S6: drafting for 20 buyers runs at most 8 model calls at once (a few more than 4, so 50 take ~1 min)", async () => {
   maxInFlight = 0;
   modelReply = () => JSON.stringify({ subject: "A dental opportunity", body: "Hello, a dental practice in the region may interest you." });
-  const r = await call("POST", "/api/deals/D1/draft-outreach", { buyerUserIds: Array.from({ length: 12 }, (_, i) => `bx${i + 1}`) }, { "x-test-broker": "b1" });
+  const r = await call("POST", "/api/deals/D1/draft-outreach", { buyerUserIds: Array.from({ length: 20 }, (_, i) => `bx${i + 1}`) }, { "x-test-broker": "b1" });
   assert.equal(r.status, 200, r.text);
-  assert.equal(r.json.drafts.length, 12);
-  assert.ok(maxInFlight <= 4, `${maxInFlight} model calls at once`);
+  assert.equal(r.json.drafts.length, 20);
+  assert.ok(maxInFlight <= 8, `${maxInFlight} model calls at once`);
+  assert.ok(maxInFlight > 4, `only ${maxInFlight} at once — drafting a full batch would take ~2 minutes`);
 });
 await check("S6: sending to 51 buyers is refused; a buyer listed twice is emailed once", async () => {
   sent.length = 0;

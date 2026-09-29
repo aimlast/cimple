@@ -75,7 +75,8 @@ export async function deleteDocumentAndProvenance(docId: string): Promise<string
   // when no other row (a copied document) still points at the same file.
   const filePath = resolveDocumentPath(doc);
   const stillUsed = doc.fileUrl ? (await storage.getDocumentsByFileUrl(doc.fileUrl).catch(() => [{}])).length > 0 : false;
-  if (filePath && !stillUsed) fs.unlink(filePath, () => {});
+  // Awaited: when the delete returns, the file is gone (a missing file is fine).
+  if (filePath && !stillUsed) await fs.promises.unlink(filePath).catch(() => {});
 
   return removed;
 }
