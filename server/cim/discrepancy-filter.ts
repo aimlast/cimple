@@ -114,12 +114,37 @@ const MISSING_FILLER = new Set([
 ]);
 
 /**
+ * A clause of a "not stated" side that only explains WHY it isn't there —
+ * which documents or years are on file, what a statement doesn't break out,
+ * what the other side said — and so states no value of its own:
+ * "only 2022 and 2023 available", "only a 2022 bank statement is on file",
+ * "the P&L does not break out owner salary", "the financial statements only
+ * show consolidated revenue", "the seller said the landlord is his
+ * brother-in-law", "not about the manager's contract".
+ */
+function isMissingContext(clause: string): boolean {
+  const c = clause.replace(/^(?:and|but|although|though|however|while|whereas|as|since|because)\b[\s,]*/i, "").trim();
+  if (/^only\b/i.test(c)) return true;
+  // What's on file / available ("… was provided", "… is on file", "… available").
+  if (/\b(?:available|on file|(?:was|were|is|are|been) (?:provided|uploaded|supplied|included|given))\s*\.?$/i.test(c)) return true;
+  // What a statement or document does NOT show, or shows only.
+  if (/^(?:the |a |an |our |its )?(?:p\s?&\s?l|profit and loss|income statements?|financial statements?|statements?|financials|balance sheets?|t2s?|tax returns?|ledgers?|general ledger|gl|bank statements?|records?|documents?|documentation|knowledge base|kb|accounts?)\b/i.test(c) &&
+      /\b(?:only|not|no|doesn'?t|don'?t|never|nor|without)\b/i.test(c)) return true;
+  // What another source said or was asked (the other side restated, not this side's claim).
+  if (/^(?:the |a |an )?(?:seller|owner|vendor|broker|interview(?:er)?|call|transcript|questionnaire)\b[^.;]{0,40}\b(?:said|says|stated|states|mentioned|mentions|told|claims?|claimed|reported|was asked|were asked|asked)\b/i.test(c)) return true;
+  // A bare negative ("not about the manager's contract", "no breakdown by segment").
+  return /^(?:not|no|nor|never|none)\b/i.test(c) && !/\d/.test(c);
+}
+
+/**
  * One side is absent, or says only that a document isn't there. A side that
  * states its own figure, date or claim and ALSO notes some detail is missing
  * ("Largest customer 31% of 2024 revenue (customer name not disclosed)",
  * "Lease expires August 31, 2029; renewal options not stated") is a real
  * side: judged clause by clause, it is missing only when every clause with
- * content says something isn't there.
+ * content says something isn't there or only explains why (which documents
+ * or years are on file — isMissingContext). The years in "only 2022 and 2023
+ * available" are not a figure for the fact.
  */
 export function isMissingSide(v: string | null | undefined): boolean {
   const t = stripLabel(v ?? "").trim();
@@ -129,7 +154,7 @@ export function isMissingSide(v: string | null | undefined): boolean {
     .split(/[;()[\]]|\.(?:\s+|$)|,\s*(?=(?:but|although|though|however|while|whereas)\b)|\s+[—–-]\s+|\s+(?:but|although|however|whereas)\s+/i)
     .map((c) => c.trim())
     .filter(Boolean);
-  const stated = clauses.filter((c) => !MISSING_RE.test(c));
+  const stated = clauses.filter((c) => !MISSING_RE.test(c) && !isMissingContext(c));
   return !stated.some((c) => {
     if (/\d/.test(c)) return true;
     const words = c.toLowerCase().split(/[^a-z']+/).filter((w) => w.length >= 3 && !MISSING_FILLER.has(w));

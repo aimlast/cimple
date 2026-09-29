@@ -33,6 +33,8 @@ export interface ExtractedStatement {
   lineItems: LineItem[];
   currency: string;
   basisOfAccounting?: "cash" | "accrual" | "unknown";
+  /** The company the statement is for, as printed ("1234567 Ontario Inc.") — an Opco and its Holdco are two statements. */
+  entity?: string;
   sourceDocumentId: string;
   sourceDocumentName?: string;
   confidence: number; // 0-1
@@ -59,6 +61,62 @@ type PartReader = (text: string, documentId: string, documentName: string, partL
 const RECAST = /\b(?:recast|normali[sz]ed|adjusted|pro ?forma)\b/i;
 const isRecast = (s: ExtractedStatement) => RECAST.test([...(s.notes ?? []), ...s.lineItems.map((l) => l.label)].join(" "));
 const labelKey = (l: LineItem) => `${l.category}|${String(l.label ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()}`;
+
+/** Words of a company's name that don't tell two companies apart. */
+const ENTITY_FILLER = /\b(?:inc|incorporated|ltd|limited|corp|corporation|co|company|llc|llp|lp|the|and|of)\b\.?/g;
+/**
+ * Which company a statement is for, as a comparable key ("1234567 ontario"),
+ * when the reader recorded it. (Not guessed from the notes: they name the
+ * accountant's firm as often as the company.)
+ */
+function entityKey(s: ExtractedStatement): string | undefined {
+  const named = typeof s.entity === "string" ? s.entity.trim() : "";
+  if (!named) return undefined;
+  const key = named.toLowerCase().replace(ENTITY_FILLER, " ").replace(/[^a-z0-9]+/g, " ").trim();
+  return key || undefined;
+}
+
+/** The statement's revenue total for its periods (its largest revenue line), if it has one. */
+function revenueScale(s: ExtractedStatement, periods?: string[]): number | undefined {
+  const vals = s.lineItems
+    .filter((l) => l.category === "revenue")
+    .flatMap((l) => Object.entries(l.amounts ?? {}).filter(([p]) => !periods || periods.includes(p)).map(([, v]) => Math.abs(Number(v))))
+    .filter((v) => Number.isFinite(v) && v > 0);
+  return vals.length > 0 ? Math.max(...vals) : undefined;
+}
+
+/**
+ * True when two statements from different parts can't be the same one:
+ * they name different companies (an Opco and its Holdco), or — for the
+ * same years — the lines they share disagree on their amounts, or — for
+ * other years — their revenue differs tenfold (a Holdco's rent beside an
+ * Opco's sales).
+ */
+function differentStatements(e: ExtractedStatement, s: ExtractedStatement, shared: string[]): boolean {
+  const ea = entityKey(e);
+  const sa = entityKey(s);
+  if (ea && sa && ea !== sa && !ea.includes(sa) && !sa.includes(ea)) return true;
+  if (shared.length > 0) {
+    const byKey = new Map(e.lineItems.map((l) => [labelKey(l), l]));
+    let compared = 0;
+    let disagree = 0;
+    for (const l of s.lineItems) {
+      const hit = byKey.get(labelKey(l));
+      if (!hit) continue;
+      for (const p of shared) {
+        const a = Number(hit.amounts?.[p]);
+        const b = Number(l.amounts?.[p]);
+        if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+        compared++;
+        if (Math.abs(a - b) > Math.max(1, 0.01 * Math.max(Math.abs(a), Math.abs(b)))) disagree++;
+      }
+    }
+    return compared > 0 && disagree * 2 > compared;
+  }
+  const re = revenueScale(e);
+  const rs = revenueScale(s);
+  return !!re && !!rs && Math.max(re, rs) / Math.min(re, rs) >= 10;
+}
 
 /**
  * One statement from two parts of the same pack: the periods of both, each
@@ -92,8 +150,10 @@ function mergeStatement(a: ExtractedStatement, b: ExtractedStatement): Extracted
  * The statements of a long pack, read part by part: the same statement read
  * in two parts (FY2022 in the first, FY2024 in the third — or a table cut at
  * a boundary) becomes one statement with every period. Raw and recast
- * versions of a statement are never merged into each other, and two
- * statements one part read stay two.
+ * versions of a statement are never merged into each other, two statements
+ * one part read stay two, and two companies' statements (an Opco and its
+ * Holdco — by the company each names, the amounts they give for the same
+ * year, or a tenfold difference in revenue) stay two.
  */
 export function combinePartStatements(parts: ExtractedStatement[][]): ExtractedStatement[] {
   const out: ExtractedStatement[] = [];
@@ -105,6 +165,8 @@ export function combinePartStatements(parts: ExtractedStatement[][]): ExtractedS
         if (e.statementType !== s.statementType || (e.currency || "") !== (s.currency || "") || isRecast(e) !== isRecast(s)) return false;
         const ep = new Set(e.periods ?? []);
         const shared = (s.periods ?? []).filter((p) => ep.has(p));
+        // Another company's statement (a Holdco beside the Opco) is never merged in.
+        if (differentStatements(e, s, shared)) return false;
         if (shared.length === 0) return true; // other years of the same statement
         // The same years again (the overlap, or a table cut in two): the same statement when their lines agree.
         const ek = new Set(e.lineItems.map(labelKey));
@@ -213,6 +275,7 @@ INSTRUCTIONS:
 8. Provide a confidence score (0-1) for the extraction quality.
 9. Include any notes about anomalies, missing data, source mix per column, or assumptions.
 10. If the same statement appears twice (e.g. raw and recast), extract both and note which is which.
+11. Record in "entity" the company each statement is for, as printed (e.g. "1234567 Ontario Inc."). A pack can hold an operating company's and a holding company's statements: keep them as separate statements.
 
 Respond with valid JSON only — an array of extracted statements. Each element:
 {
@@ -229,6 +292,7 @@ Respond with valid JSON only — an array of extracted statements. Each element:
       "notes": ""
     }
   ],
+  "entity": "Example Co. Ltd.",
   "currency": "USD",
   "basisOfAccounting": "accrual",
   "confidence": 0.92,

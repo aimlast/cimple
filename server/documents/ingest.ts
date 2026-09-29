@@ -18,7 +18,7 @@
 import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
-import { extractTextWithPages, UnreadableFormatError } from "./parser";
+import { extractTextWithPages, isPdfSource, UnreadableFormatError } from "./parser";
 import { resolveDocumentPath } from "./document-path";
 import {
   extractDocumentData,
@@ -31,6 +31,7 @@ import {
   unreadableExtraction,
   type ExtractedDocumentData,
   type MergeSource,
+  type TextLayout,
 } from "./extractor";
 import { releaseRequirementsFor } from "./requirements";
 import { recordFactSpeakers } from "../interview/fact-guards";
@@ -434,12 +435,15 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
   try {
     await storage.updateDocument(doc.id, { status: "parsing" } as any);
     let text = "";
-    let pages: number | undefined;
+    // How the text was laid out (a PDF's pages) — tells a scan from a readable file.
+    let layout: TextLayout = { pdf: isPdfSource(doc) };
     let problem: string | null = null;
     const filePath = resolveDocumentPath(doc);
     if (filePath && fs.existsSync(filePath)) {
       try {
-        ({ text, pages } = await extractTextWithPages(filePath, doc.mimeType));
+        const parsed = await extractTextWithPages(filePath, doc.mimeType);
+        text = parsed.text;
+        layout = { pages: parsed.pages, pageTexts: parsed.pageTexts, pdf: parsed.pdf };
       } catch (err) {
         console.error(`[ingest] couldn't open doc ${doc.id}:`, (err as Error)?.message ?? err);
         problem = parseProblem(err);
@@ -453,7 +457,7 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
       : (await extractWithRetries(
           () => extractDocumentData(text, doc.category || "other", doc.subcategory, kind, {
             checklist: dealForChecklist ? extractionChecklist(dealForChecklist) : undefined,
-            pages,
+            ...layout,
           }),
           extractionRetryDelays(),
           (attempt, wait, why) => console.warn(`[ingest] read of doc ${doc.id} failed (${why}) — attempt ${attempt + 1} in ${Math.round(wait / 1000)}s`),
@@ -483,7 +487,7 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
     // Read, but nothing about the business came out of a text this thin (a
     // scan with a typed cover page): it is not yet the checklist document it
     // was uploaded for — the row asks for a readable copy again.
-    if (kind === "document" && !hadExtraction && readFoundNothing(extracted, text, pages)) {
+    if (kind === "document" && !hadExtraction && readFoundNothing(extracted, text, layout)) {
       await releaseRequirementsFor(doc.dealId, doc.id, { fileName: doc.originalName || doc.name, reason: SCANNED_REASON });
     }
     return await mergeExtractionIntoDeal(doc, extracted);

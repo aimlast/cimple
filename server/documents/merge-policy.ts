@@ -135,7 +135,7 @@ function isStatementsTitle(title: string): boolean {
 }
 
 /** A dedicated source for a fact: [fact key pattern, source title pattern or test]. */
-const SPECIALIST_SOURCES: Array<[RegExp, RegExp | ((title: string) => boolean)]> = [
+const SPECIALIST_SOURCES: Array<[RegExp, RegExp | ((title: string, facts?: Record<string, unknown>) => boolean)]> = [
   // Book figures: the financial statements, not a tax return's version of them
   // and not a management report that happens to contain a P&L.
   [/^(annualRevenue|revenueByYear|grossProfit\w*|grossMargin|netIncome\w*|netProfit|operatingIncome|operatingExpenses\w*|totalExpenses\w*|cogs|costOfGoodsSold|costOfSales|ebitda\w*|accountsReceivable\w*|accountsPayable\w*|inventor\w*|totalAssets\w*|totalLiabilities\w*|currentAssets\w*|otherCurrentAssets\w*|currentLiabilities\w*|longTermDebt\w*|bankIndebtedness\w*|shareholderLoans?\w*|retainedEarnings\w*|shareholdersEquity\w*|depreciation\w*|amortization\w*|interestExpense\w*|fixedAssets\w*|prepaid\w*|accrued\w*|cash\w*)$/,
@@ -167,9 +167,9 @@ const SPECIALIST_SOURCES: Array<[RegExp, RegExp | ((title: string) => boolean)]>
 ];
 
 /** True when the source (by its title / type) is a dedicated source for `key`. */
-export function isSpecialistSource(key: string, sourceTitle: string | null | undefined): boolean {
+export function isSpecialistSource(key: string, sourceTitle: string | null | undefined, facts?: Record<string, unknown>): boolean {
   if (!sourceTitle) return false;
-  return SPECIALIST_SOURCES.some(([k, t]) => k.test(key) && (typeof t === "function" ? t(sourceTitle) : t.test(sourceTitle)));
+  return SPECIALIST_SOURCES.some(([k, t]) => k.test(key) && (typeof t === "function" ? t(sourceTitle, facts) : t.test(sourceTitle)));
 }
 
 /**
@@ -442,6 +442,16 @@ export function isUnreviewedFigure(value: string): boolean {
   return /\b(?:unreviewed|not (?:yet )?(?:been )?reviewed|un-reviewed|management (?:numbers|estimates?)|mgmt (?:numbers|figures|estimates?)|unaudited management|preliminary|provisional|pending (?:compilation|review|audit|year[- ]end|completion|statements?)|not (?:yet )?final(?:i[sz]ed)?|before year[- ]end)\b/i.test(value);
 }
 
+/**
+ * Notes that say a figure is the whole year's, not a part: "only full year
+ * on file", "only audited year", "the only year on file", "only reviewed
+ * statements", "FY2024 only", "full year only", "12 months only".
+ */
+const WHOLE_YEAR_ONLY = new RegExp(
+  String.raw`\b(?:the\s+)?only\s+(?:(?:the|a|one)\s+)?(?:full|complete|audited|reviewed|compiled|fiscal|financial|reported|annual|year|years|period|statements?|return|t2|figures?)\b` +
+  String.raw`|\b(?:fy\s?'?\d{2,4}|(?:19|20)\d{2}|(?:full|fiscal|calendar|whole)\s+year|annual|audited|reviewed|12[\s-]months?|twelve months)\s+only\b`,
+  "gi");
+
 /** Part of the business ("$6.8M (Alderbrook only)") — not the year's total. */
 export function isSubsetFigure(value: string): boolean {
   // "(Alderbrook only)", "Surrey location alone", "the retail segment",
@@ -449,11 +459,13 @@ export function isSubsetFigure(value: string): boolean {
   // appears in a note about the whole year's figure: "(audited; only full
   // year on file)", "(net of customer rebates)", "(per client statements)".
   if (/\b(?:segments?|divisions?)\b/i.test(value) && !/\b(?:all|every|total|combined|consolidated)\b[^.;)]*\b(?:segments?|divisions?)\b/i.test(value)) return true;
-  // "<Name> only" / "<a part> alone": a capitalised name or a part-of-business word just before it.
-  if (/\b(?:[A-Z][\w&'’.-]*|location|site|store|branch|clinic|shop|plant|facility|office|division|segment|department|region|product|line|service|contract|customer|client|account)\s+(?:only|alone)\b/.test(value)) return true;
-  // "only <a part>": "only the Surrey location", "only Alderbrook".
-  if (/\b[Oo]nly\s+(?:(?:the|our|its|one|a)\s+)?(?:[A-Z][\w&'’.-]*|(?:\w+\s+)?(?:location|site|store|branch|clinic|shop|plant|facility|division|segment|department|region|customer|client|account|contract)s?)\b/.test(value) &&
-      !/\bonly\s+(?:(?:the|our|its|one|a)\s+)?(?:full|complete|audited|reviewed|compiled|fiscal|financial|reported)\b/i.test(value)) return true;
+  // "X only" / "X alone" / "only X" is a part of the business ("service
+  // revenue only", "commercial work only", "installs only, excludes service",
+  // "only the Burnaby clinic") — unless every "only" / "alone" in it is one
+  // of the known notes about the whole year's figure ("only full year on
+  // file", "the only audited year", "FY2024 only").
+  const partWords = value.replace(WHOLE_YEAR_ONLY, " ");
+  if (/\b(?:only|alone)\b/i.test(partWords)) return true;
   // Revenue from / for one customer or client.
   return /\b(?:from|for|to|with|by)\s+(?:(?:a|one|the|single|largest|biggest|top|key|main|major|anchor|our|its)\s+)+(?:customer|client|account)\b/i.test(value) ||
     /\b(?:largest|biggest|top|single|one|key|anchor)\s+(?:customer|client)\b/i.test(value);

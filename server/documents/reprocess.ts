@@ -25,8 +25,8 @@
  */
 import fs from "fs";
 import { storage } from "../storage";
-import { extractTextWithPages } from "./parser";
-import { classifyExtractionFailure, extractDocumentData, extractionChecklist, extractionRetryDelays, extractWithRetries, mergeExtractedData, normaliseExtraction, _setExtractionRetryDelaysForTests, type ExtractedDocumentData } from "./extractor";
+import { extractTextWithPages, isPdfSource } from "./parser";
+import { classifyExtractionFailure, extractDocumentData, extractionChecklist, extractionRetryDelays, extractWithRetries, mergeExtractedData, normaliseExtraction, _setExtractionRetryDelaysForTests, type ExtractedDocumentData, type TextLayout } from "./extractor";
 import type { DocumentSourceMeta } from "@shared/schema";
 import { groundedInSource, groundedValue, guardExtraction, restates, SPOKEN_KINDS } from "./extraction-guard";
 import { recordFactSpeakers } from "../interview/fact-guards";
@@ -180,14 +180,17 @@ export async function reprocessDealDocuments(
     if (onlyIds && !onlyIds.has(doc.id)) return { data: stored, freshText: null, skipped: true };
 
     let text: string | null = null;
-    let pages: number | undefined;
+    // How the text was laid out (a PDF's pages) — tells a scan from a readable file.
+    let layout: TextLayout = { pdf: isPdfSource(doc) };
     let openProblem: string | null = null;
     // The shared resolver: only "/uploads/docs/<name>", never outside the
     // docs folder (a broker-set fileUrl once read /proc/self/environ).
     const filePath = resolveDocumentPath(doc);
     if (filePath && fs.existsSync(filePath)) {
       try {
-        ({ text, pages } = await extractTextWithPages(filePath, doc.mimeType));
+        const parsed = await extractTextWithPages(filePath, doc.mimeType);
+        text = parsed.text;
+        layout = { pages: parsed.pages, pageTexts: parsed.pageTexts, pdf: parsed.pdf };
       } catch (err) {
         console.error(`[reprocess] parse failed for doc ${doc.id} (${doc.name}):`, err);
         openProblem = parseProblem(err);
@@ -204,7 +207,7 @@ export async function reprocessDealDocuments(
         // failure stub: tried again with a growing wait (a multi-minute
         // outage outlasts one quick retry) before the source keeps what it had.
         const read = await extractWithRetries(
-          () => extractDocumentData(text!, doc.category || "other", doc.subcategory, documentKind(doc), { checklist, pages }),
+          () => extractDocumentData(text!, doc.category || "other", doc.subcategory, documentKind(doc), { checklist, ...layout }),
           extractionRetryDelays(),
           (attempt, wait, why) => console.warn(`[reprocess] re-read of doc ${doc.id} (${doc.name}) failed (${why}) — attempt ${attempt + 1} in ${Math.round(wait / 1000)}s`),
         );

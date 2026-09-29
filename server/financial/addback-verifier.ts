@@ -12,7 +12,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { parseJsonLoose } from "./shape";
-import { addbackSupport, claimFor } from "@shared/addback-support";
+import { ADDBACK_MATCH_TOLERANCE, addbackSupport, claimWords, coveredYears, periodLabel, wholeYears } from "@shared/addback-support";
 
 /** The model client (a stub in tests: _setAddbackClientForTests). */
 interface AddbackClient {
@@ -252,11 +252,11 @@ export interface MatchResult {
    * "unverified" when the add-back's likely accounts could not all be read
    * and nothing was found in what was — never "no_match" for a ledger not read.
    */
-  verificationStatus: "matched" | "no_match" | "partial_match" | "unverified";
+  verificationStatus: "matched" | "no_match" | "partial_match" | "exceeds_claim" | "unverified";
   matchedTransactions: MatchedTransaction[];
   /** What the linked transactions add up to — computed in code, not the model's figure. */
   totalMatchedAmount: number;
-  /** The claim that total was compared with (the annual claim over the period the transactions span). */
+  /** The claim that total was compared with (the annual claim over the period the ledger covers). */
   claimedAmount: number;
   aiNotes: string;
   /** Set when not every transaction that could support the add-back was checked. */
@@ -272,8 +272,13 @@ export interface IdentifiedAddback {
   yearAmounts: Record<string, number>;
   matchedTransactions: MatchedTransaction[];
   aiNotes: string;
-  /** "matched" when the amount comes from its linked transactions; "unverified" when none were linked. */
-  verificationStatus: "matched" | "unverified";
+  /**
+   * "matched" when the amount comes from its linked transactions;
+   * "exceeds_claim" for a portion of them (above-market rent out of the rent
+   * paid); "partial_match" when they hold less than the amount found;
+   * "unverified" when none were linked.
+   */
+  verificationStatus: "matched" | "exceeds_claim" | "partial_match" | "unverified";
   totalMatchedAmount: number;
   claimedAmount: number;
   coverageNote?: string;
@@ -552,14 +557,18 @@ export function settleMatch(
 ): MatchResult {
   const idx = citedIndices(modelResult?.matchedTransactionIndices, transactions.length, opts.shown);
   const matched = idx.map((i) => toMatched(transactions[i], documentId, typeof modelResult?.confidence === "number" ? modelResult.confidence : 0.7));
-  const support = addbackSupport(ab, matched);
+  // (Compared over the period the whole ledger covers: three months of
+  // statements hold a quarter of a year's claim.)
+  const support = addbackSupport(ab, matched, transactions);
   let status: MatchResult["verificationStatus"] = support.status;
   // The model judged the transactions it cited implausible: never "matched" on them.
-  if (modelResult?.verificationStatus === "no_match" && status === "matched") status = "partial_match";
+  if (modelResult?.verificationStatus === "no_match" && (status === "matched" || status === "exceeds_claim")) status = "partial_match";
   const notes: string[] = [];
   if (modelResult?.aiNotes) notes.push(String(modelResult.aiNotes));
   if (status === "partial_match") {
-    notes.push(`The linked transactions add up to ${money(support.supported)} against ${money(support.claimed)} claimed for that period.`);
+    notes.push(`The linked transactions add up to ${money(support.supported)} against ${claimWords(ab.annualAmount, support.claimed)}.`);
+  } else if (status === "exceeds_claim") {
+    notes.push(portionNote(support.supported, ab.annualAmount, support.claimed));
   }
   let coverageNote: string | undefined;
   if (opts.incomplete) {
@@ -711,6 +720,11 @@ export function discoveryInput(transactions: ParsedTransaction[], limit: number 
   return { accountLines, indices };
 }
 
+/** An add-back that is a portion of what the linked transactions paid, in words. */
+function portionNote(paid: number, annual: number, claimed: number): string {
+  return `The linked transactions add up to ${money(paid)}, more than ${claimWords(annual, claimed)}: the add-back is a portion of these payments — confirm how the portion was worked out.`;
+}
+
 /** Sum of transactions by calendar year ("2024" → 12,000). */
 function sumsByYear(txs: MatchedTransaction[]): Record<string, number> {
   const out: Record<string, number> = {};
@@ -725,13 +739,19 @@ function sumsByYear(txs: MatchedTransaction[]): Record<string, number> {
 /**
  * One discovered add-back with its amount taken from its transactions: the
  * ones the model cited plus every transaction in the accounts it named.
- * The model's own total (summed from a list it may not have seen in full)
- * is kept in the notes when it differs.
+ * A whole account named, or an amount within 15% of what the transactions
+ * add up to, takes the transactions' total (the model's own, summed from a
+ * list it may not have seen in full, is kept in the notes when it differs).
+ * An amount well below the payments it cites is a portion of them (the
+ * above-market part of related-party rent, the personal half of a vehicle):
+ * it stays the model's amount, "exceeds_claim". Well above them: partly
+ * supported.
  */
 export function settleDiscovered(r: any, transactions: ParsedTransaction[], shown: Set<number>): IdentifiedAddback {
   const named = new Set((Array.isArray(r?.accounts) ? r.accounts : []).map((a: unknown) => String(a).trim().toLowerCase()).filter(Boolean));
   const idx = new Set(citedIndices(r?.matchedTransactionIndices, transactions.length, shown));
-  if (named.size > 0) transactions.forEach((t, i) => { if (named.has((t.account || "(no account)").trim().toLowerCase())) idx.add(i); });
+  let fromAccounts = 0;
+  if (named.size > 0) transactions.forEach((t, i) => { if (named.has((t.account || "(no account)").trim().toLowerCase())) { idx.add(i); fromAccounts++; } });
   const matched = Array.from(idx).sort((a, b) => a - b).map((i) => toMatched(transactions[i], "", 0.8));
   const modelAnnual = Number(r?.annualAmount) || 0;
   const notes: string[] = [];
@@ -752,23 +772,50 @@ export function settleDiscovered(r: any, transactions: ParsedTransaction[], show
   const total = Math.abs(matched.reduce((s, t) => s + t.amount, 0));
   const years = sumsByYear(matched);
   const yearKeys = Object.keys(years).sort();
-  const spanYears = Math.max(1, Math.round(claimFor({ annualAmount: 1 }, matched))); // the years the transactions span
-  // One amount per year: the latest year's when the transactions fall in whole calendar years, else the total over the span.
-  const calendar = yearKeys.length === spanYears;
-  const annual = Math.round((calendar ? years[yearKeys[yearKeys.length - 1]] : total / spanYears) * 100) / 100;
-  if (modelAnnual > 0 && Math.abs(modelAnnual - annual) > 0.15 * annual) {
-    notes.push(`The linked transactions put it at ${money(annual)} a year (the first estimate was ${money(modelAnnual)}).`);
-  }
-  return {
-    ...base,
-    annualAmount: annual,
-    yearAmounts: calendar ? years : (r?.yearAmounts || {}),
-    matchedTransactions: matched,
-    aiNotes: notes.join(" "),
-    verificationStatus: "matched",
-    totalMatchedAmount: Math.round(total * 100) / 100,
-    claimedAmount: Math.round(annual * spanYears * 100) / 100,
+  // The period the ledger covers (every transaction uploaded, else the linked ones).
+  const covered = coveredYears(transactions) ?? coveredYears(matched) ?? 1;
+  const whole = wholeYears(covered);
+  const oneOff = base.category === "one_time" || base.category === "non_recurring" || matched.length < 2;
+  // One amount per year: the latest year's when the transactions fall in
+  // whole calendar years, else the total over the whole years covered, else
+  // (three months of statements) the total scaled to a year. A one-time
+  // item is its total.
+  const calendar = !oneOff && whole !== null && yearKeys.length === whole;
+  const perYear = oneOff ? total : calendar ? years[yearKeys[yearKeys.length - 1]] : total / (whole ?? covered);
+  const linkedAnnual = Math.round(perYear * 100) / 100;
+  const linkedYears = calendar ? years : (r?.yearAmounts || {});
+  const settle = (annualAmount: number, yearAmounts: Record<string, number>, status?: "matched") => {
+    const support = addbackSupport({ annualAmount, yearAmounts, category: base.category }, matched, transactions);
+    return {
+      ...base,
+      annualAmount,
+      yearAmounts,
+      matchedTransactions: matched,
+      verificationStatus: status ?? (support.status === "no_match" ? "unverified" : support.status),
+      totalMatchedAmount: support.supported,
+      claimedAmount: support.claimed,
+    } as const;
   };
+  // A whole account named as the add-back (the owner's salary account): its
+  // transactions are the amount — summed in code, not the model's figure.
+  // An amount close to the linked total is the same figure, summed in code.
+  const accountWhole = fromAccounts > 0;
+  const close = modelAnnual > 0 && Math.abs(modelAnnual - linkedAnnual) <= ADDBACK_MATCH_TOLERANCE * linkedAnnual;
+  if (accountWhole || close || modelAnnual <= 0) {
+    if (modelAnnual > 0 && Math.abs(modelAnnual - linkedAnnual) > 0.15 * linkedAnnual) {
+      notes.push(`The linked transactions put it at ${money(linkedAnnual)} a year (the first estimate was ${money(modelAnnual)}).`);
+    }
+    if (!oneOff && whole === null) notes.push(`Scaled to a year from the ${periodLabel(Math.max(1, Math.round(covered * 12)))} the ledger covers.`);
+    return { ...settle(linkedAnnual, linkedYears, "matched"), aiNotes: notes.join(" ") };
+  }
+  // The model's amount differs from the payments it cited: a portion of
+  // them (the above-market part of the rent, the personal half of a
+  // vehicle) when lower — the amount stays the model's and the payments
+  // stand behind it; less than it when higher — partly supported.
+  const own = settle(modelAnnual, r?.yearAmounts || {});
+  if (own.verificationStatus === "exceeds_claim") notes.push(portionNote(own.totalMatchedAmount, modelAnnual, own.claimedAmount));
+  else if (own.verificationStatus === "partial_match") notes.push(`The linked transactions add up to ${money(own.totalMatchedAmount)} against ${claimWords(modelAnnual, own.claimedAmount)}.`);
+  return { ...own, aiNotes: notes.join(" ") };
 }
 
 export async function identifyAddbacksFromTransactions(
@@ -809,7 +856,7 @@ Analyze the transaction data and identify potential addbacks. Look for:
 
 ${ownerContext}
 
-Group related transactions (e.g., 12 monthly salary payments = one addback) and list EVERY transaction that makes up the addback. When a whole account is the addback, name it in "accounts" (exactly as written in the account summary) — its transactions are then all counted, including any not listed line by line.
+Group related transactions (e.g., 12 monthly salary payments = one addback) and list EVERY transaction that makes up the addback. When a whole account is the addback, name it in "accounts" (exactly as written in the account summary) — its transactions are then all counted, including any not listed line by line. When the addback is only a PORTION of some payments (above-market rent to a related party, the personal share of vehicle costs), give the portion as annualAmount, cite the payments it comes from in matchedTransactionIndices, and do NOT name their account.
 Use the transaction indices exactly as shown in [brackets].
 
 Return ONLY a valid JSON array. Each item:
@@ -863,7 +910,7 @@ export async function generateSellerQuestions(
   gaps: string[],
 ): Promise<SellerQuestion[]> {
   const unmatchedAddbacks = addbacks.filter(
-    (a) => a.verificationStatus === "no_match" || a.verificationStatus === "partial_match",
+    (a) => a.verificationStatus === "no_match" || a.verificationStatus === "partial_match" || a.verificationStatus === "exceeds_claim",
   );
 
   if (unmatchedAddbacks.length === 0 && gaps.length === 0) return [];

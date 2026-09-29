@@ -358,46 +358,101 @@ export const MAX_SOURCE_PARTS = 10;
 const PART_CONCURRENCY = 3;
 /** Below this much text there is nothing to read (a scanned image, an empty file). */
 export const MIN_READABLE_CHARS = 50;
-/** A page of a readable document holds more text than this (after repeated lines — a scanner's watermark — are set aside). */
-export const MIN_USEFUL_CHARS_PER_PAGE = 150;
+/** A page of a scanned PDF's text layer holds at most this much text of its own (a stray scanner mark, a stamp). */
+export const MAX_SCANNED_PAGE_CHARS = 10;
+/** A scanned PDF: at least this share of its pages hold (almost) no text. */
+const SCANNED_PAGE_SHARE = 0.75;
+/** Without each page's text: a PDF averaging under this much text of its own a page (a typed cover over image pages). */
+export const MIN_USEFUL_CHARS_PER_PAGE = 25;
+/** Without a page count: a scanner watermark's pages averaging under this much text of their own. */
+const MIN_CHARS_PER_WATERMARKED_PAGE = 150;
+
+/** A scanning app's own stamp ("Scanned with CamScanner", "Scanned by TurboScan"). */
+const SCANNER_STAMP = /\b(?:scanned (?:with|by|using|via)|camscanner|adobe scan|genius ?scan|microsoft lens|office lens|tiny ?scanner|turbo ?scan|scanbot|clear ?scan|swift ?scan|iscanner|scanner pro|simple ?scan)\b/i;
+
+/** How a source's text was laid out: a PDF's pages (and each page's text), or a file that has no pages. */
+export interface TextLayout {
+  /** The PDF's page count. */
+  pages?: number;
+  /** Each page's text, when the PDF was just read. */
+  pageTexts?: string[];
+  /** True for a PDF (its text may be a scan's text layer); false for Word, Excel, PowerPoint, text and pasted sources. */
+  pdf?: boolean;
+}
+
+const asLayout = (layout?: number | TextLayout): TextLayout =>
+  typeof layout === "number" ? { pages: layout, pdf: true } : layout ?? {};
+
+const normLine = (l: string) => l.toLowerCase().replace(/\s+/g, " ");
+const PAGE_NUMBER_LINE = /^(?:page\s*)?#?\s*\d+(?:\s*(?:of|\/)\s*\d+)?$|^[-–—]\s*\d+\s*[-–—]$/i;
+const ownChars = (line: string) => line.replace(/[^A-Za-z0-9]/g, "").length;
 
 /**
- * The text a source holds of its own: letters and digits outside lines that
- * repeat page after page ("Scanned with CamScanner", a running header, a
- * page number) — and how many pages those repeats suggest when the page
- * count isn't known.
+ * The text a source holds of its own: letters and digits outside a
+ * scanner's stamp, a running header / footer and page numbers — and how many
+ * pages a scanner's repeated stamp suggests when the page count isn't known.
+ * Only a scanner's stamp counts pages: a questionnaire's "Yes" / "No"
+ * answers, a slide footer ("Confidential") or a status column ("Owned")
+ * repeat too, and they are text of the document's own.
  */
-export function usefulText(text: string): { chars: number; repeatedPages: number } {
+export function usefulText(text: string, runningLines?: Set<string>): { chars: number; repeatedPages: number } {
   const lines = (text || "").split(/\r?\n|\f/).map((l) => l.trim()).filter(Boolean);
-  // The same short line, word for word (a ledger's rows differ in their
-  // dates and amounts; a watermark or running header does not).
-  const norm = (l: string) => l.toLowerCase().replace(/\s+/g, " ");
   const counts = new Map<string, number>();
-  for (const l of lines) counts.set(norm(l), (counts.get(norm(l)) ?? 0) + 1);
+  for (const l of lines) counts.set(normLine(l), (counts.get(normLine(l)) ?? 0) + 1);
   let chars = 0;
   let repeatedPages = 0;
   for (const l of lines) {
-    const n = counts.get(norm(l)) ?? 0;
-    if (n >= 3 && l.length <= 80 && /[a-z]/i.test(l)) { repeatedPages = Math.max(repeatedPages, n); continue; }
-    if (/^(?:page\s*)?#?\s*\d+(?:\s*(?:of|\/)\s*\d+)?$|^[-–—]\s*\d+\s*[-–—]$/i.test(l)) continue;
-    chars += l.replace(/[^A-Za-z0-9]/g, "").length;
+    const n = counts.get(normLine(l)) ?? 0;
+    if (SCANNER_STAMP.test(l) && l.length <= 80) { repeatedPages = Math.max(repeatedPages, n); continue; }
+    if (runningLines?.has(normLine(l))) continue;
+    if (PAGE_NUMBER_LINE.test(l)) continue;
+    chars += ownChars(l);
   }
   return { chars, repeatedPages };
 }
 
+/** Lines on at least half of a PDF's pages (a running header or footer), by their text. */
+function runningLinesOf(pageTexts: string[]): Set<string> {
+  const onPages = new Map<string, number>();
+  for (const page of pageTexts) {
+    const seen = new Set(page.split(/\r?\n|\f/).map((l) => l.trim()).filter((l) => l && l.length <= 80).map(normLine));
+    seen.forEach((l) => onPages.set(l, (onPages.get(l) ?? 0) + 1));
+  }
+  const out = new Set<string>();
+  onPages.forEach((n, l) => { if (n >= Math.max(3, pageTexts.length / 2)) out.add(l); });
+  return out;
+}
+
 /**
  * True when a document's text layer is too thin to have been read — a
- * scanned PDF whose only text is a scanner's watermark or a typed cover
- * page: under MIN_USEFUL_CHARS_PER_PAGE characters of its own per page, on
- * a document of three or more pages (the page count from the PDF, else the
- * number of pages a repeated watermark suggests). A one- or two-page
- * document is judged by MIN_READABLE_CHARS alone.
+ * scanned PDF whose only text is a scanner's stamp or a typed cover page
+ * over image pages. Judged on three or more pages:
+ * - with each page's text (a PDF just read): most pages (three in four)
+ *   hold almost no text of their own once running headers, footers and
+ *   stamps are set aside — a sparse slide deck ("Founded 2009", "Thank
+ *   you") has a little on nearly every page, a scan has nothing;
+ * - with only the PDF's page count: under MIN_USEFUL_CHARS_PER_PAGE a page;
+ * - with no page count (a PDF's stored text): only a scanner's stamp,
+ *   repeated page after page, counts the pages.
+ * Word, Excel, PowerPoint, text and pasted sources are never judged thin:
+ * they have no scanned pages, and their repeated lines are their own text.
+ * A one- or two-page document is judged by MIN_READABLE_CHARS alone.
  */
-export function thinTextLayer(text: string, pages?: number): boolean {
+export function thinTextLayer(text: string, layout?: number | TextLayout): boolean {
+  const { pages, pageTexts, pdf } = asLayout(layout);
+  if (pdf === false) return false;
+  if (pageTexts && pageTexts.length >= 3) {
+    const running = runningLinesOf(pageTexts);
+    const empty = pageTexts.filter((page) => usefulText(page, running).chars <= MAX_SCANNED_PAGE_CHARS).length;
+    return empty >= pageTexts.length * SCANNED_PAGE_SHARE;
+  }
+  if (pages && pages > 0) {
+    if (pages < 3) return false;
+    return usefulText(text).chars / pages < MIN_USEFUL_CHARS_PER_PAGE;
+  }
   const { chars, repeatedPages } = usefulText(text);
-  const pageCount = pages && pages > 0 ? pages : repeatedPages;
-  if (pageCount < 3) return false;
-  return chars / pageCount < MIN_USEFUL_CHARS_PER_PAGE;
+  if (repeatedPages < 3) return false;
+  return chars / repeatedPages < MIN_CHARS_PER_WATERMARKED_PAGE;
 }
 
 /** The reason given for a scanned document with a thin text layer. */
@@ -408,10 +463,11 @@ export const SCANNED_REASON = "most of its pages have no readable text — it lo
  * characters a page (or 300 in all). With hasNoBusinessFacts, the source is
  * not counted as the checklist document it was uploaded for.
  */
-export function readFoundNothing(data: ExtractedDocumentData, text: string, pages?: number): boolean {
+export function readFoundNothing(data: ExtractedDocumentData, text: string, layout?: number | TextLayout): boolean {
   if (!hasNoBusinessFacts(data)) return false;
+  const { pages, pdf } = asLayout(layout);
   const { chars, repeatedPages } = usefulText(text);
-  const pageCount = Math.max(1, pages && pages > 0 ? pages : repeatedPages);
+  const pageCount = Math.max(1, pages && pages > 0 ? pages : pdf === false ? 1 : repeatedPages);
   return chars < 300 || chars / pageCount < 300;
 }
 
@@ -812,12 +868,13 @@ export async function extractDocumentData(
   /** What kind of source this is — an email or call is read differently from a P&L. */
   kind: SourceKind = "document",
   /** The deal's checklist keys, so answers land where the interview and coverage look (see extractionChecklist). */
-  opts: { checklist?: ExtractionChecklistItem[]; pages?: number } = {},
+  /** pages / pageTexts / pdf: how the text was laid out (thinTextLayer). */
+  opts: { checklist?: ExtractionChecklistItem[] } & TextLayout = {},
 ): Promise<ExtractedDocumentData> {
   if (!text || text.trim().length < MIN_READABLE_CHARS) return unreadableExtraction(text, kind);
   // A scanned PDF whose text layer is a watermark or a cover page: not read
   // (nothing in it is), and said so — it is not the document it was sent as.
-  if (kind === "document" && thinTextLayer(text, opts.pages)) return unreadableExtraction(text, kind, SCANNED_REASON);
+  if (kind === "document" && thinTextLayer(text, { pages: opts.pages, pageTexts: opts.pageTexts, pdf: opts.pdf })) return unreadableExtraction(text, kind, SCANNED_REASON);
 
   const parts = splitSourceText(text);
   if (parts.length === 1) {
@@ -1537,14 +1594,17 @@ export function mergeExtractedData(
   const title = [o.title, typeof data._documentType === "string" ? data._documentType : ""].filter(Boolean).join(" · ");
   // A forklift, truck or copier lease: its term and payment are that
   // equipment's lease, never the premises lease's expiry and rent.
-  if (isEquipmentLeaseTitle(title)) rerouteEquipmentLease(data, title, o.title, inferredKeys);
+  // (A street address or tenant / landlord terms in the lease's own facts
+  // outweigh an equipment word that only describes it.)
+  const leaseFacts = { ...(data as Record<string, unknown>) };
+  if (isEquipmentLeaseTitle(title, leaseFacts)) rerouteEquipmentLease(data, title, o.title, inferredKeys);
 
   // The premises a lease document is for (its address, else the place its title names).
   const premises = kind === "document" ? premisesKey(o.title ?? title, typeof data.leaseAddress === "string" ? data.leaseAddress : null) : undefined;
   const srcFor = (rawKey: string, key: string): FieldSource => ({
     ...base,
     ...(keyPeriods[rawKey] ? { period: keyPeriods[rawKey] } : {}),
-    ...(isSpecialistSource(key, title) ? { specialist: true, ...(premises && PREMISES_LEASE_KEY.test(key) ? { premises } : {}) } : {}),
+    ...(isSpecialistSource(key, title, leaseFacts) ? { specialist: true, ...(premises && PREMISES_LEASE_KEY.test(key) ? { premises } : {}) } : {}),
     ...(inferredKeys.has(rawKey) ? { valueInferred: true } : {}),
   });
 

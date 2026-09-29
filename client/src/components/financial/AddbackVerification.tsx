@@ -13,7 +13,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { AddbackVerification as AddbackVerificationType, Document } from "@shared/schema";
-import { addbackSupport, evidencedAmount, withEvidence } from "@shared/addback-support";
+import { addbackSupport, claimWords, evidencedAmount, withEvidence } from "@shared/addback-support";
 import {
   Upload, Loader2, CheckCircle2, XCircle, AlertTriangle,
   HelpCircle, ChevronDown, ChevronRight, FileText, Search,
@@ -63,12 +63,12 @@ interface AddbackItem {
   /** Which year annualAmount comes from, when seeded from the analysis. */
   amountYear?: string | null;
   yearAmounts: Record<string, number>;
-  verificationStatus: "unverified" | "matched" | "partial_match" | "seller_confirmed" | "disputed" | "no_match";
+  verificationStatus: "unverified" | "matched" | "partial_match" | "exceeds_claim" | "seller_confirmed" | "disputed" | "no_match";
   /** Status before Confirm / Dispute — lets the broker undo a misclick. */
-  previousStatus?: "unverified" | "matched" | "partial_match" | "no_match";
+  previousStatus?: "unverified" | "matched" | "partial_match" | "exceeds_claim" | "no_match";
   /** What the linked transactions add up to (worked out in code, not the AI's figure). */
   totalMatchedAmount?: number | null;
-  /** The claim that total was compared with (the annual claim over the period the transactions span). */
+  /** The claim that total was compared with (the annual claim over the period the ledger covers). */
   claimedAmount?: number | null;
   /** Set when not every transaction that could support the add-back was checked. */
   coverageNote?: string | null;
@@ -118,6 +118,7 @@ const STATUS_ICONS: Record<string, { icon: any; color: string; label: string }> 
   unverified:       { icon: HelpCircle,    color: "text-muted-foreground", label: "Unverified" },
   matched:          { icon: Search,        color: "text-blue-400",         label: "Match Found" },
   partial_match:    { icon: AlertTriangle, color: "text-amber-300",       label: "Partly supported" },
+  exceeds_claim:    { icon: Search,        color: "text-blue-400",         label: "Portion of payments" },
   seller_confirmed: { icon: CheckCircle2,  color: "text-emerald-400",     label: "Confirmed" },
   disputed:         { icon: XCircle,       color: "text-red-400",         label: "Disputed" },
   no_match:         { icon: AlertTriangle, color: "text-amber-400",       label: "No Match" },
@@ -557,7 +558,7 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
     const confirmedItems = addbacks.filter((a) => a.verificationStatus === "seller_confirmed");
     const confirmed = confirmedItems.length;
     const disputed = addbacks.filter((a) => a.verificationStatus === "disputed").length;
-    const matched = addbacks.filter((a) => a.verificationStatus === "matched").length;
+    const matched = addbacks.filter((a) => a.verificationStatus === "matched" || a.verificationStatus === "exceeds_claim").length;
     const partial = addbacks.filter((a) => a.verificationStatus === "partial_match").length;
     const unmatched = addbacks.filter((a) => a.verificationStatus === "no_match").length;
     const withProof = confirmedItems.filter((a) => (a.matchedTransactions?.length ?? 0) > 0).length;
@@ -590,8 +591,9 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
             documentId: tx.documentId || "",
           })),
         ];
-        // Matched only when the linked transactions add up to the claim.
-        const support = addbackSupport(ab, merged);
+        // Matched only when the linked transactions add up to the claim
+        // (over the period the uploaded ledger covers).
+        const support = addbackSupport(ab, merged, allTransactions);
         return {
           ...ab,
           matchedTransactions: merged,
@@ -603,7 +605,7 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
       updateVerification.mutate({ addbacks: updated as any });
       setBrowsingForAddback(null);
     },
-    [addbacks, updateVerification],
+    [addbacks, updateVerification, allTransactions],
   );
 
   const priorStatus = (ab: AddbackItem): AddbackItem["previousStatus"] =>
@@ -635,7 +637,7 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
   const handleUndo = (addbackId: string) => {
     const updated = addbacks.map((ab) => {
       if (ab.id !== addbackId) return ab;
-      const fallback = addbackSupport(ab, ab.matchedTransactions ?? []).status;
+      const fallback = addbackSupport(ab, ab.matchedTransactions ?? [], allTransactions).status;
       return { ...ab, verificationStatus: ab.previousStatus ?? fallback, previousStatus: undefined };
     });
     updateVerification.mutate({ addbacks: updated as any });
@@ -1180,7 +1182,7 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
           const isExpanded = expandedAddback === ab.id;
           const statusCfg = STATUS_ICONS[ab.verificationStatus] || STATUS_ICONS.unverified;
           const Icon = statusCfg.icon;
-          const isActionable = ab.verificationStatus === "matched" || ab.verificationStatus === "partial_match" || ab.verificationStatus === "no_match" || ab.verificationStatus === "unverified";
+          const isActionable = ab.verificationStatus === "matched" || ab.verificationStatus === "partial_match" || ab.verificationStatus === "exceeds_claim" || ab.verificationStatus === "no_match" || ab.verificationStatus === "unverified";
 
           return (
             <Card
@@ -1279,9 +1281,19 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
                         <p className="text-muted-foreground">
                           The linked transactions add up to{" "}
                           <span className="font-mono text-foreground">{fmtCurrency(ab.totalMatchedAmount ?? 0)}</span>
-                          {" "}against{" "}
-                          <span className="font-mono text-foreground">{fmtCurrency(ab.claimedAmount ?? ab.annualAmount)}</span>
-                          {" "}claimed for that period. Only the supported part counts toward the verified amount. Link more transactions, give the AI a hint, or note where the rest is supported.
+                          {" "}against {claimWords(ab.annualAmount, ab.claimedAmount)}. Only the supported part counts toward the verified amount. Link more transactions, give the AI a hint, or note where the rest is supported.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* The payments exceed the claim: the add-back is a portion of them */}
+                    {ab.verificationStatus === "exceeds_claim" && (
+                      <div className="rounded bg-blue-500/5 border border-blue-500/20 p-3 text-xs">
+                        <p className="font-medium text-blue-400 mb-1">A portion of these payments</p>
+                        <p className="text-muted-foreground">
+                          The linked transactions add up to{" "}
+                          <span className="font-mono text-foreground">{fmtCurrency(ab.totalMatchedAmount ?? 0)}</span>
+                          , more than {claimWords(ab.annualAmount, ab.claimedAmount)}. The payments are in the ledger; how much of them is the add-back is a judgment. Confirm it with the seller and note how it was worked out (for example, the market rent it is compared with).
                         </p>
                       </div>
                     )}
