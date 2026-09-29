@@ -111,6 +111,13 @@ export interface IStorage {
   getCimSectionsByDeal(dealId: string): Promise<CimSection[]>;
   updateCimSection(id: string, updates: Partial<InsertCimSection>): Promise<CimSection | undefined>;
   deleteCimSectionsForDeal(dealId: string): Promise<void>;
+  /**
+   * Replace a deal's whole CIM in ONE transaction: the deal update (e.g. the
+   * buyer hold, off-live, cleared approvals, layout version), the old
+   * sections and their Blind/DD overrides out, the new sections in. A crash
+   * or DB error part-way leaves the old CIM exactly as it was.
+   */
+  replaceDealCim(dealId: string, sections: InsertCimSection[], dealUpdates: Partial<InsertDeal>): Promise<void>;
 
   // Buyer Q&A operations
   createBuyerQuestion(question: InsertBuyerQuestion): Promise<BuyerQuestion>;
@@ -430,6 +437,7 @@ export class MemStorage implements IStorage {
   async getCimSectionsByDeal(): Promise<CimSection[]> { return []; }
   async updateCimSection(): Promise<CimSection | undefined> { return undefined; }
   async deleteCimSectionsForDeal(): Promise<void> {}
+  async replaceDealCim(): Promise<void> { throw new Error("Use DbStorage"); }
   async createBuyerQuestion(): Promise<BuyerQuestion> { throw new Error("Use DbStorage"); }
   async getQuestionsByDeal(): Promise<BuyerQuestion[]> { return []; }
   async getPublishedQuestions(): Promise<BuyerQuestion[]> { return []; }
@@ -995,6 +1003,19 @@ export class DbStorage implements IStorage {
 
   async deleteCimSectionsForDeal(dealId: string): Promise<void> {
     await db.delete(cimSections).where(eq(cimSections.dealId, dealId));
+  }
+
+  async replaceDealCim(dealId: string, sections: InsertCimSection[], dealUpdates: Partial<InsertDeal>): Promise<void> {
+    await db.transaction(async (tx) => {
+      // First, so a failed hold write changes nothing (and it commits with the sections).
+      await tx.update(deals).set({ ...dealUpdates, updatedAt: new Date() }).where(eq(deals.id, dealId));
+      await tx.delete(cimSectionOverrides).where(and(eq(cimSectionOverrides.dealId, dealId), inArray(cimSectionOverrides.mode, ["blind", "dd"])));
+      await tx.delete(cimSections).where(eq(cimSections.dealId, dealId));
+      if (sections.length > 0) {
+        // Under the per-section approval rule from the start (shared/cim-approvals).
+        await tx.insert(cimSections).values(sections.map((s) => ({ ...s, contentHistory: withApprovalRuleMark(s.contentHistory) })));
+      }
+    });
   }
 
   async getBrandingByBroker(brokerId: string): Promise<BrandingSettings | undefined> {

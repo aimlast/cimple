@@ -51,6 +51,12 @@ s.getCimSectionOverrides = async (_d: string, mode: string) => (mode === "dd" ? 
 s.deleteCimSectionsForDeal = async () => undefined;
 s.deleteCimSectionOverrides = async () => undefined;
 s.createCimSection = async (x: any) => { created.push(x); return x; };
+s.getCimSectionsByDeal = async () => created.slice();
+s.replaceDealCim = async (_id: string, rows: any[], u: any) => {
+  created.length = 0;
+  created.push(...rows);
+  Object.assign(deal, structuredClone(u));
+};
 
 _setGeneratorForTests(async () => ({
   dealId,

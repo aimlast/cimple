@@ -32,6 +32,7 @@ import {
 import { hasRelativeTime, repairInferredYears, staleTargets } from "./fact-dates";
 import { canonLines, earningsCanon, earningsWarnings, offCanon, screenEarningsFacts, type EarningsCanon, type EarningsHold } from "./earnings-canon";
 import { normalizeSpokenFigures } from "./spoken-figures";
+import { describeAiFailure } from "../ai-retry";
 import {
   addbackCompanions,
   consistencyKnowledge,
@@ -281,6 +282,16 @@ export async function generateCimLayout(
       ),
     );
     generated.push(...results);
+    // The AI service is down (credits out, an overload burst): when not one
+    // section of the first batch could be written, stop instead of retrying
+    // every remaining section — the job fails and the deal's CIM stays.
+    if (i === 0 && results.length > 0 && results.every(isFallback)) {
+      // Say why when the service told us (credits out or a rejected key won't
+      // come right by trying again in a few minutes).
+      const cause = runAiErrors.get(sharedSystem);
+      const why = cause ? describeAiFailure(cause) : null;
+      throw new Error(`The AI service failed${why ? ` (${why.reason})` : ""} while writing the first ${results.length} sections, so the run was stopped. Nothing was changed — ${why?.advice ?? "try again in a few minutes"}.`);
+    }
   }
 
   // ── Phase 3: every figure must trace to the deal's data ────────────────
@@ -352,6 +363,7 @@ export async function generateCimLayout(
     generatedAt: new Date().toISOString(),
     version: 1,
     warnings: warnings.length > 0 ? warnings : undefined,
+    aiError: slimAiError(runAiErrors.get(sharedSystem)),
   };
 }
 
@@ -554,6 +566,18 @@ function nothingLeft(s: CimLayoutSection): boolean {
   if (["bar_chart", "horizontal_bar_chart", "pie_chart", "donut_chart", "line_chart"].includes(s.layoutType)) return empty("data");
   if (s.layoutType === "metric_grid") return empty("metrics");
   return false;
+}
+
+/**
+ * The last AI service error of a run (keyed by the run's shared system
+ * block), so a run the service failed can say why — e.g. credits out, where
+ * trying again in a few minutes won't help.
+ */
+const runAiErrors = new WeakMap<object, unknown>();
+function slimAiError(err: unknown): CimDocument["aiError"] {
+  if (!err) return undefined;
+  const e = err as { status?: unknown; message?: unknown };
+  return { status: typeof e.status === "number" ? e.status : undefined, message: String(e.message ?? "").slice(0, 300) };
 }
 
 function isFallback(s: CimLayoutSection): boolean {
@@ -1194,9 +1218,12 @@ async function writeSectionContent(
     }
   } catch (err) {
     console.error(`[layout-engine] Section "${entry.sectionKey}" generation error:`, err);
+    runAiErrors.set(sharedSystem, err);
     try {
       result = await attempt(true);
-    } catch { /* fall through */ }
+    } catch (retryErr) {
+      runAiErrors.set(sharedSystem, retryErr);
+    }
   }
   return result;
 }

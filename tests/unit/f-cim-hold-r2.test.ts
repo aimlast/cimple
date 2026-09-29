@@ -56,6 +56,15 @@ s.getCimSectionOverrides = async () => [];
 s.deleteCimSectionsForDeal = async () => { log.push("delete-sections"); };
 s.deleteCimSectionOverrides = async () => undefined;
 s.createCimSection = async (x: any) => { log.push("create-section"); return x; };
+s.getCimSectionsByDeal = async () => [{ id: "old" }];
+// One transaction: the hold, off-live and cleared approvals go in with the
+// section replacement, or nothing does.
+s.replaceDealCim = async (_id: string, rows: any[], u: any) => {
+  const holds = !!u?.cimGeneration?.buyerHold && u.isLive === false;
+  if (holds && failHoldWrite) throw new Error("db down");
+  log.push(`${holds ? "hold+offline+" : ""}replace:${rows.length}`);
+  Object.assign(deal, structuredClone(u));
+};
 
 _setGeneratorForTests(async () => ({
   dealId,
@@ -74,7 +83,7 @@ failHoldWrite = true;
 await startCimGeneration(structuredClone(deal), "layout");
 await waitDone();
 assert.equal(getLiveCimGenerationStatus(dealId)!.status, "failed");
-assert.ok(!log.includes("delete-sections") && !log.includes("create-section"), log.join(" "));
+assert.ok(!log.some((l) => l.includes("replace")), log.join(" "));
 assert.equal(deal.isLive, true);
 assert.equal(cimHeldFromBuyers(deal), false, "the old CIM is still what buyers see — not a 'being updated' notice");
 console.log("  ✓ if the hold can't be written, nothing is replaced (and the old CIM isn't held)");
@@ -85,12 +94,12 @@ log.length = 0;
 await startCimGeneration(structuredClone(deal), "layout");
 await waitDone();
 assert.equal(getLiveCimGenerationStatus(dealId)!.status, "done");
-const holdAt = log.indexOf("hold+offline");
-assert.ok(holdAt >= 0 && holdAt < log.indexOf("delete-sections") && holdAt < log.indexOf("create-section"), log.join(" "));
+assert.ok(log.includes("hold+offline+replace:1"), log.join(" "));
+assert.ok(!log.some((l) => l.startsWith("update:") && l.includes("isLive")), "the hold is never written apart from the sections");
 assert.ok(cimHeldFromBuyers(deal));
 assert.equal(deal.isLive, false);
 for (const k of ["contentApprovedByBroker", "contentApprovedBySeller", "designApprovedByBroker", "designApprovedBySeller"]) assert.equal(deal[k], false, k);
-console.log("  ✓ the hold, off-live and cleared approvals are written before any section is replaced");
+console.log("  ✓ the hold, off-live and cleared approvals are written in the same transaction as the sections");
 
 // Publishing: the hold is released and the undecided buyer who viewed the old CIM gets a fresh clock.
 await releaseBuyerHold(dealId);

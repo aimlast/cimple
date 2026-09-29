@@ -823,7 +823,7 @@ export const buyerAccess = pgTable("buyer_access", {
   // Decision prompt pacing — first visit is a breathing period (no prompt),
   // subsequent visits show the decision panel, reminder emails escalate.
   firstViewedAt: timestamp("first_viewed_at"),
-  reminderStage: text("reminder_stage").default("none"), // none | reminder_sent | warning_sent
+  reminderStage: text("reminder_stage").default("none"), // none | reminder_sent | warning_sent | email_undeliverable
   lastReminderAt: timestamp("last_reminder_at"),
 
   expiresAt: timestamp("expires_at"),
@@ -2256,12 +2256,19 @@ export type BuyerInterestStatus = (typeof BUYER_INTEREST_STATUSES)[number];
 
 export interface BuyerAiSummary { text: string; at: string; key: string }
 
-/** One broker action on a buyer_access row (buyer_access.access_events). */
+/**
+ * One event on a buyer_access row (buyer_access.access_events): a broker
+ * action, or a decision-reminder email refused for good (the pipeline stops
+ * and the broker follows up — server/reminders/decision-reminders.ts).
+ */
 export interface BuyerAccessEvent {
-  type: "extended" | "level_changed" | "revoked";
+  type: "extended" | "level_changed" | "revoked" | "reminder_undeliverable";
   at: string;
   expiresAt?: string | null;
   accessLevel?: string | null;
+  /** reminder_undeliverable: which email, and the email service's HTTP status. */
+  stage?: "reminder" | "warning";
+  status?: number | null;
 }
 
 /** "other" = on the buyer's global profile, written by someone other than this broker or the buyer (never named). */

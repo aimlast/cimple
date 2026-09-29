@@ -24,6 +24,8 @@ export interface AnalysisSourceRef {
   id: string;
   name?: string;
   role?: AnalysisSourceRole;
+  /** Set when the run couldn't read this statement (why) — its figures are missing until a re-run. */
+  unread?: string;
 }
 
 export interface SourceDocLike {
@@ -77,7 +79,12 @@ export function readAnalysisSources(raw: unknown): AnalysisSourceRef[] {
       if (typeof x === "string" && x) return { id: x };
       if (x && typeof x === "object" && typeof (x as AnalysisSourceRef).id === "string") {
         const r = x as AnalysisSourceRef;
-        return { id: r.id, ...(typeof r.name === "string" ? { name: r.name } : {}), ...(r.role ? { role: r.role } : {}) };
+        return {
+          id: r.id,
+          ...(typeof r.name === "string" ? { name: r.name } : {}),
+          ...(r.role ? { role: r.role } : {}),
+          ...(typeof r.unread === "string" && r.unread ? { unread: r.unread } : {}),
+        };
       }
       return null;
     })
@@ -89,6 +96,8 @@ export interface AnalysisSourceStatus {
   removed: AnalysisSourceRef[];
   /** Statement / tax documents added (and read) since the analysis ran. */
   added: Array<{ id: string; name: string }>;
+  /** Statements still on file that the run couldn't read (the AI service failed) — re-run to include them. */
+  unread: Array<{ id: string; name: string }>;
   /** A statement or tax document the analysis used was deleted: its figures can't go into a CIM. */
   blocking: boolean;
   /** One broker-facing sentence, or null when nothing changed. */
@@ -100,7 +109,7 @@ const quote = (names: string[]) => names.map((n) => `“${n}”`).join(", ");
 
 export function analysisSourceStatus(analysis: { sourceDocumentIds?: unknown } | null | undefined, docs: SourceDocLike[]): AnalysisSourceStatus {
   const refs = readAnalysisSources(analysis?.sourceDocumentIds);
-  const none: AnalysisSourceStatus = { removed: [], added: [], blocking: false, message: null };
+  const none: AnalysisSourceStatus = { removed: [], added: [], unread: [], blocking: false, message: null };
   if (!analysis || refs.length === 0) return none;
   const current = new Map(docs.map((d) => [d.id, d]));
   const used = new Set(refs.map((r) => r.id));
@@ -111,8 +120,9 @@ export function analysisSourceStatus(analysis: { sourceDocumentIds?: unknown } |
   const added = docs
     .filter((d) => !used.has(d.id) && hasContent(d) && !isBrokerOnly(d) && (isFinancialStatementDoc(d) || isTaxDocument(d)))
     .map((d) => ({ id: d.id, name: d.name }));
+  const unread = refs.filter((r) => r.unread && current.has(r.id)).map((r) => ({ id: r.id, name: current.get(r.id)!.name }));
   const blocking = removed.some((r) => r.role === "statements" || r.role === "tax");
-  if (removed.length === 0 && added.length === 0) return none;
+  if (removed.length === 0 && added.length === 0 && unread.length === 0) return none;
   const parts: string[] = [];
   const removedNamed = removed.filter((r) => r.name).map((r) => r.name!);
   if (removed.length > 0) {
@@ -123,5 +133,6 @@ export function analysisSourceStatus(analysis: { sourceDocumentIds?: unknown } |
     );
   }
   if (added.length > 0) parts.push(`${added.length === 1 ? "a financial document was" : "financial documents were"} added since (${quote(added.map((a) => a.name))})`);
-  return { removed, added, blocking, message: `The financial analysis is out of date: ${parts.join(", and ")}. Re-run it so the CIM's financials match the documents on file.` };
+  if (unread.length > 0) parts.push(`the AI service couldn't read ${unread.length === 1 ? "a statement" : "some statements"} when it ran (${quote(unread.map((u) => u.name))})`);
+  return { removed, added, unread, blocking, message: `The financial analysis is out of date: ${parts.join(", and ")}. Re-run it so the CIM's financials match the documents on file.` };
 }

@@ -63,7 +63,9 @@ export function CimGenerationWatcher() {
         // used to be called "fell back to a placeholder").
         const summary = generationSummary(n, job.warnings);
         toast({
-          title: `CIM ready — ${job.businessName}`,
+          // "Ready" only when every section was written — a run with
+          // placeholders says so in the title, not just the description.
+          title: summary.attention ? `CIM written with gaps — ${job.businessName}` : `CIM ready — ${job.businessName}`,
           description: job.buyerHold
             ? `${summary.text} Buyers don't see it until you publish it again.`
             : summary.text,

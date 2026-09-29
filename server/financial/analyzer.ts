@@ -22,6 +22,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { IStorage } from "../storage";
 import type { Discrepancy, FinancialAnalysis } from "@shared/schema";
 import { extractFinancialData, type ExtractedStatement } from "./extractor";
+import { isTransientAiError, mapWithLimit, withAiRetry } from "../ai-retry";
 import { brokerPrivacy } from "../interview/seller-view";
 import { getFieldSources } from "../interview/info-merger";
 import { filterDiscrepancyItems, dropReason, differentYears, discrepancyYear, normalizeFactYear } from "../cim/discrepancy-filter";
@@ -211,6 +212,62 @@ export function sliceRelevantText(text: string, budget: number, extraKeywords: s
   return chunks.join("");
 }
 
+// ── Statement extraction: a few at a time, retried, failures recorded ──
+//
+// Every statement pack used to be read at once (Ridgeline has 10 — ten
+// parallel 16,000-token generations), with no retry: a 429/529 dropped that
+// statement silently and the analysis still reported "completed" — the
+// CIM's "authoritative" tables could miss, say, the 2023 balance sheet with
+// nothing telling the broker.
+
+/** Statement reads in flight at once for one analysis. */
+export const STATEMENT_READS_AT_ONCE = 3;
+let statementRetryDelaysMs = [5_000, 20_000];
+let statementExtractor: typeof extractFinancialData = extractFinancialData;
+export function _setStatementExtractorForTests(fn: typeof extractFinancialData | null, retryDelaysMs?: number[]) {
+  statementExtractor = fn ?? extractFinancialData;
+  if (retryDelaysMs) statementRetryDelaysMs = retryDelaysMs;
+}
+
+export { isTransientAiError };
+
+function unreadReason(err: unknown): string {
+  const e = err as { status?: number; message?: string } | null;
+  if (e?.status === 429) return "the AI service's rate limit was reached";
+  if (e?.status === 529 || /overloaded/i.test(e?.message ?? "")) return "the AI service was overloaded";
+  if (isTransientAiError(err)) return "the AI service didn't respond";
+  return "the AI service returned an error";
+}
+
+/**
+ * Read each statement document (at most STATEMENT_READS_AT_ONCE at a time,
+ * transient failures retried with back-off). Returns each document's
+ * statements in order, and the documents that couldn't be read with why.
+ */
+export async function readStatementDocs(
+  docs: Array<{ id: string; name: string; extractedText: string | null }>,
+): Promise<{ statementArrays: ExtractedStatement[][]; unread: Array<{ id: string; name: string; reason: string }> }> {
+  const unread: Array<{ id: string; name: string; reason: string }> = [];
+  const statementArrays = await mapWithLimit(docs, STATEMENT_READS_AT_ONCE, async (doc) => {
+    try {
+      return await withAiRetry(() => statementExtractor(doc.extractedText ?? "", doc.id, doc.name), statementRetryDelaysMs);
+    } catch (err: any) {
+      console.error(`Statement extraction failed for "${doc.name}" — continuing without it:`, err?.message);
+      unread.push({ id: doc.id, name: doc.name, reason: unreadReason(err) });
+      return [] as ExtractedStatement[];
+    }
+  });
+  return { statementArrays, unread };
+}
+
+/** The analysis's own notes, with the statements it couldn't read named first. */
+export function withUnreadNote(aiReasoning: string, sources: AnalysisSourceRef[]): string {
+  const unread = sources.filter((s) => s.unread);
+  if (unread.length === 0) return aiReasoning;
+  const note = `Couldn't read ${unread.map((s) => `“${s.name ?? s.id}” (${s.unread})`).join(", ")} — the figures from ${unread.length === 1 ? "that statement are" : "those statements are"} missing from this analysis. Re-run the analysis to include ${unread.length === 1 ? "it" : "them"}.`;
+  return aiReasoning ? `${note}\n\n${aiReasoning}` : note;
+}
+
 async function assembleSources(
   dealId: string,
   storage: IStorage,
@@ -242,17 +299,9 @@ async function assembleSources(
     (d) => isFinancialStatementDoc(d) && d.extractedText && d.extractedText.trim().length >= 50,
   );
   // Per-doc failures (network blips, malformed output) must not kill the run —
-  // the comprehensive pass still has the other docs + raw context to work with.
-  const statementArrays = await Promise.all(
-    financialDocs.map(async (doc) => {
-      try {
-        return await extractFinancialData(doc.extractedText!, doc.id, doc.name);
-      } catch (err: any) {
-        console.error(`Statement extraction failed for "${doc.name}" — continuing without it:`, err.message);
-        return [] as ExtractedStatement[];
-      }
-    }),
-  );
+  // the comprehensive pass still has the other docs + raw context to work with
+  // — but a statement that couldn't be read is recorded and told to the broker.
+  const { statementArrays, unread } = await readStatementDocs(financialDocs);
   const statements = statementArrays.flat();
 
   // Financial docs whose structured extraction produced nothing still carry
@@ -371,10 +420,14 @@ async function assembleSources(
 
   // Every document the run read, with its role — so a deleted statement
   // (or one added since) marks the analysis out of date (source-status.ts).
+  // A statement the run couldn't read is marked (`unread`): the analysis is
+  // flagged until it is re-run (source-status.ts).
+  const unreadById = new Map(unread.map((u) => [u.id, u.reason]));
   const contributingDocIds: AnalysisSourceRef[] = processedDocs.map((d) => ({
     id: d.id,
     name: d.name,
     role: financialIds.has(d.id) ? "statements" : analysisSourceRole(d),
+    ...(unreadById.has(d.id) ? { unread: unreadById.get(d.id)! } : {}),
   }));
 
   const privateParts: string[] = [];
@@ -577,7 +630,7 @@ export async function runFinancialAnalysis(
       insights: analysisResult.insights,
       clarifyingQuestions: analysisResult.clarifyingQuestions,
       sourceDocumentIds: sources.sourceDocumentIds,
-      aiReasoning: analysisResult.aiReasoning,
+      aiReasoning: withUnreadNote(analysisResult.aiReasoning, sources.sourceDocumentIds),
     });
 
     // 6. Route cross-source discrepancies into the shared discrepancies table

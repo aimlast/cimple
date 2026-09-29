@@ -346,6 +346,7 @@ test("the handler checks the gate before loading DD inputs", () => {
   assert.ok(gate > 0, "gate present");
   assert.ok(body.indexOf("discrepancyBlockResponse(res, openCritical") > gate);
   assert.ok(gate < body.indexOf("loadDdInputs(deal)"), "before the DD inputs");
+  assert.ok(gate < body.indexOf("startFullDdGeneration("), "before the run starts");
 });
 
 // ── F10: expandable financial tables ─────────────────────────────────────
