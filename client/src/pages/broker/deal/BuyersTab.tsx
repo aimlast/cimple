@@ -406,7 +406,7 @@ export function BuyersTab() {
                           >
                             {/* The decision already shows under Status: here, how they read. */}
                             {["interested", "not_interested", "lapsed"].includes(card.status)
-                              ? <span className="text-xs text-muted-foreground">Read {card.pagesReached} of {card.totalPages} pages</span>
+                              ? <span className="text-xs text-muted-foreground">Scrolled through {card.pagesReached} of {card.totalPages} pages</span>
                               : <StatusChip status={card.status} label={card.statusLabel} />}
                             <PageStrip cells={card.pageStrip} maxMs={stripMax} size="sm" caption={false} className="mt-1.5 w-36" />
                           </div>

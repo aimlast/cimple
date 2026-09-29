@@ -35,6 +35,7 @@ import { BuyerComparison } from "@/components/deal/BuyerComparison";
 import { ActivityTimeline } from "@/components/deal/ActivityTimeline";
 import { CallListPanel } from "@/components/engagement/global/CallListPanel";
 import { ComparePanel } from "@/components/engagement/global/ComparePanel";
+import { useEngagementCompare } from "@/hooks/useEngagement";
 
 // ── Types (the per-buyer table still reads /analytics/computed until the
 //    capture stream moves it onto reading rollups) ────────────────────────
@@ -123,11 +124,15 @@ export default function Analytics() {
     [deals],
   );
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
-  // Default to a live deal (the one most likely to have readers), else the first.
+  const { data: compare, isLoading: compareLoading } = useEngagementCompare();
+  // Default to the deal most buyers have opened (from the comparison), else
+  // a live deal, else the first.
   useEffect(() => {
-    if (selectedDealId || active.length === 0) return;
-    setSelectedDealId((active.find((d) => d.isLive) ?? active[0]).id);
-  }, [active, selectedDealId]);
+    if (selectedDealId || active.length === 0 || compareLoading) return;
+    const ids = new Set(active.map((d) => d.id));
+    const mostRead = (compare?.deals ?? []).filter((r) => ids.has(r.dealId) && r.opened > 0).sort((a, b) => b.opened - a.opened)[0];
+    setSelectedDealId(mostRead?.dealId ?? (active.find((d) => d.isLive) ?? active[0]).id);
+  }, [active, selectedDealId, compare, compareLoading]);
   const selectedDeal = active.find((d) => d.id === selectedDealId) ?? null;
 
   return (

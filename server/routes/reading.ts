@@ -23,7 +23,8 @@ import { dealPublishedForBuyers } from "@shared/buyer-publish-gate";
 import { ndaBlocksBuyer } from "@shared/cim-buyer-view";
 import { storage } from "../storage";
 import { viewLinkProblem } from "../buyers/view-access.js";
-import { dbReadingStore, ingestReading, networkKey, uaFamilyOf, type ReadingStore } from "../analytics/reading-ingest";
+import { dbReadingStore, ingestReading, networkKey, onReadingWritten, uaFamilyOf, type ReadingStore } from "../analytics/reading-ingest";
+import { scheduleLearningRefresh } from "../cim/learning-loop";
 
 let store: ReadingStore = dbReadingStore;
 /** Tests: swap in an in-memory store (server/analytics/reading-ingest.ts memoryReadingStore). */
@@ -33,7 +34,15 @@ export function setReadingStore(s: ReadingStore): void {
 
 const textBody = express.text({ type: "text/plain", limit: READING_RULES.maxBodyBytes });
 
+let learningHooked = false;
+
 export function registerReadingRoutes(app: Express): void {
+  // Every stored send schedules the deal's (debounced) benchmark + layout-hint
+  // refresh (server/cim/learning-loop.ts; demo/QA deals never write).
+  if (!learningHooked) {
+    learningHooked = true;
+    onReadingWritten((dealId) => scheduleLearningRefresh(dealId, storage));
+  }
   app.post("/api/view/:token/reading", textBody, async (req, res) => {
     try {
       const access = await storage.getBuyerAccessByToken(req.params.token);

@@ -6240,6 +6240,17 @@ Return JSON only.`,
         const bid = q.buyerAccessId;
         if (bid && buyerStats[bid]) buyerStats[bid].questionCount += 1;
       }
+      // Reading time per buyer comes from the reading rollups (2026-09
+      // tracker; the broker's own previews excluded), falling back to the old
+      // events only for access rows with no measured visit: the same numbers
+      // as the Engagement tab and the buyer profile. Intent feeds the score.
+      const { engagementByAccess, readingIntentByAccess } = await import("./buyers/profile-data.js");
+      const [reading, intents] = await Promise.all([
+        engagementByAccess(buyers.map((b) => b.id)).catch(() => new Map() as Awaited<ReturnType<typeof engagementByAccess>>),
+        readingIntentByAccess(buyers.map((b) => ({ id: b.id, dealId: b.dealId }))).catch(() => new Map<string, number>()),
+      ]);
+      const questionsBy: Record<string, number> = {};
+      for (const q of questions) if (q.buyerAccessId) questionsBy[q.buyerAccessId] = (questionsBy[q.buyerAccessId] ?? 0) + 1;
       // For each buyer, look up their Cimple account (if linked) and compute
       // match fit against this deal. Match fit uses the SAME positive framing
       // as the buyer-side dashboard: raw criteria-matched count + dimension
@@ -6322,24 +6333,29 @@ Return JSON only.`,
         // Combines match-fit + profile completeness + engagement + proof of
         // funds into one broker-facing 0-100 score with hot/warm/cool/cold tier.
         const stats = buyerStats[b.id];
+        const read = reading.get(b.id);
+        const totalTimeSeconds = read ? read.seconds : stats?.totalSeconds ?? 0;
+        const sectionsViewedCount = read ? read.sectionsViewed : stats?.sectionsEntered.size ?? 0;
+        const questionCount = questionsBy[b.id] ?? 0;
         const qualifiedScore = buyerUser ? calculateQualifiedLeadScore({
           buyer: buyerUser,
           match: fullBreakdown,
-          engagement: stats ? {
+          engagement: read || stats ? {
+            intent: intents.get(b.id) ?? null,
             viewCount: b.viewCount ?? 0,
-            sectionsViewed: stats.sectionsEntered.size,
-            totalTimeSeconds: stats.totalSeconds,
-            questionCount: stats.questionCount,
+            sectionsViewed: sectionsViewedCount,
+            totalTimeSeconds,
+            questionCount,
             ndaSigned: !!b.ndaSignedAt,
           } : null,
         }) : null;
 
         return {
           ...b,
-          totalTimeSeconds: stats?.totalSeconds ?? 0,
-          sectionsViewedCount: stats?.sectionsEntered.size ?? 0,
+          totalTimeSeconds,
+          sectionsViewedCount,
           maxScrollDepth: stats?.maxScrollDepth ?? 0,
-          questionCount: stats?.questionCount ?? 0,
+          questionCount,
           hasAccount: !!b.buyerUserId,
           profile,
           match,

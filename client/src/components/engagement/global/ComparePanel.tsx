@@ -81,7 +81,7 @@ export function ComparePanel() {
   return (
     <div className="space-y-8" data-testid="engagement-compare">
       <section>
-        <h3 className="text-sm font-semibold text-foreground">Your deals compared</h3>
+        <h3 className="text-sm font-semibold text-foreground">Deal by deal</h3>
         <p className="mt-0.5 mb-3 text-xs text-muted-foreground">Reading time is time with the CIM on screen and the buyer active — never idle or hidden tabs.</p>
         {rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">No deals yet.</p>

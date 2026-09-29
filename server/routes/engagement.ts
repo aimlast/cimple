@@ -39,6 +39,7 @@ import {
   buildJourneyResponse,
   buildSummaryResponse,
 } from "../engagement/responses";
+import { invalidateBrokerEngagement } from "./engagement-insights";
 
 const BASE = "/api/deals/:dealId/engagement";
 
@@ -155,6 +156,8 @@ export function registerEngagementRoutes(app: Express): void {
       const history = [...((access.accessEvents as BuyerAccessEvent[] | null) ?? []), { type: "contacted" as const, at }];
       await storage.updateBuyerAccess(access.id, { accessEvents: history } as any);
       invalidate(deal.id);
+      // The cross-deal call list shows "Contacted today" at once, not after its cache expires.
+      if (req.session.brokerId) invalidateBrokerEngagement(req.session.brokerId);
       const body: MarkContactedResponse = { ok: true, contactedAt: at };
       res.json(body);
     } catch (err) {

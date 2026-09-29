@@ -137,6 +137,7 @@ async function readingByAccess(accessIds: string[]): Promise<Map<string, AccessE
   const visits = await db.select({
     accessId: buyerVisits.buyerAccessId,
     n: sql<number>`count(*)::int`,
+    active: sql<number>`coalesce(sum(${buyerVisits.activeMs}), 0)::float8`,
     first: sql<number>`(extract(epoch from min(${buyerVisits.startedAt})) * 1000)::float8`,
     last: sql<number>`(extract(epoch from max(${buyerVisits.lastSeenAt})) * 1000)::float8`,
   }).from(buyerVisits)
@@ -171,7 +172,8 @@ async function readingByAccess(accessIds: string[]): Promise<Map<string, AccessE
   for (const v of visits) {
     out.set(v.accessId, {
       views: Number(v.n) || 0,
-      seconds: 0,
+      // Reading time = active time with the CIM (the Engagement tab's number).
+      seconds: Math.round((Number(v.active) || 0) / 1000),
       sectionsViewed: 0,
       lastEventAt: v.last != null ? new Date(Number(v.last)) : null,
       firstViewEventAt: v.first != null ? new Date(Number(v.first)) : null,
@@ -184,7 +186,6 @@ async function readingByAccess(accessIds: string[]): Promise<Map<string, AccessE
     const e = out.get(r.accessId);
     if (!e) continue;
     const ms = Number(r.att) || 0;
-    e.seconds += ms / 1000;
     const dealId = dealOf.get(r.accessId) ?? "";
     const isBrokeragePage = r.pageId === DISCLAIMER_PAGE_ID || r.pageId === CONTACT_PAGE_ID;
     const key = isBrokeragePage ? r.pageId : resolve.get(`${dealId}:${r.pageId}`) ?? (r.lineageId ? resolve.get(`${dealId}:${r.lineageId}`) : undefined);
@@ -194,7 +195,6 @@ async function readingByAccess(accessIds: string[]): Promise<Map<string, AccessE
     perPage.set(r.accessId, m);
   }
   for (const [id, e] of Array.from(out.entries())) {
-    e.seconds = Math.round(e.seconds);
     const m = perPage.get(id) ?? new Map<string, number>();
     const content = Array.from(m.entries()).filter(([k]) => k !== DISCLAIMER_PAGE_ID && k !== CONTACT_PAGE_ID);
     e.sectionsViewed = content.filter(([, ms]) => ms >= READING_RULES.readerMinMs).length;
