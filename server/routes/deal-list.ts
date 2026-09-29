@@ -21,6 +21,7 @@ import {
   discrepancies,
   interviewSessions,
   sellerInvites,
+  notifications,
   type Deal,
 } from "@shared/schema";
 import { computeCimReadiness, type CimReadiness } from "@shared/cim-readiness";
@@ -241,14 +242,14 @@ export function regionFrom(...candidates: unknown[]): string | null {
  * query per deal. Callers must pass only ids the session broker owns.
  */
 export async function loadDealSideFacts(
-  dealRows: Array<Pick<Deal, "id" | "createdAt">>,
+  dealRows: Array<Pick<Deal, "id" | "createdAt"> & { interviewCompleted?: boolean | null }>,
   opts: { confidence?: boolean } = {},
 ): Promise<Map<string, DealSideFacts>> {
   const out = new Map<string, DealSideFacts>();
   if (dealRows.length === 0) return out;
   const ids = dealRows.map((d) => d.id);
 
-  const [sessionRows, docRows, buyerRows, sectionRows, discRows, inviteRows] = await Promise.all([
+  const [sessionRows, docRows, buyerRows, sectionRows, discRows, inviteRows, reviewRows] = await Promise.all([
     // Latest session per deal: its activity time and (optionally) the
     // interview's confidence levels, which the readiness score uses.
     db
@@ -298,12 +299,14 @@ export async function loadDealSideFacts(
     db
       .select({
         dealId: discrepancies.dealId,
-        open: sql<number>`count(*)::int`,
-        critical: sql<number>`count(*) filter (where ${discrepancies.severity} = 'critical')::int`,
+        open: sql<number>`count(*) filter (where ${discrepancies.status} <> 'ask_seller')::int`,
+        critical: sql<number>`count(*) filter (where ${discrepancies.severity} = 'critical' and ${discrepancies.status} <> 'ask_seller')::int`,
+        // Routed to the seller — blocking once the interview has ended (shared/discrepancy-gate.ts).
+        routedCritical: sql<number>`count(*) filter (where ${discrepancies.severity} = 'critical' and ${discrepancies.status} = 'ask_seller')::int`,
       })
       .from(discrepancies)
       // Same statuses that gate generation/approvals/publish in routes.ts.
-      .where(and(inArray(discrepancies.dealId, ids), inArray(discrepancies.status, ["open", "seller_responded"])))
+      .where(and(inArray(discrepancies.dealId, ids), inArray(discrepancies.status, ["open", "seller_responded", "ask_seller"])))
       .groupBy(discrepancies.dealId),
     db
       .selectDistinctOn([sellerInvites.dealId], {
@@ -317,6 +320,17 @@ export async function loadDealSideFacts(
       // A removed seller-team member's revoked link is not the deal's seller.
       .where(and(inArray(sellerInvites.dealId, ids), ne(sellerInvites.status, "revoked")))
       .orderBy(sellerInvites.dealId, desc(sellerInvites.createdAt)),
+    // Which CIM stages were sent to the seller for review (seller-review.ts
+    // records each send as a cim_ready notification with its stage).
+    db
+      .select({
+        dealId: notifications.dealId,
+        content: sql<boolean>`bool_or(${notifications.metadata} ->> 'stage' = 'content')`,
+        design: sql<boolean>`bool_or(${notifications.metadata} ->> 'stage' = 'design')`,
+      })
+      .from(notifications)
+      .where(and(inArray(notifications.dealId, ids), eq(notifications.type, "cim_ready")))
+      .groupBy(notifications.dealId),
   ]);
 
   const byDeal = <T extends { dealId: string }>(rows: T[]) => new Map(rows.map((r) => [r.dealId, r]));
@@ -326,6 +340,7 @@ export async function loadDealSideFacts(
   const sections = byDeal(sectionRows);
   const discs = byDeal(discRows);
   const invites = byDeal(inviteRows);
+  const reviews = byDeal(reviewRows);
 
   for (const d of dealRows) {
     const s = sessions.get(d.id);
@@ -352,6 +367,8 @@ export async function loadDealSideFacts(
         sectionsAwaitingApproval: toNum(sec?.awaitingApproval),
         cimGenerating: getLiveCimGenerationStatus(d.id)?.status === "running",
         openCriticalDiscrepancies: toNum(disc?.critical),
+        sellerFollowUpsBlocking: d.interviewCompleted ? toNum(disc?.routedCritical) : 0,
+        sellerReviewSent: { content: !!reviews.get(d.id)?.content, design: !!reviews.get(d.id)?.design },
         buyersWithAccess: toNum(b?.active),
         buyersViewing: toNum(b?.viewing),
       },
@@ -399,6 +416,9 @@ const slimColumns = {
   cimLayoutGeneratedAt: deals.cimLayoutGeneratedAt,
   scrapedAt: deals.scrapedAt,
   questionnaireData: sql<boolean>`(${deals.questionnaireData} is not null)`,
+  // Intake pages 2 and 3 — "onboarding complete" needs the Key People save (shared/seller-portal.ts).
+  operationalSystems: sql<boolean>`(${deals.operationalSystems} is not null)`,
+  employeeChart: sql<boolean>`(jsonb_typeof(${deals.employeeChart}) = 'array')`,
   cimContent: sql<boolean>`(${deals.cimContent} is not null)`,
   cimDesignData: sql<boolean>`(${deals.cimDesignData} is not null)`,
   extractedInfo: deals.extractedInfo,

@@ -1603,6 +1603,12 @@ export const NOTIFICATION_ROUTING: Record<string, { teams: string[]; roles?: str
   buyer_approval_rejected: { teams: ["broker"], roles: ["lead", "associate"] },
   // The seller finished (or ended) their AI interview.
   interview_complete: { teams: ["broker"], roles: ["lead", "associate"] },
+  // New events only (free round 2) — no existing event's recipients change.
+  // The broker routed questions to a seller who had finished the interview.
+  seller_followup_questions: { teams: ["seller"], roles: ["owner", "representative"] },
+  // The seller's answer on the CIM review page (/seller/:token/review).
+  cim_seller_approved: { teams: ["broker"], roles: ["lead", "associate"] },
+  cim_changes_requested: { teams: ["broker"], roles: ["lead", "associate"] },
 };
 
 // Buyer decision next-step options (shown after "interested in moving forward")

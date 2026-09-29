@@ -270,13 +270,30 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
       );
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: { sellerFollowUp?: { interviewFinished: boolean; emailed: number; addressed: number; recentlyEmailed?: boolean } }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "financial-analysis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "discrepancies"] });
-      toast({
-        title: "Routed to seller interview",
-        description: "The AI interview will raise this with the seller naturally and capture their answer.",
-      });
+      const f = data?.sellerFollowUp;
+      // The seller had already finished the interview: it reaches them as a follow-up link.
+      toast(
+        f?.interviewFinished
+          ? f.addressed === 0 && !f.recentlyEmailed
+            ? {
+                title: "Nobody to send it to",
+                description: "The seller has finished the interview and has no emailed invite. Send them their link, or answer it here.",
+                variant: "destructive",
+              }
+            : {
+                title: "Sent to the seller as a follow-up",
+                description: f.recentlyEmailed
+                  ? "They were already emailed a follow-up link in the last hour — this is added to it."
+                  : "They had finished the interview, so they were sent a link to answer your follow-up questions.",
+              }
+          : {
+              title: "Routed to seller interview",
+              description: "The AI interview will raise this with the seller naturally and capture their answer.",
+            },
+      );
     },
     onError: (err: unknown) => {
       toast({ title: "Could not route to seller", description: apiErrorMessage(err, "Failed to route question to the seller interview"), variant: "destructive" });

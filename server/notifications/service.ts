@@ -497,6 +497,99 @@ async function notifySellerInviteFallback(
 }
 
 /**
+ * Who a seller-portal email goes to, each with THEIR OWN seller link: the
+ * seller-team members routed for the event (a member's link is the invite
+ * minted for their address), else the deal's sent/accepted seller invites.
+ * A member with no live link of their own is skipped — a seller-portal
+ * link is never someone else's token. Pure.
+ */
+export function sellerPortalRecipients(
+  eventType: string,
+  members: DealMember[],
+  invites: SellerInvite[],
+): { email: string; name: string | null; token: string; recipientId: string; via: "members" | "seller_invite" }[] {
+  const live = invites.filter((i) => i.status !== "revoked" && !!i.token);
+  const byEmail = new Map<string, SellerInvite>();
+  // Newest first from storage; keep the first (newest) per address.
+  for (const inv of live) {
+    const e = inv.sellerEmail?.trim().toLowerCase();
+    if (e && !byEmail.has(e)) byEmail.set(e, inv);
+  }
+  const routed = routedMembers(members, eventType).filter((m) => m.teamType === "seller" && m.emailNotifications !== false && !!m.email);
+  const fromMembers = routed
+    .map((m) => {
+      const inv = byEmail.get(m.email!.trim().toLowerCase());
+      return inv ? { email: m.email!.trim(), name: m.name ?? null, token: inv.token, recipientId: m.id, via: "members" as const } : null;
+    })
+    .filter((r): r is NonNullable<typeof r> => !!r);
+  if (routed.length > 0) return fromMembers;
+  return eligibleSellerInvites(live).map((inv) => ({
+    email: inv.sellerEmail!.trim(),
+    name: inv.sellerName ?? null,
+    token: inv.token,
+    recipientId: inv.id,
+    via: "seller_invite" as const,
+  }));
+}
+
+/**
+ * A seller-facing email whose button opens the seller's own portal page
+ * (`/seller/<their token>/<path>`): the CIM ready for their review, the
+ * broker's follow-up questions. Seeded demo/QA deals record it but never
+ * email (their sellers are fictional).
+ */
+export async function notifySellerPortal(
+  dealId: string,
+  eventType: string,
+  opts: { title: string; body: string; path: string; businessName?: string; metadata?: Record<string, any> },
+): Promise<NotifyResult> {
+  try {
+    const deal = await storage.getDeal(dealId);
+    if (!deal) return NO_RECIPIENTS;
+    const targets = sellerPortalRecipients(
+      eventType,
+      await storage.getDealMembers(dealId),
+      await storage.getSellerInvitesByDealId(dealId),
+    );
+    if (targets.length === 0) {
+      console.log(`[notify] ${eventType}: no seller with a link of their own on deal ${dealId}`);
+      return NO_RECIPIENTS;
+    }
+    const path = opts.path.replace(/^\/+/, "");
+    let emailsSent = 0;
+    for (const t of targets) {
+      const actionUrl = `/seller/${t.token}/${path}`;
+      const skip = deal.demoKey ? "demo_deal" : null;
+      const emailSent = skip
+        ? false
+        : await sendEmail(t.email, opts.title, buildEmailHtml({ title: opts.title, body: opts.body, actionUrl, businessName: opts.businessName }));
+      if (skip) console.log(`[notify:email] Not emailed (${skip}) → seller: ${eventType}`);
+      if (emailSent) emailsSent++;
+      await storage.createNotification({
+        dealId,
+        recipientId: t.recipientId,
+        recipientEmail: t.email,
+        recipientPhone: null,
+        type: eventType,
+        title: opts.title,
+        body: opts.body,
+        // (The link carries the seller's token — the log keeps the page, not the token.)
+        actionUrl: `/seller/…/${path}`,
+        metadata: { ...(opts.metadata || {}), ...(t.via === "seller_invite" ? { fallbackRecipient: "seller_invite", sellerInviteId: t.recipientId } : {}), ...(skip ? { emailSkipped: skip } : {}) },
+        emailSent,
+        emailSentAt: emailSent ? new Date() : null,
+        smsSent: false,
+        smsSentAt: null,
+      });
+    }
+    return { recipients: targets.length, emailsSent, via: targets[0].via };
+  } catch (err) {
+    console.error(`[notify] Error dispatching ${eventType}:`, err);
+    return NO_RECIPIENTS;
+  }
+}
+
+/**
  * Send notifications for a deal event.
  *
  * Automatically routes to the right team members based on NOTIFICATION_ROUTING.

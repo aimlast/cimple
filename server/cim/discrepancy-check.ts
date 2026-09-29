@@ -29,6 +29,7 @@ import {
 } from "./discrepancy-engine";
 import { dropReason, differentYears } from "./discrepancy-filter";
 import { settleMergeRowsQuietly } from "../documents/merge-conflicts";
+import { BLOCKING_DISCREPANCY_STATUSES, discrepancyBlocksCim } from "@shared/discrepancy-gate";
 
 export { recordsSameDispute };
 
@@ -301,10 +302,11 @@ export async function supersedeCheckDuplicates(
 
 // ── Gate before a full CIM generation ──
 
-export const BLOCKING_DISCREPANCY_STATUSES = new Set(["open", "seller_responded"]);
+export { BLOCKING_DISCREPANCY_STATUSES };
 
-export function blockingCritical(rows: Pick<Discrepancy, "severity" | "status">[]): boolean {
-  return rows.some((d) => d.severity === "critical" && BLOCKING_DISCREPANCY_STATUSES.has(d.status));
+/** (shared/discrepancy-gate.ts — a routed critical row blocks once the interview has ended.) */
+export function blockingCritical(rows: Pick<Discrepancy, "severity" | "status">[], interviewCompleted?: boolean | null): boolean {
+  return rows.some((d) => discrepancyBlocksCim(d, interviewCompleted));
 }
 
 export class DiscrepancyGateError extends Error {
@@ -354,7 +356,8 @@ export async function ensureDiscrepancyGate(
   // A merge row whose conflict no longer stands never blocks.
   await settleMergeRowsQuietly(dealId, "discrepancy-gate");
   const rows = await storage.getDiscrepanciesByDeal(dealId);
-  const blocking = rows.filter((d) => d.severity === "critical" && BLOCKING_DISCREPANCY_STATUSES.has(d.status));
+  const gateDeal = await storage.getDeal(dealId);
+  const blocking = rows.filter((d) => discrepancyBlocksCim(d, gateDeal?.interviewCompleted));
   if (blocking.length > 0) throw new DiscrepancyGateError(blocking.map((d) => ({ id: d.id, field: d.field })));
   const fresh = created.filter((d) => REVIEW_BEFORE_WRITING.has(d.severity));
   if (fresh.length > 0) throw new DiscrepancyGateError(fresh.map((d) => ({ id: d.id, field: d.field })), "new");

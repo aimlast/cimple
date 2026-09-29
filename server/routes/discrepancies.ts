@@ -13,6 +13,7 @@ import { requireBroker, requireOwnedDeal, getOwnedDeal } from "../broker-auth/ro
 import type { Discrepancy } from "@shared/schema";
 import { discrepancyFieldLabel, discrepancySideValue, discrepancyHasPrivateSide, getSideSources } from "@shared/discrepancy-sides";
 import { runAndPersistDiscrepancyCheck, getDiscrepancyCheckStatus } from "../cim/discrepancy-check";
+import { notifySellerOfFollowUps } from "../interview/seller-followups";
 import { settleMergeRowsQuietly } from "../documents/merge-conflicts";
 import {
   applyDiscrepancyResolution,
@@ -286,7 +287,14 @@ export function registerDiscrepancyRoutes(app: Express) {
           console.warn("[discrepancies] couldn't write the resolution into the deal's facts:", e);
         }
       }
-      res.json({ ...updated, factWrite, staleFacts });
+      // Routed to a seller who has already finished the interview: nothing
+      // would raise it, so the seller is told (their own link) and the
+      // broker learns it waits on them (seller-followups.ts).
+      const sellerFollowUp =
+        status === "ask_seller" && existingDisc.status !== "ask_seller"
+          ? await notifySellerOfFollowUps(updated.dealId)
+          : undefined;
+      res.json({ ...updated, factWrite, staleFacts, ...(sellerFollowUp ? { sellerFollowUp } : {}) });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to update discrepancy" });
     }

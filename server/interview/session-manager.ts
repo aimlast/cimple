@@ -149,6 +149,7 @@ import {
 import { agentConfig } from "./config/load-config";
 import { ensureSectionImportance } from "./section-importance";
 import { ensureInterviewPlan } from "./interview-plan";
+import { ensureIndustryDocumentRequirements } from "../documents/requirements";
 import { generateSellerProfile } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
 import { isInterviewHiddenFact } from "../information/deal-mirror";
@@ -1035,6 +1036,7 @@ async function startOrResumeSessionOnce(
   // the deal already has a ranking for its industry).
   ensureSectionImportance(deal, importanceContext(seededIndustryContext));
   ensureInterviewPlan(deal, { subIndustry: seededIndustryContext?.subIndustry ?? null });
+  void ensureIndustryDocumentRequirements(deal.id, seededIndustryContext?.industry || deal.industry, seededIndustryContext?.subIndustry ?? deal.subIndustry);
   console.log(timer.line(`opening of session ${sessionId}${priorCompletedSession ? " (returning seller)" : ""}`));
 
   return {
@@ -3377,6 +3379,9 @@ async function processTurnLocked(
   const updatedKb = assembleKnowledgeBase(updatedDeal!, documents, tasks, session, resolvedDiscrepancies, kbExtras);
   ensureSectionImportance(updatedDeal!, importanceContext(updatedIndustryContext));
   ensureInterviewPlan(updatedDeal!, { subIndustry: updatedIndustryContext?.subIndustry ?? null });
+  // The industry the interview identified brings its document requests
+  // (a deal opened as "Other" still gets the clinic's licences). Background.
+  void ensureIndustryDocumentRequirements(dealId, updatedIndustryContext?.industry || updatedDeal?.industry, updatedIndustryContext?.subIndustry ?? updatedDeal?.subIndustry);
 
   // (Everything is shown by now — released at the gate or once final; this
   // only waits for the typing to finish.)

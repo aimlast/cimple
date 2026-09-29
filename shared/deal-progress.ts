@@ -8,6 +8,7 @@
  * "Waiting on the seller" in another.
  */
 import type { Deal } from "./schema";
+import { intakeComplete } from "./seller-portal";
 
 /* ─── Phases ─────────────────────────────────────────────────────────── */
 
@@ -91,6 +92,9 @@ export type DealProgressInput = Pick<
   | "scrapedAt"
 > & {
   questionnaireData?: unknown;
+  /** Intake pages 2 and 3 (the deal list sends "is saved" booleans). */
+  operationalSystems?: unknown;
+  employeeChart?: unknown;
   cimContent?: unknown;
   cimDesignData?: unknown;
 };
@@ -111,6 +115,19 @@ export interface DealProgressExtras {
   cimGenerating?: boolean;
   /** Critical discrepancies still open — they block generation, approvals and publish. */
   openCriticalDiscrepancies?: number;
+  /**
+   * Critical conflicts routed to a seller who had finished the interview —
+   * they block too, until the seller answers (shared/discrepancy-gate.ts).
+   */
+  sellerFollowUpsBlocking?: number;
+  /**
+   * Which CIM stages the broker sent the seller to review (their review
+   * page, /seller/:token/review). Not sent → approving is still the
+   * broker's move (send it, or approve on the seller's behalf) — never
+   * "Waiting on the seller" for something the seller was never shown.
+   * Unknown → the old reading (waiting on the seller).
+   */
+  sellerReviewSent?: { content: boolean; design: boolean };
   /** Buyers whose link is active (not revoked, not expired). */
   buyersWithAccess?: number;
   /** Buyers who opened the CIM and haven't decided yet. */
@@ -200,7 +217,10 @@ export interface PhaseItem {
   optional?: boolean;
 }
 
-const hasQuestionnaire = (d: DealProgressInput) => !!d.questionnaireData || !!d.sqCompleted;
+// The seller finished the intake (all three pages) or the broker recorded
+// the questionnaire as received outside Cimple (shared/seller-portal.ts).
+// Page 1 alone is not the questionnaire done.
+const hasQuestionnaire = (d: DealProgressInput) => intakeComplete(d);
 /** A CIM draft exists: content generation sets cimContent, layout-only
  *  generation (Designer) stamps cimLayoutGeneratedAt; sections prove either. */
 const hasCimDraft = (d: DealProgressInput, x?: DealProgressExtras) =>
@@ -224,7 +244,7 @@ export function phaseChecklist(
       ];
     case "phase2_platform_intake":
       return [
-        { label: "Seller onboarding", actor: "seller", done: !!deal.questionnaireData },
+        { label: "Seller onboarding", actor: "seller", done: intakeComplete(deal) },
         { label: "Public data scraped", actor: "auto", optional: true, done: !!deal.scrapedAt },
         { label: "AI interview", actor: "seller", done: !!deal.interviewCompleted },
       ];
@@ -296,6 +316,10 @@ export function computeNextStep(deal: DealProgressInput, extras: DealProgressExt
     you(`resolve ${openCritical} conflicting fact${openCritical === 1 ? "" : "s"}`);
   const interviewStep = () =>
     seller(extras.interviewStarted ? "AI interview (in progress)" : "AI interview (not started yet)");
+  // Conflicts routed to a seller who had finished the interview: theirs to answer.
+  const followUps = extras.sellerFollowUpsBlocking ?? 0;
+  const followUpStep = () =>
+    seller(`answer ${followUps} follow-up question${followUps === 1 ? "" : "s"}`);
 
   switch (deal.phase) {
     case "phase1_info_collection": {
@@ -323,12 +347,18 @@ export function computeNextStep(deal: DealProgressInput, extras: DealProgressExt
           return interviewStep();
         }
         if (openCritical > 0) return conflicts();
+        if (followUps > 0) return followUpStep();
         return you("generate the CIM");
       }
       if (extras.cimGenerating) return { label: "Cimple is rewriting the CIM", owner: "none", href: overview };
       if (!deal.contentApprovedByBroker) return you("review the CIM content");
-      if (!deal.contentApprovedBySeller) return seller("content approval");
+      if (!deal.contentApprovedBySeller) {
+        return extras.sellerReviewSent && !extras.sellerReviewSent.content
+          ? you("send the CIM to the seller for review")
+          : seller("content approval");
+      }
       if (openCritical > 0) return conflicts();
+      if (followUps > 0) return followUpStep();
       return you("move the deal to Design");
     }
     case "phase4_design_finalization": {
@@ -341,8 +371,13 @@ export function computeNextStep(deal: DealProgressInput, extras: DealProgressExt
       if (!designApprovalState(deal, awaiting).brokerApproved) {
         return you(`approve ${awaiting} section${awaiting === 1 ? "" : "s"}`, designer);
       }
-      if (!deal.designApprovedBySeller) return seller("design sign-off");
+      if (!deal.designApprovedBySeller) {
+        return extras.sellerReviewSent && !extras.sellerReviewSent.design
+          ? you("send the design to the seller for sign-off")
+          : seller("design sign-off");
+      }
       if (openCritical > 0) return conflicts();
+      if (followUps > 0) return followUpStep();
       return you("publish to buyers");
     }
     default:

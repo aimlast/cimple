@@ -15,6 +15,7 @@ import { Check } from "lucide-react";
 import SellerIntake from "@/pages/seller/SellerIntake";
 import SellerProgress from "@/pages/seller/SellerProgress";
 import SellerDocuments from "@/pages/seller/SellerDocuments";
+import SellerReview from "@/pages/seller/SellerReview";
 import NotFound from "@/pages/not-found";
 
 interface ProgressStep {
@@ -137,6 +138,7 @@ export default function SellerLayout() {
           <Route path="/seller/:token" component={SellerIntake} />
           <Route path="/seller/:token/progress" component={SellerProgress} />
           <Route path="/seller/:token/documents" component={SellerDocuments} />
+          <Route path="/seller/:token/review" component={SellerReview} />
           <Route component={NotFound} />
         </Switch>
       </div>

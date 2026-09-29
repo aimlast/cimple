@@ -405,14 +405,62 @@ type QaDeal = { id: string; businessName?: string | null; extractedInfo?: unknow
  * identifies the business (shared/buyer-qa-scope.ts).
  */
 export async function publishedQuestionsFor(deal: QaDeal, reader: QaReader): Promise<BuyerQuestion[]> {
-  const [all, accesses] = await Promise.all([storage.getQuestionsByDeal(deal.id), storage.getBuyerAccessByDeal(deal.id)]);
+  const [all, accesses, faqs] = await Promise.all([
+    storage.getQuestionsByDeal(deal.id),
+    storage.getBuyerAccessByDeal(deal.id),
+    // (The FAQ adds to what a buyer may read — failing to load it never takes the Q&A down.)
+    storage.getFaqsByDeal(deal.id).catch((err) => {
+      console.warn(`[qa] couldn't load the FAQ for deal ${deal.id}:`, err?.message || err);
+      return [];
+    }),
+  ]);
   const levelOf = new Map(accesses.map((a) => [a.id, a.accessLevel]));
   const terms = blindLeakTerms(deal, { codename: deal.blindCodename });
-  return all.filter((q) => {
+  return [...all, ...faqKnowledgeRows(deal.id, faqs)].filter((q) => {
     if (!q.isPublished || !(q.publishedAnswer || q.aiAnswer)) return false;
     const scope = rowScope(q, q.buyerAccessId && levelOf.has(q.buyerAccessId) ? levelOf.get(q.buyerAccessId) : false);
     return readerMaySeeRow(q, scope, reader, terms);
   });
+}
+
+/** Ids of FAQ rows in the Q&A knowledge base ("faq:<faq id>"). */
+export const FAQ_ROW_PREFIX = "faq:";
+
+/**
+ * The broker's pre-answered questions (Q&A tab → FAQ) as rows of the
+ * buyer Q&A knowledge base. The Q&A tab promised "Pre-answered questions
+ * the buyer assistant can use instantly", but nothing read them: a buyer
+ * asking about the lease term escalated to the broker and the seller
+ * anyway. A published FAQ is a broker-written answer published on purpose,
+ * so it is for every buyer ("all") — and, like any row, a Blind buyer only
+ * receives it when it names nothing identifying (readerMaySeeRow). Pure.
+ */
+export function faqKnowledgeRows(
+  dealId: string,
+  faqs: Array<{ id: string; question: string; answer: string; isPublished?: boolean | null; order?: number | null; createdAt: Date; updatedAt: Date }>,
+): BuyerQuestion[] {
+  return faqs
+    .filter((f) => f.isPublished !== false && f.question?.trim() && f.answer?.trim())
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    .map((f) => ({
+      id: `${FAQ_ROW_PREFIX}${f.id}`,
+      dealId,
+      buyerAccessId: null,
+      question: f.question.trim(),
+      aiAnswer: null,
+      brokerDraft: null,
+      sellerApproved: true,
+      sellerApprovedAt: null,
+      publishedAnswer: f.answer.trim(),
+      status: "published",
+      sellerApprovalToken: null,
+      addedToKnowledgeBase: true,
+      similarQuestionIds: [],
+      isPublished: true,
+      answerScope: "all",
+      createdAt: f.createdAt,
+      updatedAt: f.updatedAt,
+    }));
 }
 
 /**
@@ -422,8 +470,10 @@ export async function publishedQuestionsFor(deal: QaDeal, reader: QaReader): Pro
  * newest so the chat reads chronologically.
  */
 export async function buildBuyerQuestionFeed(deal: QaDeal, reader: QaReader): Promise<BuyerQuestionFeedItem[]> {
-  const [all, visible] = await Promise.all([storage.getQuestionsByDeal(deal.id), publishedQuestionsFor(deal, reader)]);
+  const [asked, visible] = await Promise.all([storage.getQuestionsByDeal(deal.id), publishedQuestionsFor(deal, reader)]);
   const visibleIds = new Set(visible.map((q) => q.id));
+  // The broker's FAQ entries this reader may see are part of the feed too.
+  const all = [...asked, ...visible.filter((q) => q.id.startsWith(FAQ_ROW_PREFIX))];
   const feed: BuyerQuestionFeedItem[] = [];
   for (const q of all) {
     const isMine = !!q.buyerAccessId && q.buyerAccessId === reader.id;

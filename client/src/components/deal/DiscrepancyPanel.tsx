@@ -82,6 +82,15 @@ type ResolveResponse = Discrepancy & {
   staleFacts: StaleFact[];
 };
 
+/** What routing to a seller who had finished the interview did (server/interview/seller-followups.ts). */
+interface SellerFollowUp {
+  interviewFinished: boolean;
+  waiting: number;
+  emailed: number;
+  addressed: number;
+  recentlyEmailed?: boolean;
+}
+
 interface DiscrepancyPanelProps {
   dealId: string;
   onAllResolved?: () => void;
@@ -108,6 +117,17 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
   const [linkFor, setLinkFor] = useState<DiscrepancyRow | null>(null);
   const [updateFor, setUpdateFor] = useState<DiscrepancyRow | null>(null);
 
+  // Whether the interview is finished decides what "Ask seller" does (a
+  // follow-up link instead of the running interview) — the deal is cached.
+  const { data: dealRow } = useQuery<{ interviewCompleted?: boolean | null }>({
+    queryKey: ["/api/deals", dealId],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load the deal");
+      return r.json();
+    },
+  });
+  const interviewFinished = !!dealRow?.interviewCompleted;
   const { data: allDiscrepancies = [], isLoading, error: loadError, refetch } = useQuery<DiscrepancyRow[]>({
     queryKey: discrepanciesKey(dealId),
     queryFn: async () => {
@@ -181,6 +201,30 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
     onSuccess: (data, vars) => {
       invalidateFacts(dealId);
       const priv = discrepancyHasPrivateSide(data);
+      const privateNote = priv.interview || priv.document ? " Your private notes are never shown or mentioned." : "";
+      // The seller had already finished the interview: say what actually happens.
+      const f = (data as { sellerFollowUp?: SellerFollowUp }).sellerFollowUp;
+      if (vars.status === "ask_seller" && f?.interviewFinished) {
+        toast(
+          f.addressed === 0 && !f.recentlyEmailed
+            ? {
+                title: "Nobody to send it to",
+                description: "The seller has finished the interview and has no emailed invite, so nothing reaches them. Send them their link, or resolve it here.",
+                variant: "destructive",
+              }
+            : {
+                title: "Sent to the seller as a follow-up",
+                description:
+                  (f.recentlyEmailed
+                    ? "They were already emailed a follow-up link in the last hour — this is added to it."
+                    : f.emailed > 0
+                      ? "They had finished the interview, so we emailed them a link to answer your follow-up questions."
+                      : "They had finished the interview; their portal now shows your follow-up questions (email isn't set up here, so nothing was emailed).") +
+                  " A critical conflict keeps the CIM locked until they answer or you resolve it." + privateNote,
+              },
+        );
+        return;
+      }
       toast({
         title: vars.status === "ask_seller" ? "Routed to seller interview" : "Returned to open",
         description: vars.status === "ask_seller"
@@ -359,7 +403,7 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
               >
                 {isExpanded ? <ChevronDown className="h-3.5 w-3.5 mt-1 shrink-0 text-muted-foreground" aria-hidden="true" />
                   : <ChevronRight className="h-3.5 w-3.5 mt-1 shrink-0 text-muted-foreground" aria-hidden="true" />}
-                <DiscrepancyHeaderLine disc={disc} showSource={!sourceFilter} />
+                <DiscrepancyHeaderLine disc={disc} showSource={!sourceFilter} interviewFinished={interviewFinished} />
               </button>
 
               {/* Resolved: which fact it updated, and anything still saying the old value */}
@@ -410,9 +454,11 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
                   {/* Routed state note */}
                   {isRouted && (
                     <div className="flex flex-wrap items-center justify-between gap-2 rounded bg-blue-500/5 border border-blue-500/20 p-2.5">
-                      <p className="text-xs text-blue-400 flex items-center gap-1.5">
+                      <p className="text-xs text-blue-400 flex items-center gap-1.5" data-testid={`text-routed-${disc.id}`}>
                         <MessageCircleQuestion className="h-3.5 w-3.5 shrink-0" />
-                        The AI interview will raise this with the seller. You can still resolve it now below.
+                        {interviewFinished
+                          ? `Not asked yet — the seller had finished the interview, so they were sent a follow-up link.${disc.severity === "critical" ? " The CIM stays locked until they answer or you resolve it." : ""} You can still resolve it now below.`
+                          : "The AI interview will raise this with the seller. You can still resolve it now below."}
                       </p>
                       <Button
                         size="sm"
@@ -484,7 +530,7 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
                             onClick={() => route.mutate({ id: disc.id, status: "ask_seller" })}
                             disabled={route.isPending}
                           >
-                            <MessageCircleQuestion className="h-3 w-3" /> Ask seller in interview
+                            <MessageCircleQuestion className="h-3 w-3" /> {interviewFinished ? "Send to the seller as a follow-up" : "Ask seller in interview"}
                           </Button>
                         )}
                       </div>
