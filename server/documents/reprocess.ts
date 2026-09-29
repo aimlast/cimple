@@ -89,6 +89,7 @@ import {
 } from "./merge-policy";
 import { fieldLabel as fieldLabelText } from "../interview/interview-plan";
 import { recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
+import { stampNoteSources } from "./source-visibility";
 import { removeSourceFromFacts } from "./source-removal";
 import { reviewPrivateNotes } from "./private-notes-review";
 import { reconcileMirroredFacts } from "../information/deal-mirror";
@@ -345,11 +346,25 @@ export async function reprocessDealDocuments(
     const latestDeal = await storage.getDeal(dealId);
     const latest = (latestDeal?.extractedInfo as Record<string, unknown> | null) || {};
     const latestSources = getFieldSources(latest);
+    const startSources = getFieldSources(existing);
+    const nowDocuments = await storage.getDocumentsByDeal(dealId);
+    const nowLookup = sourceRowLookup(nowDocuments);
     const finalSources = { ...(rebuilt[FIELD_SOURCES_KEY] as Record<string, unknown>) };
     const carried: string[] = [];
     for (const key of Array.from(new Set([...Object.keys(latest), ...Object.keys(existing)]))) {
       if (key === FIELD_SOURCES_KEY || key === FIELD_ALTERNATES_KEY || key === FIELD_CORROBORATIONS_KEY) continue;
-      if (JSON.stringify(latest[key]) === JSON.stringify(existing[key])) continue;
+      // A change to who stands behind a fact counts even when the value is
+      // the same: the broker resolving a discrepancy (or confirming a fact)
+      // to the value already on file makes it the broker's — the rebuild,
+      // derived from the start-of-run sources, must not hand it back to the
+      // seller or the document (the next re-read could then replace it).
+      // Only WHO stands behind it counts — a save that merely re-stamps the
+      // source's details (another upload's ingest adding brokerOnly:false, a
+      // visibility switch) is not a change, or the re-read's fresh value
+      // would be thrown away for the stale one it replaces.
+      const sameValue = JSON.stringify(latest[key]) === JSON.stringify(existing[key]);
+      const sameSource = sameSourceIdentity(latestSources[key], startSources[key], latest[key], nowLookup);
+      if (sameValue && sameSource) continue;
       carried.push(key);
       if (latest[key] === undefined) { delete rebuilt[key]; delete finalSources[key]; continue; }
       rebuilt[key] = latest[key];
@@ -386,7 +401,7 @@ export async function reprocessDealDocuments(
     // start): nothing it said comes back — its facts, other values,
     // confirmations and notes go now, and what that empties is refilled by
     // the merge's own authority (source-removal.ts).
-    const stillOnDeal = new Set((await storage.getDocumentsByDeal(dealId)).map((d) => d.id));
+    const stillOnDeal = new Set(nowDocuments.map((d) => d.id));
     const deletedMeanwhile = documents.filter((d) => !stillOnDeal.has(d.id)).map((d) => d.id);
     for (const { doc, data } of results) if (data && stillOnDeal.has(doc.id)) refreshSourceNotes(rebuilt, doc, data);
     for (const id of deletedMeanwhile) {
@@ -394,6 +409,11 @@ export async function reprocessDealDocuments(
     }
     if (deletedMeanwhile.length > 0) console.log(`[reprocess] ${dealId}: ${deletedMeanwhile.length} source(s) deleted while re-reading — their facts were taken off`);
     compactPrivateNotes(rebuilt);
+    // Every value goes out stamped with its row's visibility NOW: the rebuild
+    // stamped from the rows as they were at the start, and a source the
+    // broker made broker-only (or shared) meanwhile must not be saved with
+    // its old stamp — the seller view and the CIM go by it.
+    rebuilt = restampChangedVisibility(rebuilt, documents, nowDocuments);
 
     // The deal's own name, industry and listed price are the broker's facts
     // (deal-mirror.ts): a tax return's NAICS line or a CRM note's "steel fab"
@@ -533,6 +553,55 @@ export function foldAliasedFacts(info: Record<string, unknown>, ctx: MergeContex
   }
   return folded;
 }
+/**
+ * Pure: whether two recorded sources of a fact name the same source — the
+ * same kind, row, session, turn, note and broker vouching, year by year for a
+ * by-year map (`value`) — ignoring the details a save re-stamps without a
+ * new source standing behind the fact (brokerOnly, dated, period, at,
+ * excerpt, speaker), and an older bare-id year entry vs its full form.
+ */
+export function sameSourceIdentity(
+  a: FieldSource | null | undefined,
+  b: FieldSource | null | undefined,
+  value: unknown,
+  lookup?: SourceRowLookup,
+): boolean {
+  if (!a || !b) return !a && !b;
+  const one = (s: FieldSource) =>
+    s.documentId
+      ? JSON.stringify(["row", s.documentId, !!s.acceptedByBroker, s.note ?? null])
+      : JSON.stringify([s.source, s.sessionId ?? null, s.turn ?? null, s.note ?? null, !!s.acceptedByBroker]);
+  const map = repairCharIndexedValue(value);
+  if ((a.years || b.years) && map && typeof map === "object" && !Array.isArray(map)) {
+    const m = map as Record<string, unknown>;
+    const ya = resolvedYearSources(a, m, lookup);
+    const yb = resolvedYearSources(b, m, lookup);
+    for (const y of Array.from(new Set([...Object.keys(ya), ...Object.keys(yb)]))) {
+      if (!ya[y] || !yb[y] || one(ya[y]) !== one(yb[y])) return false;
+    }
+    return true;
+  }
+  return one(a) === one(b);
+}
+
+/**
+ * Pure: `info` re-stamped for the rows whose visibility changed between
+ * `before` (the rows a rebuild stamped from) and `now` — facts, other values,
+ * confirmations and private notes, as restampSourceVisibility does.
+ */
+export function restampChangedVisibility(
+  info: Record<string, unknown>,
+  before: Array<{ id: string; visibility?: string | null }>,
+  now: Array<{ id: string; sourceKind?: string | null; visibility?: string | null }>,
+): Record<string, unknown> {
+  const was = new Map(before.map((d) => [d.id, d.visibility === "broker_only"]));
+  const changed = now.filter((d) => was.has(d.id) && was.get(d.id) !== (d.visibility === "broker_only"));
+  if (changed.length === 0) return info;
+  let out = stampSourceDetails(info, now);
+  for (const d of changed) out = stampNoteSources(out, d.id, d.visibility === "broker_only");
+  return out;
+}
+
 /** A source's own notes (summary, red flags, "… notes"): what it says in passing, not a fact filed under a name. */
 const NOTE_LIKE_KEY = /Notes$|^(?:summary|keyFacts|redFlags)$/;
 

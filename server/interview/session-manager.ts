@@ -135,7 +135,7 @@ import {
 import { withDealFactsLock } from "../documents/facts-lock";
 import { effectiveRank } from "../documents/merge-policy";
 import { retireDeletedEntry } from "../information/facts";
-import { sellerProfileNeedsRebuild, carryBrokerProfileEdits } from "./eq-profiler";
+import { sellerProfileNeedsRebuild, saveRegeneratedSellerProfile } from "./eq-profiler";
 import {
   updateDeferralLedger,
   openDeferrals,
@@ -639,7 +639,8 @@ async function startOrResumeSessionOnce(
     const prior = (deal.sellerProfile as Record<string, unknown> | null) || null;
     generateSellerProfile(dealId)
       .then(async (profile) => {
-        await storage.updateDeal(dealId, { sellerProfile: carryBrokerProfileEdits(profile, prior) } as any);
+        // The broker's notes as they are when it lands, not as they were when it started.
+        await saveRegeneratedSellerProfile(dealId, profile);
         console.log(`[session-manager] ${prior ? "Rebuilt" : "Auto-generated"} seller profile for deal ${dealId}`);
       })
       .catch((err) => {

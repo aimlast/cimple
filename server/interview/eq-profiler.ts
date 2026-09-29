@@ -133,6 +133,22 @@ export function carryBrokerProfileEdits(
   return out;
 }
 
+/**
+ * Saves a freshly generated profile with the broker's notes and corrections
+ * carried over from the deal as it is NOW. Generation takes 20-60s; a copy
+ * read before it started would silently drop a note the broker saved
+ * meanwhile ("health issue, don't raise retirement timing").
+ */
+export async function saveRegeneratedSellerProfile(
+  dealId: string,
+  profile: SellerCommunicationProfile,
+): Promise<SellerCommunicationProfile> {
+  const current = await storage.getDeal(dealId);
+  const saved = carryBrokerProfileEdits(profile, (current?.sellerProfile as Record<string, unknown> | null) || null);
+  await storage.updateDeal(dealId, { sellerProfile: saved } as any);
+  return saved;
+}
+
 /** The profile's category fields (the ones a prompt renders as labels). */
 export const PROFILE_CATEGORY_FIELDS = BROKER_EDITABLE_PROFILE_FIELDS;
 export type ProfileCategoryField = (typeof PROFILE_CATEGORY_FIELDS)[number];

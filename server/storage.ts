@@ -29,7 +29,7 @@ import {
   integrations, integrationEmails, financialAnalyses, addbackVerifications,
   cimSectionOverrides, discrepancies,
   dealMembers, notifications, buyerApprovalRequests, buyerUsers, brokerBuyerContacts, dealOutreach,
-  dealDocumentRequirements,
+  dealDocumentRequirements, dealMedia,
   calculateBuyerProfileCompletion
 } from "@shared/schema";
 import { randomUUID } from "crypto";
@@ -188,6 +188,13 @@ export interface IStorage {
   createDiscrepancy(data: InsertDiscrepancy): Promise<Discrepancy>;
   getDiscrepanciesByDeal(dealId: string): Promise<Discrepancy[]>;
   updateDiscrepancy(id: string, updates: Partial<InsertDiscrepancy>): Promise<Discrepancy | undefined>;
+  /**
+   * Writes only while the row's status is still one of `statuses` (checked in
+   * the same statement). Returns the updated row, or undefined when the row
+   * is gone or its status moved on — a broker's resolution or routing made
+   * while a long AI run held an older copy is never overwritten.
+   */
+  updateDiscrepancyIfStatus(id: string, statuses: readonly string[], updates: Partial<InsertDiscrepancy>): Promise<Discrepancy | undefined>;
   getResolvedDiscrepancies(dealId: string): Promise<Discrepancy[]>;
 
   // Deal members (team management)
@@ -463,6 +470,7 @@ export class MemStorage implements IStorage {
   async createDiscrepancy(): Promise<Discrepancy> { throw new Error("Use DbStorage"); }
   async getDiscrepanciesByDeal(): Promise<Discrepancy[]> { return []; }
   async updateDiscrepancy(): Promise<Discrepancy | undefined> { return undefined; }
+  async updateDiscrepancyIfStatus(): Promise<Discrepancy | undefined> { return undefined; }
   async getResolvedDiscrepancies(): Promise<Discrepancy[]> { return []; }
 
   // Deal members stubs
@@ -617,6 +625,33 @@ export class DbStorage implements IStorage {
   async getDocumentsByDeal(dealId: string): Promise<Document[]> {
     const result = await db.select().from(documents).where(eq(documents.dealId, dealId)).orderBy(desc(documents.createdAt));
     return result;
+  }
+
+  /** Every stored file path any documents row points at (the orphan-file sweep). */
+  async getAllDocumentFileUrls(): Promise<Array<string | null>> {
+    const rows = await db.select({ fileUrl: documents.fileUrl }).from(documents);
+    return rows.map((r) => r.fileUrl);
+  }
+
+  /**
+   * Documents rows whose deal no longer exists (a deal delete used to take
+   * only the deals row). Never answers while the deals table is empty — a
+   * misread database must not look like every deal was deleted.
+   */
+  async getDocumentsOfDeletedDeals(): Promise<Document[]> {
+    return db.select().from(documents).where(sql`NOT EXISTS (SELECT 1 FROM ${deals} WHERE ${deals.id} = ${documents.dealId}) AND EXISTS (SELECT 1 FROM ${deals})`);
+  }
+
+  /** A deal's photo/video rows, deleted; returns what they were (their files are the caller's). */
+  async deleteDealMediaRows(dealId: string): Promise<Array<{ id: string; dealId: string; fileUrl: string }>> {
+    return db.delete(dealMedia).where(eq(dealMedia.dealId, dealId)).returning({ id: dealMedia.id, dealId: dealMedia.dealId, fileUrl: dealMedia.fileUrl });
+  }
+
+  /** The ids of deals that are gone but still have photo/video rows (same empty-table guard as above). */
+  async getDeletedDealIdsWithMedia(): Promise<string[]> {
+    const rows = await db.selectDistinct({ dealId: dealMedia.dealId }).from(dealMedia)
+      .where(sql`NOT EXISTS (SELECT 1 FROM ${deals} WHERE ${deals.id} = ${dealMedia.dealId}) AND EXISTS (SELECT 1 FROM ${deals})`);
+    return rows.map((r) => r.dealId);
   }
 
   async updateDocument(id: string, updates: Partial<InsertDocument>): Promise<Document | undefined> {
@@ -1218,6 +1253,15 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  async updateDiscrepancyIfStatus(id: string, statuses: readonly string[], updates: Partial<InsertDiscrepancy>): Promise<Discrepancy | undefined> {
+    if (statuses.length === 0) return undefined;
+    const result = await db.update(discrepancies)
+      .set(updates)
+      .where(and(eq(discrepancies.id, id), inArray(discrepancies.status, [...statuses])))
+      .returning();
+    return result[0];
+  }
+
   async getResolvedDiscrepancies(dealId: string): Promise<Discrepancy[]> {
     const { and, inArray } = await import("drizzle-orm");
     // Returns interview-relevant discrepancies:
@@ -1395,7 +1439,7 @@ export class DbStorage implements IStorage {
     const result = await db.select().from(buyerUsers).where(
       sql`(LOWER(${buyerUsers.email}) LIKE ${`%${q}%`} OR LOWER(${buyerUsers.name}) LIKE ${`%${q}%`})
         AND (
-          ${buyerUsers.id} IN (SELECT ${brokerBuyerContacts.buyerUserId} FROM ${brokerBuyerContacts} WHERE ${brokerBuyerContacts.brokerId} = ${brokerId})
+          ${buyerUsers.id} IN (SELECT ${brokerBuyerContacts.buyerUserId} FROM ${brokerBuyerContacts} WHERE ${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.removedAt} IS NULL)
           OR ${buyerUsers.id} IN (SELECT ${buyerAccess.buyerUserId} FROM ${buyerAccess} JOIN ${deals} ON ${deals.id} = ${buyerAccess.dealId} WHERE ${deals.brokerId} = ${brokerId} AND ${buyerAccess.buyerUserId} IS NOT NULL)
           OR LOWER(${buyerUsers.email}) IN (SELECT LOWER(${buyerAccess.buyerEmail}) FROM ${buyerAccess} JOIN ${deals} ON ${deals.id} = ${buyerAccess.dealId} WHERE ${deals.brokerId} = ${brokerId})
         )`
@@ -1460,15 +1504,36 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  /** The broker's contact row for a buyer — only while the buyer is on the list (not removed). */
   async getBrokerBuyerContact(brokerId: string, buyerUserId: string): Promise<BrokerBuyerContact | undefined> {
     const result = await db.select().from(brokerBuyerContacts).where(
-      sql`${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.buyerUserId} = ${buyerUserId}`
+      sql`${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.buyerUserId} = ${buyerUserId} AND ${brokerBuyerContacts.removedAt} IS NULL`
     );
     return result[0];
   }
 
+  /** The row the broker removed this buyer with (soft delete), if any. */
+  async getRemovedBrokerBuyerContact(brokerId: string, buyerUserId: string): Promise<BrokerBuyerContact | undefined> {
+    const result = await db.select().from(brokerBuyerContacts).where(
+      sql`${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.buyerUserId} = ${buyerUserId} AND ${brokerBuyerContacts.removedAt} IS NOT NULL`
+    ).orderBy(desc(brokerBuyerContacts.removedAt));
+    return result[0];
+  }
+
+  /** Every buyer this broker removed from their list (the CRM buyer sync skips them). */
+  async getRemovedBrokerBuyerContacts(brokerId: string): Promise<BrokerBuyerContact[]> {
+    // A buyer who is back on the list (added back, re-imported) isn't
+    // "removed" because an older removal row survived a race.
+    return db.select().from(brokerBuyerContacts).where(
+      sql`${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.removedAt} IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM broker_buyer_contacts a WHERE a.broker_id = broker_buyer_contacts.broker_id AND a.buyer_user_id = broker_buyer_contacts.buyer_user_id AND a.removed_at IS NULL)`
+    );
+  }
+
   async getBrokerBuyerContacts(brokerId: string): Promise<BrokerBuyerContact[]> {
-    return db.select().from(brokerBuyerContacts).where(eq(brokerBuyerContacts.brokerId, brokerId));
+    return db.select().from(brokerBuyerContacts).where(
+      sql`${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.removedAt} IS NULL`
+    );
   }
 
   async upsertBrokerBuyerContact(data: InsertBrokerBuyerContact): Promise<BrokerBuyerContact> {
@@ -1477,6 +1542,11 @@ export class DbStorage implements IStorage {
     // stays idempotent with manual additions and CSV imports.
     const existing = await this.getBrokerBuyerContact(data.brokerId, data.buyerUserId);
     if (existing) return existing;
+    // A buyer the broker removed and is now adding again (by hand, a CSV,
+    // access to a deal, an NDA they signed): their row comes back with the
+    // broker's own notes and edits.
+    const removed = await this.getRemovedBrokerBuyerContact(data.brokerId, data.buyerUserId);
+    if (removed) return (await this.updateBrokerBuyerContact(removed.id, { removedAt: null })) ?? removed;
     return this.createBrokerBuyerContact(data);
   }
 
@@ -1543,8 +1613,8 @@ export class DbStorage implements IStorage {
       }
     }
 
-    // Step 3: manually added contacts (may include buyers with zero deal access yet)
-    const contacts = await db.select().from(brokerBuyerContacts).where(eq(brokerBuyerContacts.brokerId, brokerId));
+    // Step 3: manually added contacts (may include buyers with zero deal access yet) — never ones the broker removed
+    const contacts = await this.getBrokerBuyerContacts(brokerId);
     const contactMap = new Map<string, BrokerBuyerContact>();
     for (const c of contacts) {
       contactMap.set(c.buyerUserId, c);

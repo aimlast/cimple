@@ -1901,6 +1901,10 @@ export const brokerBuyerContacts = pgTable("broker_buyer_contacts", {
   brokerProfileMeta: jsonb("broker_profile_meta"),     // { field: { at } }
   interestStatus: text("interest_status"),             // hot | warm | cold | not_interested | null
   aiSummary: jsonb("ai_summary"),                      // { text, at, key }
+  // Removed from this broker's list (soft delete): off the list, matching,
+  // deep check and outreach, and the CRM buyer sync never adds them back.
+  // The broker's own edits are kept, so "Add back" restores them.
+  removedAt: timestamp("removed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

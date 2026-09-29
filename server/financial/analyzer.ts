@@ -29,6 +29,7 @@ import { analysisFactKey } from "./discrepancy-fact-key";
 import { correctBalanceSheetFigures } from "./note-figures";
 import { analysisSourceRole, isFinancialStatementDoc, isTaxDocument, type AnalysisSourceRef } from "./source-status";
 import { scrubPrivateText } from "../cim/discrepancy-privacy";
+import { updateDiscrepancyIfStill } from "../cim/discrepancy-cas";
 import { mentionsPrivateSource, type DiscrepancySideSources, type DiscrepancySideSource } from "@shared/discrepancy-sides";
 import {
   applyAddbackRules,
@@ -431,6 +432,47 @@ export async function createAnalysisPlaceholder(
     status: "running",
   });
   return { id: analysis.id, version: nextVersion };
+}
+
+/** Deals with an analysis running in this process (one run per deal at a time). */
+const runningAnalyses = new Set<string>();
+
+export class AnalysisRunningError extends Error {
+  readonly status = 409;
+  constructor() {
+    super("An analysis is already running for this deal. Wait for it to finish, then re-run it if you need to.");
+  }
+}
+
+export function isFinancialAnalysisRunning(dealId: string): boolean {
+  return runningAnalyses.has(dealId);
+}
+
+/**
+ * Starts a background analysis: creates the "running" placeholder and runs
+ * the analysis without waiting for it. One run per deal at a time — two
+ * runs each wrote discrepancies from their own snapshot (duplicate rows,
+ * two versions with one number). Throws AnalysisRunningError while one runs.
+ * A run cut off by a restart doesn't hold the deal: this is per process.
+ */
+export async function startFinancialAnalysis(
+  dealId: string,
+  storage: IStorage,
+  run: typeof runFinancialAnalysis = runFinancialAnalysis,
+): Promise<{ id: string; version: number }> {
+  if (runningAnalyses.has(dealId)) throw new AnalysisRunningError();
+  runningAnalyses.add(dealId);
+  let placeholder: { id: string; version: number };
+  try {
+    placeholder = await createAnalysisPlaceholder(dealId, storage);
+  } catch (err) {
+    runningAnalyses.delete(dealId);
+    throw err;
+  }
+  run(dealId, storage, { analysisId: placeholder.id })
+    .catch((err: any) => console.error("Background financial analysis failed:", err))
+    .finally(() => runningAnalyses.delete(dealId));
+  return placeholder;
 }
 
 export async function runFinancialAnalysis(
@@ -1291,7 +1333,9 @@ async function persistFinancialDiscrepancies(
       if (row.source !== "financial_analysis" || row.factKey) continue;
       const hit = analysisFactKey({ field: row.field, factYear: row.factYear, sourceA: { value: row.interviewValue ?? "" }, sourceB: { value: row.documentValue ?? "" } }, info);
       if (!hit) continue;
-      await storage.updateDiscrepancy(row.id, { factKey: hit.factKey, ...(row.factYear ? {} : { factYear: hit.factYear }) });
+      if (!(await updateDiscrepancyIfStill(storage, row.id, [row.status], { factKey: hit.factKey, ...(row.factYear ? {} : { factYear: hit.factYear }) }))) {
+        continue; // settled or routed while the analysis ran — left as the broker left it
+      }
       row.factKey = hit.factKey;
       if (!row.factYear) row.factYear = hit.factYear;
     }
@@ -1351,7 +1395,9 @@ async function persistFinancialDiscrepancies(
       // field name and a fact key the broker already linked.
       // A year the broker linked stays, unless the finding is plainly about
       // another year (it never reaches here then — matchesExisting).
-      await storage.updateDiscrepancy(openMatch.id, {
+      // Only while the row is as this run found it: one the broker resolved
+      // or routed during the run keeps the sides they decided on.
+      await updateDiscrepancyIfStill(storage, openMatch.id, [openMatch.status], {
         ...values,
         factKey: openMatch.factKey || values.factKey,
         factYear: openMatch.factKey ? openMatch.factYear ?? values.factYear : values.factYear,
@@ -1384,7 +1430,7 @@ async function persistFinancialDiscrepancies(
       documentValue: b ?? row.documentValue,
       aiExplanation: `${row.aiExplanation ?? ""}${row.aiExplanation ? " " : ""}${DIVIDEND_NOTE}`,
     };
-    await storage.updateDiscrepancy(row.id, patch);
+    if (!(await updateDiscrepancyIfStill(storage, row.id, [row.status], patch))) continue;
     unsettled[i] = { ...row, ...patch };
     byId.set(row.id, unsettled[i]);
   }
@@ -1402,7 +1448,9 @@ async function persistFinancialDiscrepancies(
     const row = byId.get(id);
     if (!row || row.source !== "financial_analysis" || refreshed.has(id)) continue;
     if (row.status !== "open" && row.status !== "seller_responded") continue;
-    await storage.updateDiscrepancy(id, { status: "superseded" });
+    // The status this run saw must still hold: a row the broker resolved or
+    // routed to the seller while the analysis ran is never closed by it.
+    await updateDiscrepancyIfStill(storage, id, [row.status], { status: "superseded" });
   }
 }
 
