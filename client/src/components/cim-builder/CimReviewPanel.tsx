@@ -60,7 +60,8 @@ export function CimReviewPanel({ dealId, review, sections, onOpenSection, compac
   const hold = review.heldFromBuyers;
   const facts = review.facts;
   const showNotes = warnings.length > 0 && !dismissed;
-  if (!hold && !showNotes && !facts && review.placeholders === 0 && privateStaff.length === 0) return null;
+  const servedPrivate = review.privateStaffServed ?? [];
+  if (!hold && !showNotes && !facts && review.placeholders === 0 && privateStaff.length === 0 && servedPrivate.length === 0) return null;
 
   const dismiss = () => {
     setDismissed(true);
@@ -71,6 +72,7 @@ export function CimReviewPanel({ dealId, review, sections, onOpenSection, compac
     hold ? (hold.servingPublished ? "buyers see the previous version until you publish" : "held from buyers until you publish") : null,
     review.placeholders > 0 ? `${review.placeholders} section${review.placeholders === 1 ? "" : "s"} couldn't be written` : null,
     showNotes ? `${warnings.length} note${warnings.length === 1 ? "" : "s"} from the last generation` : null,
+    servedPrivate.length > 0 ? `buyers are still reading a private staff matter in ${servedPrivate.length} section${servedPrivate.length === 1 ? "" : "s"}` : null,
     privateStaff.length > 0 ? `${privateStaff.length} section${privateStaff.length === 1 ? "" : "s"} still mention${privateStaff.length === 1 ? "s" : ""} a private staff matter` : null,
     facts ? `facts changed since it was written${facts.sections ? ` (${facts.sections} section${facts.sections === 1 ? "" : "s"})` : ""}` : null,
   ].filter(Boolean) as string[];
@@ -123,6 +125,25 @@ export function CimReviewPanel({ dealId, review, sections, onOpenSection, compac
                 <div className="flex flex-wrap gap-1.5">
                   {sections.filter((s) => s.placeholder).map((s) => (
                     <SectionChip key={s.id} title={s.sectionTitle} onClick={onOpenSection ? () => onOpenSection(s.id) : undefined} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {servedPrivate.length > 0 && (
+            <div className="flex gap-2.5" data-testid="cim-review-private-staff-served">
+              <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5 text-red-400" />
+              <div className="min-w-0 space-y-1">
+                <p className="font-medium">Buyers are still reading a private staff matter in the published version</p>
+                <p className="text-xs text-muted-foreground">
+                  {review.privateStaffServedFrom === "kept_copy"
+                    ? "While you review the update, buyers read the version you published, and it still states this. Publish the update, or hide the section from buyers on the CIM tab (“Held back from the CIM”)."
+                    : "These sections changed since you approved them, so buyers still read the approved version, which states this. Approve the updated section to publish it, or hide the section."}
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {servedPrivate.map((s) => (
+                    <SectionChip key={s.id} title={s.title} hint={s.descriptions.join("; ")} onClick={onOpenSection ? () => onOpenSection(s.id) : undefined} />
                   ))}
                 </div>
               </div>

@@ -11,8 +11,10 @@
  *
  * No model call here.
  */
-import type { CimGenerationStatus, Deal } from "@shared/schema";
+import type { CimGenerationStatus, CimSection, CimSectionOverride, Deal } from "@shared/schema";
 import { STAFF_PRIVATE_INCLUDED_KEY, type StaffPrivateItem, type StaffPrivateListItem } from "@shared/staff-private";
+import { servesPublishedSnapshot } from "@shared/cim-buyer-view";
+import { servedVersions } from "@shared/cim-published";
 import { brokerFactsView, factDisplayLabel, mutateDealInfo } from "../information/facts";
 import { splitFactsForCim } from "../information/cim-facts";
 import { includedStaffPrivate, screenStaffPrivatePairs, staffContextFrom } from "./staff-private";
@@ -152,4 +154,94 @@ export function heldPrivateStateForDeal(deal: Deal, sections: ReadonlyArray<Held
   const info = (brokerFactsView(deal).extractedInfo as Info | null) || {};
   const items = heldPrivateForDeal(deal);
   return { items, showing: sections.length > 0 ? sectionsShowingStaffPrivate(sections, info, items) : [] };
+}
+
+// ── What buyers are served now (final review PRIV-3) ────────────────────
+//
+// The scan above reads the DRAFT. Buyers of a live CIM are not always served
+// the draft: while a regenerated CIM waits for the broker's review they read
+// the kept copy (published-snapshot.ts), and a section changed since its
+// approval is served in its approved version (shared/cim-published.ts). So a
+// matter the broker regenerated or edited out of the draft can still be in
+// front of every buyer — DD included — until the update is published. These
+// helpers scan what is served (its named, Blind and DD texts) so the CIM tab
+// can say so.
+
+/** Where the served text that isn't the draft comes from. */
+export type ServedSource = "kept_copy" | "approved_version";
+
+export interface ServedRows {
+  source: ServedSource;
+  /** The served named sections that differ from the draft (all of the kept copy's). */
+  sections: CimSection[];
+  /** Their served Blind / DD versions. */
+  overrides: Array<Pick<CimSectionOverride, "cimSectionId" | "layoutData" | "contentOverride">>;
+}
+
+/**
+ * The rows buyers are served that are NOT the draft, or null when buyers
+ * read the draft (or nothing). Pure.
+ */
+export function servedRowsNotDraft(input: {
+  deal: { isLive?: boolean | null; cimGeneration?: unknown };
+  draft: CimSection[];
+  snapshot: { sections: CimSection[]; blindOverrides: CimSectionOverride[]; ddOverrides: CimSectionOverride[] } | null;
+  published: CimSectionOverride[] | null;
+}): ServedRows | null {
+  const { deal, draft, snapshot, published } = input;
+  if (!deal.isLive) return null;
+  if (servesPublishedSnapshot(deal)) {
+    if (!snapshot) return null;
+    return { source: "kept_copy", sections: snapshot.sections, overrides: [...snapshot.blindOverrides, ...snapshot.ddOverrides] };
+  }
+  if (!published || published.length === 0) return null;
+  const named = servedVersions({ deal, mode: "normal", sections: draft, overrides: [], published });
+  if (named.kept.length === 0) return null;
+  const kept = new Set(named.kept);
+  const blind = servedVersions({ deal, mode: "blind", sections: draft, overrides: [], published });
+  const dd = servedVersions({ deal, mode: "dd", sections: draft, overrides: [], published });
+  return {
+    source: "approved_version",
+    sections: named.sections.filter((s) => kept.has(s.id)),
+    overrides: [...blind.overrides, ...dd.overrides].filter((o) => kept.has(String(o.cimSectionId))),
+  };
+}
+
+/**
+ * Served sections (not the draft) that state a held staff matter: each
+ * section's named text, and its Blind / DD versions read under the same
+ * title. Pure.
+ */
+export function servedShowingStaffPrivate(rows: ServedRows, info: Info, items: ReadonlyArray<StaffPrivateListItem>): SectionShowingPrivate[] {
+  // A hidden section reaches no buyer in any version.
+  const titleOf = new Map(rows.sections.filter((s) => s.isVisible !== false).map((s) => [s.id, s.sectionTitle]));
+  const scan: HeldScanSection[] = [
+    ...rows.sections,
+    ...rows.overrides
+      .filter((o) => titleOf.has(String(o.cimSectionId)))
+      .map((o) => ({ id: String(o.cimSectionId), sectionTitle: titleOf.get(String(o.cimSectionId))!, layoutData: o.layoutData, aiDraftContent: o.contentOverride ?? null })),
+  ];
+  const byId = new Map<string, SectionShowingPrivate>();
+  for (const hit of sectionsShowingStaffPrivate(scan, info, items)) {
+    const prev = byId.get(hit.id);
+    if (prev) prev.descriptions = Array.from(new Set([...prev.descriptions, ...hit.descriptions]));
+    else byId.set(hit.id, { ...hit, descriptions: [...hit.descriptions] });
+  }
+  return Array.from(byId.values());
+}
+
+/** What buyers are still served that states a held matter (the draft aside), with where it comes from. */
+export async function servedHeldPrivateForDeal(
+  deal: Deal,
+  draft: CimSection[],
+  items: ReadonlyArray<StaffPrivateListItem> = heldPrivateForDeal(deal),
+): Promise<{ source: ServedSource | null; showing: SectionShowingPrivate[] }> {
+  if (!deal.isLive) return { source: null, showing: [] };
+  const [{ getPublishedSnapshot }, { loadPublishedVersions }] = await Promise.all([import("./published-snapshot"), import("./published-versions")]);
+  const snapshot = servesPublishedSnapshot(deal) ? await getPublishedSnapshot(deal.id) : null;
+  const published = servesPublishedSnapshot(deal) ? null : await loadPublishedVersions(deal);
+  const rows = servedRowsNotDraft({ deal, draft, snapshot, published });
+  if (!rows) return { source: null, showing: [] };
+  const info = (brokerFactsView(deal).extractedInfo as Info | null) || {};
+  return { source: rows.source, showing: servedShowingStaffPrivate(rows, info, items) };
 }

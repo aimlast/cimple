@@ -705,14 +705,19 @@ export function buyerInsight(buyer: BuyerReadingFacts, ctxIn: InsightContext): B
   const decisionStatus = status === "interested" || status === "not_interested" || status === "lapsed" || status === "reading_now";
   const contacted = contactedLabel(buyer, ctx.now);
   const recency = core.lastActivity ? Math.exp(-(ctx.now.getTime() - core.lastActivity) / DAY / INSIGHT_RULES.recencyDays) : 0;
+  // (A buyer whose access the broker revoked — a competitor removed, one the
+  // seller turned down — is never a lead to call: priority 0, labelled.)
+  const revoked = !!buyer.revokedAt;
   const priority = buyer.visits.length === 0
     ? -1
-    : core.intent * fitScore(buyer) * recency * opennessOf(buyer, ctx.now) + 0.001 * recency * (opennessOf(buyer, ctx.now) > 0 ? 1 : 0);
+    : revoked
+      ? 0
+      : core.intent * fitScore(buyer) * recency * opennessOf(buyer, ctx.now) + 0.001 * recency * (opennessOf(buyer, ctx.now) > 0 ? 1 : 0);
   const pageLabels: Record<string, ReadLabel> = {};
   for (const r of core.rows) if (r.label) pageLabels[viewerPageKey(r.page.pageId, r.page.part)] = r.label;
   return {
     status,
-    statusLabel: contacted && !decisionStatus ? contacted : BUYER_STATUS_TEXT[status],
+    statusLabel: revoked ? "Access revoked" : contacted && !decisionStatus ? contacted : BUYER_STATUS_TEXT[status],
     why: whyOf(buyer, core, sigs, ctx),
     signals: sigs.map(({ id, strength, evidence, pageRefs }) => ({ id, strength: Math.round(strength * 100) / 100, evidence, pageRefs })),
     talkingPoints: talkingPointsOf(sigs),

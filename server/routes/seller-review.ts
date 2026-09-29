@@ -33,6 +33,7 @@ import {
 import { listedAskingPrice } from "../information/deal-mirror";
 import { loadMediaAssets } from "../cim/media-store";
 import type { Deal } from "@shared/schema";
+import { sellerLinkRights, OWNER_SIGNS_OFF_MESSAGE, type SellerLinkRights } from "@shared/seller-link-rights";
 
 const STAGE_WORD: Record<SellerReviewStage, string> = {
   not_ready: "",
@@ -42,12 +43,18 @@ const STAGE_WORD: Record<SellerReviewStage, string> = {
   approved: "",
 };
 
-/** The seller's invite + deal, or null (unknown / revoked token). */
-async function sellerDeal(token: string): Promise<{ deal: Deal; inviteId: string; sellerName: string | null } | null> {
+/**
+ * The seller's invite + deal + what this link may do, or null (unknown /
+ * revoked token). Every seller-team member has their own link, so the
+ * sign-off is checked against who holds it (shared/seller-link-rights.ts).
+ */
+async function sellerDeal(token: string): Promise<{ deal: Deal; inviteId: string; sellerName: string | null; rights: SellerLinkRights } | null> {
   const invite = await storage.getSellerInviteByToken(token);
   if (!invite) return null;
   const deal = await storage.getDeal(invite.dealId);
-  return deal ? { deal, inviteId: invite.id, sellerName: invite.sellerName ?? null } : null;
+  if (!deal) return null;
+  const rights = sellerLinkRights(invite, await storage.getDealMembers(deal.id));
+  return { deal, inviteId: invite.id, sellerName: invite.sellerName ?? null, rights };
 }
 
 /**
@@ -66,13 +73,16 @@ export function registerSellerReviewRoutes(app: Express) {
     try {
       const found = await sellerDeal(req.params.token);
       if (!found) return res.status(404).json({ error: "This link isn't valid any more — ask your broker for a new one." });
-      const { deal } = found;
+      const { deal, rights } = found;
       const stage = sellerReviewStage(deal);
       const base = {
         stage,
         businessName: deal.businessName,
         approvals: { content: !!deal.contentApprovedBySeller, design: !!deal.designApprovedBySeller },
         previewByBroker: await isOwningBroker(req, deal),
+        // Only the owner's link approves or asks for changes (an accountant's
+        // or attorney's link can read it).
+        canApprove: rights.canApproveCim,
       };
       // Nothing before the broker has approved it, and nothing while a
       // regenerated CIM waits for the broker's review.
@@ -105,9 +115,12 @@ export function registerSellerReviewRoutes(app: Express) {
     try {
       const found = await sellerDeal(req.params.token);
       if (!found) return res.status(404).json({ error: "This link isn't valid any more — ask your broker for a new one." });
-      const { deal } = found;
+      const { deal, rights } = found;
       if (await isOwningBroker(req, deal)) {
         return res.status(403).json({ error: "You're signed in as the deal's broker. To record the seller's approval yourself, use “Approve on the seller's behalf” on the deal's Overview.", code: "broker_preview" });
+      }
+      if (!rights.canApproveCim) {
+        return res.status(403).json({ error: OWNER_SIGNS_OFF_MESSAGE, code: "not_owner" });
       }
       const stage = sellerReviewStage(deal);
       const field = sellerApprovalField(stage);
@@ -153,9 +166,12 @@ export function registerSellerReviewRoutes(app: Express) {
     try {
       const found = await sellerDeal(req.params.token);
       if (!found) return res.status(404).json({ error: "This link isn't valid any more — ask your broker for a new one." });
-      const { deal, sellerName } = found;
+      const { deal, sellerName, rights } = found;
       if (await isOwningBroker(req, deal)) {
         return res.status(403).json({ error: "You're signed in as the deal's broker — this is the seller's button.", code: "broker_preview" });
+      }
+      if (!rights.canApproveCim) {
+        return res.status(403).json({ error: OWNER_SIGNS_OFF_MESSAGE, code: "not_owner" });
       }
       const note = typeof req.body?.note === "string" ? req.body.note.trim().slice(0, 4000) : "";
       if (note.length < 3) return res.status(400).json({ error: "Tell your broker what should change." });

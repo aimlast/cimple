@@ -47,3 +47,29 @@ export function countedSellerTurns(messages: Msg[]): number {
   }
   return n;
 }
+
+/**
+ * On a Continue press: the seller's saved answer the fault left
+ * unprocessed — every seller message since the last AI reply that wasn't a
+ * fault notice, in order, not counting Continue presses. "" when there is
+ * none. `messages` is the transcript BEFORE the Continue press.
+ *
+ * The turn's checks read this, not "Continue" (final review INT-RC-2: the
+ * grounding and numeric-fidelity guards saw a message with no figures, so
+ * the saved "$2.4M … 30%" was downgraded to approximate and queued to be
+ * verified — the seller told "no need to type it again" was asked again).
+ */
+export function savedAnswerText(messages: Msg[]): string {
+  const parts: string[] = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role === "ai") {
+      if (m.degraded) continue;
+      break;
+    }
+    if (m.role !== "user" || isContinueAfterFault(messages, i)) continue;
+    const text = m.content.trim();
+    if (text) parts.unshift(text);
+  }
+  return parts.join("\n\n");
+}

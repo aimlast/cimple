@@ -4586,7 +4586,15 @@ Return JSON only.`,
       // review link, on every step (the approval email can land in spam).
       const pendingQuestions = await db.select().from(buyerQuestions)
         .where(eqOp(buyerQuestions.dealId, deal.id));
-      const pendingSeller = pendingQuestions.filter((q) => q.status === "pending_seller");
+      // Only for a link whose holder approves buyer answers (the roles
+      // qa_needs_approval is routed to) — an accountant's or attorney's link
+      // never gets the buyer's question, the broker's draft or the publish
+      // link (shared/seller-link-rights.ts).
+      const { sellerLinkRights } = await import("@shared/seller-link-rights");
+      const linkRights = sellerLinkRights(invite, await storage.getDealMembers(deal.id));
+      const pendingSeller = linkRights.canApproveQa
+        ? pendingQuestions.filter((q) => q.status === "pending_seller")
+        : [];
 
       // The interview's to-dos: documents it asked for and things to look up.
       const todo = sellerTodoItems(sellerTasks);
@@ -4648,7 +4656,7 @@ Return JSON only.`,
         },
         todo,
         followUpQuestions,
-        cimReview: { stage: reviewStage },
+        cimReview: { stage: reviewStage, canApprove: linkRights.canApproveCim },
         pendingApprovals: pendingSeller.length,
         pendingApprovalItems: pendingSeller
           .filter((q) => !!q.sellerApprovalToken)

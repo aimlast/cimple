@@ -68,7 +68,7 @@ interface SellerProgressData {
   /** Questions the broker sent back after the conversation ended. */
   followUpQuestions?: number;
   /** The CIM waiting for their review (shared/seller-portal sellerReviewStage). */
-  cimReview?: { stage: "not_ready" | "content" | "design" | "waiting" | "approved" };
+  cimReview?: { stage: "not_ready" | "content" | "design" | "waiting" | "approved"; canApprove?: boolean };
   pendingApprovals: number;
   /** Buyer questions whose answer waits on the seller — each with its review link. */
   pendingApprovalItems?: Array<{ id: string; question: string; href: string }>;
@@ -196,7 +196,8 @@ export default function SellerProgress() {
       </div>
 
       {/* Things waiting on the seller right now, whatever step they're on */}
-      {(data.cimReview?.stage === "content" || data.cimReview?.stage === "design") && (
+      {/* Only the owner's link signs off (an accountant's or attorney's link doesn't get the call to action). */}
+      {(data.cimReview?.stage === "content" || data.cimReview?.stage === "design") && data.cimReview.canApprove !== false && (
         <CTACard
           title={data.cimReview.stage === "design" ? "Your CIM is ready for your sign-off" : "Your CIM is ready for your review"}
           description="Read the document buyers will see about your business, then approve it or tell your broker what should change. Nothing goes to buyers until you've signed off."

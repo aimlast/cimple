@@ -794,15 +794,21 @@ function proseMispairings(texts: string[], knownText: string, knownNorm: string)
       // Where the span sits in the plain text: the markers before it are gone there.
       const at = stripDdMarkers(raw.slice(0, m.index ?? 0)).length;
       const spanEnd = at + stripDdMarkers(m[0]).length;
-      const sentenceEnd = plain.slice(spanEnd).search(/(?<=[.!?])\s+(?=[A-Z])|\n/);
-      const after = mentionWindow(plain.slice(spanEnd, sentenceEnd < 0 ? undefined : spanEnd + sentenceEnd));
-      const claimed = parseFiguresAt(after)
-        .filter((f) => f.kind !== "plain" && (CLAIM_BEFORE.test(after.slice(Math.max(0, f.index - 40), f.index)) || CLAIM_AFTER.test(after.slice(f.end))))
-        .map((f) => ({ value: f.value, kind: f.kind, tolerance: f.tolerance }) as KindedFigure);
-      if (claimed.length === 0) continue;
+      const inside = plain.slice(at, spanEnd);
       for (const name of Array.from(candidates)) {
-        const inside = plain.slice(at, spanEnd);
-        if (!onFile(name, knownNorm) || !inside.includes(name)) continue;
+        const pos = inside.indexOf(name);
+        if (!onFile(name, knownNorm) || pos < 0) continue;
+        // The figures that follow the NAME, up to the end of its sentence or
+        // the next party — inside the span too: "[[dd]]Sunrise Co-op accounts
+        // for 31% of revenue.[[/dd]]" pairs the name and the share in one
+        // span, which a window from the span's end never saw (final review F2-DD-4).
+        const from = at + pos + name.length;
+        const sentenceEnd = plain.slice(from).search(/(?<=[.!?])\s+(?=[A-Z])|\n/);
+        const after = mentionWindow(plain.slice(from, sentenceEnd < 0 ? undefined : from + sentenceEnd));
+        const claimed = parseFiguresAt(after)
+          .filter((f) => f.kind !== "plain" && (CLAIM_BEFORE.test(after.slice(Math.max(0, f.index - 40), f.index)) || CLAIM_AFTER.test(after.slice(f.end))))
+          .map((f) => ({ value: f.value, kind: f.kind, tolerance: f.tolerance }) as KindedFigure);
+        if (claimed.length === 0) continue;
         const stated = statedFigureFor(name, knownText).filter((s) => claimed.some((c) => sameKind(c, s) && c.kind === s.kind));
         if (stated.length > 0 && !claimed.some((c) => stated.some((s) => c.kind === s.kind && figureClose(c, s)))) {
           out.push(`shows "${name}" at ${claimed.map((c) => c.value.toLocaleString("en-US")).join(" / ")}, but the file gives it ${stated.map((s) => s.value.toLocaleString("en-US")).join(" / ")}`);

@@ -11,9 +11,9 @@ import {
   type Discrepancy,
   type Document as DealDocument,
 } from "@shared/schema";
-import { countedSellerTurns, isContinueAfterFault, CONTINUE_AFTER_FAULT as CONTINUE_AFTER_FAULT_TEXT } from "@shared/interview-fault";
+import { countedSellerTurns, isContinueAfterFault, savedAnswerText, CONTINUE_AFTER_FAULT as CONTINUE_AFTER_FAULT_TEXT } from "@shared/interview-fault";
 import { eq, desc, sql } from "drizzle-orm";
-import { assembleKnowledgeBase, sellerAnswered, type KnowledgeBase, type IndustryContext, type SectionCoverage } from "./knowledge-base";
+import { assembleKnowledgeBase, sellerAnswered, type KnowledgeBase, type IndustryContext, type SectionCoverage, type AskSellerDiscrepancy } from "./knowledge-base";
 import { questionnaireFacts } from "./questionnaire-facts";
 import {
   type ConductedBy,
@@ -1182,7 +1182,7 @@ export function processTurn(
 async function processTurnLocked(
   dealId: string,
   sessionId: string,
-  sellerMessage: string,
+  rawSellerMessage: string,
   onDelta: ((chunk: string) => void) | undefined,
   opts: ProcessTurnOpts,
   receivedAt: string,
@@ -1213,6 +1213,14 @@ async function processTurnLocked(
   }
   const openDiscrepancies = allDiscrepancies.filter((d) => d.status === "open");
   timer.mark("loaded");
+  // A Continue press after a fault notice is not an answer: the turn's
+  // checks (grounding, numeric fidelity, live claims, the intent reading,
+  // the seller's own question…) read the saved answer the fault left
+  // unprocessed. "Continue" stays in the transcript and the model's history
+  // only (the RECOVERY NOTE explains it). Final review INT-RC-2.
+  const priorTranscript = session.messages as ConversationMessage[];
+  const continuingAfterFault = isContinueAfterFault([...priorTranscript, { role: "user", content: rawSellerMessage }], priorTranscript.length);
+  const sellerMessage = continuingAfterFault ? savedAnswerText(priorTranscript) || rawSellerMessage : rawSellerMessage;
   // Whose session this is (the admission check above made sure the caller's
   // mode is the session's). Earlier sessions this one may read: never a
   // broker-alone session's transcript unless the broker is the one here.
@@ -1310,12 +1318,12 @@ async function processTurnLocked(
   }
 
   // Add the new seller message
-  apiMessages.push({ role: "user", content: modelFacingUserContent(sellerMessage, correctionOf) });
+  apiMessages.push({ role: "user", content: modelFacingUserContent(rawSellerMessage, correctionOf) });
 
   // Every question → answer so far: earlier sessions, this transcript, and
   // this turn (the question just answered). Feeds the wrap-up checklist and
   // the re-ask guard.
-  const thisSessionQA = exchangesOf([...existingMessages, { role: "user", content: sellerMessage, timestamp: receivedAt }]);
+  const thisSessionQA = exchangesOf([...existingMessages, { role: "user", content: rawSellerMessage, timestamp: receivedAt }]);
   const allExchanges: Exchange[] = [
     ...(kb.priorExchanges ?? []).map((x) => ({ question: x.question, answer: x.answer })),
     ...thisSessionQA,
@@ -1349,7 +1357,7 @@ async function processTurnLocked(
   // Seller turns so far, including this one — drives completion governance
   // and the wrap-up pacing nudge. (A Continue press after a fault notice, or
   // a retry sent during the fault, is not a turn: shared/interview-fault.ts.)
-  const userTurnCount = Math.max(1, countedSellerTurns([...existingMessages, { role: "user", content: sellerMessage }]));
+  const userTurnCount = Math.max(1, countedSellerTurns([...existingMessages, { role: "user", content: rawSellerMessage }]));
   // The completion floor: the first interview only. A session on a finished
   // interview (the broker's follow-up questions, "Add more detail") may end
   // once its questions are covered (seller-followups.ts turnFloorFor).
@@ -1406,6 +1414,7 @@ async function processTurnLocked(
   const intentPromise = classifySellerIntent({
     sellerMessage,
     ...(labelledExchange ? { labelledExchange: true } : {}),
+    ...(afterPause ? { afterPause: true } : {}),
     prevAiMessage,
     prevSellerMessage: [...existingMessages].reverse().find((m) => m.role === "user")?.content,
     recentFacts: sellerSpokenFacts(sellerView as Record<string, unknown>),
@@ -1417,8 +1426,13 @@ async function processTurnLocked(
     }
     return pauseGate(combineIntent(quick, modelIntent ?? null));
   };
-  /** A short break is never read broker-led (pauseAllowed). */
-  const pauseGate = (i: SellerIntent): SellerIntent => (pauseAllowed || !i.pause ? i : { ...i, pause: false });
+  /**
+   * A short break is never read broker-led (pauseAllowed), nor straight
+   * after a "take your time" reply: the seller's first message after a
+   * break is them back (or leaving), never a second break — the canned
+   * reply could otherwise loop (final review INT-RC-4).
+   */
+  const pauseGate = (i: SellerIntent): SellerIntent => ((pauseAllowed && !afterPause) || !i.pause ? i : { ...i, pause: false });
 
   let stopNow = quick.stop !== "none";
   let stopLevel: StopLevel = quick.stop;
@@ -1537,7 +1551,7 @@ async function processTurnLocked(
       text:
         `# RECOVERY NOTE\n` +
         `The seller's previous ${priorDegradedTurns} message(s) arrived during a technical fault and were never processed. Re-read the recent seller messages in the conversation and extract EVERY fact from them now (extractedFields), acknowledging naturally — do not dwell on the glitch or ask the seller to repeat anything they already re-sent.` +
-        (isContinueAfterFault([...existingMessages, { role: "user", content: sellerMessage, timestamp: receivedAt }], existingMessages.length)
+        (continuingAfterFault
           ? ` Their new message ("${CONTINUE_AFTER_FAULT_TEXT}") is the Continue button they pressed after the fault notice — not an answer. Reply to their last real answer above as if it had just arrived: the reply is your next question.`
           : ""),
     });
@@ -2088,6 +2102,9 @@ async function processTurnLocked(
             conflicts: kb.sourceConflicts,
             risks: kb.flaggedRisks,
             onFileTopics: prospectiveKb.onFileTopics,
+            // The broker's routed questions this session hasn't raised yet
+            // (a follow-up session has no turn floor — INT-RC-3).
+            routedQuestions: routedQuestionsRaised(kb.askSellerDiscrepancies ?? [], existingMessages),
             // A deferral or "resolved" the agent records in this very turn
             // counts only if this turn's exchange was about it — parking
             // every open item in the goodbye message is not covering it.
@@ -3462,7 +3479,7 @@ async function processTurnLocked(
   // Update session
   const storedUserMessage: ConversationMessage = {
     role: "user",
-    content: sellerMessage,
+    content: rawSellerMessage,
     timestamp: receivedAt,
     ...(correctionOf ? { correctionOf } : {}),
   };
@@ -3642,6 +3659,22 @@ export function routedDiscrepancyDiscussed(
   // (A word's stem: "concentration" → "concentr" also finds "concentrated".)
   const hits = words.filter((w) => ai.includes(w.slice(0, Math.min(w.length, Math.max(5, Math.ceil(w.length * 0.6)))))).length;
   return hits >= Math.min(2, words.length);
+}
+
+/**
+ * The broker's routed questions as the wrap-up check sees them: each one's
+ * label and whether this session's interviewer messages have raised it
+ * (routedDiscrepancyDiscussed; a side from a broker-only source is never in
+ * the interview's view, so only its label and the other side count). Pure.
+ */
+export function routedQuestionsRaised(
+  routed: ReadonlyArray<Pick<AskSellerDiscrepancy, "field" | "valueA" | "valueB">>,
+  messages: Pick<ConversationMessage, "role" | "content">[],
+): Array<{ label: string; discussed: boolean }> {
+  return routed.map((d) => ({
+    label: d.field,
+    discussed: routedDiscrepancyDiscussed({ field: d.field, factKey: null, interviewValue: d.valueA, documentValue: d.valueB }, messages),
+  }));
 }
 
 /** The note a routed discrepancy carries back to the broker when the interview ends. */

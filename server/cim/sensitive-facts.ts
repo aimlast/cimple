@@ -374,12 +374,26 @@ export function holdConfidentialFacts(
   // ("Alderbrook pricing is confidential") holds no party.
   const allText = first.map(([, v]) => valueText(v).toLowerCase());
   const usedElsewhere = (name: string) => allText.filter((t) => t.includes(name.toLowerCase())).length;
+  // The deal's own owner, shareholders and management are never a held
+  // party: a confidential clause about them ("Harjit Grewal was approached
+  // by Kinder Freight about a sale (confidential)") holds that clause only —
+  // holding the owner's name took their role, transition plan and the
+  // key-person facts out of the named CIM and DD (final review F2-CIMTRUTH-1).
+  const own = ownPeople(pairs, valueText);
   const fromClauses = holds.flatMap((h) =>
     h.clauses
       .filter((c) => !attributeHolds.includes(c))
       .flatMap((c) => namesIn(c).filter((name, i) => (i === 0 ? usedElsewhere(name) < 3 : usedElsewhere(name) === 0))),
   );
-  const heldNames = Array.from(new Set([...fromClauses, ...(keepOut?.names ?? [])]));
+  const heldNames = Array.from(new Set([...fromClauses, ...(keepOut?.names ?? [])])).filter((n) => !own.some((o) => samePerson(n, o)));
+  // A held person's given name alone is matched only when no one else on
+  // file shares it (the owner "Harjit Grewal" and a held "Harjit Sandhu").
+  const people = peopleOnFile(pairs, valueText);
+  const ambiguous = new Set(heldNames.filter((n) => {
+    const g = givenOf(n);
+    return !!g && people.some((p) => givenOf(p) === g && !samePerson(p, n));
+  }));
+  if (ambiguous.size > 0) GIVEN_ALONE_OFF.set(heldNames, ambiguous);
   if (heldNames.length === 0) return { safe: first, holds, heldNames };
 
   // A clause elsewhere that names a held party goes too ("… potential new
@@ -402,6 +416,49 @@ export function holdConfidentialFacts(
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+/** Facts that name the deal's own people (owner, shareholders, management). */
+const OWN_PEOPLE_KEY =
+  /^(?:owner(?:s|Name|Names|FullName)?|ownerNames?|sellerName|sellers?|shareholders?|shareholderNames?|founders?|founderNames?|principals?|partners?|management|managementTeam|keyManagement|managers?|officers?|directors?)$/i;
+
+/** The names in the facts about the deal's own people. */
+function ownPeople(pairs: Array<[string, unknown]>, valueText: (v: unknown) => string): string[] {
+  return pairs
+    .filter(([k]) => OWN_PEOPLE_KEY.test(k))
+    .flatMap(([, v]) => namesIn(` ${valueText(v)}`))
+    .filter((n) => n.split(/\s+/).length >= 2);
+}
+
+/** Every person-like name on file (two or more words, starting with a known given name). */
+function peopleOnFile(pairs: Array<[string, unknown]>, valueText: (v: unknown) => string): string[] {
+  return Array.from(new Set(pairs.flatMap(([, v]) => namesIn(` ${valueText(v)}`)).filter((n) => !!givenOf(n))));
+}
+
+const personWords = (n: string) => n.toLowerCase().split(/\s+/).filter((w) => w && !PERSON_TITLE.test(w)).map((w) => w.replace(/[.'’]+$/, ""));
+
+/** The same person: one name's words all in the other's ("Harjit Grewal" / "Harjit S. Grewal"). */
+function samePerson(a: string, b: string): boolean {
+  const x = personWords(a);
+  const y = personWords(b);
+  if (x.length === 0 || y.length === 0) return false;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.length >= 2 ? short.every((w) => long.includes(w)) : false;
+}
+
+/** A person's given name (lower-case), when the name starts with a known one. */
+function givenOf(name: string): string | null {
+  const words = name.trim().split(/\s+/).filter((w) => !PERSON_TITLE.test(w));
+  if (words.length < 2) return null;
+  const folded = words[0].normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  return GIVEN_NAMES.has(folded) ? folded : null;
+}
+
+/**
+ * Held names whose given name alone must not be matched (someone else on
+ * file shares it), keyed by the heldNames list holdConfidentialFacts
+ * returned — the list travels to the writer's scrub and the DD check as is.
+ */
+const GIVEN_ALONE_OFF = new WeakMap<readonly string[], ReadonlySet<string>>();
 
 /** The held name a text mentions (whole words, any case), if any. */
 export function mentionsHeldName(text: string, heldNames: readonly string[]): string | null {
@@ -449,7 +506,8 @@ function givenNameRe(name: string, flags = "u"): RegExp | null {
 export function mentionsHeldPerson(text: string, heldNames: readonly string[]): string | null {
   const full = mentionsHeldName(text, heldNames);
   if (full || !text) return full;
-  for (const name of heldNames) if (givenNameRe(name)?.test(text)) return name;
+  const off = GIVEN_ALONE_OFF.get(heldNames);
+  for (const name of heldNames) if (!off?.has(name) && givenNameRe(name)?.test(text)) return name;
   return null;
 }
 
@@ -696,10 +754,11 @@ export function mergeKeepOut(...parts: Array<KeepOut | null | undefined>): KeepO
  */
 export function neutralBridgeLabel(label: string, heldNames: readonly string[], type = ""): string {
   let t = label;
+  const off = GIVEN_ALONE_OFF.get(heldNames);
   for (const name of heldNames) {
     const words = name.trim().split(/\s+/).map(escapeRe).join(String.raw`\s+`);
     t = t.replace(new RegExp(String.raw`(?<![\p{L}\p{N}])${words}(?:'s|’s)?(?![\p{L}\p{N}])`, "giu"), " ");
-    const given = givenNameRe(name, "gu");
+    const given = off?.has(name) ? null : givenNameRe(name, "gu");
     if (given) t = t.replace(given, " ");
   }
   t = t

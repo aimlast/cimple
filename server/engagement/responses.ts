@@ -270,7 +270,9 @@ export function buildSummaryResponse(facts: DealReadingFacts, published: boolean
   const readThisWeek = facts.buyers.filter((b) => opened(b) && now - lastSeenMs(b) <= 7 * 86_400_000).length;
   const readingNowBuyers = facts.buyers.filter((b) => opened(b) && now - lastSeenMs(b) <= READING_RULES.readingNowMs);
   const cards = buildBuyersResponse(facts).buyers;
-  const top: CallListEntry[] = cards.slice(0, 3).map((c) => ({
+  // (Never a buyer whose access was revoked — F2-ANALYTICS-3.)
+  const revoked = new Set(facts.buyers.filter((b) => !!b.revokedAt).map((b) => b.accessId));
+  const top: CallListEntry[] = cards.filter((c) => !revoked.has(c.accessId)).slice(0, 3).map((c) => ({
     dealId: facts.dealId,
     dealName,
     accessId: c.accessId,

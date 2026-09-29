@@ -31,6 +31,8 @@ interface ReviewData {
   approvals: { content: boolean; design: boolean };
   /** The deal's own broker is looking at the seller's link. */
   previewByBroker?: boolean;
+  /** This link may approve / ask for changes (the owner's). An accountant's or attorney's link reads only. */
+  canApprove?: boolean;
   sections: CimSection[];
   design: CimDesignPayload | null;
   changesRequested?: { id: string; note: string; at: string }[];
@@ -153,7 +155,8 @@ export default function SellerReview() {
     disclaimer: design.brokerage.showDisclaimerPage !== false,
     contact: design.brokerage.showContactPage !== false,
   });
-  const open = data.stage === "content" || data.stage === "design";
+  const readOnly = data.canApprove === false;
+  const open = !readOnly && (data.stage === "content" || data.stage === "design");
   const pendingRequest = (data.changesRequested?.length ?? 0) > 0;
 
   return (
@@ -163,7 +166,7 @@ export default function SellerReview() {
           {back}
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight">
-              {data.stage === "design" ? "Sign off your CIM" : "Review your CIM"}
+              {readOnly ? "The CIM" : data.stage === "design" ? "Sign off your CIM" : "Review your CIM"}
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
               This is the document buyers read about {data.businessName.replace(/\.$/, "")}. Check that everything is accurate and that
@@ -178,7 +181,12 @@ export default function SellerReview() {
             “Approve on the seller's behalf” on the deal if they approved it with you.
           </div>
         )}
-        {!open && (
+        {readOnly && (
+          <div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground" data-testid="text-review-read-only">
+            The business owner signs off the CIM. You can read it here — send any comments to your broker.
+          </div>
+        )}
+        {!open && !readOnly && (
           <div className="rounded-lg border border-teal/30 bg-teal/5 p-4 flex items-start gap-3" data-testid="text-review-done">
             <CheckCircle2 className="h-5 w-5 text-teal shrink-0 mt-0.5" />
             <p className="text-sm">

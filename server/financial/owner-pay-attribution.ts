@@ -204,6 +204,10 @@ function firstPersonStatementsIn(sentence: string, others: string[], isPrivate: 
   return out;
 }
 
+/** A year that dates history or a duration ("since 2015", "founded … in 1994"), never a pay figure's year. */
+const HISTORY_YEAR_RE =
+  /\b(?:since|from|starting(?:\s+in)?|beginning(?:\s+in)?|ever since)\s+((?:19|20)\d{2})\b|\b(?:founded|started|established|opened|bought|purchased|acquired|took over|incorporated|joined|began|launched|built|set up)\b[^.;$]{0,40}?\b((?:19|20)\d{2})\b/gi;
+
 function payStatement(sentence: string, hit: RegExpExecArray, others: string[], isPrivate: boolean, after: string, firstPerson = false): PayStatement | null {
   // Complete parentheticals between the name and the pay word are an
   // aside ("Surinder (Harjit's wife) salary $62K"); a relation opening one
@@ -221,7 +225,13 @@ function payStatement(sentence: string, hit: RegExpExecArray, others: string[], 
   if (/\bsalaries\b/i.test(hit[0]) && /\b(?:and|&)\b/.test(after.slice(0, 60))) return null;
   const value = moneyValue(hit[3]);
   if (value === null || value < 10_000) return null;
-  const years = Array.from(new Set(sentence.match(/\b(?:19|20)\d{2}\b/g) ?? []));
+  // A year of history or duration is not the pay's year: "has drawn $285,000
+  // since 2015" is the pay now (current), "founded the company in 1994 and
+  // takes $285,000" too. Taking 2015 as the statement's year tied the pay
+  // to no analysis year, and the several-shareholders line was added back
+  // whole (final review F2-CIMTRUTH-2).
+  const history = new Set(Array.from(sentence.matchAll(HISTORY_YEAR_RE)).map((m) => m[1] ?? m[2]).filter(Boolean));
+  const years = Array.from(new Set(sentence.match(/\b(?:19|20)\d{2}\b/g) ?? [])).filter((y) => !history.has(y));
   return { value, year: years.length === 1 ? years[0] : null, private: isPrivate, text: sentence.length > 200 ? `${sentence.slice(0, 197)}…` : sentence };
 }
 

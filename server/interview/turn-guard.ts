@@ -1325,6 +1325,45 @@ const BREAK_OFFER_RE =
 const OFFER_MARKER_RE = /\b(?:saved|when you'?re (?:back|ready)|stop here for today|carry on from here)\b/i;
 const ACCEPT_RE = /^\W*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|please|that would|that'?d|a (?:short |quick )?break|(?:a )?(?:few |couple (?:of )?)?(?:minutes?|moment)|good idea|thanks|thank you)\b/i;
 const DECLINE_RE = /\b(?:no|nope|not (?:now|yet|necessary|needed)|i'?m (?:fine|ok(?:ay)?|good)|keep going|carry on|let'?s continue|push on)\b/i;
+// The offer ALSO offers stopping (the fatigue wording in
+// prompts/emotional-intelligence.md: "Want to take a few minutes, or stop
+// here for today? Everything so far is saved.") — a bare "yes" to it may be
+// either (final review INT-RC-1: "Yes, let's call it a day." became a break).
+const OFFER_ALSO_STOP_RE =
+  /\b(?:stop (?:here|there|for (?:now|today|the day))|call it (?:a day|a night|there)|wrap (?:up|it up|things up|this up)|finish (?:here|up|for (?:now|today))|pick (?:this|it) up (?:another|next|later)|another (?:day|time))\b/i;
+// A return said in the message itself — the seller is coming back soon.
+const EXPLICIT_RETURN_RE = new RegExp(
+  [
+    String.raw`\bbrb\b`,
+    String.raw`\b(?:be|i'?ll be|i will be) (?:right|straight) back\b`,
+    String.raw`\bback in ${SHORT_SPAN}`,
+    String.raw`\b(?:give|gimme|allow) me ${SHORT_SPAN}`,
+  ].join("|"),
+  "i",
+);
+// The message names a short break itself: a break word, a return, or the
+// minutes it asks for ("Yes, a short break would help", "A few minutes please").
+const NAMED_SPAN_RE = /\b(?:(?:a )?(?:few|couple(?: of)?) (?:min(?:ute)?s?|moments)|a (?:minute|moment|sec(?:ond)?))\b/i;
+
+/**
+ * The seller's message itself names a short break or a return ("a short
+ * break would help", "back in ten", "give me a few minutes") and says
+ * nothing about stopping or leaving. Only then may a break the patterns see
+ * win over the classifier's soft stop (seller-intent.ts combineIntent).
+ */
+export function namesShortBreak(sellerMessage: string): boolean {
+  const text = sellerMessage.replace(/[’‘]/g, "'").trim();
+  if (!text || LATER_DAY_RE.test(text)) return false;
+  // (A return said outright stands with an errand: "Give me five minutes, I have to run to the shop.")
+  if (EXPLICIT_RETURN_RE.test(text)) return true;
+  if (matchesStopRequest(text)) return false;
+  return BREAK_WORD_RE.test(text) || NAMED_SPAN_RE.test(text);
+}
+
+/** The interviewer offered a short break and nothing else ("Want to take a few minutes? … when you're back") — not "or stop here for today?". */
+export function interviewerOfferedBreakOnly(aiMessage: string | undefined): boolean {
+  return interviewerOfferedBreak(aiMessage) && !OFFER_ALSO_STOP_RE.test(aiMessage!.replace(/[’‘]/g, "'"));
+}
 
 /** The interviewer offered the seller a short break ("Want to take a few minutes? Everything so far is saved…"). */
 export function interviewerOfferedBreak(aiMessage: string | undefined): boolean {
@@ -1352,10 +1391,18 @@ export function detectPause(sellerMessage: string, prevAiMessage?: string): bool
   if (sentences.some((s) => s.includes("?") && (!BREAK_WORD_RE.test(s) || WH_QUESTION_RE.test(s)))) return false;
   // ("Stop. Hang on." — a stop said on its own is never a break.)
   if (sentences.some((s) => /^\W*(?:please\W+)?stop\W*$/i.test(s))) return false;
+  // Stopping or leaving said in the same message ("Hang on, I need to head
+  // out.", "One sec, I've got to run.", "Yes, let's call it a day.") is
+  // never a break — unless the seller also says they're coming right back
+  // ("Give me five minutes, I have to run to the shop."). Final review
+  // INT-RC-1: those read as "take your time" and the stop was never counted.
+  if (matchesStopRequest(text) && !EXPLICIT_RETURN_RE.test(text)) return false;
   // Accepting the interviewer's own offer — a few words, no figure ("Yes,
-  // every 4 hours" answers a question about the business's breaks).
+  // every 4 hours" answers a question about the business's breaks). When
+  // the offer also offered stopping for today, a bare "yes" is either — the
+  // classifier decides; only a reply that names the break itself counts.
   if (interviewerOfferedBreak(prevAiMessage) && wordCount(text) <= 10 && !/\d/.test(text) && ACCEPT_RE.test(text) && !DECLINE_RE.test(text)) {
-    return true;
+    if (!OFFER_ALSO_STOP_RE.test(prevAiMessage!.replace(/[’‘]/g, "'")) || namesShortBreak(text)) return true;
   }
   const at = sentences.findIndex((s) => PAUSE_SENTENCE_RE.test(s) && !HABIT_RE.test(s));
   if (at < 0) return false;
@@ -1401,8 +1448,14 @@ const APOLOGY_LEAD_RE =
 export function sellerResumed(sellerMessage: string, opts: { afterPause?: boolean } = {}): boolean {
   const text = sellerMessage.replace(/[’‘]/g, "'").trim();
   if (!text || matchesStopRequest(text)) return false;
-  return RESUME_LEAD_RE.test(text) || (!!opts.afterPause && APOLOGY_LEAD_RE.test(text));
+  return RESUME_LEAD_RE.test(text) || (!!opts.afterPause && (APOLOGY_LEAD_RE.test(text) || BARE_RETURN_RE.test(text)));
 }
+
+// Right after a "take your time" reply, a bare "ok" / "Back." / "here" is
+// the seller coming back (final review INT-RC-4: only "I'm back", "back
+// now" or "ready" counted, so "ok" could be read as taking the break again).
+const BARE_RETURN_RE =
+  /^\W*(?:ok(?:ay)?|k|back|here|i'?m here|alright|all right|right|yes|yep|yeah|sure|go ahead|go on|continue|let'?s go|good to go|all good|got it)(?:[,.!\s]+(?:ok(?:ay)?|back|here|thanks|thank you|now|again))*\W*$/i;
 
 /**
  * The reply to a short break — no question (the one on screen is still the

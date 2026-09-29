@@ -500,6 +500,14 @@ export interface BuyerReadingFacts {
   decisionAt: string | null;
   /** Last "Mark contacted" (buyer_access.access_events). */
   contactedAt: string | null;
+  /**
+   * The broker took the link away (their reading still counts in the
+   * aggregates) — never a lead to call: out of the call list and the pulse's
+   * top buyers (final review F2-ANALYTICS-3).
+   */
+  revokedAt?: string | null;
+  /** The link's expiry (an expired link can't be opened until the broker extends it). */
+  expiresAt?: string | null;
   fit: BuyerFit | null;
   visits: VisitFacts[];
   /** Key = viewerPageKey(pageId, part). */

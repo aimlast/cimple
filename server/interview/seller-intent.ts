@@ -27,7 +27,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { agentConfig } from "./config/load-config";
-import { detectStopSignal, detectFirmStop, firmStopLevel, sellerDeclinedWrapUp, sellerAskedQuestion, detectPause, sellerResumed } from "./turn-guard";
+import { detectStopSignal, detectFirmStop, firmStopLevel, sellerDeclinedWrapUp, sellerAskedQuestion, detectPause, sellerResumed, namesShortBreak, interviewerOfferedBreakOnly } from "./turn-guard";
 import {
   detectRetraction,
   detectCorrection,
@@ -108,6 +108,12 @@ export interface SellerIntent {
    * in (combineIntent), unlike an explicit "let's keep going".
    */
   resumeOnly?: boolean;
+  /**
+   * The patterns' break is named in the message itself ("a short break
+   * would help", "back in ten") with no word of stopping or leaving — only
+   * such a break may win over the classifier's soft stop (combineIntent).
+   */
+  pauseNamed?: boolean;
 }
 
 // =====================
@@ -130,9 +136,11 @@ export function quickIntent(sellerMessage: string, prevAiMessage?: string, opts:
   // withdraws something: "Hold on, keep that out of the book", "Wait,
   // scratch that" — review F2-FINAL-1.)
   // (Right after a "take your time", the break offer before it has been
-  // taken: an "ok" now is the seller back, never a second acceptance.)
+  // taken: an "ok" now is the seller back, never a second acceptance — and
+  // a second break straight after "take your time" means nothing new: the
+  // seller is still away or back, never pausing again (final review INT-RC-4).)
   const pause =
-    !firm && !privacy && !correction && !detectRetraction(sellerMessage) && detectPause(sellerMessage, opts.afterPause ? undefined : prevAiMessage);
+    !opts.afterPause && !firm && !privacy && !correction && !detectRetraction(sellerMessage) && detectPause(sellerMessage, prevAiMessage);
   const stop: StopLevel = firm ? "firm" : !pause && detectStopSignal(sellerMessage, prevAiMessage) ? "soft" : "none";
   // Carrying on: an explicit "let's keep going", or a return from a break
   // ("OK I'm back.", or — right after a "take your time" — "Sorry about that").
@@ -144,6 +152,8 @@ export function quickIntent(sellerMessage: string, prevAiMessage?: string, opts:
     firmStopStands: firm === "stands",
     continueRequest: declined || resumed,
     ...(resumed ? { resumeOnly: true } : {}),
+    // (Named in the message, or a "yes" to an offer of a break and nothing else.)
+    ...(pause && (namesShortBreak(sellerMessage) || interviewerOfferedBreakOnly(prevAiMessage)) ? { pauseNamed: true } : {}),
     sellerQuestion: sellerQuestionFromMessage(sellerMessage),
     retractions: detectRetraction(sellerMessage) && !correction && !privacy ? [{ what: sellerMessage.trim().slice(0, 300) }] : [],
     corrections: correction ? [{ old: "", new: "" }] : [],
@@ -211,12 +221,16 @@ export function combineIntent(quick: SellerIntent, model: SellerIntent | null): 
   // get back to you", "Yes, every 4 hours" (to a question about the
   // business's breaks) are not breaks, and a pattern pause the classifier
   // reads as carrying on no longer swaps the reply for "take your time"
-  // (review F2-INT-2, round 2). One exception: where the classifier reads a
-  // soft stop and the patterns a break ("yes, a short break would help"
-  // after the interviewer offered one), both say the seller is stepping
-  // away — the break, which ends nothing, wins. Never over a firm stop.
+  // (review F2-INT-2, round 2). When the classifier reads a stop, the stop
+  // wins — with one exception: the message itself names a short break and
+  // says nothing of stopping or leaving ("yes, a short break would help",
+  // "back in ten"): both say the seller is stepping away, and the break,
+  // which ends nothing, wins. A bare "yes" to "take a few minutes, or stop
+  // here for today?", "Yes, let's call it a day." or "Hang on, I need to
+  // head out." is the classifier's stop (final review INT-RC-1). Never over
+  // a firm stop.
   const modelStop: StopLevel = stands ? "firm" : model.stop;
-  const pause = modelStop !== "firm" && (model.pause || (quick.pause && modelStop === "soft"));
+  const pause = modelStop !== "firm" && (model.pause || (quick.pause && !!quick.pauseNamed && modelStop === "soft"));
   const stop: StopLevel = pause ? "none" : modelStop;
   return {
     ...model,
@@ -340,7 +354,17 @@ export interface IntentInput {
    * seller's intent.
    */
   labelledExchange?: boolean;
+  /**
+   * The interviewer's last reply was the short-break acknowledgement ("Take
+   * your time… Just say when you're back"): this message is the seller's
+   * first since the break.
+   */
+  afterPause?: boolean;
 }
+
+/** What the classifier is told when the seller is writing after a short break. */
+export const AFTER_PAUSE_NOTE =
+  "THE SELLER IS COMING BACK FROM A SHORT BREAK. The interviewer's previous message below is the question they were answering before the break; the interviewer's last reply was only \"Take your time — everything so far is saved. Just say when you're back and we'll carry on.\" A short reply now (\"ok\", \"back\", \"ready\", \"sorry about that\") is the seller back and carrying on: pause false, continueRequest true. It is never accepting a break again. Only a clear wish to end the session is a stop.";
 
 /** What the classifier is told about a labelled broker-led exchange. */
 export const LABELLED_EXCHANGE_NOTE =
@@ -353,6 +377,7 @@ export function intentPrompt(input: IntentInput): string {
     : "(none)";
   return (
     (input.labelledExchange ? `${LABELLED_EXCHANGE_NOTE}\n\n` : "") +
+    (input.afterPause ? `${AFTER_PAUSE_NOTE}\n\n` : "") +
     `FACTS THE SELLER GAVE EARLIER (key: value):\n${facts}\n\n` +
     (input.prevSellerMessage ? `SELLER'S EARLIER MESSAGE:\n${input.prevSellerMessage.slice(0, 1500)}\n\n` : "") +
     `INTERVIEWER'S PREVIOUS MESSAGE:\n${(input.prevAiMessage ?? "(start of the interview)").slice(0, 1500)}\n\n` +

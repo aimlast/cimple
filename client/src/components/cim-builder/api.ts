@@ -48,6 +48,9 @@ export interface CimReview {
   placeholders: number;
   /** Sections still stating a private staff matter that is now held back. */
   privateStaffSections?: number;
+  /** Sections buyers are still served (the kept copy, or a changed section's approved version) that state a held staff matter. */
+  privateStaffServed?: Array<{ id: string; title: string; descriptions: string[] }>;
+  privateStaffServedFrom?: "kept_copy" | "approved_version" | null;
   /** Facts changed since the CIM was written (null = none). */
   facts: {
     changes: Array<{ label: string; before: string | null; after: string | null }>;

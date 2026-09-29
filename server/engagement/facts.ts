@@ -481,6 +481,8 @@ export function buyerShell(a: BuyerAccess, fit: BuyerFit | null = null): BuyerRe
     decision: a.decision ?? "under_review",
     decisionAt: iso(a.decisionAt),
     contactedAt: contacted,
+    revokedAt: iso(a.revokedAt),
+    expiresAt: iso(a.expiresAt),
     fit,
     visits: [],
     pages: {},

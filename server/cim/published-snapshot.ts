@@ -162,6 +162,24 @@ export async function getPublishedSnapshot(dealId: string): Promise<PublishedCim
   return store.get(dealId);
 }
 
+/**
+ * Take one section out of the kept copy (it stops reaching buyers now, the
+ * draft is untouched) — for a section the broker can't leave in front of
+ * buyers until the update is published, e.g. one still stating a staff
+ * matter now held back. Returns false when there's no such section.
+ */
+export async function withdrawFromPublishedSnapshot(dealId: string, sectionId: string): Promise<boolean> {
+  const snap = await store.get(dealId);
+  if (!snap || !snap.sections.some((s) => String(s.id) === sectionId && s.isVisible !== false)) return false;
+  await store.save(dealId, {
+    sections: snap.sections.map((s) => (String(s.id) === sectionId ? { ...s, isVisible: false } : s)),
+    blindOverrides: snap.blindOverrides,
+    ddOverrides: snap.ddOverrides,
+    blindCodename: snap.blindCodename,
+  });
+  return true;
+}
+
 /** The broker published the new CIM: the kept copy goes. */
 export async function dropPublishedSnapshot(dealId: string): Promise<void> {
   await store.drop(dealId);

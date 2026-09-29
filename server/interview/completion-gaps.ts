@@ -211,6 +211,16 @@ export interface CompletionGapInput {
   now?: SameTurnContext;
   /** Seller-only topics the seller already gave their account of in a call, an email or an earlier session (on-file-evidence.ts). */
   onFileTopics?: readonly string[];
+  /**
+   * The broker's routed questions ("Ask the seller" discrepancies) and
+   * whether this session has brought each up (session-manager
+   * routedDiscrepancyDiscussed). An undiscussed one blocks a self-initiated
+   * end until it is raised or deferred — a follow-up session on a finished
+   * interview has no turn floor, and ending early handed them back to the
+   * broker as "not discussed" (final review INT-RC-3). The seller's stop
+   * still always wins (governance).
+   */
+  routedQuestions?: ReadonlyArray<{ label: string; discussed: boolean }>;
 }
 
 /** Seller-only topics with no seller-sourced fact and no answered exchange (the ledger aside). Pure. */
@@ -242,6 +252,13 @@ export function completionBlockers(input: CompletionGapInput): string[] {
     const src = sources[k];
     return !src || !isSourceKind(src.source) || !["crm", "website", "social"].includes(src.source) || !!src.acceptedByBroker;
   };
+
+  // 0. The broker's routed questions not yet raised or deferred.
+  for (const q of input.routedQuestions ?? []) {
+    if (q.discussed || !q.label.trim()) continue;
+    if (addressedInLedger(input.ledger, input.now, q.label)) continue;
+    out.push(`the broker's question: ${q.label}`);
+  }
 
   // 1. Unreconciled critical conflicts between sources.
   for (const c of input.conflicts ?? []) {

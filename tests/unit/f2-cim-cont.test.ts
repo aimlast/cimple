@@ -147,8 +147,13 @@ import { splitLeaseType } from "../../shared/cim-location";
   assert.ok(p.some((x) => /whom the CIM must leave out/.test(x)), p.join(" | "));
 
   // The named CIM: facts and the section scrub drop the first-name form too; another Maria stays.
-  const screened = screenFactsForCim([["staff", "Maria handles scheduling and billing"], ["frontDesk", "Maria Lopez (receptionist, 6 years)"]], { clauses: [], names: held, pairs: [] } as any);
-  assert.ok(!JSON.stringify(screened.safe).includes("Maria handles"), JSON.stringify(screened.safe));
+  const alone = screenFactsForCim([["staff", "Maria handles scheduling and billing"], ["owner", "Dr. Alan Chen"]], { clauses: [], names: held, pairs: [] } as any);
+  assert.ok(!JSON.stringify(alone.safe).includes("Maria handles"), JSON.stringify(alone.safe));
+  // (Final review F2-CIMTRUTH-1: with ANOTHER Maria on file, "Maria" alone
+  // may be her — the given name alone is no longer matched; the full name is.)
+  const screened = screenFactsForCim([["staff", "Maria handles scheduling and billing"], ["frontDesk", "Maria Lopez (receptionist, 6 years)"], ["payroll", "Maria Chen is paid $62,000"]], { clauses: [], names: held, pairs: [] } as any);
+  assert.ok(JSON.stringify(screened.safe).includes("Maria handles"), JSON.stringify(screened.safe));
+  assert.ok(!JSON.stringify(screened.safe).includes("Maria Chen"), JSON.stringify(screened.safe));
   assert.ok(JSON.stringify(screened.safe).includes("Maria Lopez"));
   assert.equal(screenConfidentialText("The office runs well. Maria keeps the books.", held), "The office runs well.");
   const scrubbed = scrubHeldNames({ layoutType: "prose_highlight", layoutData: { body: "Staff are long-tenured. Maria (owner's spouse) keeps the books." } }, held);

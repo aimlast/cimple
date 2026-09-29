@@ -512,7 +512,11 @@ function attributeOwnerPay(ab: UiAddback, ctx: AddbackRuleContext): { line: UiAd
   const years = Object.keys(actual).sort();
   const latest = years[years.length - 1];
   const list = (ys: string[]) => (ys.length <= 1 ? ys.join("") : `${ys.slice(0, -1).join(", ")} and ${ys[ys.length - 1]}`);
-  if (who && stated) {
+  // (A stated pay that covers none of the analysis years says nothing about
+  // this line: a several-people line then goes to the broker to split below,
+  // never added back whole — final review F2-CIMTRUTH-2.)
+  const statedForSome = !!stated && years.some((y) => (stated.byYear[y] ?? (y === latest ? stated.current : null)) !== null);
+  if (who && stated && (statedForSome || !several)) {
     const payFor = (y: string): number | null => stated.byYear[y] ?? (y === latest ? stated.current : null);
     const over = (y: string) => { const own = payFor(y); return own !== null && actual[y] > own && !within(actual[y], own); };
     const cut = years.filter(over);
@@ -570,11 +574,11 @@ function attributeOwnerPay(ab: UiAddback, ctx: AddbackRuleContext): { line: UiAd
   }
   // Several people's pay, and no stated pay for the person: the broker splits it.
   // (With one owner on file, a "Shareholders' salaries" line is that owner's pay.)
-  if (several && aggregate && ab.approved) {
+  if (several && ab.approved) {
     return {
       line: { ...ab, approved: false, confidence: "low" },
       notes: [
-        `"${ab.label}" is the "${aggregate.name}" line (${years.map((y) => `${fmt(actual[y])} in ${y}`).join(", ")}) — several people's pay. The material doesn't say how much of it is ${who ? `${who.name}'s` : "the selling owner's"}, so it isn't added back until you enter that pay (only the departing owner's pay above a market salary is an add-back).`,
+        `"${ab.label}" is ${aggregate ? `the "${aggregate.name}" line` : "a line"} (${years.map((y) => `${fmt(actual[y])} in ${y}`).join(", ")}) — several people's pay. The material doesn't say how much of it is ${who ? `${who.name}'s` : "the selling owner's"}, so it isn't added back until you enter that pay (only the departing owner's pay above a market salary is an add-back).`,
       ],
       rewrites: [],
     };
