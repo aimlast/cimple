@@ -68,7 +68,7 @@ export function ddRunToast(check: Exclude<DdRunCheck, { kind: "wait" }>): DdRunT
   if (run.notWritten > 0 || run.warnings.length > 0) {
     return {
       title: "Due-diligence version written with gaps",
-      description: `${run.written} section${run.written === 1 ? "" : "s"} written${run.notWritten > 0 ? ` · ${run.notWritten} couldn't be written and kept their previous version — refresh them later` : ""}. The notes are on the CIM tab's Due diligence card.`,
+      description: `${run.written} section${run.written === 1 ? "" : "s"} written${run.notWritten > 0 ? ` · ${run.notWritten} couldn't be written — they're marked "DD out of date" in the builder (due-diligence buyers see the current named version) until you refresh them` : ""}. The notes are on the CIM tab's Due diligence card.`,
       variant: run.notWritten > 0 ? "destructive" : undefined,
       duration: 12000,
     };

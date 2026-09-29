@@ -125,8 +125,14 @@ export function quickIntent(sellerMessage: string, prevAiMessage?: string, opts:
   const privacy = detectPrivacyRequest(sellerMessage);
   const firm = firmStopLevel(sellerMessage);
   // (A short break wins over the soft stop its words may also read as —
-  // "sorry, I have to take this call, back in ten" — never over a firm one.)
-  const pause = !firm && detectPause(sellerMessage, prevAiMessage);
+  // "sorry, I have to take this call, back in ten" — never over a firm one.
+  // Nor is it ever a break when the message asks for privacy, corrects or
+  // withdraws something: "Hold on, keep that out of the book", "Wait,
+  // scratch that" — review F2-FINAL-1.)
+  // (Right after a "take your time", the break offer before it has been
+  // taken: an "ok" now is the seller back, never a second acceptance.)
+  const pause =
+    !firm && !privacy && !correction && !detectRetraction(sellerMessage) && detectPause(sellerMessage, opts.afterPause ? undefined : prevAiMessage);
   const stop: StopLevel = firm ? "firm" : !pause && detectStopSignal(sellerMessage, prevAiMessage) ? "soft" : "none";
   // Carrying on: an explicit "let's keep going", or a return from a break
   // ("OK I'm back.", or — right after a "take your time" — "Sorry about that").

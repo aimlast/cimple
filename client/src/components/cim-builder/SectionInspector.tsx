@@ -182,7 +182,7 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
           <p className="text-muted-foreground">
             {section.ddStatus === "missing"
               ? "This section was added after the due-diligence version was made."
-              : "This section changed after its due-diligence version was made."}{" "}
+              : "This section changed after its due-diligence version was made, or the last due-diligence run couldn't rewrite it."}{" "}
             Due-diligence buyers see the current named version until you refresh it.
           </p>
           <Button

@@ -8,7 +8,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { ConversationMessage } from "@shared/schema";
 import { installHarness, baseDeal, ai, seller, type Harness } from "./turn-harness";
 import { processTurn, startOrResumeSession } from "../../server/interview/session-manager";
-import { PAUSE_REPLY, DEGRADED_TURN_MESSAGE, TRANSIENT_RETRY } from "../../server/interview/turn-guard";
+import { PAUSE_REPLY, PAUSE_REPLY_AFTER_OFFER, DEGRADED_TURN_MESSAGE, TRANSIENT_RETRY } from "../../server/interview/turn-guard";
 import { CONTINUE_AFTER_FAULT } from "../../shared/interview-fault";
 
 TRANSIENT_RETRY.delaysMs = [0, 0];
@@ -27,12 +27,16 @@ const CLOSING = "Before you go, the one thing I'd most like to pin down is your 
 (async () => {
   // ── 1. The finding's scenario: the AI offers a break, the seller takes it, comes back and answers ──
   {
-    const h = installHarness(baseDeal(), { messages: [...history.slice(0, 2), ai(OFFER)] });
+    const h = installHarness(baseDeal(), { messages: [...history.slice(0, 2), ai(OFFER, { suggestedAnswers: ["Yes, a short break", "No, let's keep going"] })] });
     // The classifier as it read this before the fix: a soft stop.
     h.intents.push({ stop: "soft" });
     h.script.push({ message: "Sure — take your time.", shouldEnd: false });
     const t1 = await processTurn("deal-1", "sess-1", "yes, a short break would help");
-    assert.equal(t1.message, PAUSE_REPLY);
+    // (The message above is the offer itself: no "answer the question
+    // above", and the offer's chips are not offered again — F2-FINAL-2.)
+    assert.equal(t1.message, PAUSE_REPLY_AFTER_OFFER);
+    assert.doesNotMatch(t1.message, /question above/);
+    assert.deepEqual(t1.suggestedAnswers, []);
     assert.equal(t1.shouldEnd, false);
     assert.equal(has(h, /Seller stop signal/), false, "not a stop");
     assert.equal(has(h, /short break/), true);
@@ -69,10 +73,12 @@ const CLOSING = "Before you go, the one thing I'd most like to pin down is your 
 
     // A pause during the closing turn: nothing ends; the answer after it still closes.
     const h3 = installHarness(baseDeal(), { messages: [...history, seller("Sorry, I have to go to a meeting."), ai(CLOSING)], sessionMeta: { _stopSignalCount: 1 } });
+    h3.intents.push({ stop: "none", pause: true });
     h3.script.push({ message: "No problem.", shouldEnd: true, endReason: "seller asked to stop" });
     const p = await processTurn("deal-1", "sess-1", "Hang on, let me grab the number.");
     assert.equal(p.shouldEnd, false, "a break is never the end");
     assert.equal(p.message, PAUSE_REPLY);
+    assert.equal(h3.calls.length, 1, "the draft's proposed end never reaches governance (no continuation call)");
     assert.equal(h3.sessions[0].extractedInfo._stopSignalCount, 1, "the stop the closing turn waits on carries over");
     h3.script.push({ message: "Thanks — everything is saved.", shouldEnd: true, endReason: "seller asked to stop" });
     const after = await processTurn("deal-1", "sess-1", "Around $2.5M.");
@@ -192,20 +198,20 @@ const CLOSING = "Before you go, the one thing I'd most like to pin down is your 
       assert.equal(h.sessions[0].messages[h.sessions[0].messages.length - 1].pause, undefined, msg);
       assert.equal(has(h, /short break/), false, msg);
     }
-    // A pattern break the classifier reads as carrying on: the draft written
-    // for a break is redone once for an ordinary turn — never "take your time".
+    // A pattern break the classifier reads as carrying on: the first prompt
+    // was never written for a break, so its draft is shown as it is — one
+    // call, never "take your time" (F2-FINAL-1: it used to be redone).
     {
       const h = installHarness(baseDeal(), { messages: [...history] });
       h.intents.push({ stop: "none", pause: false });
-      h.script.push({ message: "Sure.", shouldEnd: false });
       h.script.push({ message: "Is the lease in the corporation's name or yours?", targetSection: "location_site" });
       const t = await processTurn("deal-1", "sess-1", "brb");
       assert.equal(t.message, "Is the lease in the corporation's name or yours?");
-      assert.equal(has(h, /Intent re-call on session sess-1: not a short break/), true);
-      assert.match(h.systems[0], /# SHORT BREAK/);
-      assert.doesNotMatch(h.systems[1], /# SHORT BREAK/);
+      assert.equal(h.calls.length, 1, "no second full call");
+      assert.equal(has(h, /Intent re-call/), false);
+      assert.doesNotMatch(h.systems[0], /# SHORT BREAK/);
     }
-    ok("F2-INT-2 r2: a question, objection or deferral opening with a pause word gets the model's answer; a pattern break the classifier doesn't confirm is redone as an ordinary turn");
+    ok("F2-INT-2 r2: a question, objection or deferral opening with a pause word gets the model's answer; a pattern break the classifier doesn't confirm is shown as written (one call)");
   }
   {
     // After a stop's closing turn, answers that mention being back end the
@@ -263,6 +269,100 @@ const CLOSING = "Before you go, the one thing I'd most like to pin down is your 
     assert.equal(t.shouldEnd, false);
     assert.equal(has(h, /Seller break read after the reply was shown/), true);
     ok("F2-INT-2 r2: a break the classifier reads only after the reply was shown keeps the shown reply (never swapped)");
+  }
+
+  // ── F2-FINAL-1: a pattern-only break never replaces the model's reply ──
+  {
+    const LARGEST = "What share of revenue does your largest customer account for?";
+    const hist = [...history.slice(0, 2), ai(LARGEST, { suggestedAnswers: ["Under 10%", "10–25%", "Over 25%"] })];
+    // Refusals, objections and hand-offs that open with a pause word — with
+    // the classifier down (no scripted reading → it fails): the model's
+    // reply is shown, one call, no stop counted, nothing stored as a pause.
+    for (const msg of [
+      "Hold on, I'm not comfortable sharing that.",
+      "One moment — that's confidential, I'd rather not say.",
+      "Wait a second, you asked me that already",
+      "Just a moment, my wife handles that side.",
+      "Let me check.",
+      "Let me get that for you.",
+    ]) {
+      const h = installHarness(baseDeal(), { messages: [...hist] });
+      const reply = "How many customers make up most of the revenue, roughly?";
+      h.script.push({ message: reply, targetSection: "customer_base" });
+      const t = await processTurn("deal-1", "sess-1", msg);
+      assert.equal(t.message, reply, msg);
+      assert.equal(h.calls.length, 1, msg);
+      assert.doesNotMatch(h.systems[0], /# SHORT BREAK/, msg);
+      const last = h.sessions[0].messages[h.sessions[0].messages.length - 1];
+      assert.equal(last.pause, undefined, msg);
+      assert.equal(t.shouldEnd, false, msg);
+    }
+    // A genuine break the patterns read while the classifier is down: the
+    // model's own reply (written as an ordinary turn) is shown — never the
+    // canned push to "answer the question above"; no stop is counted.
+    {
+      const h = installHarness(baseDeal(), { messages: [...hist] });
+      const reply = "When you're back, roughly what share of revenue comes from your largest customer?";
+      h.script.push({ message: reply, targetSection: "customer_base" });
+      const t = await processTurn("deal-1", "sess-1", "brb");
+      assert.equal(t.message, reply);
+      assert.equal(h.calls.length, 1);
+      assert.equal(has(h, /Seller break read by the patterns only/), true);
+      assert.equal(h.sessions[0].extractedInfo._stopSignalCount ?? 0, 0);
+      assert.equal(t.shouldEnd, false);
+    }
+    // …streamed too: with the classifier's failure known, the stream gate
+    // shows the model's question as it is written (not held for a break).
+    {
+      const h = installHarness(baseDeal(), { messages: [...hist] });
+      const reply = "When you're back, roughly what share of revenue comes from your largest customer?";
+      h.script.push({ message: reply, targetSection: "customer_base" });
+      let shown = "";
+      const t = await processTurn("deal-1", "sess-1", "brb", (c) => { shown += c; });
+      assert.equal(shown, reply);
+      assert.equal(t.message, reply);
+      assert.equal(h.sessions[0].messages[h.sessions[0].messages.length - 1].pause, undefined);
+    }
+    // …and with the model down too, the break's reply stands in for the
+    // fault notice (an outage never turns "brb" into "press Continue").
+    {
+      const h = installHarness(baseDeal(), { messages: [...hist] });
+      const t = await processTurn("deal-1", "sess-1", "brb");
+      assert.equal(t.message, PAUSE_REPLY);
+      assert.deepEqual(t.suggestedAnswers, ["Under 10%", "10–25%", "Over 25%"], "the question on screen keeps its chips");
+    }
+    // A break the classifier confirms: the fixed reply, from one call (the
+    // prompt never carried a break instruction, so nothing is redone).
+    {
+      const h = installHarness(baseDeal(), { messages: [...hist] });
+      h.intents.push({ stop: "none", pause: true });
+      h.script.push({ message: "Understood.", targetSection: "customer_base" });
+      const t = await processTurn("deal-1", "sess-1", "Give me five minutes");
+      assert.equal(t.message, PAUSE_REPLY);
+      assert.equal(h.calls.length, 1);
+      assert.equal(h.sessions[0].messages[h.sessions[0].messages.length - 1].pause, true);
+    }
+    ok("F2-FINAL-1: refusals, re-ask complaints and hand-offs opening with a pause word get the model's reply; a pattern-only break never replaces it (the fixed reply only when the classifier confirms, or the model is down); never a second call");
+  }
+  // ── F2-FINAL-2: taking the interviewer's offered break ──
+  {
+    const hist = [...history.slice(0, 2), ai(OFFER, { suggestedAnswers: ["Yes, a short break", "No, let's keep going"] })];
+    for (const msg of ["Yes please", "Sure", "A few minutes please"]) {
+      const h = installHarness(baseDeal(), { messages: [...hist] });
+      h.intents.push({ stop: "none", pause: true });
+      h.script.push({ message: "Sure.", shouldEnd: false });
+      const t = await processTurn("deal-1", "sess-1", msg);
+      assert.equal(t.message, PAUSE_REPLY_AFTER_OFFER, msg);
+      assert.deepEqual(t.suggestedAnswers, [], msg);
+    }
+    // Back after it, "ok" is the seller returning — never a second acceptance of the offer (patterns only).
+    {
+      const h = installHarness(baseDeal(), { messages: [...hist, seller("Yes please"), ai(PAUSE_REPLY_AFTER_OFFER, { pause: true })] });
+      h.script.push({ message: "Who holds the Hillhurst lease — you personally or the corporation?", targetSection: "location_site" });
+      const t = await processTurn("deal-1", "sess-1", "ok");
+      assert.equal(t.message, "Who holds the Hillhurst lease — you personally or the corporation?");
+    }
+    ok("F2-FINAL-2: taking the offered break gets 'just say when you're back' with no chips (never 'answer the question above' or the offer's chips again); 'ok' after it carries on");
   }
 
   console.log(`\n${n} groups passed`);

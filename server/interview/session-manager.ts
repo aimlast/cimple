@@ -52,8 +52,7 @@ import {
   type GovernanceResult,
   buildStopSignalNudge,
   buildClosingAnswerNudge,
-  buildPauseNudge,
-  PAUSE_REPLY,
+  pauseReplyFor,
   sanctionedFigureText,
   valuationDeflection,
   DEGRADED_TURN_MESSAGE,
@@ -1452,11 +1451,13 @@ async function processTurnLocked(
     // (A goodbye that asks nothing — it already fits a second stop too.)
     systemBlocks.push({ type: "text", text: buildClosingAnswerNudge() });
     stopNudgeLevel = "firm";
-  } else if (pauseNow) {
-    systemBlocks.push({ type: "text", text: buildPauseNudge() });
   }
-  /** The prompt was written for a short break. */
-  const pauseInPrompt = pauseNow;
+  // (A short break the patterns see puts nothing in the first prompt: the
+  // prompt stays an ordinary turn's until the classifier confirms the
+  // break, whose reply is fixed anyway (PAUSE_REPLY) — so a pattern misread
+  // ("Hold on, I'm not comfortable sharing that.") never costs a second
+  // full call, and without the classifier the model's own reply is shown
+  // (review F2-FINAL-1).)
   // What the first prompt was written for — closingAnswerTurn itself changes
   // once the classifier's reading is in (review RV-INT-5: the "seller chose
   // to continue" re-call read the already-cleared flag and never fired).
@@ -1700,15 +1701,12 @@ async function processTurnLocked(
   // …or the patterns' firm stop went into the prompt (a goodbye, nothing
   // asked) and the classifier reads a soft one: the seller gets their one
   // closing question (a second stop in a row ends anyway).
-  // …or the prompt was written for a short break (or a return) the
-  // patterns saw and the classifier doesn't: "Hang on, why do you need
-  // that?" is the seller's question, and after a stop's closing turn
-  // "Revenue is back now to where it was…" is its answer (review F2-INT-2,
-  // round 2).
+  // …or the patterns saw a break (or a return) where the classifier reads
+  // the answer to a stop's closing turn: "Revenue is back now to where it
+  // was…" (review F2-INT-2, round 2). (A break itself never misfits: the
+  // prompt carries no break instruction, and a confirmed break's reply is
+  // fixed.)
   const promptMisfits = (i: SellerIntent): boolean =>
-    // (A short break the patterns missed.)
-    (i.pause && !pauseInPrompt) ||
-    (pauseInPrompt && !i.pause) ||
     (!closingInPrompt && !patternStopInPrompt && priorStopCount > 0 && i.stop === "none" && !i.pause && !i.continueRequest) ||
     (i.stop !== "none" && (stopNudgeLevel === "none" || (i.stop === "firm" && stopNudgeLevel === "soft"))) ||
     (patternStopInPrompt && stopNudgeLevel === "firm" && i.stop === "soft" && priorStopCount === 0) ||
@@ -1720,6 +1718,14 @@ async function processTurnLocked(
   let intentRecallPending = false;
   /** The intent re-call is running: its draft was written for the final intent. */
   let intentSettled = false;
+  /**
+   * The draft is held for a short break's fixed reply: the classifier reads
+   * one, or the patterns do while the classifier is still out. Once the
+   * classifier has failed (null), a pattern break never replaces the
+   * model's reply — its draft, written as an ordinary turn, goes through
+   * like any other (review F2-FINAL-1).
+   */
+  const heldForBreak = (i: SellerIntent): boolean => i.pause && (i.via === "model" || modelIntent === undefined);
 
   // Call Claude Opus — recovery-wrapped, so a malformed or truncated response
   // retries once and then degrades gracefully instead of dead-ending the seller.
@@ -1804,7 +1810,7 @@ async function processTurnLocked(
     // A short break: the reply is the fixed "take your time" (PAUSE_REPLY),
     // shown when the turn is final — never the model's draft, which only
     // records what the seller said (so it is never stopped or redone).
-    if (intentNow.pause) return true;
+    if (heldForBreak(intentNow)) return true;
     if (!intentSettled && promptMisfits(intentNow)) {
       intentRecallPending = true;
       return false;
@@ -2111,7 +2117,7 @@ async function processTurnLocked(
     const held = heldEnd;
     if (!held || held.call !== call || shown.released || modelIntent === undefined) return;
     const i = pauseGate(combineIntent(quick, modelIntent ?? null));
-    if (i.pause || (!intentSettled && promptMisfits(i))) return;
+    if (heldForBreak(i) || (!intentSettled && promptMisfits(i))) return;
     if (retractionRecallPossible(i) || (valuationFishing && valuationLeak(held.text))) return;
     if (asksQuestion(held.text)) return;
     const st = resolveStopState({ stopNow, stopSignalCount, stopLevel, closingAnswerTurn }, priorStopCount, i);
@@ -2263,8 +2269,23 @@ async function processTurnLocked(
       // stop state stands).
       console.log(`[session-manager] Seller break read after the reply was shown on session ${sessionId} — the shown reply stays`);
       pauseNow = false;
+    } else if (pauseNow && intent.via === "patterns" && !degraded) {
+      // Only the patterns read a break (the classifier failed or was late):
+      // the model's reply — written as an ordinary turn — is shown, never
+      // the canned "take your time… answer the question above", which a
+      // pattern misread turns into a push to answer what the seller just
+      // declined (review F2-FINAL-1). Nothing ends and no stop is counted
+      // (the break's stop state stands). With the model down too, the
+      // break's reply stands in for the fault notice (below).
+      console.log(`[session-manager] Seller break read by the patterns only on session ${sessionId} — the model's reply is shown`);
+      pauseNow = false;
     } else if (pauseNow) {
       console.log(`[session-manager] Seller is taking a short break on session ${sessionId} (${intent.via}) — no stop, nothing ends`);
+      // (The draft was written as an ordinary turn — no break instruction in
+      // the prompt — and its reply is replaced below: an end it proposed
+      // never reaches governance, which could re-call the model for nothing.)
+      aiResponse.shouldEnd = false;
+      aiResponse.endReason = undefined;
     } else if (st.change === "classifier_stop") {
       console.log(`[session-manager] Seller stop signal #${stopSignalCount} (${intent.stop}, classifier) detected on session ${sessionId}`);
     } else if (st.change === "classifier_cleared") {
@@ -2283,7 +2304,7 @@ async function processTurnLocked(
   // the turn stands.)
   if ((intentRecallPending || promptMisfits(intent)) && !shown.released && !pauseNow) {
     const blocks = systemBlocks.filter(
-      (b) => !/^# (?:THE SELLER WANTS TO STOP|SELLER STOP|CLOSING|SHORT BREAK|FINANCIAL-CORE CHECKPOINT|PACING|RECONCILE NOW)\b/.test(b.text),
+      (b) => !/^# (?:THE SELLER WANTS TO STOP|SELLER STOP|CLOSING|FINANCIAL-CORE CHECKPOINT|PACING|RECONCILE NOW)\b/.test(b.text),
     );
     if (stopNow) {
       blocks.push(stopNudge(stopLevel, stopSignalCount, intent.sellerQuestion));
@@ -2296,7 +2317,7 @@ async function processTurnLocked(
     }
     callParams.system = blocks;
     console.warn(
-      `[session-manager] Intent re-call on session ${sessionId}: ${stopNow ? `seller stop (${stopLevel})` : closingAnswerTurn ? "answer to the closing turn" : pauseInPrompt ? "not a short break" : "seller chose to continue"}`,
+      `[session-manager] Intent re-call on session ${sessionId}: ${stopNow ? `seller stop (${stopLevel})` : closingAnswerTurn ? "answer to the closing turn" : "seller chose to continue"}`,
     );
     intentSettled = true;
     intentRecallPending = false;
@@ -2424,8 +2445,14 @@ async function processTurnLocked(
   // from the message stands. (Honoured without the model too — an outage
   // must not turn "be right back" into a fault notice.)
   if (pauseNow) {
-    aiResponse.message = PAUSE_REPLY;
-    aiResponse.suggestedAnswers = [...([...existingMessages].reverse().find((m) => m.role === "ai" && !m.pause)?.suggestedAnswers ?? [])];
+    // (After the interviewer's own offer of a break, the message above is
+    // that offer — no question to go back to, and its chips are not offered
+    // again: review F2-FINAL-2.)
+    const reply = pauseReplyFor(prevAiMessage);
+    aiResponse.message = reply.message;
+    aiResponse.suggestedAnswers = reply.keepChips
+      ? [...([...existingMessages].reverse().find((m) => m.role === "ai" && !m.pause)?.suggestedAnswers ?? [])]
+      : [];
     aiResponse.whyItMatters = undefined;
     aiResponse.targetSection = undefined;
     aiResponse.importance = undefined;

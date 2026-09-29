@@ -1091,18 +1091,6 @@ export function buildClosingAnswerNudge(): string {
   );
 }
 
-/**
- * The seller is stepping away for a moment ("be right back", "hang on, let
- * me grab the lease"). The reply the seller sees is fixed (PAUSE_REPLY) —
- * this only keeps the model's own turn short and its record honest.
- */
-export function buildPauseNudge(): string {
-  return (
-    `# SHORT BREAK\n` +
-    `The seller is stepping away for a moment and coming back to this conversation — it is not a request to stop. Record anything they told you in this message; ask nothing new and don't repeat your last question (it is still on their screen). Reply in one short sentence, set shouldEnd to false, and return suggestedAnswers empty.`
-  );
-}
-
 // "I'll follow up with Donna" — the interviewer can't; the broker does.
 const CLOSING_PROMISE_RE =
   /\b(I)(?:['’]ll| will| can| am going to|['’]m going to)\s+(?:also\s+|personally\s+|make sure to\s+)?(follow up|reach out|be in touch|get in touch|touch base|check in with|contact|email|e-mail|call|phone)\b/g;
@@ -1278,8 +1266,13 @@ const PAUSE_SENTENCE_RE = new RegExp(
     // Going to fetch something ("let me grab the lease") — not "let me get
     // back to you", "let me find out", "let me check with my accountant",
     // "let me get this straight" (DEFER_RE below catches the rest of a
-    // question set aside: "…and send it over", "…after the call").
-    String.raw`\blet me (?:go |quickly |just |run and )?(?:grab|get|find|fetch|pull (?:up|out)|dig (?:out|up)|look (?:it |that |this )?up|check)\b(?! (?:back|out|to you|you|with|in with|on (?:that|this|it) (?:later|tomorrow)|(?:this|that|it) straight))`,
+    // question set aside: "…and send it over", "…after the call"). A bare
+    // "Let me check." / "Let me look that up." / "Let me get that for you."
+    // is not a break on its own — it may be the seller working the answer
+    // out, and the model's reply fits it (review F2-FINAL-1); after a pause
+    // word it still is one ("Hold on, let me check.").
+    String.raw`\blet me (?:go |quickly |just |run and )?(?:grab|fetch|pull (?:up|out)|dig (?:out|up))\b(?! (?:back|out|to you|you|with|in with|on (?:that|this|it) (?:later|tomorrow)|(?:this|that|it) straight))`,
+    String.raw`\blet me (?:go |quickly |just |run and )?(?:get|find)\b(?! (?:back|out|to you|you|with|in with|on (?:that|this|it) (?:later|tomorrow)|(?:this|that|it) straight|(?:that|this|it|them|those)\b(?! (?:file|folder|binder|lease|report|statement|sheet|list|number|figure)s?\b)))`,
     // A break asked for or accepted — "a short break would help", "can we
     // take a quick break?", "I need a breather" — never the business's own
     // ("we give the crew a short break at noon").
@@ -1305,8 +1298,18 @@ const DEFER_RE =
   /\b(?:get back to|come back to|circle back|follow up|send (?:it|that|this|them|those|you)\b|email (?:it|that|you)\b|forward (?:it|that)\b|later\b|afterwards?\b|after (?:the|this|our) (?:call|chat|interview|meeting)\b)/i;
 // Objecting to what the interviewer said ("Hold on, that's not what I said.",
 // "Wait a minute, I never said that.", "Hold on. I already answered that.").
+// …or at being asked again ("Wait a second, you asked me that already.",
+// "Hang on, I told you that last week.", "We went over this.").
 const OBJECTION_RE =
-  /\b(?:that'?s not (?:what i (?:said|meant)|right|true|correct)|that is not (?:what i said|right|true|correct)|not what i (?:said|meant)|i (?:never|didn'?t|did not) (?:say|said|tell|told|mean|meant)|i(?:'ve| have)? already (?:answered|told|said|gave|given|covered|sent|explained)|you(?:'ve| have)? (?:got|get) (?:that|it|this) wrong|that'?s wrong|you already (?:have|asked))\b/i;
+  /\b(?:that'?s not (?:what i (?:said|meant)|right|true|correct)|that is not (?:what i said|right|true|correct)|not what i (?:said|meant)|i (?:never|didn'?t|did not) (?:say|said|tell|told|mean|meant)|i(?:'ve| have)? already (?:answered|told|said|gave|given|covered|sent|explained)|you(?:'ve| have)? (?:got|get) (?:that|it|this) wrong|that'?s wrong|you already (?:have|asked|know)|you(?:'ve| have)? (?:just |already )?asked (?:me )?(?:that|this|it|about (?:that|this|it))(?: (?:already|before|twice|again))?|you(?:'ve| have)? (?:just |already )?asked (?:me )?(?:already|before|twice)|(?:i|we)(?:'ve| have)? (?:just |already )?(?:told|given|sent) (?:you|it to you|that to you)|(?:we|i)(?:'ve| have)? (?:already )?(?:been over|gone over|went over|covered|done) (?:that|this|it)|(?:asked|answered) (?:that|this) (?:already|before|twice))\b/i;
+// Refusing or handing off the question, not stepping away: "Hold on, I'm
+// not comfortable sharing that.", "One moment — that's confidential, I'd
+// rather not say.", "Just a moment, my wife handles that side." A pause
+// word in front of these never makes them a break (review F2-FINAL-1: the
+// canned "take your time… answer the question above" pushed the seller to
+// answer what they had just declined).
+const REFUSAL_RE =
+  /\b(?:(?:not|never) (?:comfortable|happy|willing|prepared|keen|going) (?:(?:with )?(?:sharing|saying|discussing|answering|disclosing|giving|getting into|going into)|to (?:share|say|discuss|answer|disclose|give|get into|go into))|uncomfortable|(?:i'?d|i would|we'?d|we would) (?:rather|prefer) not|prefer not to|rather not (?:say|share|answer|discuss|get into|go into)|(?:that'?s|that is|it'?s|it is|this is|those are|that'?s all|that one'?s) (?:\w+ )?(?:confidential|private|personal|sensitive)\b|none of (?:your|their|anyone'?s) business|(?:don'?t|do not|won'?t|will not|can'?t|cannot) (?:want to |really )?(?:share|say|disclose|discuss|answer|get into|go into|talk about) (?:that|this|it|those)|not (?:going|willing|prepared) to (?:share|say|disclose|discuss|answer)|off the record|between (?:us|you and me)|pass on (?:that|this)|skip (?:that|this)(?: one)?|no comment|(?:not|isn'?t|is not) relevant|irrelevant|why does (?:that|it|this) matter|(?:my|our|the) (?:\w+ ){0,2}(?:handles|looks after|takes care of|deals with|manages|knows|keeps track of|does) (?:that|this|those|it|all (?:of )?(?:that|this|those))\b|\b(?:she|he|they) (?:handles|looks after|takes care of|deals with|manages|knows|keeps track of) (?:that|this|those|all (?:of )?(?:that|this))\b|(?:that'?s|it'?s|that is) (?:my|our|the) \w+'?s? (?:department|side|area|job|thing|call)\b|ask (?:my|our|the) (?:wife|husband|partner|accountant|bookkeeper|lawyer|controller|cfo|manager|son|daughter|brother|sister))/i;
 // A sentence asking for a break ("Can we take a quick break?") is the only
 // kind of question a pause may carry — "Hang on, why do you need that?" and
 // "Just a sec, what do you mean by recurring revenue?" are the seller's own
@@ -1344,7 +1347,7 @@ export function interviewerOfferedBreak(aiMessage: string | undefined): boolean 
 export function detectPause(sellerMessage: string, prevAiMessage?: string): boolean {
   const text = sellerMessage.replace(/[’‘]/g, "'").trim();
   if (!text || firmStopTier(text) !== null || LATER_DAY_RE.test(text)) return false;
-  if (OBJECTION_RE.test(text) || DEFER_RE.test(text)) return false;
+  if (OBJECTION_RE.test(text) || REFUSAL_RE.test(text) || DEFER_RE.test(text)) return false;
   const sentences = sentencesOf(text);
   if (sentences.some((s) => s.includes("?") && (!BREAK_WORD_RE.test(s) || WH_QUESTION_RE.test(s)))) return false;
   // ("Stop. Hang on." — a stop said on its own is never a break.)
@@ -1408,6 +1411,27 @@ export function sellerResumed(sellerMessage: string, opts: { afterPause?: boolea
  */
 export const PAUSE_REPLY =
   "Take your time — everything so far is saved. When you're ready, just answer the question above and we'll carry on from there.";
+
+/**
+ * The reply when the seller takes the break the interviewer offered ("Want
+ * to take a few minutes…?" → "Yes please"): the message above is the offer
+ * itself, so there is no question to point back to — and its chips ("Yes, a
+ * short break") are never offered again (review F2-FINAL-2: tapping one
+ * looped into another "take your time").
+ */
+export const PAUSE_REPLY_AFTER_OFFER =
+  "Take your time — everything so far is saved. Just say when you're back and we'll carry on.";
+
+/**
+ * The fixed reply to a short break, and whether the question on screen
+ * keeps its chips: after the interviewer's own offer of a break there is
+ * no question to go back to.
+ */
+export function pauseReplyFor(prevAiMessage: string | undefined): { message: string; keepChips: boolean } {
+  return interviewerOfferedBreak(prevAiMessage)
+    ? { message: PAUSE_REPLY_AFTER_OFFER, keepChips: false }
+    : { message: PAUSE_REPLY, keepChips: true };
+}
 
 
 // Praise of the seller's question itself ("Great question.", "Good

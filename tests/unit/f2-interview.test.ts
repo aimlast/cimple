@@ -13,7 +13,8 @@ import {
   interviewerOfferedBreak,
   detectStopSignal,
   PAUSE_REPLY,
-  buildPauseNudge,
+  PAUSE_REPLY_AFTER_OFFER,
+  pauseReplyFor,
   DEGRADED_TURN_MESSAGE,
   fallbackQuestion,
   leaksInternalMachinery,
@@ -132,7 +133,6 @@ function patternsTurn(message: string, prevAi: string | undefined, priorStopCoun
     // The pause reply asks nothing (the question on screen is still the one), and the nudge says so.
     assert.equal(asksQuestion(PAUSE_REPLY), false);
     assert.match(PAUSE_REPLY, /saved/);
-    assert.match(buildPauseNudge(), /not a request to stop/);
     // The classifier is told what a pause is, and that a return is carrying on.
     const src = fs.readFileSync(path.join(REPO, "server/interview/seller-intent.ts"), "utf8");
     assert.match(src, /pause: true when the seller is stepping away for a SHORT while/);
@@ -419,6 +419,47 @@ function patternsTurn(message: string, prevAi: string | undefined, priorStopCoun
     const src = fs.readFileSync(path.join(REPO, "server/interview/session-manager.ts"), "utf8");
     assert.match(src, /appended the planned question[\s\S]{0,400}if \(leaksInternalMachinery\(aiResponse\.message\)\) aiResponse\.message = scrubInternalMachinery\(aiResponse\.message\);/);
     ok("F2-INT-10: the mechanical fallback question drops the agent's planning words (probes, ledger, wrap-up, sections) and is checked again after it is appended");
+  }
+
+  // ── F2-FINAL-1 / F2-FINAL-2: pattern precision on breaks; the reply to taking an offered break ──
+  {
+    const Q = "What share of revenue does your largest customer account for?";
+    const noPrior = { stopNow: false, stopSignalCount: 0, stopLevel: "none" as const, closingAnswerTurn: false };
+    // The finding's probe: quickIntent + combineIntent(q, null) + resolveStopState — none is a break.
+    for (const m of [
+      "Hold on, I'm not comfortable sharing that.",
+      "One moment — that's confidential, I'd rather not say.",
+      "Wait a second, you asked me that already",
+      "Just a moment, my wife handles that side.",
+      "Let me check.",
+      "Let me get that for you.",
+    ]) {
+      const q = combineIntent(quickIntent(m, Q), null);
+      assert.equal(q.pause, false, m);
+      assert.equal(resolveStopState(noPrior, 0, q).paused, false, m);
+    }
+    // A privacy request, correction or withdrawal behind a pause word is never a break.
+    for (const m of ["Hold on, keep that out of the book.", "Wait a sec — scratch that, it's 12 years not 10.", "Hang on, scratch that."]) {
+      assert.equal(quickIntent(m, Q).pause, false, m);
+    }
+    // Still breaks: a pause word with a fetch after it, and fetching a named thing.
+    for (const m of ["Hold on, let me check.", "Hold on, let me look that up.", "Let me get the lease.", "Let me grab that file.", "Hang on, let me grab the lease. It's in the office.", "One sec, a customer just walked in."]) {
+      assert.equal(quickIntent(m, Q).pause, true, m);
+    }
+    // After the interviewer's own offer: no "question above", no chips.
+    assert.deepEqual(pauseReplyFor(PAUSE_OFFER), { message: PAUSE_REPLY_AFTER_OFFER, keepChips: false });
+    assert.deepEqual(pauseReplyFor(Q), { message: PAUSE_REPLY, keepChips: true });
+    assert.doesNotMatch(PAUSE_REPLY_AFTER_OFFER, /question above/);
+    assert.equal(asksQuestion(PAUSE_REPLY_AFTER_OFFER), false);
+    // Right after "take your time", an "ok" / "sure" is the seller back — never a second acceptance.
+    for (const m of ["ok", "Sure", "Yes please"]) {
+      assert.equal(quickIntent(m, PAUSE_OFFER).pause, true, m);
+      assert.equal(quickIntent(m, PAUSE_OFFER, { afterPause: true }).pause, false, m);
+    }
+    // The first prompt never carries a break instruction (a misread costs no second call).
+    const src = fs.readFileSync(path.join(REPO, "server/interview/session-manager.ts"), "utf8");
+    assert.doesNotMatch(src, /SHORT BREAK\\n|buildPauseNudge/);
+    ok("F2-FINAL-1/2: refusals, re-ask complaints, hand-offs, privacy requests and bare 'let me check' are not breaks; taking an offered break gets a reply with no 'question above' and no chips");
   }
 
   console.log(`\n${n} groups passed`);

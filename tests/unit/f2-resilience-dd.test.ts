@@ -15,9 +15,11 @@ import assert from "node:assert/strict";
 import fs from "fs";
 import path from "path";
 import { storage } from "../../server/storage";
+import { db } from "../../server/db";
 import {
   _setDdClientForTests,
   _setDdRunWriterForTests,
+  _dbRunWriterForTests,
   DdUnavailableError,
   ddRunning,
   enrichSection,
@@ -95,6 +97,53 @@ const goodFor = (failIds: Set<string>) => ({
   assert.equal(summary.notWritten, 1);
   assert.ok(summary.warnings.some((w) => /Section b.*kept/.test(w)));
   ok("a partial outage writes only the sections it could write; the rest keep their DD version");
+}
+
+// F2-FINAL-3: a section the AI couldn't write in a full re-run keeps its old
+// DD version but is marked out of date, so the builder offers to refresh it
+// and DD buyers read the current named content meanwhile.
+{
+  const calls: any[] = [];
+  _setDdRunWriterForTests(async (_d, _all, written, _at, notWrittenIds) => { calls.push({ written: written.map((w) => w.cimSectionId).sort(), notWrittenIds }); });
+  _setDdClientForTests(goodFor(new Set(["b"])));
+  const startedAt = new Date("2026-09-29T10:00:00Z");
+  await startFullDdGeneration(deal, [sec("a"), sec("b"), sec("c")], inputs, startedAt).done;
+  assert.deepEqual(calls[0], { written: ["a", "c"], notWrittenIds: ["b"] }, "the writer is told which sections weren't written");
+
+  // The database writer, against a recording transaction (no database).
+  const log: Array<{ sql: string; params: unknown[] } | { insert: string[] }> = [];
+  const rec = {
+    update: (t: any) => ({ set: (v: any) => ({ where: (c: any) => { log.push(db.update(t).set(v).where(c).toSQL()); return Promise.resolve([]); } }) }),
+    delete: (t: any) => ({ where: (c: any) => { log.push(db.delete(t).where(c).toSQL()); return Promise.resolve([]); } }),
+    insert: (_t: any) => ({ values: (v: any[]) => { log.push({ insert: v.map((x) => x.cimSectionId) }); return Promise.resolve([]); } }),
+  };
+  const origTx = (db as any).transaction;
+  (db as any).transaction = async (fn: (tx: any) => Promise<unknown>) => fn(rec);
+  const w = (id: string) => ({ cimSectionId: id, layoutData: {}, contentOverride: "" });
+  await _dbRunWriterForTests("d-dd", ["a", "b", "c"], [w("a"), w("c")], startedAt, ["b"]);
+  (db as any).transaction = origTx;
+  const updates = log.filter((l): l is { sql: string; params: unknown[] } => "sql" in l && /^update/.test(l.sql));
+  const staleMark = updates.find((u) => u.params.includes("b"));
+  assert.ok(staleMark, "the unwritten section is updated");
+  assert.match(staleMark!.sql, /set "dd_stale_at" = \$1/);
+  assert.match(staleMark!.sql, /"dd_stale_at" is null/, "an edit's own stale mark is kept");
+  const stamp = staleMark!.params[0];
+  assert.equal(new Date(stamp instanceof Date ? stamp : String(stamp).replace(" ", "T") + (/Z|[+-]\d\d:?\d\d$/.test(String(stamp)) ? "" : "Z")).getTime(), startedAt.getTime(), "stamped with the run's start");
+  assert.ok(staleMark!.params.includes("d-dd"), "scoped to the deal");
+  const fresh = updates.find((u) => /set "dd_stale_at" = \$1/.test(u.sql) && u.params[0] === null);
+  assert.ok(fresh && fresh.params.includes("a") && fresh.params.includes("c") && !fresh.params.includes("b"), "only the written sections are marked fresh");
+  assert.ok(log.every((l) => !("sql" in l) || !/^delete/.test(l.sql) || !(l.params as unknown[]).includes("b") || /not in/.test(l.sql)), "the unwritten section's DD row is not deleted");
+  assert.deepEqual((log.find((l) => "insert" in l) as { insert: string[] }).insert, ["a", "c"]);
+
+  // What that mark means downstream: DD buyers are served the named content.
+  const { buildBuyerCim } = await import("../../shared/cim-buyer-view");
+  const named = { ...sec("b"), dealId: "d-dd", sectionOrder: 1, isVisible: true, accessTier: "full" };
+  const oldDd = { id: "o1", dealId: "d-dd", cimSectionId: "b", mode: "dd", layoutData: { body: "OLD enrichment with Sunnyside." }, contentOverride: "OLD enrichment with Sunnyside." } as any;
+  const before = buildBuyerCim({ deal: { ...deal, cimContent: {} } as any, accessLevel: "due_diligence", sections: [named], overrides: [oldDd] } as any);
+  const after = buildBuyerCim({ deal: { ...deal, cimContent: {} } as any, accessLevel: "due_diligence", sections: [{ ...named, ddStaleAt: startedAt }], overrides: [oldDd] } as any);
+  assert.match(JSON.stringify(before.sections), /OLD enrichment/);
+  assert.doesNotMatch(JSON.stringify(after.sections), /OLD enrichment/);
+  ok("F2-FINAL-3: a section a full re-run couldn't write is marked DD out of date (refreshable; DD buyers see the named version), never shown as fresh");
 }
 
 // Pure plan: a rejection still writes the named version (the DD rules' fallback).

@@ -523,9 +523,16 @@ export function lastDdRun(dealId: string): DdRunSummary | null {
 }
 
 /** Writes a run's results. Swappable for tests. */
-export type DdRunWriter = (dealId: string, allSectionIds: string[], written: DdEnrichmentResult[], startedAt: Date) => Promise<void>;
+export type DdRunWriter = (
+  dealId: string,
+  allSectionIds: string[],
+  written: DdEnrichmentResult[],
+  startedAt: Date,
+  /** Sections the AI couldn't write this run (their DD version, if any, is kept). */
+  notWrittenIds?: string[],
+) => Promise<void>;
 
-const dbRunWriter: DdRunWriter = async (dealId, allSectionIds, written, startedAt) => {
+const dbRunWriter: DdRunWriter = async (dealId, allSectionIds, written, startedAt, notWrittenIds = []) => {
   const ids = written.map((w) => w.cimSectionId);
   await db.transaction(async (tx) => {
     // The written sections' old DD rows, and rows of sections since deleted.
@@ -542,8 +549,24 @@ const dbRunWriter: DdRunWriter = async (dealId, allSectionIds, written, startedA
       // Fresh = written this run and not edited while it ran.
       await tx.update(cimSections).set({ ddStaleAt: null }).where(and(inArray(cimSections.id, ids), lt(cimSections.ddStaleAt, startedAt)));
     }
+    // A section the AI couldn't write keeps its previous DD version — built
+    // from the inputs before this run (a full re-run usually follows new
+    // documents or a re-run analysis). It is marked out of date as of the
+    // run's start: the builder then offers to refresh it ("Refresh DD", the
+    // section's own button), and DD buyers see the current named content
+    // instead of the old enrichment until it is (review F2-FINAL-3: it used
+    // to stay "fresh", so only another full paid run could redo it). A mark
+    // already there (an edit, before or during the run) is left as it is.
+    if (notWrittenIds.length > 0) {
+      await tx
+        .update(cimSections)
+        .set({ ddStaleAt: startedAt })
+        .where(and(eq(cimSections.dealId, dealId), inArray(cimSections.id, notWrittenIds), isNull(cimSections.ddStaleAt)));
+    }
   });
 };
+/** The database writer itself (tests run it against a recording transaction). */
+export const _dbRunWriterForTests: DdRunWriter = dbRunWriter;
 let runWriter: DdRunWriter = dbRunWriter;
 export function _setDdRunWriterForTests(writer: DdRunWriter | null) {
   runWriter = writer ?? dbRunWriter;
@@ -579,7 +602,7 @@ async function runFullDd(deal: Deal, sections: CimSection[], inputs: DdInputs, s
   const warnings = results.map((r) => r.warning).filter((w): w is string => !!w);
   const started = startedAt.toISOString();
   if (plan.error) return { startedAt: started, finishedAt: new Date().toISOString(), error: plan.error, written: 0, notWritten: plan.notWritten.length, warnings };
-  await runWriter(deal.id, sections.map((s) => String(s.id)), plan.write, startedAt);
+  await runWriter(deal.id, sections.map((s) => String(s.id)), plan.write, startedAt, plan.notWritten.map((r) => r.cimSectionId));
   return { startedAt: started, finishedAt: new Date().toISOString(), written: plan.write.length, notWritten: plan.notWritten.length, warnings };
 }
 

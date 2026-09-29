@@ -315,6 +315,22 @@ export const NOT_PAUSES: string[] = [
   "I need to take this call seriously, a buyer asked about the lease.",
   "brb is what my staff text me all day",
   "Stop. Hang on.",
+  // Refusals, re-ask complaints and hand-offs behind a pause word, and a
+  // bare "let me check" (review F2-FINAL-1: the canned "take your time…
+  // answer the question above" pushed the seller to answer what they had
+  // just declined).
+  "Hold on, I'm not comfortable sharing that.",
+  "One moment — that's confidential, I'd rather not say.",
+  "Wait a second, you asked me that already",
+  "Just a moment, my wife handles that side.",
+  "Hang on, I told you that last week.",
+  "Hold on, we went over this.",
+  "One sec — that's private.",
+  "Just a minute, I'd prefer not to get into that.",
+  "Hang on, why does that matter?",
+  "Let me check.",
+  "Let me get that for you.",
+  "Let me look that up.",
 ];
 /** A question about the business's own breaks — not the interviewer offering one. */
 export const BUSINESS_BREAK_Q = "Do your therapists take a break between patient blocks?";
