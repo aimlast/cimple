@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useSearch } from "wouter";
 import { useDeal } from "@/contexts/DealContext";
 import { InterviewTranscriptPanel } from "@/components/deal/InterviewTranscriptPanel";
+import { OpenInterviewItemsCard } from "@/components/deal/OpenInterviewItemsCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ShieldAlert, ChevronDown, ChevronUp } from "lucide-react";
@@ -169,6 +170,7 @@ export function InterviewReviewTab() {
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-6 space-y-6">
+      <OpenInterviewItemsCard dealId={dealId} />
       <BrokerPrivateNotesPanel notes={privateNotes} />
       <InterviewTranscriptPanel dealId={dealId} focusSessionId={focusSessionId} focusTurn={focusTurn} />
     </div>

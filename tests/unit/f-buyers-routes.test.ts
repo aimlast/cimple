@@ -73,6 +73,13 @@ async function main() {
     getBuyerAccessByBuyerUser: async (bid: string) => T.access.filter((a) => a.buyerUserId === bid),
     createBuyerAccess: async (row: any) => { const r = { id: id("A"), decision: "under_review", viewCount: 0, ndaSigned: false, ...row }; T.access.push(r); return r; },
     updateBuyerAccess: async (aid: string, patch: any) => { const r = upd("access", aid, patch); return r ? { ...r } : r; },
+    // Like the database: records a signature only on a link that hasn't signed.
+    recordBuyerNdaSignature: async (aid: string, patch: any) => {
+      const a = find("access", (x) => x.id === aid);
+      if (!a || a.ndaSigned) return undefined;
+      const r = upd("access", aid, { ...patch, ndaSigned: true });
+      return r ? { ...r } : r;
+    },
     getBuyerUser: async (bid: string) => read("buyers", (b) => b.id === bid),
     getBuyerUserByEmail: async (e: string) => read("buyers", (b) => b.email === e.toLowerCase().trim()),
     createBuyerUser: async (row: any) => { const r = { id: id("U"), ...row }; T.buyers.push(r); return r; },
@@ -240,7 +247,8 @@ async function main() {
   assert.equal(await processReminderForAccess(oldGated as any, now, "https://app.test"), "none", "F6: unsigned NDA → no reminder");
   assert.equal(sent.filter((m) => m.to.includes("sam@buyer.invalid")).length, 0);
   // Content served (LOI buyer, named CIM, NDA signed) → counted once.
-  T.sections.push({ id: "S1", dealId: "D1", sectionKey: "executiveSummary", sectionTitle: "Summary", order: 0, layoutType: "prose_highlight", layoutData: {}, aiDraftContent: "A practice.", brokerEditedContent: null, isVisible: true });
+  // (Approved: on a live CIM only approved content reaches buyers — shared/cim-published.ts.)
+  T.sections.push({ id: "S1", dealId: "D1", sectionKey: "executiveSummary", sectionTitle: "Summary", order: 0, layoutType: "prose_highlight", layoutData: {}, aiDraftContent: "A practice.", brokerEditedContent: null, isVisible: true, brokerApproved: true });
   const served = mkAccess({ accessLevel: "loi", ndaSigned: true });
   res = await call("GET", `/api/view/${served.accessToken}`);
   assert.equal(res.status, 200, res.text);

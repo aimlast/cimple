@@ -60,6 +60,8 @@ export interface BuyerSyncStatus {
   updated?: number;
   unchanged?: number;
   skippedNoEmail?: number;
+  /** People the broker removed from their buyers — never added back by a sync. */
+  skippedRemoved?: number;
   errors?: number;
   message?: string;
 }
@@ -272,7 +274,7 @@ export async function startPipedriveBuyerSync(brokerId: string, settings: BuyerS
   if (running.get(brokerId)?.state === "running") return { started: false, reason: "already_running" };
   const integration = await getPipedriveIntegration(brokerId);
   if (!integration) return { started: false, reason: "not_connected" };
-  const status: BuyerSyncStatus = { state: "running", startedAt: new Date().toISOString(), processed: 0, created: 0, updated: 0, unchanged: 0, skippedNoEmail: 0, errors: 0 };
+  const status: BuyerSyncStatus = { state: "running", startedAt: new Date().toISOString(), processed: 0, created: 0, updated: 0, unchanged: 0, skippedNoEmail: 0, skippedRemoved: 0, errors: 0 };
   running.set(brokerId, status);
   await saveSyncState(integration, { settings, status });
   void runSync(integration, settings, status, opts.limit)
@@ -344,6 +346,13 @@ async function runSync(integration: Integration, settings: BuyerSyncSettings, st
   const optionLabels = new Map<string, string>();
   for (const f of personFields) for (const o of f.options || []) optionLabels.set(`${f.key}:${o.id}`, String(o.label));
 
+  // Buyers the broker removed from their list stay removed: a sync never
+  // re-creates them (by their buyer account or by this CRM person).
+  const removedRows = await storage.getRemovedBrokerBuyerContacts(brokerId);
+  const removedBuyerIds = new Set(removedRows.map((c) => c.buyerUserId));
+  const removedPersonIds = new Set(removedRows.filter((c) => c.crmProvider === "pipedrive" && c.crmRecordId).map((c) => String(c.crmRecordId)));
+  const skipRemoved = () => { status.skippedRemoved = (status.skippedRemoved ?? 0) + 1; status.processed!++; };
+
   let list = Array.from(candidates.values()).slice(0, limit ?? MAX_CONTACTS_PER_RUN);
   status.total = list.length;
 
@@ -364,6 +373,7 @@ async function runSync(integration: Integration, settings: BuyerSyncSettings, st
 
   await mapLimit(list, 4, async (cand) => {
     try {
+      if (removedPersonIds.has(String(cand.personId))) { skipRemoved(); return; }
       const person = (await pd(token, `/v1/persons/${cand.personId}`))?.data;
       const email = firstEmail(person);
       if (!person || !email) { status.skippedNoEmail!++; status.processed!++; return; }
@@ -374,6 +384,7 @@ async function runSync(integration: Integration, settings: BuyerSyncSettings, st
 
       // Contact basics go on the global row only when missing there.
       let buyer: BuyerUser | undefined = await storage.getBuyerUserByEmail(email);
+      if (buyer && removedBuyerIds.has(buyer.id)) { skipRemoved(); return; }
       let created = false;
       const name = String(person.name || email);
       const orgName = typeof person.org_id === "object" ? person.org_id?.name ?? null : person.org_name ?? null;
@@ -395,7 +406,17 @@ async function runSync(integration: Integration, settings: BuyerSyncSettings, st
       }
       let contact = await storage.getBrokerBuyerContact(brokerId, buyer.id);
       if (!contact) {
+        // The removed list above was read when the sync started (runs take
+        // minutes): a buyer the broker removed since then is checked again
+        // right before a row is made — and once more after, so a removal
+        // that lands in between takes the new row back off.
+        if (await storage.getRemovedBrokerBuyerContact(brokerId, buyer.id)) { skipRemoved(); return; }
         contact = await storage.createBrokerBuyerContact({ brokerId, buyerUserId: buyer.id, source: "crm", tags: [] as any, notes: null } as any);
+        if (await storage.getRemovedBrokerBuyerContact(brokerId, buyer.id)) {
+          await storage.deleteBrokerBuyerContact(contact.id);
+          skipRemoved();
+          return;
+        }
         created = true;
       }
 

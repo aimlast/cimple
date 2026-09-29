@@ -51,9 +51,11 @@ import { CimCanvas, type PreviewAs } from "@/components/cim-builder/CimCanvas";
 import { AddSectionDialog } from "@/components/cim-builder/AddSectionDialog";
 import { ChangeLayoutDialog } from "@/components/cim-builder/ChangeLayoutDialog";
 import { builderRequest, errorText, type BuilderSection } from "@/components/cim-builder/api";
+import { useDdRun } from "@/components/cim-builder/useDdRun";
 import { useDealDesign } from "@/components/cim-design/api";
 import { DesignPanel } from "@/components/cim-design/DesignPanel";
-import { cimModeForAccessLevel } from "@shared/cim-layouts";
+import { cimModeForAccessLevel, hasSampleData } from "@shared/cim-layouts";
+import { sectionsAwaitingApproval } from "@shared/cim-approvals";
 
 const PREVIEWS: Array<{ key: PreviewAs; label: string; hint: string }> = [
   { key: "editor", label: "Editing", hint: "Everything, with your edit controls" },
@@ -141,6 +143,8 @@ export default function CIMDesigner() {
   const branding = buildBranding(brandingSettings as any, deal ?? null);
   const selected = sections.find((s) => s.id === selectedId) ?? null;
   const approvedCount = sections.filter((s) => s.brokerApproved).length;
+  // Shown sections not approved as they stand (one rule with the Overview and the server).
+  const awaitingCount = sectionsAwaitingApproval(sections, deal ?? null).length;
   // What "Regenerate all" does to buyers who can open the CIM now.
   const regenImpact = regenerateBuyerImpact({
     isLive: state?.deal.isLive,
@@ -180,20 +184,17 @@ export default function CIMDesigner() {
     onError: (e) => toast({ title: "Couldn't start generating", description: errorText(e), variant: "destructive" }),
   });
   const generateVersion = useMutation({
-    mutationFn: (mode: "blind" | "dd") => builderRequest<{ warnings?: string[] }>("POST", `/api/deals/${dealId}/generate-${mode}`),
-    onSuccess: (r, mode) => {
+    mutationFn: () => builderRequest("POST", `/api/deals/${dealId}/generate-blind`),
+    onSuccess: () => {
       builder.refresh();
       qc.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      const kept = mode === "dd" ? r?.warnings ?? [] : [];
-      toast({
-        title: mode === "blind" ? "Blind version ready" : "Due-diligence version ready",
-        // Enrichments that would have changed a figure or named someone not on
-        // file are discarded — those sections show the named CIM.
-        description: kept.length > 0 ? `${kept.length} section${kept.length === 1 ? "" : "s"} kept as the named CIM: ${kept[0]}` : undefined,
-      });
+      toast({ title: "Blind version ready" });
     },
     onError: (e) => toast({ title: "Couldn't generate that version", description: errorText(e), variant: "destructive" }),
   });
+  // The DD version is written in the background (202): stay busy while it
+  // runs and announce its real outcome (useDdRun) — never "ready" up front.
+  const ddRun = useDdRun(dealId, { dd: state?.dd, fetchedAt: builder.query.dataUpdatedAt, refetch: builder.query.refetch });
 
   const generating = generation.isRunning || generateAll.isPending;
 
@@ -289,7 +290,8 @@ export default function CIMDesigner() {
             variant="ghost"
             size="sm"
             className="w-full h-7 text-xs text-teal hover:text-teal"
-            onClick={() => sections.filter((s) => !s.brokerApproved).forEach((s) => builder.patch.mutate({ id: s.id, brokerApproved: true }))}
+            // A section still showing sample data can't be approved (the inspector says why).
+            onClick={() => sections.filter((s) => !s.brokerApproved && !hasSampleData(s)).forEach((s) => builder.patch.mutate({ id: s.id, brokerApproved: true }))}
           >
             Approve all sections
           </Button>
@@ -301,6 +303,18 @@ export default function CIMDesigner() {
   const pagePane = (
     <div className="h-full min-h-0 overflow-y-auto scrollbar-thin bg-muted/20" id="cim-builder-page">
       <div className="max-w-[900px] mx-auto px-3 py-5 sm:px-6 sm:py-8 space-y-4">
+        {/* A live CIM: say plainly what an edit does to buyers (shared/cim-published.ts). */}
+        {!readOnly && state?.deal.isLive && (
+          <div className="rounded-lg border border-teal/30 bg-teal-muted/30 px-3 py-2 text-xs" data-testid="live-cim-notice">
+            <p className="font-medium text-foreground">This CIM is live.</p>
+            <p className="text-muted-foreground mt-0.5">
+              Buyers keep seeing each section as you last approved it. A change — yours or the AI's — reaches them once you approve that section.
+              {awaitingCount > 0 && (
+                <span className="text-amber-500"> {awaitingCount === 1 ? "1 changed section is" : `${awaitingCount} changed sections are`} waiting for your approval.</span>
+              )}
+            </p>
+          </div>
+        )}
         {/* App chrome above the paper: what this preview is */}
         {readOnly && (
           <PreviewBanner
@@ -316,7 +330,9 @@ export default function CIMDesigner() {
             onRefreshDd={() => builder.refreshAllDd.mutate(undefined as never)}
             loading={overridesLoading}
             busy={generateVersion.isPending}
-            onGenerate={(m) => generateVersion.mutate(m)}
+            ddBusy={ddRun.busy}
+            ddLastError={state?.dd.lastRun?.error ?? null}
+            onGenerate={(m) => (m === "dd" ? ddRun.start() : generateVersion.mutate())}
             onRetryBlind={() => builder.refreshBlind.mutate(undefined as never)}
             onBackToEditing={() => setPreviewAs("editor")}
           />
@@ -342,6 +358,7 @@ export default function CIMDesigner() {
             deal={deal}
             branding={branding}
             design={designPayload}
+            askingPrice={state?.deal.listedAskingPrice}
             selectedId={selectedId}
             onSelect={(id) => select(id, "page")}
             onAddAfter={(id) => openAdd(id)}
@@ -690,7 +707,7 @@ export default function CIMDesigner() {
 
 // ── Preview banner (app chrome above the paper) ─────────────────────────
 function PreviewBanner({
-  previewAs, hint, blindGenerated, blindUpdating, blindHeld, blindError, ddGenerated, ddOutOfDate, ddRunning, onRefreshDd, loading, busy, onGenerate, onRetryBlind, onBackToEditing,
+  previewAs, hint, blindGenerated, blindUpdating, blindHeld, blindError, ddGenerated, ddOutOfDate, ddRunning, onRefreshDd, loading, busy, ddBusy, ddLastError, onGenerate, onRetryBlind, onBackToEditing,
 }: {
   previewAs: PreviewAs;
   hint: string;
@@ -703,7 +720,12 @@ function PreviewBanner({
   ddRunning: boolean;
   onRefreshDd: () => void;
   loading: boolean;
+  /** Generating the blind version. */
   busy: boolean;
+  /** Writing the DD version (or waiting for its result). */
+  ddBusy: boolean;
+  /** Why the last DD run changed nothing. */
+  ddLastError: string | null;
   onGenerate: (m: "blind" | "dd") => void;
   onRetryBlind: () => void;
   onBackToEditing: () => void;
@@ -734,8 +756,15 @@ function PreviewBanner({
         </Notice>
       )}
       {previewAs === "due_diligence" && !ddGenerated && (
-        <Notice tone="blue" action={<Button size="sm" className="h-7 text-xs bg-blue-500 text-white hover:bg-blue-400" disabled={busy} onClick={() => onGenerate("dd")}>{busy ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}Generate DD version</Button>}>
-          No due-diligence version yet — DD buyers currently see the named CIM without the extra detail.
+        <Notice tone="blue" action={<Button size="sm" className="h-7 text-xs bg-blue-500 text-white hover:bg-blue-400" disabled={ddBusy} onClick={() => onGenerate("dd")} data-testid="button-generate-dd">{ddBusy ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}{ddBusy ? "Writing…" : "Generate DD version"}</Button>}>
+          {ddBusy
+            ? "Writing the due-diligence version — about 20 seconds a section. It keeps going if you leave this page."
+            : "No due-diligence version yet — DD buyers currently see the named CIM without the extra detail."}
+          {!ddBusy && ddLastError && (
+            <span className="mt-1.5 flex items-start gap-1 text-amber-500" role="status" data-testid="dd-last-run-error">
+              <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" /><span>{ddLastError}</span>
+            </span>
+          )}
         </Notice>
       )}
       {previewAs === "due_diligence" && ddGenerated && ddOutOfDate > 0 && (

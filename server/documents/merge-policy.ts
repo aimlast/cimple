@@ -65,6 +65,7 @@ import {
 } from "../interview/info-merger";
 import { shareClaimsConflict } from "./conflict-measures";
 import { settleSelfContradictions } from "./self-contradiction";
+import { addressInTitle, isPremisesLeaseTitle } from "./lease-kind";
 
 type Info = Record<string, unknown>;
 const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -134,7 +135,7 @@ function isStatementsTitle(title: string): boolean {
 }
 
 /** A dedicated source for a fact: [fact key pattern, source title pattern or test]. */
-const SPECIALIST_SOURCES: Array<[RegExp, RegExp | ((title: string) => boolean)]> = [
+const SPECIALIST_SOURCES: Array<[RegExp, RegExp | ((title: string, facts?: Record<string, unknown>) => boolean)]> = [
   // Book figures: the financial statements, not a tax return's version of them
   // and not a management report that happens to contain a P&L.
   [/^(annualRevenue|revenueByYear|grossProfit\w*|grossMargin|netIncome\w*|netProfit|operatingIncome|operatingExpenses\w*|totalExpenses\w*|cogs|costOfGoodsSold|costOfSales|ebitda\w*|accountsReceivable\w*|accountsPayable\w*|inventor\w*|totalAssets\w*|totalLiabilities\w*|currentAssets\w*|otherCurrentAssets\w*|currentLiabilities\w*|longTermDebt\w*|bankIndebtedness\w*|shareholderLoans?\w*|retainedEarnings\w*|shareholdersEquity\w*|depreciation\w*|amortization\w*|interestExpense\w*|fixedAssets\w*|prepaid\w*|accrued\w*|cash\w*)$/,
@@ -159,15 +160,16 @@ const SPECIALIST_SOURCES: Array<[RegExp, RegExp | ((title: string) => boolean)]>
   // its figures are receivables measures (see receivablesMeasureKey).
   [/^(customerConcentration|topCustomers?|largestCustomer|customerBase|customerList)$/,
     /customer (?:list|sales|revenue|concentration|analysis)|top (?:\d+ )?customers|sales by customer|revenue by customer|concentration/i],
-  [/^(lease\w*|monthlyRent|annualRent|rent|landlord|propertyInfo)$/, /\blease\b/i],
+  // The premises lease — not a forklift, truck or copier lease (lease-kind.ts).
+  [/^(lease\w*|monthlyRent|annualRent|rent|landlord|propertyInfo)$/, isPremisesLeaseTitle],
   [/^(shareholders?|shareholding|ownershipSplit|directors?|officers?|incorporat\w*|entityType|legalName)$/,
     /minute book|articles|shareholders'? agreement|operating agreement|corporate (?:profile|registry|search)|certificate of (?:incorporation|status)/i],
 ];
 
 /** True when the source (by its title / type) is a dedicated source for `key`. */
-export function isSpecialistSource(key: string, sourceTitle: string | null | undefined): boolean {
+export function isSpecialistSource(key: string, sourceTitle: string | null | undefined, facts?: Record<string, unknown>): boolean {
   if (!sourceTitle) return false;
-  return SPECIALIST_SOURCES.some(([k, t]) => k.test(key) && (typeof t === "function" ? t(sourceTitle) : t.test(sourceTitle)));
+  return SPECIALIST_SOURCES.some(([k, t]) => k.test(key) && (typeof t === "function" ? t(sourceTitle, facts) : t.test(sourceTitle)));
 }
 
 /**
@@ -396,7 +398,7 @@ export function normaliseYearKey(key: string): string | null {
   m = k.match(/^(?:fy|fiscal(?:\s+year)?)\s*(\d{2})\s*[\/–—-]\s*(\d{2})$/i);
   if (m) return `20${m[2]}`;
   const years = k.match(/(?:19|20)\d{2}/g);
-  if (years && years.length === 1 && /^(?:fy|fiscal|year|ye|ended|end|dec(?:ember)?|jun(?:e)?|mar(?:ch)?|sep(?:tember)?|[\s.,'()\d-])*$/i.test(k)) return years[0];
+  if (years && years.length === 1 && /^(?:fye?|fiscal|year|ye|ended|ending|end|for|the|of|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*|[\s.,'()\d-])*$/i.test(k)) return years[0];
   return null;
 }
 
@@ -408,12 +410,16 @@ const METRIC_WORDS: Array<[string, RegExp]> = [
   ["cashflow", /\bcash ?flow\b/i],
 ];
 function metricFamily(metric: string): string {
-  const m = metric.toLowerCase();
-  if (/sde|discretionary/.test(m)) return "sde";
-  if (/ebitda/.test(m)) return "ebitda";
-  if (/profit|income|margin|earnings/.test(m)) return "profit";
-  if (/cash/.test(m)) return "cashflow";
-  return m.includes("revenue") || m.includes("sales") ? "revenue" : m;
+  // Judged by the key's words: "activeDriversDecember" holds the letters
+  // "sDe" but is no SDE figure.
+  const words = processKeyWords(metric);
+  const has = (re: RegExp) => words.some((w) => re.test(w));
+  if (has(/^(?:sde|discretionary)$/)) return "sde";
+  if (has(/ebitda/)) return "ebitda";
+  // (One run-together word — "netprofit", "grossincome" — by its letters.)
+  if (has(/^(?:profits?|income|margins?|earnings)$/) || (words.length === 1 && /profit|income|margin|earnings/.test(words[0]))) return "profit";
+  if (has(/^cash(?:flows?)?$/)) return "cashflow";
+  return has(/^(?:revenues?|sales)$/) ? "revenue" : metric.toLowerCase();
 }
 
 /**
@@ -436,13 +442,55 @@ export function isUnreviewedFigure(value: string): boolean {
   return /\b(?:unreviewed|not (?:yet )?(?:been )?reviewed|un-reviewed|management (?:numbers|estimates?)|mgmt (?:numbers|figures|estimates?)|unaudited management|preliminary|provisional|pending (?:compilation|review|audit|year[- ]end|completion|statements?)|not (?:yet )?final(?:i[sz]ed)?|before year[- ]end)\b/i.test(value);
 }
 
+/**
+ * Notes that say a figure is the whole year's, not a part: "only full year
+ * on file", "only audited year", "the only year on file", "only reviewed
+ * statements", "FY2024 only", "full year only", "12 months only".
+ */
+const WHOLE_YEAR_ONLY = new RegExp(
+  String.raw`\b(?:the\s+)?only\s+(?:(?:the|a|one)\s+)?(?:full|complete|audited|reviewed|compiled|fiscal|financial|reported|annual|year|years|period|statements?|return|t2|figures?|numbers?|values?|amounts?|sources?|documents?|data|one)\b` +
+  String.raw`|\b(?:fy\s?'?\d{2,4}|(?:19|20)\d{2}|(?:full|fiscal|calendar|whole)\s+year|annual|audited|reviewed|12[\s-]months?|twelve months)\s+only\b`,
+  "gi");
+
 /** Part of the business ("$6.8M (Alderbrook only)") — not the year's total. */
 export function isSubsetFigure(value: string): boolean {
-  return /\b(?:only|alone|segment|division|client|customer)\b/i.test(value);
+  // "(Alderbrook only)", "Surrey location alone", "the retail segment",
+  // "from our largest customer", "for one client". Not a word that merely
+  // appears in a note about the whole year's figure: "(audited; only full
+  // year on file)", "(net of customer rebates)", "(per client statements)".
+  if (/\b(?:segments?|divisions?)\b/i.test(value) && !/\b(?:all|every|total|combined|consolidated)\b[^.;)]*\b(?:segments?|divisions?)\b/i.test(value)) return true;
+  // "X only" / "X alone" / "only X" is a part of the business ("service
+  // revenue only", "commercial work only", "installs only, excludes service",
+  // "only the Burnaby clinic") — unless every "only" / "alone" in it is one
+  // of the known notes about the whole year's figure ("only full year on
+  // file", "the only audited year", "FY2024 only").
+  const partWords = value.replace(WHOLE_YEAR_ONLY, " ");
+  if (/\b(?:only|alone)\b/i.test(partWords)) return true;
+  // Revenue from one place: "from the Hamilton branch", "at our Barrie location".
+  if (/\b(?:from|at|of)\s+(?:the|our|its|one|a)\s+(?:[A-Z][\w&'’.-]*\s+){0,3}(?:location|site|store|branch|clinic|shop|plant|facility|office|region|division|segment|department)\b/.test(value)) return true;
+  // Revenue from / for one customer or client.
+  return /\b(?:from|for|to|with|by)\s+(?:(?:a|one|the|single|largest|biggest|top|key|main|major|anchor|our|its)\s+)+(?:customer|client|account)\b/i.test(value) ||
+    /\b(?:largest|biggest|top|single|one|key|anchor)\s+(?:customer|client)\b/i.test(value);
 }
 
-/** Metrics measured in money (a year's value must state an amount); margins and counts are not. */
-const MONEY_METRIC = /revenue|sales|profit|income|ebitda|sde|earnings|cash|receivable|payable|assets?|liabilit|debt|expense|cost|payroll|wage|rent|inventor|equity/i;
+/** A key word naming a money measure ("revenue", "costs", "sde"). */
+const MONEY_WORD = /^(?:revenues?|sales|profits?|income|ebitda|sde|earnings|cash|receivables?|payables?|assets?|liabilit(?:y|ies)|debts?|expenses?|costs?|cogs|payroll|wages?|rents?|inventor(?:y|ies)|equity)$/;
+/** The same, inside one run-together lower-case word ("grossprofit", "totalrevenue"). */
+const MONEY_LETTERS = /revenue|sales|profit|income|ebitda|earnings|receivable|payable|liabilit|expense|payroll|inventor/;
+
+/**
+ * Metrics measured in money (a year's value must state an amount); margins
+ * and counts are not. Judged by the key's words, so a count whose name
+ * merely contains a money word's letters ("activeDriversDecember" holds
+ * "sDe", "currentStaff" holds "rent", "costumes" holds "cost") is not one.
+ */
+const MONEY_METRIC = {
+  test(metric: string): boolean {
+    const words = processKeyWords(metric);
+    if (words.some((w) => MONEY_WORD.test(w))) return true;
+    return words.length === 1 && MONEY_LETTERS.test(words[0]);
+  },
+};
 
 export interface CleanYearMap {
   map: Record<string, string>;
@@ -744,16 +792,106 @@ function sameOrigin(a: FieldSource, b: FieldSource): boolean {
   return !a.documentId && !b.documentId && a.source === b.source && a.sessionId === b.sessionId;
 }
 
+/** "240 Bayfront Commerce Drive, Hamilton" → "240 bayfront" (street number + first street word), for comparing two leases' premises. */
+function addressIdentity(text: string): string | undefined {
+  const m = text.match(/\b(\d{1,6})(?:[-–]\d{1,6})?\s+([A-Za-z][\w'’]*)/);
+  if (m) return `${m[1]} ${m[2].toLowerCase()}`;
+  const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+  return words.length > 0 ? words.slice(0, 3).join(" ") : undefined;
+}
+
+/** Words of a lease document's title that don't name a place. */
+const LEASE_TITLE_FILLER = new Set([
+  "lease", "leases", "agreement", "agreements", "premises", "commercial", "the", "a", "an", "of", "for", "and", "to", "at", "on",
+  "amending", "amendment", "amended", "renewal", "renewed", "extension", "extended", "new", "original", "signed", "executed",
+  "copy", "draft", "final", "pdf", "docx", "doc", "txt", "scan", "scanned", "summary", "term", "terms", "expires", "expiry",
+  "expiring", "dated", "from", "until", "yrs", "years", "year", "options", "option", "offer", "notice", "letter", "schedule",
+  "addendum", "assignment", "consent", "indenture", "sublease", "head", "current", "existing", "old", "revised",
+  "jan", "january", "feb", "february", "mar", "march", "apr", "april", "may", "jun", "june", "jul", "july", "aug", "august",
+  "sep", "sept", "september", "oct", "october", "nov", "november", "dec", "december",
+]);
+
+/**
+ * Which premises a lease is for: "addr:240 bayfront" from an address (the
+ * lease's own leaseAddress, else its title's), else "name:hillhurst clinic"
+ * from the place its title names; undefined for a title that names no place
+ * ("Lease amending agreement", "Premises lease 2019").
+ */
+export function premisesKey(title: string | null | undefined, leaseAddress?: string | null): string | undefined {
+  if (leaseAddress && leaseAddress.trim()) {
+    const id = addressIdentity(leaseAddress);
+    if (id) return `addr:${id}`;
+  }
+  if (!title) return undefined;
+  const fromTitle = addressInTitle(title);
+  if (fromTitle) {
+    const id = addressIdentity(fromTitle);
+    if (id) return `addr:${id}`;
+  }
+  const words = title.split(/\s+·\s+/)[0].toLowerCase().split(/[^a-z]+/).filter((w) => w.length >= 2 && !LEASE_TITLE_FILLER.has(w));
+  return words.length > 0 ? `name:${words.join(" ")}` : undefined;
+}
+
+/**
+ * The premises a lease document is for: recorded on its facts when merged
+ * (FieldSource.premises), else its leaseAddress / "Address:" on file, else
+ * its title (the deal's source rows).
+ */
+function premisesOf(info: Info | undefined, src: Partial<FieldSource> | undefined, lookup?: SourceRowLookup): string | undefined {
+  if (src?.premises) return src.premises;
+  const documentId = src?.documentId;
+  if (!documentId) return undefined;
+  if (info) {
+    const sources = getFieldSources(info);
+    const alts = getFieldAlternates(info);
+    const valuesFrom = (key: string): string[] => {
+      const out: string[] = [];
+      const v = info[key];
+      if (typeof v === "string" && sources[key]?.documentId === documentId) out.push(v);
+      for (const a of alts[key] ?? []) if (a.documentId === documentId && typeof a.value === "string") out.push(a.value);
+      return out;
+    };
+    const direct = valuesFrom("leaseAddress")[0];
+    if (direct) return premisesKey(null, direct);
+    for (const d of valuesFrom("leaseDetails")) {
+      const m = d.match(/\bAddress:\s*([^;]+)/i);
+      if (m) return premisesKey(null, m[1]);
+    }
+  }
+  return premisesKey(lookup?.titleOf?.(documentId));
+}
+
+/** Two lease documents for two different premises (both named the same way — two addresses, or two place names — and different). */
+function twoPremises(info: Info | undefined, a: Partial<FieldSource> | undefined, b: Partial<FieldSource> | undefined, lookup?: SourceRowLookup): boolean {
+  const pa = premisesOf(info, a, lookup);
+  const pb = premisesOf(info, b, lookup);
+  if (!pa || !pb || pa.slice(0, 5) !== pb.slice(0, 5)) return false;
+  return pa !== pb;
+}
+
 /** Records a conflict when it is material and between two different, explicit sources. */
-export function noteConflict(ctx: MergeContext, factKey: string, factYear: string | undefined, winner: ConflictSide, loser: ConflictSide): void {
+export function noteConflict(
+  ctx: MergeContext,
+  factKey: string,
+  factYear: string | undefined,
+  winner: ConflictSide,
+  loser: ConflictSide,
+  /** The facts being merged into — to tell two premises (two lease addresses) from one lease disputed. */
+  info?: Info,
+): void {
   if (!ctx.conflicts) return;
   if (winner.src.valueInferred || loser.src.valueInferred) return;
   if (isUntrackedSource(winner.src) && isUntrackedSource(loser.src)) return;
   if (sameOrigin(winner.src, loser.src)) return;
   // Two different leases (a business with two premises) disagreeing about
-  // expiry, rent or size are two leases, not one lease disputed.
+  // expiry, rent or size are two leases, not one lease disputed — but only
+  // when both lease documents name their address and the addresses differ.
+  // Otherwise a renewal, an amendment or a misfiled document replacing the
+  // premises lease's terms is exactly what the broker must hear about.
   if (/^(?:lease\w*|monthlyRent|annualRent|rent|landlord)$/.test(factKey) && winner.src.specialist && loser.src.specialist &&
-      winner.src.source === "document" && loser.src.source === "document") return;
+      winner.src.source === "document" && loser.src.source === "document") {
+    if (twoPremises(info, winner.src, loser.src, ctx.lookup)) return;
+  }
   if (!factYear) {
     // Two sources for different fiscal periods (FY2023 vs FY2024 statements,
     // last year's and this year's tax return) differing is history, not a
@@ -826,7 +964,12 @@ function isOtherEarningsMeasure(info: Info, c: MergeConflict, onFile: string = c
  * its source, and it is dropped when the losing value no longer differs
  * materially from it. Duplicates (same fact, year and values) collapse.
  */
-export function settleConflicts(info: Info, conflicts: MergeConflict[]): MergeConflict[] {
+export function settleConflicts(
+  info: Info,
+  conflicts: MergeConflict[],
+  /** The deal's source rows (their titles tell two premises' leases apart). */
+  lookup?: SourceRowLookup,
+): MergeConflict[] {
   const sources = getFieldSources(info);
   const out: MergeConflict[] = [];
   const seen = new Set<string>();
@@ -848,14 +991,15 @@ export function settleConflicts(info: Info, conflicts: MergeConflict[]): MergeCo
     // two leases, not one disputed.
     if (/^(?:lease\w*|monthlyRent|annualRent|rent|landlord)$/.test(c.factKey) &&
         (getFieldAlternates(info)[c.factKey] ?? []).some((a) => a.specialist && a.source === "document" &&
-          a.documentId !== c.loser.src.documentId && !materiallyDifferent(c.factKey, String(a.value), c.loser.value))) continue;
+          a.documentId !== c.loser.src.documentId && !materiallyDifferent(c.factKey, String(a.value), c.loser.value) &&
+          twoPremises(info, a, currentSrc ?? undefined, lookup))) continue;
     // (A figure on file as the broker's that the statements also state is weighed as the statements'.)
     const onFileSrc = currentSrc
       ? creditedSource(info, c.factKey, c.factYear && (isYearMapKey(c.factKey) || !mapKey) ? `${c.factKey}.${c.factYear}` : c.factKey, serial(current), currentSrc)
       : c.winner.src;
     const winner: ConflictSide = { value: serial(current), src: onFileSrc };
     const settled: MergeConflict[] = [];
-    noteConflict({ conflicts: settled }, c.factKey, c.factYear, winner, c.loser);
+    noteConflict({ conflicts: settled, lookup }, c.factKey, c.factYear, winner, c.loser, info);
     for (const s of settled) {
       const key = `${s.factKey}|${s.factYear ?? ""}|${s.winner.value}|${s.loser.value}`;
       if (seen.has(key)) continue;
@@ -907,11 +1051,11 @@ export function mergeScalarInto(info: Info, key: string, value: unknown, src: Fi
     info[key] = value;
     setFieldSource(info, key, src);
     displaceCorroborations(info, key, value);
-    noteConflict(ctx, key, undefined, { value: serial(value), src }, { value: serial(current), src: cur ?? LEGACY });
+    noteConflict(ctx, key, undefined, { value: serial(value), src }, { value: serial(current), src: cur ?? LEGACY }, info);
     return true;
   }
   recordAlternate(info, key, value, src);
-  noteConflict(ctx, key, undefined, { value: serial(current), src: cur ?? LEGACY }, { value: serial(value), src });
+  noteConflict(ctx, key, undefined, { value: serial(current), src: cur ?? LEGACY }, { value: serial(value), src }, info);
   return false;
 }
 

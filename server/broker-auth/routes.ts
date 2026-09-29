@@ -17,11 +17,13 @@ import type { Express, Request, Response, NextFunction } from "express";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { z } from "zod";
-import { eq, and, gt, sql } from "drizzle-orm";
+import { eq, and, gt, sql, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { users, type Deal, type User } from "@shared/schema";
 import { storage } from "../storage";
 import { sendDirectEmail } from "../notifications/service.js";
+import { hashResetToken, resetTokenLookupValues } from "../buyer-auth/reset-token";
+import { regenerateSession, saveSession, signOutOtherBrokerSessions } from "./sessions";
 
 const BCRYPT_ROUNDS = 10;
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -166,7 +168,10 @@ export function registerBrokerAuthRoutes(app: Express) {
         return res.status(401).json({ error: "Invalid username or password" });
       }
 
+      // A fresh session id for the signed-in session (no fixation).
+      await regenerateSession(req);
       req.session.brokerId = user.id;
+      await saveSession(req);
       res.json({ user: toPublicUser(user) });
     } catch (error: any) {
       if (error.name === "ZodError") {
@@ -245,8 +250,12 @@ export function registerBrokerAuthRoutes(app: Express) {
       if (!ok) return res.status(401).json({ error: "Current password is incorrect" });
 
       const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-      await db.update(users).set({ password: passwordHash }).where(eq(users.id, user.id));
-      res.json({ success: true });
+      // A pending reset link is void once the password changes.
+      await db.update(users).set({ password: passwordHash, resetToken: null, resetTokenExpiresAt: null }).where(eq(users.id, user.id));
+      // Every other device is signed out: a new password must lock out
+      // whoever else holds a session (a lost laptop, a taken cookie).
+      await signOutOtherBrokerSessions(db, user.id, req.sessionID);
+      res.json({ success: true, signedOutElsewhere: true });
     } catch (error: any) {
       if (error.name === "ZodError") {
         return res.status(400).json({ error: error.errors?.[0]?.message || "Invalid password data" });
@@ -266,9 +275,11 @@ export function registerBrokerAuthRoutes(app: Express) {
       const user = await storage.getUserByUsername(username.trim());
       if (user && user.role === "broker" && user.email) {
         const token = crypto.randomBytes(32).toString("hex");
+        // Stored hashed (as buyer reset tokens are): the plaintext exists
+        // only in the email link, so a leaked users row can't reset anyone.
         await db
           .update(users)
-          .set({ resetToken: token, resetTokenExpiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS) })
+          .set({ resetToken: hashResetToken(token), resetTokenExpiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS) })
           .where(eq(users.id, user.id));
 
         const baseUrl = process.env.APP_URL || "https://cimple-production.up.railway.app";
@@ -302,10 +313,15 @@ export function registerBrokerAuthRoutes(app: Express) {
       });
       const { token, newPassword } = schema.parse(req.body);
 
+      // The stored hash (or, for a link sent before hashing, the plaintext).
+      const lookup = resetTokenLookupValues(token);
+      if (lookup.length === 0) {
+        return res.status(400).json({ error: "This reset link is invalid or has expired. Request a new one." });
+      }
       const rows = await db
         .select()
         .from(users)
-        .where(and(eq(users.resetToken, token), gt(users.resetTokenExpiresAt, sql`NOW()`)));
+        .where(and(inArray(users.resetToken, lookup), gt(users.resetTokenExpiresAt, sql`NOW()`)));
       const user = rows[0];
       if (!user) {
         return res.status(400).json({ error: "This reset link is invalid or has expired. Request a new one." });
@@ -317,8 +333,12 @@ export function registerBrokerAuthRoutes(app: Express) {
         .set({ password: passwordHash, resetToken: null, resetTokenExpiresAt: null })
         .where(eq(users.id, user.id));
 
-      // Log them in right away
+      // Log them in right away — in a fresh session — and sign every other
+      // session out (whoever prompted the reset may hold one).
+      await regenerateSession(req);
+      await signOutOtherBrokerSessions(db, user.id, req.sessionID);
       req.session.brokerId = user.id;
+      await saveSession(req);
       res.json({ success: true, user: toPublicUser(user) });
     } catch (error: any) {
       if (error.name === "ZodError") {

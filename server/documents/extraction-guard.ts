@@ -67,7 +67,8 @@ const DERIVED_METRICS: DerivedMetric[] = [
   // "ccaDiscretionaryClaim" (a tax-return line) is not SDE — only discretionary earnings / cash flow are.
   { name: "SDE", key: /\bsde\b|\bdiscretionary (?:earnings|cash)|\bsellers? discretionary\b|\bowner'?s? benefit\b/, term: /\bSDE\b|discretionary/i },
   // A seller on a call spells it out: "earnings before interest, amortization and tax".
-  { name: "EBITDA", key: /\bebitda\b|\bebit\b/, term: /\bEBITDA\b|\bEBIT\b|\bearnings before interest\b[^.;\n]{0,80}?\b(?:tax(?:es)?|depreciation|amorti[sz]ation)\b/i },
+  // (French statements: "BAIIA", "bénéfice avant intérêts, impôts et amortissement".)
+  { name: "EBITDA", key: /\bebitda\b|\bebit\b|\bbaiia\b/, term: /\bEBITDA\b|\bEBIT\b|\bBAIIA\b|\bearnings before interest\b[^.;\n]{0,80}?\b(?:tax(?:es)?|depreciation|amorti[sz]ation)\b|\bb[ée]n[ée]fice avant int[ée]r[êe]ts\b/i },
   { name: "add-backs", key: /\badd ?backs?\b|\baddbacks?\b|\bnormali[sz]ation\b|\bnormali[sz]ed\b|\brecast\b/, term: /add[\s-]?backs?|normali[sz]|recast/i },
   { name: "working capital", key: /\bworking capital\b/, term: /working capital/i },
   { name: "margin", key: /\bmargins?\b/, term: /margin/i },
@@ -188,12 +189,53 @@ export function ungluedGroupedFigures(text: string): string {
   return text.replace(/(,\d{3})(?=\d{1,3},\d{3}(?!\d))/g, "$1 ");
 }
 
-/** True when the value's leading figure is printed in the source ("$845,252" ↔ "845,252" / "845252"). */
-function figurePrinted(value: string, sourceDigits: string): boolean {
+/**
+ * A source that prints its figures in thousands: a statement headed "(in
+ * thousands of dollars)", "($000s)", "'000", "en milliers de dollars".
+ */
+export function printedInThousands(text: string): boolean {
+  return /\bin thousands\b|\(\s*\$?\s*000'?s?\s*\)|\$\s?000'?s\b|['’]000s?\b|\bthousands of (?:[a-z]+ )?dollars\b|\ben milliers\b|\(\s*k\$\s*\)|\bin \$?k\b/i.test(text);
+}
+
+/** The value's leading amount as a number ("$1,200,000" → 1200000, "$1.2M" → 1200000). */
+function leadingAmount(value: string): number | null {
+  const t = typedNumericValues(value).find((x) => x.kind === "currency") ?? typedNumericValues(value)[0];
+  if (t && Number.isFinite(t.value)) return t.value;
+  const first = amountsIn(value)[0];
+  return first ? parseFloat(first) : null;
+}
+
+/** "1398000" printed with plain spaces between its thousands groups ("1 398 000", French statements). */
+function printedWithSpaceGroups(digits: string, text: string): boolean {
+  if (!/^\d{4,}$/.test(digits)) return false;
+  const groups: string[] = [];
+  for (let end = digits.length; end > 0; end -= 3) groups.unshift(digits.slice(Math.max(0, end - 3), end));
+  return new RegExp(`(^|[^\\d])${groups.join("[ \\u00a0\\u202f]")}(?![\\d]|[ \\u00a0\\u202f]\\d{3}(?!\\d))`).test(text);
+}
+
+/**
+ * True when the value's leading figure is printed in the source — as
+ * written ("$845,252" ↔ "845,252" / "845252" / "845 252"), or the same
+ * amount scaled: the value's "$1,200,000" where the source says "$1.2
+ * million" or "$400K", or a statement in thousands printing "6,412" for the
+ * value's "$6,412,000".
+ */
+function figurePrinted(value: string, sourceDigits: string, text = ""): boolean {
   const first = amountsIn(value)[0];
   if (!first) return false;
   const esc = first.replace(".", "\\.");
   if (new RegExp(`(^|[^\\d.])${esc}(?![\\d])`).test(sourceDigits)) return true;
+  if (text && printedWithSpaceGroups(first, text)) return true;
+  const n = leadingAmount(value);
+  if (text && n !== null && n >= 1000) {
+    // The same amount written scaled in the source ("$1.2 million", "$400K", "1.45M").
+    if (typedNumericValues(text).some((t) => t.value >= 1000 && Math.abs(t.value - n) < 0.5)) return true;
+    // A statement in thousands: "EBITDA 6,412" for $6,412,000.
+    if (n % 1000 === 0 && printedInThousands(text)) {
+      const k = String(n / 1000);
+      if (new RegExp(`(^|[^\\d.])${k}(?![\\d])`).test(sourceDigits) || printedWithSpaceGroups(k, text)) return true;
+    }
+  }
   // "$1.2M" (or "1,398K") in the value, "1,200,000" in the source.
   const m = value.replace(/(\d),(?=\d{3}(?!\d))/g, "$1").match(/(\d+(?:\.\d+)?)\s?(k|m|million|thousand)\b/i);
   if (m) {
@@ -299,7 +341,7 @@ export function guardExtraction(
     if (!opts.spoken && metric.allFigures && amountsIn(value).length > 0 && !allFiguresPrinted(value, sourceDigits)) {
       return `${metric.name}: worked out from other figures`;
     }
-    if (opts.spoken ? looksComputed(value) : amountsIn(value).length > 0 && !figurePrinted(value, sourceDigits)) {
+    if (opts.spoken ? looksComputed(value) : amountsIn(value).length > 0 && !figurePrinted(value, sourceDigits, text)) {
       return opts.spoken ? `${metric.name}: written as a calculation` : `${metric.name}: the figure is not printed in the source`;
     }
     if (amountsIn(value).length === 0 && looksComputed(value)) return `${metric.name}: written as a calculation`;
@@ -506,6 +548,11 @@ function sourceNumbers(raw: string, spoken: boolean): number[] {
     const n = parseFloat(m.replace(/,/g, ""));
     if (Number.isFinite(n)) out.push(n);
   }
+  // Thousands grouped with spaces ("1 398 000", French statements).
+  for (const m of text.match(/(?<![\d,.])\d{1,3}(?:[ \u00a0\u202f]\d{3}(?![\d,.]))+/g) ?? []) {
+    const n = parseFloat(m.replace(/[ \u00a0\u202f]/g, ""));
+    if (Number.isFinite(n)) out.push(n);
+  }
   if (spoken) out.push(...spelledNumbers(text), ...spokenDecimals(text), ...spokenHundreds(text), ...spokenHalves(text));
   return out;
 }
@@ -650,9 +697,12 @@ function hasUnstatedFigure(v: string, sourceText: string, spoken: boolean): bool
   // Said on a call in thousands ("replace it in a year or two, maybe
   // one-eighty") — the "$180k" a note-taker writes down.
   const saidInThousands = (n: number) => spoken && n >= 10_000 && n % 1000 === 0 && inSource.includes(n / 1000);
+  // A statement printed in thousands ("EBITDA 6,412" under "(in thousands)").
+  const thousands = printedInThousands(sourceText);
+  const printedInK = (n: number) => thousands && Number.isInteger(n) && n >= 10_000 && n % 1000 === 0 && inSource.includes(n / 1000);
   const stated = (n: number) =>
     inSource.some((s) => s === n || (!exact(n) && n !== 0 && Math.abs(s - n) / Math.abs(n) <= 0.005)) ||
-    printedAsWritten(n) || asShare(n) || saidInThousands(n);
+    printedAsWritten(n) || asShare(n) || saidInThousands(n) || printedInK(n);
   // A table row whose columns PDF text glued together ("20225893615.5%8,420,000")
   // is NOT a source for the bare figures inside it: the misread "589
   // inspections, 36 out-of-service" and the true "58 inspections, 9 OOS (3

@@ -16,6 +16,7 @@ import { storage } from "../storage";
 import { generateCimLayout, type CimLayoutParams, type LayoutProgress } from "./layout-engine";
 import type { CimDocument } from "./layout-types";
 import { templateForDeal } from "./templates";
+import { generationShortfall } from "./generation-shortfall";
 import type { BuyerAccess, CimGenerationStatus, Deal, FinancialAnalysis } from "@shared/schema";
 import { phaseIndex } from "@shared/deal-progress";
 import { listedAskingPrice } from "../information/deal-mirror";
@@ -31,6 +32,7 @@ import { db } from "../db";
 import { interviewSessions } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { writerFactsSnapshot } from "./cim-staleness";
+import { describeAiFailure } from "../ai-retry";
 
 export type CimGenerationMode = CimGenerationStatus["mode"];
 
@@ -222,11 +224,13 @@ export function replacementNeedsReview(
  * one is held from every buyer until the broker publishes it again: the deal
  * leaves live, its content and design approvals are cleared (the view room
  * shows buyers a "being updated" state meanwhile — see cimHeldFromBuyers).
- * The hold is written with those changes BEFORE a single section is
- * replaced, and that write is not best-effort: if it fails the run fails
- * and the old sections stay. (Written only in the job's final status
- * write, which swallows errors, a failed write — or the moment before it —
- * served the unreviewed CIM to every link holder.)
+ * The hold, the section replacement and the deal's new layout version are
+ * written in ONE transaction (storage.replaceDealCim): if any part fails —
+ * a DB error, a redeploy mid-write — nothing changed, the old CIM is still
+ * there, live and not held. (Written separately, a failure between the
+ * deletes and the last insert left a partial CIM; the hold written only in
+ * the job's best-effort status write served the unreviewed CIM to every
+ * link holder.)
  */
 async function persistDocument(deal: Deal, mode: CimGenerationMode, document: CimDocument, job: CimGenerationJob): Promise<CimGenerationStatus["buyerHold"] | null> {
   // As the deal is now — it may have gone live while the run was writing.
@@ -245,26 +249,10 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
         ddCleared: ddBefore.length > 0 || !!previousHold?.ddCleared,
       }
     : null;
-  if (hold) {
-    // On the job only once it is on the deal: a failed write leaves the old
-    // CIM in place, live, and not held.
-    await storage.updateDeal(deal.id, {
-      cimGeneration: { ...storedStatus(job), buyerHold: hold },
-      // The approvals were for the CIM that is about to be replaced.
-      isLive: false,
-      contentApprovedByBroker: false,
-      contentApprovedBySeller: false,
-      designApprovedByBroker: false,
-      designApprovedBySeller: false,
-    } as any);
-    job.buyerHold = hold;
-  }
-  await storage.deleteCimSectionsForDeal(deal.id);
-  await storage.deleteCimSectionOverrides(deal.id, "blind");
-  await storage.deleteCimSectionOverrides(deal.id, "dd");
   const cimContent: Record<string, string> = {};
-  for (const section of document.sections) {
-    await storage.createCimSection({
+  const rows = document.sections.map((section) => {
+    if (section.aiDraftContent) cimContent[section.sectionKey] = section.aiDraftContent;
+    return {
       dealId: deal.id,
       sectionKey: section.sectionKey,
       sectionTitle: section.sectionTitle,
@@ -277,20 +265,35 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
       isVisible: section.isVisible,
       brokerApproved: false,
       figureWarnings: section.figureWarnings?.length ? section.figureWarnings : null,
-    });
-    if (section.aiDraftContent) cimContent[section.sectionKey] = section.aiDraftContent;
-  }
+    };
+  });
   const updates: Record<string, unknown> = {
     cimLayoutGeneratedAt: new Date(),
     cimLayoutVersion: (deal.cimLayoutVersion || 0) + 1,
   };
+  if (hold) {
+    Object.assign(updates, {
+      cimGeneration: { ...storedStatus(job), buyerHold: hold },
+      // The approvals were for the CIM that is about to be replaced.
+      isLive: false,
+      contentApprovedByBroker: false,
+      contentApprovedBySeller: false,
+      designApprovedByBroker: false,
+      designApprovedBySeller: false,
+    });
+  }
   if (mode === "content") {
     updates.cimContent = cimContent;
     // Moves an earlier deal into Content Creation; a full regenerate on a
     // Design-phase deal must not drag it back to phase 3.
     if (phaseIndex(deal.phase) < phaseIndex("phase3_content_creation")) updates.phase = "phase3_content_creation";
   }
-  await storage.updateDeal(deal.id, updates as any);
+  // (Also drops the approved versions on record — they were of the sections
+  // being replaced: published-versions.ts; same transaction.)
+  await storage.replaceDealCim(deal.id, rows as any, updates as any);
+  // On the job only once it is on the deal: a failed write leaves the old
+  // CIM in place, live, and not held.
+  if (hold) job.buyerHold = hold;
   return hold;
 }
 
@@ -327,6 +330,12 @@ async function run(job: CimGenerationJob, deal: Deal, beforeWriting?: BeforeWrit
       touch();
       void persist(job);
     });
+    // A run the AI service mostly failed never replaces the deal's CIM (the
+    // broker's edits, approvals, tiers, Blind and DD versions): it fails
+    // honestly and the current CIM stays (generation-shortfall.ts).
+    const existing = await storage.getCimSectionsByDeal(deal.id);
+    const shortfall = generationShortfall(document.sections, { hasExistingCim: existing.length > 0, aiError: document.aiError });
+    if (shortfall) throw new Error(shortfall.message);
     job.phase = "saving";
     touch();
     await persist(job);
@@ -346,7 +355,16 @@ async function run(job: CimGenerationJob, deal: Deal, beforeWriting?: BeforeWrit
     else console.error(`[cim-generation] deal ${job.dealId} failed:`, err);
     job.status = "failed";
     job.phase = "finished";
-    job.error = err?.message || "CIM generation failed";
+    // An AI service error (credits, overload, planning call failed) in the
+    // broker's words — not the API's raw JSON — and only "try again in a few
+    // minutes" when that can help (not for credits out or a rejected key).
+    // Nothing was written.
+    if (typeof err?.status === "number") {
+      const why = describeAiFailure(err);
+      job.error = `The AI service failed (${why.reason}) before the CIM was written. Your current CIM was not changed — ${why.advice}.`;
+    } else {
+      job.error = err?.message || "CIM generation failed";
+    }
     if (err?.name === "DiscrepancyGateError") {
       job.stoppedBy = "discrepancies";
       job.stoppedReason = err.reason === "new" ? "new" : "critical";

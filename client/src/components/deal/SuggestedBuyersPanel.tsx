@@ -35,7 +35,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import {
   Sparkles, Send, Loader2, CheckCircle2, ShieldCheck,
   ChevronDown, ChevronUp, Mail, TrendingUp, Zap,
-  AlertCircle, Clock, Target,
+  AlertCircle, AlertTriangle, Clock, Target,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -119,7 +119,17 @@ interface Draft {
   buyerEmail: string;
   subject: string;
   body: string;
+  /** False = the generic template, not written for this buyer (templateReason says why). */
+  personalised?: boolean;
+  templateReason?: "ai_unavailable" | "identifying_details" | "unusable_draft" | null;
 }
+
+/** Why a draft is the generic template, in the broker's words. */
+const TEMPLATE_REASON: Record<string, string> = {
+  ai_unavailable: "The AI service was busy, so this is the standard template — not written for this buyer. Edit it, or draft again later.",
+  identifying_details: "The AI's draft named details that could identify the business, so it was replaced with the standard template. Edit it before sending.",
+  unusable_draft: "The AI's draft couldn't be used, so this is the standard template — not written for this buyer. Edit it before sending.",
+};
 
 interface OutreachHistoryItem {
   id: string;
@@ -216,10 +226,17 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
       setDrafts(resp.drafts);
       setReplyTo(resp.replyTo ?? null);
       setDraftSheetOpen(true);
-      toast({ description: `Drafted ${resp.drafts.length} email${resp.drafts.length === 1 ? "" : "s"} — review and edit before sending.` });
+      const generic = resp.drafts.filter((d) => d.personalised === false).length;
+      toast({
+        description: `Drafted ${resp.drafts.length} email${resp.drafts.length === 1 ? "" : "s"}${generic > 0 ? ` — ${generic} use${generic === 1 ? "s" : ""} the standard template (marked)` : ""} — review and edit before sending.`,
+      });
     },
-    onError: () => {
-      toast({ variant: "destructive", description: "Failed to draft outreach. Try again." });
+    onError: (e: Error) => {
+      // Show the server's own words (e.g. "Draft up to 50 buyers at a time").
+      const m = /^\d{3}: ([\s\S]*)$/.exec(e.message || "");
+      let description = "Failed to draft outreach. Try again.";
+      try { description = (m ? JSON.parse(m[1]).error : null) || description; } catch { /* keep default */ }
+      toast({ variant: "destructive", description });
     },
   });
 
@@ -603,6 +620,12 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
                     </div>
                     <span className="text-2xs text-muted-foreground">{i + 1} / {drafts.length}</span>
                   </div>
+                  {d.personalised === false && (
+                    <p className="text-2xs text-amber-500 leading-snug flex items-start gap-1" role="status" data-testid={`draft-template-${d.buyerUserId}`}>
+                      <AlertTriangle className="h-3 w-3 mt-px shrink-0" />
+                      <span>{TEMPLATE_REASON[d.templateReason ?? "unusable_draft"] ?? TEMPLATE_REASON.unusable_draft}</span>
+                    </p>
+                  )}
                   <div className="space-y-1.5">
                     <Label className="text-2xs text-muted-foreground">Subject</Label>
                     <Input

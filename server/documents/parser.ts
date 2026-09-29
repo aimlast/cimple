@@ -27,18 +27,49 @@ export class UnreadableFormatError extends Error {
   readonly unreadable = true;
 }
 
+/** True when a source row is a PDF (by its type or file name) — only a PDF can be a scan's text layer. */
+export function isPdfSource(doc: { mimeType?: string | null; name?: string | null; originalName?: string | null; fileUrl?: string | null }): boolean {
+  if (doc.mimeType === "application/pdf") return true;
+  return [doc.originalName, doc.name, doc.fileUrl].some((n) => typeof n === "string" && /\.pdf$/i.test(n.trim()));
+}
+
 export async function extractTextFromFile(filePath: string, mimeType?: string | null): Promise<string> {
+  return (await extractTextWithPages(filePath, mimeType)).text;
+}
+
+/**
+ * The file's text, and for a PDF its page count and each page's text — how
+ * much text each page holds tells a scanned document (a watermark or a typed
+ * cover page over image pages) from a readable one (thinTextLayer). `pdf`
+ * says whether the file is a PDF at all: a Word, Excel, PowerPoint or text
+ * file has no scanned pages.
+ */
+export async function extractTextWithPages(filePath: string, mimeType?: string | null): Promise<{ text: string; pages?: number; pageTexts?: string[]; pdf: boolean }> {
   const ext = path.extname(filePath).toLowerCase();
 
   // PDF
   if (ext === ".pdf" || mimeType === "application/pdf") {
     const pdfMod = await import("pdf-parse");
-    const pdfParse: (buf: Buffer, options?: Record<string, unknown>) => Promise<{ text: string }> =
+    const pdfParse: (buf: Buffer, options?: Record<string, unknown>) => Promise<{ text: string; numpages?: number }> =
       (pdfMod as any).default ?? (pdfMod as any);
     const buffer = fs.readFileSync(filePath);
     try {
-      const data = await pdfParse(buffer, { pagerender: renderPdfPage });
-      return data.text || "";
+      // (pdf-parse renders the pages one after another, in order.)
+      const pageTexts: string[] = [];
+      const data = await pdfParse(buffer, {
+        pagerender: async (pageData: Parameters<typeof renderPdfPage>[0]) => {
+          const pageText = await renderPdfPage(pageData);
+          pageTexts.push(pageText);
+          return pageText;
+        },
+      });
+      const pages = typeof data.numpages === "number" ? data.numpages : undefined;
+      return {
+        text: data.text || "",
+        pdf: true,
+        ...(pages !== undefined ? { pages } : {}),
+        ...(pages !== undefined && pageTexts.length === pages ? { pageTexts } : {}),
+      };
     } catch (err) {
       // pdf-parse's pdf.js (v1.10, loaded once per process) rejects some
       // valid PDFs with "bad XRef entry" — e.g. every PDF made with PDFKit.
@@ -50,6 +81,10 @@ export async function extractTextFromFile(filePath: string, mimeType?: string | 
       }
     }
   }
+  return { text: await extractNonPdfText(filePath, ext, mimeType), pdf: false };
+}
+
+async function extractNonPdfText(filePath: string, ext: string, mimeType?: string | null): Promise<string> {
 
   // Excel (.xlsx / .xls)
   if ([".xlsx", ".xls"].includes(ext) ||
@@ -137,7 +172,7 @@ async function renderPdfPage(pageData: { getTextContent: (o: Record<string, bool
 }
 
 /** Text of every page via pdf-parse's bundled pdf.js v2 (same line-joining as pdf-parse). */
-async function extractPdfWithNewerPdfjs(buffer: Buffer): Promise<string> {
+async function extractPdfWithNewerPdfjs(buffer: Buffer): Promise<{ text: string; pages: number; pageTexts: string[]; pdf: true }> {
   const mod: any = await import("module");
   const req = (mod.createRequire ?? mod.default.createRequire)(import.meta.url);
   const pdfjs = req("pdf-parse/lib/pdf.js/v2.0.550/build/pdf.js");
@@ -145,14 +180,17 @@ async function extractPdfWithNewerPdfjs(buffer: Buffer): Promise<string> {
   const task = pdfjs.getDocument(new Uint8Array(buffer));
   const doc = await (task.promise ?? task);
   let text = "";
+  const pageTexts: string[] = [];
   try {
     for (let i = 1; i <= doc.numPages; i++) {
       const page = await doc.getPage(i);
       const content = await page.getTextContent();
-      text += `\n\n${joinPdfTextItems(content.items as PdfTextItem[])}`;
+      const pageText = joinPdfTextItems(content.items as PdfTextItem[]);
+      pageTexts.push(pageText);
+      text += `\n\n${pageText}`;
     }
   } finally {
     doc.destroy?.();
   }
-  return text;
+  return { text, pages: doc.numPages, pageTexts, pdf: true };
 }

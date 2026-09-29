@@ -46,6 +46,7 @@ import {
   typedNumericValues,
   type FieldSource,
   isBrokerSessionSource,
+  sourceRowLookup,
 } from "../interview/info-merger";
 import { falseConflictReason, isTaxVsBook, shareClaimsConflict, type ConflictSideInfo } from "./conflict-measures";
 
@@ -369,7 +370,7 @@ export async function recordMergeConflicts(
   /** The facts as saved — only conflicts still standing against them are raised. */
   finalInfo?: Record<string, unknown>,
 ): Promise<number> {
-  const conflicts = finalInfo ? settleConflicts(finalInfo, [...collected, ...shareDisputesOnFile(finalInfo)]) : collected;
+  const conflicts = finalInfo ? settleConflicts(finalInfo, [...collected, ...shareDisputesOnFile(finalInfo)], sourceRowLookup(documents)) : collected;
   if (conflicts.length === 0) return 0;
   const docs = new Map(documents.map((d) => [d.id, d]));
   const rows = comparableRows(await storage.getDiscrepanciesByDeal(dealId));
@@ -545,15 +546,43 @@ export async function supersedeStaleMergeRows(dealId: string): Promise<number> {
   const rows = await storage.getDiscrepanciesByDeal(dealId);
   const ids = planMergeRowSupersession(rows, info, documents);
   for (const id of ids) await storage.updateDiscrepancy(id, { status: "superseded" });
-  if (ids.length > 0) console.log(`[merge-conflicts] superseded ${ids.length} merge discrepanc${ids.length === 1 ? "y" : "ies"} on deal ${dealId}`);
+  if (ids.length > 0) console.log(`[merge-conflicts] superseded ${ids.length} discrepanc${ids.length === 1 ? "y" : "ies"} on deal ${dealId}`);
   return ids.length;
+}
+
+/**
+ * Pure: the ids of live rows of ANY source (the verification check's, the
+ * financial analysis', the merge's) that compare a source no longer on the
+ * deal. The row's conflict went with the source: it must not keep blocking
+ * CIM generation and publish, be put to the seller, or be "resolved" by
+ * writing the deleted file's figure back as the broker's. Settled rows
+ * (resolved / accepted) are kept — they are the broker's record. Only ids
+ * a row provably took from a real document count: the side sources (always
+ * a document on the deal when stamped) and a documentId the row named
+ * (documentName set — a free model id with no name is ignored).
+ */
+export function rowsWithRemovedSource(rows: Discrepancy[], documents: Pick<Document, "id">[]): string[] {
+  const onDeal = new Set(documents.map((d) => d.id));
+  const out: string[] = [];
+  for (const r of rows) {
+    if (!LIVE_STATUSES.has(r.status)) continue;
+    const sides = (r.sideSources as { interview?: SideSource; document?: SideSource } | null) || {};
+    const ids = [sides.interview?.documentId, sides.document?.documentId, r.documentName ? r.documentId : null]
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+    if (ids.some((id) => !onDeal.has(id))) out.push(r.id);
+  }
+  return out;
 }
 
 /** Pure: the ids supersedeStaleMergeRows would supersede. */
 export function planMergeRowSupersession(rows: Discrepancy[], info: Record<string, unknown>, documents: ConflictDoc[]): string[] {
   const docs = new Map(documents.map((d) => [d.id, d]));
+  // Any engine's row whose source was removed goes first — and is not a row
+  // a merge row could be repeating.
+  const removedSource = new Set(rowsWithRemovedSource(rows.filter((r) => r.source !== "merge"), documents));
+  rows = rows.filter((r) => !removedSource.has(r.id));
   const ordered = [...rows].sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt) || a.id.localeCompare(b.id));
-  const out: string[] = [];
+  const out: string[] = Array.from(removedSource);
   // Weighed against every row a new conflict is (comparableRows): settled
   // rows, the check's and the analysis' rows, and earlier live merge rows —
   // but never a superseded row of any source. Repeating a row that is no

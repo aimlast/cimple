@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { requestJson } from "./types";
 import { dealPublishedForBuyers, NOT_PUBLISHED_BROKER_MESSAGE } from "@shared/buyer-publish-gate";
 
@@ -227,16 +228,32 @@ export function RemoveBuyerDialog({ open, onOpenChange, buyerId, buyerName }: { 
   const { toast } = useToast();
   const qc = useQueryClient();
   const [, setLocation] = useLocation();
+  const addBack = async () => {
+    try {
+      const r = await requestJson<{ restored: boolean; editsRestored?: boolean }>("POST", `/api/broker/buyers/${buyerId}/restore`);
+      qc.invalidateQueries({ queryKey: ["/api/broker/buyers"] });
+      qc.invalidateQueries({ queryKey: ["/api/broker/buyers", buyerId] });
+      toast(r.editsRestored === false
+        ? { title: `${buyerName} is on your buyers`, description: "You've edited them since removing them, so the earlier notes and edits stay cleared." }
+        : { title: `${buyerName} is back on your buyers`, description: "Your notes and edits are back too." });
+      setLocation(`/broker/buyers/${buyerId}`);
+    } catch (e) {
+      toast({ title: "Couldn't add them back", description: (e as Error).message, variant: "destructive" });
+    }
+  };
+  const undo = <ToastAction altText="Add back" onClick={() => void addBack()}>Add back</ToastAction>;
   const remove = useMutation({
     mutationFn: () => requestJson<{ stillListed: boolean; reason: string | null }>("DELETE", `/api/broker/buyers/${buyerId}`),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["/api/broker/buyers"] });
       onOpenChange(false);
       if (r.stillListed) {
-        toast({ title: "Notes and edits removed", description: r.reason ?? undefined });
+        // Still listed through deal access: their notes and edits are cleared
+        // now (a new edit starts fresh); "Add back" is the only way back.
+        toast({ title: "Notes and edits removed", description: r.reason ?? undefined, action: undo });
         qc.invalidateQueries({ queryKey: ["/api/broker/buyers", buyerId] });
       } else {
-        toast({ title: `${buyerName} removed from your buyers` });
+        toast({ title: `${buyerName} removed from your buyers`, description: "Syncing from your CRM won't add them back.", action: undo });
         setLocation("/broker/buyers");
       }
     },
@@ -248,8 +265,10 @@ export function RemoveBuyerDialog({ open, onOpenChange, buyerId, buyerName }: { 
         <AlertDialogHeader>
           <AlertDialogTitle>Remove {buyerName} from your buyers?</AlertDialogTitle>
           <AlertDialogDescription>
-            Your notes, tags, interest label and edits to their profile are deleted. Their own Cimple account and anything they
-            told you on an NDA stay as they are. If they have access to one of your deals they'll stay listed until you revoke it.
+            They leave your list, suggested buyers and outreach, and syncing from your CRM won't add them back. Your notes, tags,
+            interest label and edits are kept aside: adding them back brings them back. Their own Cimple account and anything they
+            told you on an NDA stay as they are. If they have access to one of your deals they'll stay listed until you revoke it,
+            without your notes and edits (use Add back to undo).
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

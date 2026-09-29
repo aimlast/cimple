@@ -12,13 +12,18 @@ export interface ReadyToBuildCtaProps {
   criticalCount: number;
   /** The discrepancy list couldn't load — can't prove the gate is clear. */
   gateError?: boolean;
+  /**
+   * Critical questions routed to a seller who had already finished the
+   * interview — they block too, until the seller answers (shared/discrepancy-gate.ts).
+   */
+  waitingOnSeller?: number;
   pending?: boolean;
   onContinue: () => void;
   onReview: () => void;
   reviewing?: boolean;
 }
 
-export function ctaCopy(criticalCount: number, gateError = false): { title: string; body: string; blocked: boolean } {
+export function ctaCopy(criticalCount: number, gateError = false, waitingOnSeller = 0): { title: string; body: string; blocked: boolean } {
   if (gateError) {
     return {
       title: "Interview done — checking discrepancies",
@@ -34,6 +39,13 @@ export function ctaCopy(criticalCount: number, gateError = false): { title: stri
       blocked: true,
     };
   }
+  if (waitingOnSeller > 0) {
+    return {
+      title: `Interview done — waiting on the seller to answer ${waitingOnSeller} follow-up question${waitingOnSeller === 1 ? "" : "s"}`,
+      body: `You sent ${waitingOnSeller === 1 ? "a critical conflict" : "critical conflicts"} back to the seller after the interview, with a link to answer on their portal. The CIM can't be generated until they answer or you resolve ${waitingOnSeller === 1 ? "it" : "them"} yourself.`,
+      blocked: true,
+    };
+  }
   return {
     title: "Ready to build the CIM",
     body: "The interview is complete. Move to Content Creation to generate the CIM from everything you've collected.",
@@ -41,8 +53,8 @@ export function ctaCopy(criticalCount: number, gateError = false): { title: stri
   };
 }
 
-export function ReadyToBuildCta({ criticalCount, gateError, pending, onContinue, onReview, reviewing }: ReadyToBuildCtaProps) {
-  const copy = ctaCopy(criticalCount, gateError);
+export function ReadyToBuildCta({ criticalCount, gateError, waitingOnSeller, pending, onContinue, onReview, reviewing }: ReadyToBuildCtaProps) {
+  const copy = ctaCopy(criticalCount, gateError, waitingOnSeller);
   return (
     <div
       className={`rounded-lg border p-5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between ${

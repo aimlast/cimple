@@ -47,6 +47,8 @@ s.getEngagementInsightsByIndustry = async () => [];
 s.deleteCimSectionsForDeal = async () => undefined;
 s.deleteCimSectionOverrides = async () => undefined;
 s.createCimSection = async (x: any) => x;
+s.getCimSectionsByDeal = async () => [];
+s.replaceDealCim = async (_id: string, _rows: any[], u: any) => { Object.assign(deal, u); };
 
 let checkCalls = 0;
 _setCheckModelForTests(async (_system, user) => {
@@ -71,7 +73,7 @@ _setCheckModelForTests(async (_system, user) => {
 let generated = 0;
 _setGeneratorForTests(async () => {
   generated++;
-  return { sections: [], warnings: [] } as any;
+  return { sections: [{ sectionKey: "overview", sectionTitle: "Overview", order: 1, layoutType: "prose_highlight", layoutData: { body: "x" }, aiLayoutReasoning: "r", tags: [], isVisible: true, brokerApproved: false }], warnings: [] } as any;
 });
 
 (async () => {

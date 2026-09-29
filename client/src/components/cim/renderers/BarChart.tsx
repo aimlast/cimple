@@ -18,8 +18,9 @@ import { useCimTheme } from "../CimDesignContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { axisWidthFor, formatAxisTick, formatFullValue } from "./chartFormat";
-import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { chartSeriesRows, parseChartNumber, unitScale } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
+import { NotCharted } from "./NotCharted";
 
 interface BarDataPoint {
   name: string;
@@ -85,12 +86,24 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
   const secondaryColor = theme.chart[1];
   const hasSecondary = chartData.some((d) => d.secondaryValue != null);
 
-  const normalized = chartData.map((d) => ({
+  // Text values ("$1,250,000", "$1,850,000 (9 months YTD)") are read as
+  // numbers; one that isn't an amount ("TBD") is listed under the chart,
+  // never drawn as a $0 bar.
+  const series = chartSeriesRows(chartData, data.unit);
+  const normalized = series.rows.map((d) => ({
     ...d,
-    // Text values ("$1,250,000") are read as numbers, never drawn as zero.
-    value: parseChartNumber(d.value, unitScale(data.unit)) ?? 0,
-    secondaryValue: d.secondaryValue != null ? parseChartNumber(d.secondaryValue, unitScale(data.unit)) ?? 0 : undefined,
+    secondaryValue: d.secondaryValue != null ? parseChartNumber(d.secondaryValue, unitScale(data.unit)) ?? undefined : undefined,
   }));
+  if (normalized.length === 0) {
+    if (!content && series.unreadable.length === 0) return null;
+    return (
+      <div>
+        <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+        <NotCharted items={series.unreadable} />
+        {content ? <ProseFallback content={content} /> : null}
+      </div>
+    );
+  }
 
   const yAxisWidth = axisWidthFor(
     normalized.flatMap((d) =>
@@ -174,6 +187,7 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
           )}
         </BarChart>
       </ResponsiveContainer>
+      <NotCharted items={series.unreadable} />
     </div>
   );
 }

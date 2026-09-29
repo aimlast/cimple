@@ -323,4 +323,6 @@ export interface CimDocument {
   // Branding applied at render time (not stored here)
   /** Non-fatal generation problems (e.g. a section fell back to prose) */
   warnings?: string[];
+  /** The run's last AI service error, if any (why sections became placeholders; never stored). */
+  aiError?: { status?: number; message: string };
 }

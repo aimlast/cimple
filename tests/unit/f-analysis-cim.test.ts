@@ -178,7 +178,7 @@ const row = (id: string, name: string, category: string, values: Record<string, 
     ] },
   });
   const block = dd.context.split("## Add-back verification")[1]?.split("##")[0] ?? "";
-  assert.match(block, /Owner salary: seller_confirmed/);
+  assert.match(block, /Owner salary: confirmed by the seller/);
   assert.match(block, /Crane rebuild \(one-time\): document_verified/);
   assert.ok(!/Dividends|boat/.test(block), block);
   console.log("✓ F-09: verification is seeded with approved lines and one owner-pay line at $180,000; the DD writer never lists a dividend");

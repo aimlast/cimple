@@ -21,7 +21,8 @@ import { analysisHeadlines, cimGrowth, knownBridges, renderCimFinancialsBlock, r
 import { checkSectionFigures, figureWarningText, isUntracedIssue, knownFiguresFrom, parseFigures, withoutUntracedFigures, type KnownFigures } from "./figure-check";
 import {
   keepOutFromNotes,
-  mentionsHeldName,
+  mentionsHeldPerson,
+  neutralBridgeLabel,
   screenConfidentialText,
   screenFactsForCim,
   screenText,
@@ -32,6 +33,7 @@ import {
 import { hasRelativeTime, repairInferredYears, staleTargets } from "./fact-dates";
 import { canonLines, earningsCanon, earningsWarnings, offCanon, screenEarningsFacts, type EarningsCanon, type EarningsHold } from "./earnings-canon";
 import { normalizeSpokenFigures } from "./spoken-figures";
+import { describeAiFailure } from "../ai-retry";
 import {
   addbackCompanions,
   consistencyKnowledge,
@@ -281,6 +283,16 @@ export async function generateCimLayout(
       ),
     );
     generated.push(...results);
+    // The AI service is down (credits out, an overload burst): when not one
+    // section of the first batch could be written, stop instead of retrying
+    // every remaining section — the job fails and the deal's CIM stays.
+    if (i === 0 && results.length > 0 && results.every(isFallback)) {
+      // Say why when the service told us (credits out or a rejected key won't
+      // come right by trying again in a few minutes).
+      const cause = runAiErrors.get(sharedSystem);
+      const why = cause ? describeAiFailure(cause) : null;
+      throw new Error(`The AI service failed${why ? ` (${why.reason})` : ""} while writing the first ${results.length} sections, so the run was stopped. Nothing was changed — ${why?.advice ?? "try again in a few minutes"}.`);
+    }
   }
 
   // ── Phase 3: every figure must trace to the deal's data ────────────────
@@ -352,6 +364,7 @@ export async function generateCimLayout(
     generatedAt: new Date().toISOString(),
     version: 1,
     warnings: warnings.length > 0 ? warnings : undefined,
+    aiError: slimAiError(runAiErrors.get(sharedSystem)),
   };
 }
 
@@ -556,6 +569,18 @@ function nothingLeft(s: CimLayoutSection): boolean {
   return false;
 }
 
+/**
+ * The last AI service error of a run (keyed by the run's shared system
+ * block), so a run the service failed can say why — e.g. credits out, where
+ * trying again in a few minutes won't help.
+ */
+const runAiErrors = new WeakMap<object, unknown>();
+function slimAiError(err: unknown): CimDocument["aiError"] {
+  if (!err) return undefined;
+  const e = err as { status?: unknown; message?: unknown };
+  return { status: typeof e.status === "number" ? e.status : undefined, message: String(e.message ?? "").slice(0, 300) };
+}
+
 function isFallback(s: CimLayoutSection): boolean {
   return s.aiLayoutReasoning === FALLBACK_REASONING;
 }
@@ -702,7 +727,7 @@ export function scrubHeldNames(
   if (heldNames.length === 0) return null;
   const names = new Set<string>();
   const note = (s: string) => {
-    const n = mentionsHeldName(s, heldNames);
+    const n = mentionsHeldPerson(s, heldNames);
     if (n) names.add(n);
     return n;
   };
@@ -749,29 +774,9 @@ export function scrubHeldNames(
   return names.size > 0 ? { layoutData, aiDraftContent, names: Array.from(names) } : null;
 }
 
-/**
- * A bridge step's label without the confidential name: the name and the
- * words that only pointed at it go ("Salary paid to Maria Chen" → "Salary
- * paid"; "Maria Chen — owner's spouse wages" → "Owner's spouse wages").
- * When nothing descriptive is left: "Other add-back" / "Other deduction".
- */
-export function neutralBridgeLabel(label: string, heldNames: readonly string[], type = ""): string {
-  let t = label;
-  for (const name of heldNames) {
-    const words = name.trim().split(/\s+/).map(escapeRegExp).join(String.raw`\s+`);
-    t = t.replace(new RegExp(String.raw`(?<![\p{L}\p{N}])${words}(?:'s|’s)?(?![\p{L}\p{N}])`, "giu"), " ");
-  }
-  t = t
-    .replace(/\(\s*\)/g, " ")
-    .replace(/\s+(?:to|for|of|by|from|with|re|—|–|-|:|,)\s*$/i, "")
-    .replace(/^\s*(?:—|–|-|:|,)\s*/, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-  // Trailing connectors can stack ("paid to" after "for").
-  for (let i = 0; i < 2; i++) t = t.replace(/\s+(?:to|for|of|by|from|with)$/i, "").trim();
-  if (!/[A-Za-z]{3,}/.test(t)) return type === "subtract" ? "Other deduction" : "Other add-back";
-  return t.charAt(0).toUpperCase() + t.slice(1);
-}
+// A bridge step's label without the confidential name — shared with the DD
+// context (dd-enrichment.ts), so it lives in sensitive-facts.ts.
+export { neutralBridgeLabel };
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -944,7 +949,9 @@ ${def.aiSpec}
   if (!result) throw new Error("The AI couldn't rewrite this section. Nothing was changed — please try again.");
   const scrubbed = scrubHeldNames({ ...result, layoutType }, sharedSystem.heldNames);
   const final = scrubbed ? { layoutData: scrubbed.layoutData, aiDraftContent: scrubbed.aiDraftContent } : result;
-  return { ...final, layoutData: finalizeLayoutData(layoutType, final.layoutData, sharedSystem.today) };
+  // The writer is told the reclassification footnote is added for it — so
+  // it is, here too (known-4: a rewritten or converted table had none).
+  return { ...final, layoutData: withReclassificationNote(layoutType, finalizeLayoutData(layoutType, final.layoutData, sharedSystem.today), params.financials) };
 }
 
 /**
@@ -979,7 +986,7 @@ Rules:
   if (!result) throw new Error("The AI couldn't convert this section. The current layout was kept — please try again.");
   const scrubbed = scrubHeldNames({ ...result, layoutType: target }, sharedSystem.heldNames);
   const final = scrubbed ? { layoutData: scrubbed.layoutData, aiDraftContent: scrubbed.aiDraftContent } : result;
-  return { ...final, layoutData: finalizeLayoutData(target, final.layoutData, sharedSystem.today) };
+  return { ...final, layoutData: withReclassificationNote(target, finalizeLayoutData(target, final.layoutData, sharedSystem.today), params.financials) };
 }
 
 // ── Phase 1: manifest ──────────────────────────────────────────────────────
@@ -1194,9 +1201,12 @@ async function writeSectionContent(
     }
   } catch (err) {
     console.error(`[layout-engine] Section "${entry.sectionKey}" generation error:`, err);
+    runAiErrors.set(sharedSystem, err);
     try {
       result = await attempt(true);
-    } catch { /* fall through */ }
+    } catch (retryErr) {
+      runAiErrors.set(sharedSystem, retryErr);
+    }
   }
   return result;
 }
@@ -1533,7 +1543,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
   // and the broker is told), and a confidential one stays out.
   const resolved = (params.resolvedDiscrepancies ?? []).filter((n) => {
     const text = `${n.year ? `${n.year} ` : ""}${n.field}: ${n.resolvedValue}`;
-    if (mentionsHeldName(text, heldNames)) return false;
+    if (mentionsHeldPerson(text, heldNames)) return false;
     if (!canon) return true;
     const read = /ebitda|sde|discretionary/i.test(text) ? text : "";
     if (read && offCanon(read, canon).length > 0) {

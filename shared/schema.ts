@@ -823,7 +823,7 @@ export const buyerAccess = pgTable("buyer_access", {
   // Decision prompt pacing — first visit is a breathing period (no prompt),
   // subsequent visits show the decision panel, reminder emails escalate.
   firstViewedAt: timestamp("first_viewed_at"),
-  reminderStage: text("reminder_stage").default("none"), // none | reminder_sent | warning_sent
+  reminderStage: text("reminder_stage").default("none"), // none | reminder_sent | warning_sent | email_undeliverable
   lastReminderAt: timestamp("last_reminder_at"),
 
   expiresAt: timestamp("expires_at"),
@@ -1229,6 +1229,13 @@ export const conversationMessageSchema = z.object({
   /** AI turns: the answer chips offered with the question. Persisted so a
    *  resumed session shows them again for the still-pending question. */
   suggestedAnswers: z.array(z.string()).optional(),
+  /** AI turns: the reply to a short break ("take your time") — the question
+   *  before it is still the one the seller is answering. */
+  pause: z.boolean().optional(),
+  /** AI turns: the technical-fault notice of a turn the model couldn't
+   *  answer — the seller's message before it was saved but not yet
+   *  processed; the client offers Continue instead of a retype. */
+  degraded: z.boolean().optional(),
   /** Seller turns: set when this message corrects an earlier answer (the
    *  "Edit" flow). Carries the earlier message's timestamp + text so the
    *  transcript can link the two and the agent knows it is an update. */
@@ -1603,6 +1610,14 @@ export const NOTIFICATION_ROUTING: Record<string, { teams: string[]; roles?: str
   buyer_approval_rejected: { teams: ["broker"], roles: ["lead", "associate"] },
   // The seller finished (or ended) their AI interview.
   interview_complete: { teams: ["broker"], roles: ["lead", "associate"] },
+  // New events only (free round 2) — no existing event's recipients change.
+  // The broker routed questions to a seller who had finished the interview.
+  seller_followup_questions: { teams: ["seller"], roles: ["owner", "representative"] },
+  // The seller answered those follow-up questions (a session on the finished interview ended).
+  seller_followups_answered: { teams: ["broker"], roles: ["lead", "associate"] },
+  // The seller's answer on the CIM review page (/seller/:token/review).
+  cim_seller_approved: { teams: ["broker"], roles: ["lead", "associate"] },
+  cim_changes_requested: { teams: ["broker"], roles: ["lead", "associate"] },
 };
 
 // Buyer decision next-step options (shown after "interested in moving forward")
@@ -1901,6 +1916,10 @@ export const brokerBuyerContacts = pgTable("broker_buyer_contacts", {
   brokerProfileMeta: jsonb("broker_profile_meta"),     // { field: { at } }
   interestStatus: text("interest_status"),             // hot | warm | cold | not_interested | null
   aiSummary: jsonb("ai_summary"),                      // { text, at, key }
+  // Removed from this broker's list (soft delete): off the list, matching,
+  // deep check and outreach, and the CRM buyer sync never adds them back.
+  // The broker's own edits are kept, so "Add back" restores them.
+  removedAt: timestamp("removed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -2245,12 +2264,19 @@ export type BuyerInterestStatus = (typeof BUYER_INTEREST_STATUSES)[number];
 
 export interface BuyerAiSummary { text: string; at: string; key: string }
 
-/** One broker action on a buyer_access row (buyer_access.access_events). */
+/**
+ * One event on a buyer_access row (buyer_access.access_events): a broker
+ * action, or a decision-reminder email refused for good (the pipeline stops
+ * and the broker follows up — server/reminders/decision-reminders.ts).
+ */
 export interface BuyerAccessEvent {
-  type: "extended" | "level_changed" | "revoked";
+  type: "extended" | "level_changed" | "revoked" | "reminder_undeliverable";
   at: string;
   expiresAt?: string | null;
   accessLevel?: string | null;
+  /** reminder_undeliverable: which email, and the email service's HTTP status. */
+  stage?: "reminder" | "warning";
+  status?: number | null;
 }
 
 /** "other" = on the buyer's global profile, written by someone other than this broker or the buyer (never named). */

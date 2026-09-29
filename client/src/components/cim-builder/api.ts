@@ -25,6 +25,17 @@ export interface BuilderSection extends Omit<CimSection, "aiTask" | "contentHist
   factsChanged?: string[];
 }
 
+/** One full DD run (POST generate-dd), kept in server memory until the next. */
+export interface DdRunSummary {
+  /** Matches the startedAt the generate-dd response returned for this run. */
+  startedAt?: string;
+  finishedAt: string;
+  error?: string;
+  written: number;
+  notWritten: number;
+  warnings: string[];
+}
+
 /** What the broker must look at before publishing (GET …/cim-builder `review`). */
 export interface CimReview {
   /** Set while a regenerated CIM is held from buyers until it is published again. */
@@ -53,9 +64,16 @@ export interface BuilderState {
    */
   blind: { generated: boolean; codename: string | null; codenameProblem?: string | null; running: boolean; error: string | null; updating: number; held: number };
   /** outOfDate: sections whose DD version is stale or missing; running: a refresh is under way. */
-  dd: { generated: boolean; outOfDate: number; running: boolean };
+  dd: {
+    generated: boolean;
+    outOfDate: number;
+    running: boolean;
+    /** The last full DD run (server memory): why nothing changed, or what couldn't be written. */
+    lastRun?: DdRunSummary | null;
+  };
   buyers: { total: number; byLevel: Record<string, number> };
-  deal: { isLive: boolean; cimLayoutGeneratedAt: string | null };
+  /** listedAskingPrice: the price buyers see now (null = none listed); the previews apply it like the view room. */
+  deal: { isLive: boolean; cimLayoutGeneratedAt: string | null; listedAskingPrice?: string | null };
   review?: CimReview;
 }
 

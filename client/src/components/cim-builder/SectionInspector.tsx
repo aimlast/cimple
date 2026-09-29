@@ -15,7 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { StructuredDataEditor } from "@/components/cim/StructuredDataEditor";
 import { getEditableText, isStructuredLayout, isTextEditableLayout } from "@/components/cim/editableText";
-import { canAiRewriteLayout, canAiWriteLayout, getCimLayout, layoutLabel } from "@shared/cim-layouts";
+import { canAiRewriteLayout, canAiWriteLayout, getCimLayout, layoutLabel, sampleDataIn } from "@shared/cim-layouts";
 import { MediaSectionEditor } from "./media/MediaSectionEditor";
 import { cn } from "@/lib/utils";
 import { AiWriterPanel } from "./AiWriterPanel";
@@ -45,6 +45,8 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
   const mediaEditable = layout?.editor === "media";
   const aiRewrite = canAiRewriteLayout(section.layoutType);
   const aiWrite = canAiWriteLayout(section.layoutType);
+  // A blank layout's made-up figures ("Category A 60 / B 40") — never approved or served.
+  const sample = sampleDataIn(section.layoutType, section.layoutData);
 
   // ── Title ──
   const [title, setTitle] = useState(section.sectionTitle);
@@ -140,6 +142,18 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
         </div>
       )}
 
+      {/* A blank layout's made-up figures: never approved or served */}
+      {!running && sample.length > 0 && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs space-y-1.5" data-testid="section-sample-data">
+          <p className="flex items-start gap-1.5 font-medium text-amber-500">
+            <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> Sample data — replace it
+          </p>
+          <p className="text-muted-foreground">
+            {sample[0] === "sample data" ? "This is the layout's sample data" : `${sample.slice(0, 3).map((x) => `"${x}"`).join(", ")} ${sample.length === 1 ? "is" : "are"} sample data`}, not the business's figures. Buyers never see it, and the section can't be approved until you replace it below.
+          </p>
+        </div>
+      )}
+
       {/* Facts that changed since the CIM was written, still shown here */}
       {!running && (section.factsChanged?.length ?? 0) > 0 && (
         <div className="rounded-lg border border-blue-500/40 bg-blue-500/10 p-3 text-xs space-y-2" data-testid="facts-changed-banner">
@@ -182,7 +196,7 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
           <p className="text-muted-foreground">
             {section.ddStatus === "missing"
               ? "This section was added after the due-diligence version was made."
-              : "This section changed after its due-diligence version was made."}{" "}
+              : "This section changed after its due-diligence version was made, or the last due-diligence run couldn't rewrite it."}{" "}
             Due-diligence buyers see the current named version until you refresh it.
           </p>
           <Button
@@ -330,6 +344,7 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
           variant={section.brokerApproved ? "outline" : "default"}
           className={cn("w-full h-8 text-xs gap-1.5", !section.brokerApproved && "bg-teal text-teal-foreground hover:bg-teal/90")}
           onClick={() => api.patch.mutate({ id: section.id, brokerApproved: !section.brokerApproved })}
+          disabled={!section.brokerApproved && sample.length > 0}
           data-testid="button-approve-section"
         >
           <CheckCircle2 className="h-3.5 w-3.5" />
