@@ -114,6 +114,16 @@ export function servesPublishedSnapshot(deal: { isLive?: boolean | null; cimGene
 }
 
 /**
+ * Buyers read the working copy right now: the CIM is live and not waiting
+ * for the broker's review of an update. A section added (or duplicated)
+ * then would reach buyers at once, so it starts hidden; while buyers read
+ * the kept copy, a new section is part of the draft like any other.
+ */
+export function buyersReadWorkingCopy(deal: { isLive?: boolean | null; cimGeneration?: unknown }): boolean {
+  return !!deal.isLive && !servesPublishedSnapshot(deal) && !cimHeldFromBuyers(deal);
+}
+
+/**
  * The listed asking price, written as a figure ("$4,500,000"); null when
  * there is none. Text that isn't one number is used as written.
  */

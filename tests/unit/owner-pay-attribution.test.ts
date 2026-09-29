@@ -121,9 +121,12 @@ const ctx = { roster, pnl, ownerName: "Harjit Grewal", owners: ownersOnFile(info
   const staying = applyAddbackRules({ ...n, addbacks: [ab({ label: "Family member salary — Manpreet Grewal (son)", category: "discretionary", amounts: { "2024": 175_000 }, description: "Son of the owner, VP Operations." })] }, ctx)!;
   assert.equal(staying.addbacks[0].approved, false);
   assert.ok(staying.notes!.some((x) => /Manpreet stays on/.test(x)));
-  // The same line saying he is paid above market is the broker-visible add-back it claims to be.
-  const above = applyAddbackRules({ ...n, addbacks: [ab({ label: "Family member salary — Manpreet Grewal (son)", category: "discretionary", amounts: { "2024": 50_000 }, description: "Paid $50K above market for the role." })] }, ctx)!;
-  assert.equal(above.addbacks[0].approved, true);
+  // The model's own description saying he is paid above market isn't the facts saying so…
+  const aboveLine = { ...n, addbacks: [ab({ label: "Family member salary — Manpreet Grewal (son)", category: "discretionary", amounts: { "2024": 50_000 }, description: "Paid $50K above market for the role." })] };
+  assert.equal(applyAddbackRules(aboveLine, ctx)!.addbacks[0].approved, false);
+  // …the deal's material saying it is.
+  const said = payRosterFrom(payTextsFrom(info, { shared: [...factValues, ...shared, "Manpreet is paid about $50K above market for a VP Operations role."], private: [] }), people);
+  assert.equal(applyAddbackRules(aboveLine, { ...ctx, roster: said })!.addbacks[0].approved, true);
   // Surinder (non-working, leaving) stays approved.
   assert.equal(applyAddbackRules(n, ctx)!.addbacks.find((a) => /Surinder/.test(a.label))!.approved, true);
 }

@@ -4649,7 +4649,12 @@ Return JSON only.`,
       // project codename (falls back to a neutral label if redaction hasn't
       // run yet, in which case we serve the "preparing" state below).
       const blindMode = cimMode === "blind";
-      const codename = deal.blindCodename || null;
+      // While buyers read the kept copy of an update under review, the deal
+      // keeps the codename that copy was redacted under.
+      const { servedBlindCodename } = await import("./cim/published-snapshot");
+      const keptCodename = await servedBlindCodename(deal);
+      const servedDeal = keptCodename ? { ...deal, blindCodename: keptCodename } : deal;
+      const codename = servedDeal.blindCodename || null;
       const displayName = blindMode ? (codename || "Confidential Opportunity") : deal.businessName;
 
       // Buyers get a minimal whitelisted deal payload — never the raw deal
@@ -4747,7 +4752,7 @@ Return JSON only.`,
       // Media blocks: only this deal's uploads, blind-safe ones in blind mode.
       const media = await loadMediaAssets(deal.id);
       const overrides = rows.overrides;
-      const buyerCim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal) });
+      const buyerCim = buildBuyerCim({ deal: servedDeal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal) });
       if (buyerCim.preparing) {
         // No redacted version exists yet. Do NOT serve the real, un-redacted
         // sections — that would leak identity to the first viewer. Serve a
@@ -7252,15 +7257,16 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
       // hidden, locked (above the buyer's tier) and not-yet-redacted
       // sections never feed the answer.
       // (While a regenerated CIM waits for review, the kept copy buyers read.)
-      const { buyerCimRows } = await import("./cim/published-snapshot");
-      const [chatRows, chatMedia] = await Promise.all([
+      const { buyerCimRows, servedBlindCodename } = await import("./cim/published-snapshot");
+      const [chatRows, chatMedia, chatCodename] = await Promise.all([
         buyerCimRows(deal, access.accessLevel),
         loadMediaAssets(dealId),
+        servedBlindCodename(deal),
       ]);
       // A CIM held for the broker's review answers nothing (it escalates).
       const chatCim = cimHeldFromBuyers(deal) || chatRows.missing
         ? { sections: [] as ReturnType<typeof buildBuyerCim>["sections"] }
-        : buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: chatRows.sections, overrides: chatRows.overrides, media: chatMedia, askingPrice: listedAskingPrice(deal) });
+        : buildBuyerCim({ deal: chatCodename ? { ...deal, blindCodename: chatCodename } : deal, accessLevel: access.accessLevel, sections: chatRows.sections, overrides: chatRows.overrides, media: chatMedia, askingPrice: listedAskingPrice(deal) });
       const answerSections: AnswerSection[] = chatCim.sections
         .filter(s => !s.locked)
         .map(s => ({

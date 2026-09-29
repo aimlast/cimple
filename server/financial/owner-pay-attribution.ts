@@ -41,6 +41,13 @@ export interface PersonPay {
   /** The material says they stay on after the sale / leave at the sale. */
   stays: boolean;
   leaves: boolean;
+  /**
+   * The material says their pay is for no real work, above market, or ends
+   * at the sale with nobody replacing them ("no operational role since
+   * 2019", "income-splitting", "comes off at close") — the only grounds on
+   * which a relative's pay is an add-back.
+   */
+  noRealCost: boolean;
 }
 
 export interface PayRoster {
@@ -56,8 +63,13 @@ const PAY_WORD = String.raw`(?:salary|salaries|wages?|pay|paid|compensation|comp
 const NOT_PAY_BETWEEN = /\b(?:replace\w*|market|assum\w*|above|below|over|instead|would|could|buyer|estimate\w*|budget\w*|target|raise|increase|bonus|dividend\w*|draws?\s+of\s+dividend|total|combined|together|all|every|both|and|plus|family|shareholders|owners|officers|directors|management)\b|&|\+/i;
 /** A name followed by a possessive relation names someone else ("Harjit's wife"). */
 const POSSESSIVE_RELATION = /^['’]s\s+(?:wife|husband|spouse|partner|son|daughter|child|kids?|brother|sister|mother|father|mom|dad|parents?|family|nephew|niece|in-laws?|email|note|notes)\b/i;
-const STAYS_RE = /\b(?:to\s+stay|will\s+stay|staying|stays\s+on|stay\s+on|remain(?:s|ing)?|will\s+continue|continue\s+(?:as|to\s+run|running)|under\s+an?\s+employment\s+agreement|roll(?:ing)?\s+(?:over|\d))\b/i;
-const LEAVES_RE = /\b(?:retir\w+|leav(?:e|es|ing)\s+(?:at|on|after)|exit(?:s|ing)?\b|transition(?:s|ing)?\s+out|step(?:s|ping)?\s+(?:down|away|back)|will\s+not\s+be\s+replaced|won['’]t\s+be\s+replaced|not\s+be\s+replaced|salary\s+ends|removed\s+day\s+one|to\s+be\s+removed|no\s+(?:active\s+|operating\s+|operational\s+)?role|non[- ]working|fully\s+out)\b/i;
+/** Words for a relative: a reference to someone other than the named person ("Dad's salary", "his wife"). */
+const RELATION = String.raw`(?:dad|mom|mum|father|mother|wife|husband|spouse|son|daughter|brother|sister|uncle|aunt|cousin|nephew|niece|grandson|granddaughter|in-laws?)`;
+const STAYS_RE = /\b(?:to\s+stay|will\s+stay|staying|stays\s+on|stay\s+on|remain(?:s|ing)?|will\s+continue|continue\s+(?:as|to\s+run|running)|under\s+an?\s+employment\s+agreement|roll(?:ing)?\s+(?:over|\d))\b/gi;
+const LEAVES_RE = /\b(?:retir\w+|leav(?:e|es|ing)\s+(?:at|on|after)|exit(?:s|ing)?\b|transition(?:s|ing)?\s+out|step(?:s|ping)?\s+(?:down|away|back)|will\s+not\s+be\s+replaced|won['’]t\s+be\s+replaced|not\s+be\s+replaced|salary\s+ends|removed\s+day\s+one|to\s+be\s+removed|no\s+(?:active\s+|operating\s+|operational\s+)?role|non[- ]working|fully\s+out)\b/gi;
+/** The material says the pay is for no real work / above market / ends at the sale unreplaced. */
+const NO_REAL_COST_RE =
+  /\bnon[- ](?:working|operating|operational)\b|\bno\s+(?:real\s+|active\s+|operating\s+|operational\s+|day[- ]to[- ]day\s+)?role\b|\bnot\s+(?:active|working|involved)\s+in\b|\bdoes(?:n['’]t| not)\s+(?:really\s+|actually\s+)?work\b|\bincome[- ]splitting\b|\babove[- ]market\b|\bin\s+excess\s+of\s+(?:the\s+)?market\b|\bover(?:paid|[- ]market)\b|\b(?:will\s+not|won['’]t|not)\s+be\s+replaced\b|\bnot\s+(?:an?\s+)?(?:operating\s+)?role\s+a\s+buyer\b|\brole\s+(?:is\s+)?not\s+needed\b|\bnot\s+(?:needed|required)\s+(?:post[- ]?close|after\s+(?:the\s+)?(?:sale|close|closing))\b|\b(?:comes?|coming|goes|going)\s+off\s+(?:the\s+)?(?:payroll\s+)?at\s+(?:the\s+)?(?:close|closing|sale)\b|\bremoved\s+(?:on\s+)?(?:day\s+one|at\s+(?:the\s+)?(?:close|closing|sale))\b|\bto\s+be\s+removed\b|\b(?:salary|pay)\s+(?:ends|stops)\b/gi;
 
 function moneyValue(raw: string): number | null {
   const m = raw.replace(/\s+/g, "").match(/^\$(\d[\d,]*(?:\.\d+)?)(k|m|million|thousand)?$/i);
@@ -74,7 +86,86 @@ function sentencesOf(text: string): string[] {
   return text.split(/(?<=[.!?;])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
 }
 
+/** Whole sentences (a semicolon doesn't end one; a title's dot — "Dr. Park" — doesn't either). */
+function planSentencesOf(text: string): string[] {
+  return text.split(/(?<!\b(?:Dr|Mr|Mrs|Ms|St|Jr|Sr)\.)(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
+}
+
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * A transcript or note line's speaker label, and what follows it:
+ * "Manpreet Grewal: Dad takes $285K" → speaker Manpreet, "Dad takes $285K";
+ * "[00:04:18] Morgan Ellis: …", "Seller (Manpreet): …", "Surinder (Harjit's
+ * wife): no operational role …". The label names who is SPEAKING (or, with
+ * nobody named after it, who the note is about) — never the subject of what
+ * follows when it names someone else.
+ */
+function splitSpeaker(sentence: string): { speaker: string | null; body: string } {
+  const m = /^\s*(?:\[[\d:]+\]\s*)?(?:(?:Seller|Broker|Owner|Buyer|Interviewer|Advisor|Accountant)\s*\(\s*([A-Z][a-z]+)[^)]*\)|([A-Z][a-z]+)(?:\s+[A-Z][a-z]+){0,2}(?:\s*\([^)]*\))?)\s*:\s+/.exec(sentence);
+  if (!m) return { speaker: null, body: sentence };
+  return { speaker: m[1] ?? m[2], body: sentence.slice(m[0].length) };
+}
+
+/** Asides that don't change who a sentence is about: "(Harjit's wife)", ", Harjit's wife,". */
+function withoutAsides(text: string): string {
+  return text
+    // "Dad (Harjit Grewal) full salary …": the aside names who the relative is.
+    .replace(new RegExp(String.raw`\b${RELATION}\s*\(\s*([A-Za-z]{3,})[^()]*\)`, "gi"), (whole, name: string) => (/^[A-Z][a-z]/.test(name) && !NOT_A_FIRST_NAME.has(name) ? name : whole))
+    .replace(/\([^()]*\)/g, " ")
+    .replace(new RegExp(String.raw`,\s*(?:[A-Z][a-z]+['’]s\s+|(?:his|her|the\s+owner['’]s)\s+)${RELATION}\b[^,]{0,30},`, "gi"), " ");
+}
+
+const MONTH_OR_DAY = new Set(
+  "January February March April May June July August September October November December Monday Tuesday Wednesday Thursday Friday Saturday Sunday".split(" "),
+);
+
+interface PersonRef { at: number; who: string | null }
+
+/**
+ * Who each part of a text is about: every roster name (keyed), another
+ * person's name, a relative ("Dad", "his wife") or a first-person pronoun
+ * (the speaker). `who` is the roster key, or null for anyone else.
+ */
+function personRefs(body: string, firsts: string[], speaker: string | null): PersonRef[] {
+  const refs: PersonRef[] = [];
+  const rosterKey = (w: string) => firsts.find((f) => f.toLowerCase() === w.toLowerCase())?.toLowerCase() ?? null;
+  for (const m of Array.from(body.matchAll(/\b[A-Z][a-z]{2,}(?:\s+(?:[A-Z]\.\s+)?[A-Z][a-z]+)*/g))) {
+    const words = m[0].split(/\s+/).filter((w) => /^[A-Z][a-z]/.test(w));
+    const key = words.map(rosterKey).find((k) => k !== null) ?? null;
+    if (key) { refs.push({ at: m.index!, who: key }); continue; }
+    const first = words[0];
+    if (NOT_A_FIRST_NAME.has(first) || MONTH_OR_DAY.has(first)) continue;
+    // A capitalised first word is just the start of the sentence ("Retired in 2019").
+    if (m.index === 0 && !/^['’]s\b/.test(body.slice(m[0].length))) continue;
+    refs.push({ at: m.index!, who: null });
+  }
+  for (const m of Array.from(body.matchAll(new RegExp(String.raw`\b${RELATION}\b`, "gi")))) refs.push({ at: m.index!, who: null });
+  const self = speaker ? rosterKey(speaker) : null;
+  for (const m of Array.from(body.matchAll(/\bI(?:['’](?:m|ll|ve|d))?\b|\b[Mm](?:e|y|yself)\b/g))) refs.push({ at: m.index!, who: speaker ? self : null });
+  return refs.sort((a, b) => a.at - b.at);
+}
+
+/**
+ * The people a plan word is about ("Ranjit Bains retired" is Ranjit's,
+ * "Dale's retirement" Dale's, "Dad's salary … won't be replaced" Dad's):
+ * the nearest person named before it; else one named just after it
+ * ("retiring owner Harjit"); else, in a labelled line naming nobody, the
+ * label's person ("Seller (Manpreet): likely open to staying").
+ */
+function subjectsOf(re: RegExp, body: string, refs: PersonRef[], labelKey: string | null | undefined): Array<string | null> {
+  const out: Array<string | null> = [];
+  re.lastIndex = 0;
+  for (const m of Array.from(body.matchAll(re))) {
+    const at = m.index!;
+    const before = refs.filter((r) => r.at < at);
+    if (before.length > 0) { out.push(before[before.length - 1].who); continue; }
+    const after = refs.find((r) => r.at >= at && r.at - at <= 30);
+    if (after) { out.push(after.who); continue; }
+    if (refs.length === 0 && labelKey !== undefined) out.push(labelKey);
+  }
+  return out;
+}
 
 /**
  * Pay statements for one person in a sentence: "<Name> … salary $285K",
@@ -94,27 +185,56 @@ function statementsIn(sentence: string, first: string, others: string[], isPriva
     const reach = after.slice(0, 110);
     const hit = new RegExp(String.raw`^([\s\S]{0,70}?)\b${PAY_WORD}\b([^$\d]{0,24}?)(${MONEY})`, "i").exec(reach);
     if (!hit) continue;
-    // Complete parentheticals between the name and the pay word are an
-    // aside ("Surinder (Harjit's wife) salary $62K").
-    const lead = hit[1].replace(/\([^()]*\)/g, " ");
-    const between = `${lead} ${hit[2]}`;
-    if (NOT_PAY_BETWEEN.test(between)) continue;
-    if (others.some((o) => new RegExp(String.raw`\b${escape(o)}\b`, "i").test(between))) continue;
-    // "salaries of $522K for Harjit and Manpreet": plural pay of several people.
-    if (/\bsalaries\b/i.test(hit[0]) && /\b(?:and|&)\b/.test(after.slice(0, 60))) continue;
-    const value = moneyValue(hit[3]);
-    if (value === null || value < 10_000) continue;
-    const years = Array.from(new Set(sentence.match(/\b(?:19|20)\d{2}\b/g) ?? []));
-    out.push({ value, year: years.length === 1 ? years[0] : null, private: isPrivate, text: sentence.length > 200 ? `${sentence.slice(0, 197)}…` : sentence });
+    const statement = payStatement(sentence, hit, others, isPrivate, after);
+    if (statement) out.push(statement);
   }
   return out;
+}
+
+/** The speaker's own pay in the first person ("Harjit Grewal: my salary is $285,000"). */
+function firstPersonStatementsIn(sentence: string, others: string[], isPrivate: boolean): PayStatement[] {
+  const out: PayStatement[] = [];
+  for (const m of Array.from(sentence.matchAll(/\b(?:I|[Mm]y)\b/g))) {
+    const after = sentence.slice(m.index! + m[0].length);
+    const hit = new RegExp(String.raw`^([\s\S]{0,40}?)\b(?:${PAY_WORD}|take|draw|make|earn)\b([^$\d]{0,24}?)(${MONEY})`, "i").exec(after.slice(0, 90));
+    if (!hit) continue;
+    const statement = payStatement(sentence, hit, others, isPrivate, after, true);
+    if (statement) out.push(statement);
+  }
+  return out;
+}
+
+function payStatement(sentence: string, hit: RegExpExecArray, others: string[], isPrivate: boolean, after: string, firstPerson = false): PayStatement | null {
+  // Complete parentheticals between the name and the pay word are an
+  // aside ("Surinder (Harjit's wife) salary $62K"); a relation opening one
+  // is who the person is ("Harjit Grewal (Dad, full salary $285K").
+  const lead = hit[1].replace(/\([^()]*\)/g, " ").replace(new RegExp(String.raw`^\s*(?:[A-Z][a-z]+\s+)?\(\s*${RELATION}\b`, "i"), " ");
+  const between = `${lead} ${hit[2]}`;
+  if (NOT_PAY_BETWEEN.test(between)) return null;
+  if (others.some((o) => new RegExp(String.raw`\b${escape(o)}\b`, "i").test(between))) return null;
+  // Someone else between the name and the figure: a relative ("Dad takes").
+  if (new RegExp(String.raw`\b${RELATION}\b`, "i").test(between)) return null;
+  // A speaker's label ("Manpreet Grewal: he takes $285K"): what follows is theirs
+  // only when it names nobody else ("Gord McAllister (seller): Owner salary $260,000").
+  if (!firstPerson && /:/.test(between) && /\b(?:he|she|his|her|him|they|their|the\s+owner)\b/i.test(between.slice(between.lastIndexOf(":")))) return null;
+  // "salaries of $522K for Harjit and Manpreet": plural pay of several people.
+  if (/\bsalaries\b/i.test(hit[0]) && /\b(?:and|&)\b/.test(after.slice(0, 60))) return null;
+  const value = moneyValue(hit[3]);
+  if (value === null || value < 10_000) return null;
+  const years = Array.from(new Set(sentence.match(/\b(?:19|20)\d{2}\b/g) ?? []));
+  return { value, year: years.length === 1 ? years[0] : null, private: isPrivate, text: sentence.length > 200 ? `${sentence.slice(0, 197)}…` : sentence };
 }
 
 /**
  * The pay and plans of each named person, from the deal's material.
  * `names` are the people to look for (first names, or full names — the
  * first word is used). `shared` texts are the seller's side; `private` the
- * broker's own notes (statements from those are marked private).
+ * broker's own notes (statements from those are marked private; plans to
+ * stay or leave are read from the shared side only).
+ *
+ * A speaker's label is not what a line is about: "Manpreet Grewal: Dad
+ * takes $285K" is not Manpreet's pay, "Manpreet Grewal: Ranjit Bains
+ * retired" not Manpreet's retirement. Questions state nothing.
  */
 export function payRosterFrom(texts: { shared: string[]; private: string[] }, names: string[]): PayRoster {
   const firsts = Array.from(
@@ -126,28 +246,49 @@ export function payRosterFrom(texts: { shared: string[]; private: string[] }, na
     ),
   );
   const people = new Map<string, PersonPay>();
-  for (const first of firsts) people.set(first.toLowerCase(), { name: first, pay: [], stays: false, leaves: false });
+  for (const first of firsts) people.set(first.toLowerCase(), { name: first, pay: [], stays: false, leaves: false, noRealCost: false });
   if (firsts.length === 0) return { people };
+  const keyOf = (name: string | null) => (name ? firsts.find((f) => f.toLowerCase() === name.toLowerCase())?.toLowerCase() ?? null : null);
   const scan = (list: string[], isPrivate: boolean) => {
     for (const text of list) {
       if (!text) continue;
       const lower = text.toLowerCase();
-      const present = firsts.filter((f) => lower.includes(f.toLowerCase()));
-      if (present.length === 0) continue;
+      if (!firsts.some((f) => lower.includes(f.toLowerCase()))) continue;
       for (const sentence of sentencesOf(text)) {
-        for (const first of present) {
-          if (!new RegExp(String.raw`\b${escape(first)}\b`, "i").test(sentence)) continue;
+        if (/\?\s*$/.test(sentence)) continue;
+        const { speaker, body } = splitSpeaker(sentence);
+        const speakerKey = keyOf(speaker);
+        // Pay: named in the body, or the speaker's own in the first person.
+        for (const first of firsts) {
           const person = people.get(first.toLowerCase())!;
           const others = firsts.filter((o) => o !== first);
-          person.pay.push(...statementsIn(sentence, first, others, isPrivate));
-          // Plans: only a sentence about this person alone.
-          if (others.some((o) => new RegExp(String.raw`\b${escape(o)}\b(?!['’]s\s)`, "i").test(sentence))) continue;
-          if (!isPrivate && STAYS_RE.test(sentence)) person.stays = true;
-          if (!isPrivate && LEAVES_RE.test(sentence)) person.leaves = true;
+          if (new RegExp(String.raw`\b${escape(first)}\b`, "i").test(body)) person.pay.push(...statementsIn(body, first, others, isPrivate));
+          if (speakerKey === first.toLowerCase()) person.pay.push(...firstPersonStatementsIn(body, others, isPrivate));
         }
+      }
+      // Plans and role: whoever each plan word is about — read over whole
+      // sentences ("Surinder … salary $62K; no operational role since 2019").
+      for (const sentence of planSentencesOf(text)) {
+        if (/\?\s*$/.test(sentence)) continue;
+        const { speaker, body } = splitSpeaker(sentence);
+        const plain = withoutAsides(body);
+        const refs = personRefs(plain, firsts, speaker);
+        const label = speaker ? keyOf(speaker) : undefined;
+        const mark = (re: RegExp, set: (p: PersonPay) => void) => {
+          for (const who of subjectsOf(re, plain, refs, label)) {
+            const p = who ? people.get(who) : undefined;
+            if (p) set(p);
+          }
+        };
+        if (!isPrivate) {
+          mark(STAYS_RE, (p) => { p.stays = true; });
+          mark(LEAVES_RE, (p) => { p.leaves = true; });
+        }
+        mark(NO_REAL_COST_RE, (p) => { p.noRealCost = true; });
       }
     }
   };
+
   scan(texts.shared, false);
   scan(texts.private, true);
   return { people };
@@ -155,8 +296,10 @@ export function payRosterFrom(texts: { shared: string[]; private: string[] }, na
 
 /**
  * The pay the material states for a person: per named year, and one figure
- * the words give most often (the undated statements). Null when nothing is
- * stated, or two different figures are stated equally often.
+ * the undated statements give most often (their pay now). Null when nothing
+ * is stated. `current` is null when no undated statement gives it, or two
+ * different figures are stated equally often — a figure tied to an earlier
+ * year is never taken as this year's.
  */
 export function statedPay(person: PersonPay | undefined): { byYear: Record<string, number>; current: number | null; private: boolean } | null {
   if (!person || person.pay.length === 0) return null;
@@ -165,7 +308,7 @@ export function statedPay(person: PersonPay | undefined): { byYear: Record<strin
   // Shared statements decide; private ones only when nothing shared says it.
   const pool = person.pay.some((p) => !p.private) ? person.pay.filter((p) => !p.private) : person.pay;
   const counts = new Map<number, number>();
-  for (const p of pool) counts.set(p.value, (counts.get(p.value) ?? 0) + 1);
+  for (const p of pool) if (!p.year) counts.set(p.value, (counts.get(p.value) ?? 0) + 1);
   const ranked = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
   const current = ranked.length === 0 || (ranked.length > 1 && ranked[0][1] === ranked[1][1]) ? null : ranked[0][0];
   if (current === null && Object.keys(byYear).length === 0) return null;

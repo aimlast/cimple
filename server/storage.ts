@@ -29,7 +29,7 @@ import {
   integrations, integrationEmails, financialAnalyses, addbackVerifications,
   cimSectionOverrides, discrepancies,
   dealMembers, notifications, buyerApprovalRequests, buyerUsers, brokerBuyerContacts, dealOutreach,
-  dealDocumentRequirements,
+  dealDocumentRequirements, cimPublishedSnapshots,
   calculateBuyerProfileCompletion
 } from "@shared/schema";
 import { randomUUID } from "crypto";
@@ -594,6 +594,9 @@ export class DbStorage implements IStorage {
   }
 
   async deleteDeal(id: string): Promise<void> {
+    // The kept copy of a live CIM (published-snapshot.ts) has no foreign key:
+    // it would outlive the deal with the CIM buyers were given.
+    await db.delete(cimPublishedSnapshots).where(eq(cimPublishedSnapshots.dealId, id));
     await db.delete(deals).where(eq(deals.id, id));
   }
 

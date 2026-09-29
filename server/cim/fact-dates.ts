@@ -72,9 +72,53 @@ export function writtenMonthYear(text: string, month: number, year: string): boo
   return re.test(text);
 }
 
-/** Sentences of a fact (a decimal or an abbreviation's dot doesn't end one). */
+/**
+ * Sentences of a fact. A decimal doesn't end one, and neither does an
+ * abbreviation's dot — "Sept. 2024", "Nov. 30, 2024", "Dr. Park", "Ltd." —
+ * or a month-year inside it would never be checked.
+ */
 function factSentences(text: string): string[] {
-  return text.split(/(?<=[.;!?])\s+(?=[A-Z0-9"(])/);
+  return text.split(/(?<!\b(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|Mr|Mrs|Ms|Dr|St|No|Inc|Ltd|Co|Corp|Jr|Sr|approx|vs|e\.g|i\.e)\.)(?<=[.;!?])\s+(?=[A-Z0-9"(])/);
+}
+
+/** Words too common to tie a document's sentence to a fact's. */
+const COMMON_WORDS = new Set(
+  ("about above after again against along also among another around because before being below between both company business could customer customers during every first from have having into their there these those through under until using where which while whose would years months since other owner seller buyer total annual year month").split(" "),
+);
+const distinctiveWords = (s: string) =>
+  new Set((s.toLowerCase().match(/[a-z][a-z'-]{4,}/g) ?? []).filter((w) => !COMMON_WORDS.has(w) && !MONTHS.includes(w) && w !== "sept"));
+
+/**
+ * The sentences of the deal's written sources (documents, emails, the
+ * questionnaire — never broker-only material) that state a month-year one of
+ * the fact's sentences states, about the same thing: the document sentence
+ * shares two distinctive words with the fact's ("July 2023: acquired … Pembury"
+ * backs "acquired Pembury in July 2023" wherever the document's facts were
+ * filed). Joined, for repairInferredYears' documentWords.
+ */
+export function documentSentencesDating(factText: string, writtenTexts: readonly string[]): string {
+  if (!factText || writtenTexts.length === 0) return "";
+  const wanted: Array<{ month: number; year: string; words: Set<string> }> = [];
+  for (const sentence of factSentences(factText)) {
+    MONTH_YEAR.lastIndex = 0;
+    for (const m of Array.from(sentence.matchAll(MONTH_YEAR))) {
+      const month = monthIndex(m[1]);
+      if (month >= 0) wanted.push({ month, year: m[3], words: distinctiveWords(sentence) });
+    }
+  }
+  MONTH_YEAR.lastIndex = 0;
+  if (wanted.length === 0) return "";
+  const out: string[] = [];
+  for (const text of writtenTexts) {
+    if (!text || !wanted.some((w) => text.includes(w.year))) continue;
+    for (const s of text.split(/(?<=[.!?])\s+|\n+/)) {
+      if (s.length > 600) continue;
+      const hit = wanted.find((w) => s.includes(w.year) && writtenMonthYear(s, w.month, w.year) && Array.from(distinctiveWords(s)).filter((x) => w.words.has(x)).length >= 2);
+      if (hit && !out.includes(s)) out.push(s.trim());
+      if (out.length >= 20) return out.join("\n");
+    }
+  }
+  return out.join("\n");
 }
 
 /**
@@ -91,7 +135,7 @@ export function repairInferredYears(valueText: string, sellerWords: string, docu
   for (const sentence of factSentences(valueText)) {
     const local: string[] = [];
     const stripped: number[] = [];
-    const out = sentence.replace(MONTH_YEAR, (whole, monthTok: string, day: string | undefined, yearTok: string) => {
+    const out = sentence.replace(MONTH_YEAR, (whole, monthTok: string, day: string | undefined, yearTok: string, at: number) => {
       const m = monthIndex(monthTok);
       if (m < 0) return whole;
       // The seller said that year on that turn: the fact's year is theirs.
@@ -100,7 +144,9 @@ export function repairInferredYears(valueText: string, sellerWords: string, docu
       if (writtenMonthYear(documentWords, m, yearTok)) return whole;
       const said = sentenceWithMonth(sellerWords, m);
       if (!said) return whole;
-      const without = `${monthTok}${day ?? ""}`;
+      // An abbreviation keeps its dot ("Sept. 2024" → "Sept."; "Nov. 30, 2024" → "Nov. 30").
+      const dot = whole.slice(monthTok.length).startsWith(".") && (!!day || sentence[at + whole.length] !== ".") ? "." : "";
+      const without = `${monthTok}${dot}${day ?? ""}`;
       local.push(`${whole.trim()} → ${without}`);
       stripped.push(m);
       const q = said.trim().replace(/\s+/g, " ");

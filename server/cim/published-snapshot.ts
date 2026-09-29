@@ -153,6 +153,17 @@ export async function buyerCimRows(
   return { sections, overrides, fromSnapshot: false };
 }
 
+/**
+ * The codename buyers know the deal by while they read the kept copy: the
+ * one its Blind sections were redacted under (a codename changed during the
+ * review applies with the update). Null when buyers read the live CIM.
+ */
+export async function servedBlindCodename(deal: Pick<Deal, "id" | "isLive" | "cimGeneration">): Promise<string | null> {
+  if (!servesPublishedSnapshot(deal)) return null;
+  const snap = await getPublishedSnapshot(deal.id);
+  return snap?.blindCodename || null;
+}
+
 /** Sections a buyer's analytics may name: the live ones and, while one is kept, the copy's. */
 export async function buyerSectionsForAnalytics(deal: Pick<Deal, "id" | "isLive" | "cimGeneration">): Promise<Array<Pick<CimSection, "id" | "sectionKey">>> {
   const live = await storage.getCimSectionsByDeal(deal.id);

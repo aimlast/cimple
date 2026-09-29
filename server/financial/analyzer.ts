@@ -109,7 +109,7 @@ interface SourceBundle {
   /** Figures in the shared vs the broker's private material (private-figures.ts). */
   figureIndex: FigureIndex;
   /** Who is paid what, and who stays (owner-pay-attribution.ts) — for the owner-pay rules. */
-  payContext: Pick<AddbackRuleContext, "roster" | "ownerName" | "owners">;
+  payContext: PayContext;
 }
 
 /**
@@ -588,24 +588,50 @@ export async function runFinancialAnalysis(
 
 // ── Deterministic post-processing ──
 
+/** What the owner-pay rules read: who is paid what, who stays, and the material to read more names in. */
+export type PayContext = Pick<AddbackRuleContext, "roster" | "ownerName" | "owners"> & {
+  /** The texts and names the roster was read from — re-read with the people the add-backs name. */
+  payTexts?: { shared: string[]; private: string[] };
+  payNames?: string[];
+};
+
 /** Who is paid what and who stays, from the deal's material (owner-pay-attribution.ts). */
 export function payContextFor(
   rawInfo: Record<string, unknown>,
   figureTexts: { shared: string[]; private: string[] },
-): Pick<AddbackRuleContext, "roster" | "ownerName" | "owners"> {
+): PayContext {
   const ownerName = typeof rawInfo.ownerName === "string" ? rawInfo.ownerName : null;
+  const payTexts = payTextsFrom(rawInfo, figureTexts);
+  const payNames = peopleOnFile(rawInfo, ownerName ? [ownerName] : []);
   return {
-    roster: payRosterFrom(payTextsFrom(rawInfo, figureTexts), peopleOnFile(rawInfo, ownerName ? [ownerName] : [])),
+    roster: payRosterFrom(payTexts, payNames),
     ownerName,
     owners: ownersOnFile(rawInfo),
+    payTexts,
+    payNames,
   };
 }
 
+/**
+ * The roster, with the people the add-backs themselves name ("Related
+ * party salary — Maria Moretti") read from the same material — a relative
+ * the facts don't list as staff is still someone whose pay the material may
+ * describe.
+ */
+function withAddbackPeople(ctx: PayContext, n: AnalysisOutput["normalization"]): Omit<AddbackRuleContext, "pnl"> {
+  const { payTexts, payNames, ...rules } = ctx;
+  if (!payTexts || !payNames || !rules.roster || !n || !Array.isArray(n.addbacks)) return rules;
+  const labelled = peopleOnFile({}, n.addbacks.flatMap((a) => [String(a?.label ?? ""), String(a?.description ?? "")]));
+  const extra = labelled.filter((name) => !rules.roster!.people.has(name.toLowerCase()));
+  if (extra.length === 0) return rules;
+  return { ...rules, roster: payRosterFrom(payTexts, [...payNames, ...extra]) };
+}
+
 /** Rules applied to the model's fresh output, before the broker's edits are carried over. */
-export function postProcessAnalysis(result: AnalysisOutput, ctx: Omit<AddbackRuleContext, "pnl"> = {}): AnalysisOutput {
+export function postProcessAnalysis(result: AnalysisOutput, ctx: PayContext = {}): AnalysisOutput {
   return {
     ...result,
-    normalization: applyAddbackRules(result.normalization, { ...ctx, pnl: result.reclassifiedPnl }),
+    normalization: applyAddbackRules(result.normalization, { ...withAddbackPeople(ctx, result.normalization), pnl: result.reclassifiedPnl }),
     workingCapital: applyWorkingCapitalRules(result.workingCapital, result.reclassifiedBalanceSheet),
   };
 }

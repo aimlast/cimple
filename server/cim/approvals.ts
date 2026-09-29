@@ -20,6 +20,7 @@ import { db } from "../db";
 import { storage } from "../storage";
 import { cimSections, type CimSection, type Deal, type InsertCimSection } from "@shared/schema";
 import { CIM_ACCESS_TIERS, isCimLayoutKey } from "@shared/cim-layouts";
+import { buyersReadWorkingCopy } from "@shared/cim-buyer-view";
 import {
   APPROVAL_RULE_FLAG,
   PER_SECTION_APPROVAL_SINCE,
@@ -117,7 +118,7 @@ export async function backfillLegacyLiveApprovals(deal: Pick<Deal, "id" | "isLiv
  */
 export function legacySectionInsert(
   body: unknown,
-  deal: Pick<Deal, "isLive">,
+  deal: Pick<Deal, "isLive" | "cimGeneration">,
 ): { ok: true; fields: Omit<InsertCimSection, "dealId" | "order" | "sectionKey"> & { sectionKey?: string } } | { ok: false; error: string } {
   const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
   const title = typeof b.sectionTitle === "string" ? b.sectionTitle.replace(/\s+/g, " ").trim() : "";
@@ -139,8 +140,9 @@ export function legacySectionInsert(
       brokerEditedContent: text(b.brokerEditedContent),
       brokerApproved: false,
       sellerApproved: false,
-      // A live CIM doesn't show a section nobody has approved.
-      isVisible: deal.isLive ? false : b.isVisible !== false,
+      // A live CIM doesn't show a section nobody has approved (buyers
+      // reading the kept copy of an update under review don't see the draft).
+      isVisible: buyersReadWorkingCopy(deal) ? false : b.isVisible !== false,
       accessTier: tier,
       blindStaleAt: new Date(),
     },

@@ -24,7 +24,7 @@ import { settleResolvedFacts, currentResolvedNotes, resolvedNotes } from "./reso
 import { stampSourceDetails } from "../documents/merge-policy";
 import { cimFinancialsFor } from "./cim-financials";
 import { keepOutFor } from "./keep-out";
-import { hasMonthYear } from "./fact-dates";
+import { documentSentencesDating, hasMonthYear } from "./fact-dates";
 import { getFieldSources, isFactKey } from "../interview/info-merger";
 import { factValueText } from "../information/cim-facts";
 import { db } from "../db";
@@ -103,6 +103,17 @@ export function writtenValuesFor(info: Record<string, unknown>, key: string): st
 }
 
 /**
+ * The text of the deal's written sources — documents, emails, the
+ * questionnaire — that the seller side shares (never broker-only material,
+ * CRM notes, websites or spoken transcripts).
+ */
+export function writtenSourceTexts(docs: ReadonlyArray<{ sourceKind?: string | null; visibility?: string | null; extractedText?: string | null }>): string[] {
+  return docs
+    .filter((d) => d.visibility !== "broker_only" && WRITTEN_KINDS.has(d.sourceKind || "document") && typeof d.extractedText === "string" && d.extractedText.trim())
+    .map((d) => d.extractedText as string);
+}
+
+/**
  * For interview facts that state a "Month YYYY": the seller's words on the
  * turn that recorded them (provenance keeps the session and seller turn), so
  * the writer's knowledge base can correct a year the seller never said.
@@ -113,6 +124,8 @@ export async function factSourceWordsFor(
   info: Record<string, unknown>,
   /** Keys the broker settled in a resolved discrepancy: their value is the broker's, not the seller's words. */
   brokerSettled: ReadonlySet<string> = new Set(),
+  /** The deal's written sources' text (writtenSourceTexts): a date one of them states is kept, whatever fact it was filed under. */
+  writtenTexts: readonly string[] = [],
 ): Promise<Record<string, { words: string; at: string; documentWords?: string }>> {
   const sources = getFieldSources(info);
   const wanted = Object.entries(sources).filter(
@@ -130,7 +143,7 @@ export async function factSourceWordsFor(
       const words = typeof msg?.content === "string" ? msg.content : "";
       // What written sources on file say for the same fact: a year one of
       // them states is never taken out (fact-dates.ts).
-      const documentWords = writtenValuesFor(info, key);
+      const documentWords = [writtenValuesFor(info, key), documentSentencesDating(factValueText(info[key]), writtenTexts)].filter(Boolean).join("\n");
       if (words) out[key] = { words, at: s.at!, ...(documentWords ? { documentWords } : {}) };
     }
     return out;
@@ -170,7 +183,7 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
     // A resolved discrepancy overlays the broker's value on a key whose
     // provenance may still name the interview turn — that value's year is
     // the broker's ruling, never stripped as "not said by the seller".
-    factSourceWordsFor(deal.id, extractedInfo, new Set(resolvedDiscrepancies.map((n) => n.factKey).filter((k): k is string => !!k))),
+    factSourceWordsFor(deal.id, extractedInfo, new Set(resolvedDiscrepancies.map((n) => n.factKey).filter((k): k is string => !!k)), writtenSourceTexts(docs)),
   ]);
   // The deal's design template may carry the brokerage's house structure
   // ("Match my existing CIM") — the planner follows it.
