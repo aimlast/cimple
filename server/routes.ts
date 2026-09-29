@@ -1,6 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
+import { newDocumentFileName } from "./documents/document-path";
 import path from "path";
 import fs from "fs";
 import { storage } from "./storage";
@@ -302,53 +303,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Confidential documents (tax returns, financials, leases) are NOT public:
   // access requires the broker session that owns the deal, or the deal's
-  // seller invite token (?token= / X-Seller-Token). Everything else under
-  // /uploads (branding logos) stays public.
-  app.use("/uploads/docs", async (req, res, next) => {
-    try {
-      const filename = decodeURIComponent(req.path.replace(/^\//, ""));
-      if (!filename || filename.includes("..")) return res.status(404).json({ error: "Not found" });
-      const doc = await storage.getDocumentByFileUrl(`/uploads/docs/${filename}`);
-      if (!doc) return res.status(404).json({ error: "Not found" });
-
-      if (req.session.brokerId) {
-        const deal = await storage.getDeal(doc.dealId);
-        if (deal && deal.brokerId === req.session.brokerId) return next();
-      }
-      // Broker-only sources (CRM notes, private emails) are never served to
-      // the seller, whatever token they hold.
-      if ((doc as any).visibility === "broker_only") return res.status(401).json({ error: "Not authorized" });
-      const token = (req.query.token as string) || (req.headers["x-seller-token"] as string);
-      if (token) {
-        const invite = await storage.getSellerInviteByToken(token);
-        if (invite && invite.dealId === doc.dealId) return next();
-      }
-      return res.status(401).json({ error: "Not authorized" });
-    } catch (err) {
-      console.error("Document access check failed:", err);
-      return res.status(500).json({ error: "Access check failed" });
-    }
-  });
-
-  // CIM photos/videos (private-media/) are NEVER served statically — only
-  // through GET /api/media/:id (server/routes/cim-media.ts), which checks the
-  // broker session, seller token or buyer view token. The path is decoded
-  // and normalised first so "%2D", "./" or case tricks can't slip past.
-  app.use("/uploads", (req, res, next) => {
-    let p: string;
-    try {
-      p = decodeURIComponent(req.path);
-    } catch {
-      return res.status(404).json({ error: "Not found" });
-    }
-    const norm = path.posix.normalize(p.replace(/\\/g, "/")).toLowerCase();
-    if (norm === "/private-media" || norm.startsWith("/private-media/")) {
-      return res.status(404).json({ error: "Not found" });
-    }
-    next();
-  });
-
-  app.use("/uploads", (await import("express")).default.static(uploadsDir));
+  // seller invite token (?token= / X-Seller-Token). CIM photos/videos
+  // (private-media/) are never served statically — only through
+  // GET /api/media/:id. Everything else under /uploads (branding logos)
+  // stays public. The gate classifies the DECODED, normalised path — the
+  // one the static server resolves — so "//docs", "%64ocs" or "docs%2F"
+  // can't slip past it (server/security/uploads-gate.ts).
+  const { registerUploadsGate } = await import("./security/uploads-gate.js");
+  const expressStatic = (await import("express")).default.static;
+  registerUploadsGate(app, uploadsDir, {
+    getDocumentsByFileUrl: (u) => storage.getDocumentsByFileUrl(u) as any,
+    getDeal: (id) => storage.getDeal(id) as any,
+    getSellerInviteByToken: (t) => storage.getSellerInviteByToken(t) as any,
+  }, (root) => expressStatic(root));
 
   // ── Broker + buyer authentication, buyer dashboard ────────────────────
   registerBrokerAuthRoutes(app);
@@ -2912,7 +2879,7 @@ Return JSON only.`,
       },
       filename: (req, file, cb) => {
         const ext = path.extname(file.originalname);
-        cb(null, `doc_${Date.now()}${ext}`);
+        cb(null, newDocumentFileName("doc", ext));
       },
     }),
     limits: { fileSize: 20 * 1024 * 1024 }, // 20MB

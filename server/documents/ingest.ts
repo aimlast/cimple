@@ -19,7 +19,7 @@ import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile, UnreadableFormatError } from "./parser";
-import { resolveDocumentPath } from "./document-path";
+import { newDocumentFileName, resolveDocumentPath } from "./document-path";
 import {
   extractDocumentData,
   extractionChecklist,
@@ -143,12 +143,12 @@ export async function createAndIngestSource(input: CreateSourceInput): Promise<D
     if (path.dirname(abs) === path.resolve(docsDir)) {
       filename = path.basename(abs);
     } else {
-      filename = `src_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${path.extname(abs)}`;
+      filename = newDocumentFileName("src", path.extname(abs));
       fs.copyFileSync(abs, path.join(docsDir, filename));
     }
     try { fileSize = fs.statSync(path.join(docsDir, filename)).size; } catch { /* size is optional */ }
   } else if (typeof input.text === "string" && input.text.trim()) {
-    filename = `src_${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeStem(input.title)}.txt`;
+    filename = newDocumentFileName("src", ".txt", safeStem(input.title));
     fs.writeFileSync(path.join(docsDir, filename), input.text, "utf-8");
     fileSize = Buffer.byteLength(input.text, "utf-8");
     mimeType = "text/plain";

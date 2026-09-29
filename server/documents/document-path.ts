@@ -10,6 +10,7 @@
  * copy the server's environment into a document's text.
  */
 import path from "path";
+import { randomBytes } from "crypto";
 
 export const DOCS_URL_PREFIX = "/uploads/docs/";
 
@@ -37,4 +38,16 @@ export function resolveDocumentPath(
   const abs = path.resolve(docsDir, name);
   if (!abs.startsWith(docsDir + path.sep)) return null;
   return abs;
+}
+
+/**
+ * A new, unguessable file name for the docs folder. Names used to be
+ * doc_<millisecond timestamp> — easy to enumerate for anyone who can guess
+ * roughly when a seller uploaded. Now 128 random bits; the extension is kept
+ * only when it is a plain short one (".pdf", ".xlsx").
+ */
+export function newDocumentFileName(prefix: "doc" | "src" | "crm", ext: string, stem?: string): string {
+  const safeExt = /^\.[a-z0-9]{1,8}$/i.test(ext) ? ext.toLowerCase() : "";
+  const safeStemPart = stem ? `_${stem.replace(/[^A-Za-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)}` : "";
+  return `${prefix}_${randomBytes(16).toString("hex")}${safeStemPart === "_" ? "" : safeStemPart}${safeExt}`;
 }
