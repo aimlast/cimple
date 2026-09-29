@@ -11,6 +11,10 @@
  *            questions, what holds attention
  *   table    every page in one table (switch above the rail)
  *
+ * A section buyers could collapse (a long income statement) opens as they
+ * first saw it — collapsed, its summary painted — with a "Collapsed |
+ * Opened" switch; the opened view shows what the buyers who opened it read.
+ *
  * Blind versions render what the blind buyer saw (codename, redacted
  * titles); the rail adds "Buyer saw: …" under the real title, and a switch
  * shows the named version of the same page. Part-by-part heat is drawn on the
@@ -45,7 +49,10 @@ import { PagePanel, ReadLabelChip } from "./PagePanel";
 import { PageChips, PageRail } from "./PageRail";
 import { PageTable } from "./PageTable";
 import { ReachChart } from "./ReachChart";
-import { effectiveScope, heatMaxMs, legendTicks, paperTint, readersText, selectPageIndex, unreadBlocks, type HeatScope, type PageOrder } from "./viewer-model";
+import {
+  defaultSectionView, effectiveScope, expandCount, heatMaxMs, legendTicks, pageInView, pageOfText, paperTint, readersText, selectPageIndex, unreadBlocks,
+  type HeatScope, type PageOrder, type SectionView,
+} from "./viewer-model";
 
 export interface DocumentViewProps extends EngagementViewProps {
   /** The open page from the URL ("<pageId>#<part>"), or null for the default. */
@@ -72,6 +79,8 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  // A collapsible section's view (null = its default: see defaultSectionView).
+  const [viewWanted, setViewWanted] = useState<SectionView | null>(null);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
 
   const pages = doc?.pages ?? [];
@@ -92,6 +101,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
     if (!p) return;
     setSelectedKey(null);
     setHoveredKey(null);
+    setViewWanted(null);
     onPageChange(viewerPageKey(p.pageId, p.part));
   }, [pages, onPageChange]);
 
@@ -119,8 +129,11 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
   const shownPage = shown?.pages.find((p) => p.pageId === current?.pageId);
   const sameLayout = !showNamed || !servedPage || !shownPage || servedPage.blockFingerprint === shownPage.blockFingerprint;
   const paint = !!current && !current.pageLevelOnly && !doc.legacyOnly && sameLayout;
-  const maxMs = heatMaxMs(pages, scope, current);
-  const unreadCount = current && paint ? unreadBlocks(current, servedPage?.blocks).length : 0;
+  const sectionDefault = current ? defaultSectionView(current, servedPage) : null;
+  const sectionView: SectionView | null = sectionDefault ? viewWanted ?? sectionDefault : null;
+  const currentInView = current ? pageInView(current, sectionView) : null;
+  const maxMs = heatMaxMs(pages, scope, currentInView);
+  const unreadCount = current && paint ? unreadBlocks(current, servedPage?.blocks, sectionView).length : 0;
   const filteredToOne = filters.buyers.length === 1;
   const onOnlyBuyer = (accessId: string) => onFiltersChange({ ...filters, buyers: [accessId], segment: "all" });
 
@@ -136,6 +149,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
       onOnlyBuyer={onOnlyBuyer}
       filteredToOne={filteredToOne}
       paint={paint}
+      sectionView={paint ? sectionView : null}
     />
   ) : null;
 
@@ -151,8 +165,9 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
       />
 
       {doc.legacyOnly && (
-        <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-          Page-level only: this reading was recorded before part-by-part tracking.
+        <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground" data-testid="engagement-legacy-note">
+          These visits were recorded before reading was tracked part by part, so each page shows its total reading time only.
+          New visits show which parts buyers read, drawn on the page.
         </p>
       )}
 
@@ -200,7 +215,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
             {current && (
               <PageHeader
                 page={current}
-                total={pages.length}
+                pageOf={pageOfText(current.label, pages)}
                 onPrev={index > 0 ? () => go(index - 1) : null}
                 onNext={index < pages.length - 1 ? () => go(index + 1) : null}
               />
@@ -224,6 +239,15 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
                 {paint && showHeat && scope === "page" && effectiveScope(scope, current) === "document" && (
                   <span className="text-[11px]">This page has only one or two parts, so its colours compare with the whole CIM.</span>
                 )}
+                {sectionView && paint && (
+                  <Segmented<SectionView>
+                    label="How this section is shown"
+                    size="xs"
+                    value={sectionView}
+                    onChange={(v) => { setViewWanted(v); setSelectedKey(null); setShowUnread(false); }}
+                    options={[{ value: "collapsed", label: "Collapsed" }, { value: "opened", label: "Opened" }]}
+                  />
+                )}
                 {paint && unreadCount > 0 && (
                   <label className="inline-flex items-center gap-2">
                     <Switch checked={showUnread} onCheckedChange={setShowUnread} aria-label="Outline parts nobody read" />
@@ -242,6 +266,16 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
                   </button>
                 )}
               </div>
+            )}
+
+            {sectionView && paint && current && (
+              <p className="text-xs text-muted-foreground" data-testid="section-view-note">
+                {sectionView === "collapsed"
+                  ? `Buyers first see this section collapsed, as shown. ${expandCount(current) === 0 ? "Nobody has opened it yet." : `Opened ${expandCount(current)} time${expandCount(current) === 1 ? "" : "s"} — switch to Opened to see what they read.`}${current.part > 0 ? " Collapsed, the whole section sits on its first page." : ""}`
+                  : expandCount(current) === 0
+                    ? "Nobody has opened this section yet, so its full view has no reading time."
+                    : `The full section, as the buyers who opened it saw it (opened ${expandCount(current)} time${expandCount(current) === 1 ? "" : "s"}).`}
+              </p>
             )}
 
             {rendition?.mode === "blind" && (
@@ -289,6 +323,8 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
                   onSelectKey={setSelectedKey}
                   onHoverKey={setHoveredKey}
                   touch={isMobile}
+                  view={sectionView}
+                  onViewChange={(v) => { setViewWanted(v); setSelectedKey(null); }}
                 />
               )}
             </div>
@@ -296,7 +332,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
             {current && (
               <div className="flex flex-wrap items-center justify-between gap-3">
                 {paint && showHeat ? <HeatLegend maxMs={maxMs} scope={effectiveScope(scope, current)} /> : <span />}
-                <PagerButtons index={index} total={pages.length} label={current.label} onPrev={index > 0 ? () => go(index - 1) : null} onNext={index < pages.length - 1 ? () => go(index + 1) : null} />
+                <PagerButtons pageOf={pageOfText(current.label, pages)} onPrev={index > 0 ? () => go(index - 1) : null} onNext={index < pages.length - 1 ? () => go(index + 1) : null} />
               </div>
             )}
           </div>
@@ -337,7 +373,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
                 <SheetTitle className="text-sm">Page {current.label} · {current.title}</SheetTitle>
               </SheetHeader>
               {(() => {
-                const b = current.blocks.find((x) => x.key === selectedKey);
+                const b = pageInView(current, sectionView).blocks.find((x) => x.key === selectedKey);
                 return b ? <BlockDetails block={b} page={current} expectedMs={servedPage?.blocks.find((x) => x.key === b.key)?.expectedMs ?? null} /> : null;
               })()}
             </SheetContent>
@@ -354,12 +390,12 @@ function scrollToBlock(key: string) {
   el?.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
-function PageHeader({ page, total, onPrev, onNext }: { page: DocumentPage; total: number; onPrev: (() => void) | null; onNext: (() => void) | null }) {
+function PageHeader({ page, pageOf, onPrev, onNext }: { page: DocumentPage; pageOf: string; onPrev: (() => void) | null; onNext: (() => void) | null }) {
   return (
     <div className="space-y-2">
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Page {page.label} of {total}</p>
+          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">{pageOf}</p>
           <h3 className="text-lg font-semibold leading-tight">{page.title}</h3>
           {page.servedTitle && <p className="mt-0.5 text-xs italic text-muted-foreground">Buyer saw: “{page.servedTitle}”</p>}
         </div>
@@ -392,12 +428,11 @@ function PagerButton({ dir, onClick }: { dir: "prev" | "next"; onClick: (() => v
   );
 }
 
-function PagerButtons({ index, total, label, onPrev, onNext }: { index: number; total: number; label: string; onPrev: (() => void) | null; onNext: (() => void) | null }) {
-  void index;
+function PagerButtons({ pageOf, onPrev, onNext }: { pageOf: string; onPrev: (() => void) | null; onNext: (() => void) | null }) {
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
       <PagerButton dir="prev" onClick={onPrev} />
-      <span className="tabular-nums">Page {label} of {total}</span>
+      <span className="tabular-nums">{pageOf}</span>
       <PagerButton dir="next" onClick={onNext} />
     </div>
   );

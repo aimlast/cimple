@@ -45,7 +45,7 @@ import {
   type VisitFacts,
 } from "@shared/analytics-v2";
 import { quoteStart } from "@shared/cim-blocks";
-import { readLabel, studyRatio, timesWord } from "@shared/cim-reading-model";
+import { pageReadLabel, studyRatio, timesWord } from "@shared/cim-reading-model";
 
 export interface InsightContext {
   now: Date;
@@ -125,7 +125,23 @@ function capitalise(s: string): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
-export function pageRefOf(p: Pick<FactPage, "pageId" | "part" | "label" | "title">): PageRef {
+/** A page as it is spoken about for one buyer (a blind buyer's pages carry the titles THEY saw). */
+type SpokenPage = FactPage & { realTitle?: string };
+
+/**
+ * The pages with the words to use about this buyer. A blind buyer saw
+ * codename titles: every "why" line and talking point about them quotes
+ * the title they saw (never the real one — the broker may say it aloud to
+ * them); the real title rides along on page refs as broker-only context.
+ * A page with no known blind title is called "page N".
+ */
+export function pagesForBuyer(b: Pick<BuyerReadingFacts, "mode">, pages: FactPage[]): FactPage[] {
+  if (b.mode !== "blind") return pages;
+  return pages.map((p): SpokenPage => ({ ...p, title: p.blindTitle || `page ${p.label}`, realTitle: p.title }));
+}
+
+export function pageRefOf(p: Pick<FactPage, "pageId" | "part" | "label" | "title"> & { realTitle?: string }): PageRef {
+  if (p.realTitle !== undefined) return { pageId: p.pageId, part: p.part, label: p.label, title: p.realTitle, servedTitle: p.title };
   return { pageId: p.pageId, part: p.part, label: p.label, title: p.title };
 }
 
@@ -178,7 +194,7 @@ function pageRows(b: BuyerReadingFacts, pages: FactPage[]): PageRow[] {
     const attention = r?.attentionMs ?? 0;
     const onScreen = !!r && r.attentionMs + r.skimMs + r.visibleMs > 0;
     const reached = onScreen || (furthest >= 0 && (order.get(page.pageId) ?? Infinity) <= furthest);
-    return { page, attention, visits: r?.visits ?? 0, reached, label: readLabel(attention, page.expectedMs, reached) };
+    return { page, attention, visits: r?.visits ?? 0, reached, label: pageReadLabel(page.role, attention, page.expectedMs, reached) };
   });
 }
 
@@ -228,6 +244,26 @@ const ROLE_TALK: Partial<Record<PageRole, { talk: string; short: string }>> = {
   owner_transition: { talk: "Be ready to explain the owner's transition plan.", short: "read the transition plan closely" },
   employees: { talk: "Be ready to talk about the key staff and who stays after the sale.", short: "studied the team pages" },
 };
+
+/**
+ * Which earnings figure the deal leads with, from its normalization pages
+ * (their titles and row labels): "sde" (Seller's Discretionary Earnings),
+ * "ebitda", or null when there is no normalization page. SDE wins when a
+ * page is about SDE — a dental practice's bridge must not be called EBITDA.
+ */
+export function earningsBasis(pages: ReadonlyArray<Pick<FactPage, "role" | "title" | "blocks">>): "sde" | "ebitda" | null {
+  const norm = pages.filter((p) => p.role === "normalization");
+  if (norm.length === 0) return null;
+  const text = (p: Pick<FactPage, "title" | "blocks">) => [p.title, ...p.blocks.map((b) => b.label)].join(" ");
+  const SDE = /\bSDE\b|discretionary/i;
+  const EBITDA = /\bEBITDA\b/i;
+  if (norm.some((p) => SDE.test(p.title))) return "sde";
+  if (norm.some((p) => EBITDA.test(p.title))) return "ebitda";
+  const all = norm.map(text).join(" ");
+  if (SDE.test(all) && !EBITDA.test(all)) return "sde";
+  if (EBITDA.test(all)) return "ebitda";
+  return null;
+}
 
 function studiedIn(rows: PageRow[], roles: ReadonlySet<PageRole>): PageRow[] {
   return rows.filter((r) => roles.has(r.page.role) && r.label === "studied");
@@ -312,14 +348,14 @@ function signalsOf(b: BuyerReadingFacts, core: BuyerCore, ctx: InsightContext): 
     const time = formatReadingTime(sumAtt(read));
     const vis = Math.max(...read.map((r) => r.visits), 1);
     const over = vis >= 2 ? ` over ${plural(vis, "visit")}` : "";
-    const hasBridge = ctx.pages.some((p) => p.role === "normalization");
+    const basis = earningsBasis(ctx.pages);
     out.push({
       id: "financial_deep_dive",
       strength: 0.55 + 0.35 * Math.min(1, studyRatio(sumAtt(read), sumExp(read)) / 3),
       evidence: `Studied ${names(read)} for ${time}${over}.`,
       pageRefs: read.map((r) => pageRefOf(r.page)),
       short: `studied the financials for ${time}${over}`,
-      talk: `They studied the numbers (${time}). Offer to walk through ${hasBridge ? "the adjusted EBITDA" : "the financials"} with your accountant on the call.`,
+      talk: `They studied the numbers (${time}). Offer to walk through ${basis === "sde" ? "the SDE build-up" : basis === "ebitda" ? "the adjusted EBITDA" : "the financials"} with your accountant on the call.`,
       topic: "financials",
     });
   }
@@ -499,20 +535,35 @@ function signalsOf(b: BuyerReadingFacts, core: BuyerCore, ctx: InsightContext): 
   }
 
   // 12. skimmed — one visit, a small share of what the CIM needs.
+  // Never when they studied a page: going straight to the numbers and
+  // studying them is focus, not skimming.
   if (
     !core.readingNow && visits.length === 1 && core.totalExpected > 0 &&
-    core.totalAttention < R.skimmedShare * core.totalExpected
+    sumAtt(core.content) < R.skimmedShare * core.totalExpected &&
+    !core.content.some((r) => r.label === "studied")
   ) {
     const read = core.content.filter((r) => r.attention >= READING_RULES.readerMinMs).length;
-    out.push({
-      id: "skimmed",
-      strength: 0.7,
-      evidence: `One visit with ${formatReadingTime(core.totalAttention)} of reading across ${read} of ${plural(core.content.length, "page")} — the CIM takes about ${formatReadingTime(core.totalExpected)} to read.`,
-      pageRefs: [],
-      short: `only skimmed it (${formatReadingTime(core.totalAttention)})`,
-      talk: "Only skimmed. A short qualifying call may save time.",
-      topic: "skimmed",
-    });
+    // Time on the pages themselves (the cover left on screen while they walked away isn't reading).
+    const contentMs = sumAtt(core.content);
+    out.push(read === 0
+      ? {
+        id: "skimmed",
+        strength: 0.7,
+        evidence: `One visit that never got past the cover — no page read for 3 seconds or more.`,
+        pageRefs: [],
+        short: "opened it but didn't read past the cover",
+        talk: "Opened it but didn't read past the cover. A short call may help.",
+        topic: "skimmed",
+      }
+      : {
+        id: "skimmed",
+        strength: 0.7,
+        evidence: `One visit with ${formatReadingTime(contentMs)} of reading across ${read} of ${plural(core.content.length, "page")} — the CIM takes about ${formatReadingTime(core.totalExpected)} to read.`,
+        pageRefs: [],
+        short: `only skimmed it (${formatReadingTime(contentMs)})`,
+        talk: "Only skimmed. A short qualifying call may save time.",
+        topic: "skimmed",
+      });
   }
 
   // 13. completed — reached the last content page, with real reading.
@@ -646,7 +697,8 @@ function whyOf(b: BuyerReadingFacts, core: BuyerCore, signals: Sig[], ctx: Insig
 }
 
 /** Status, why, signals, talking points, intent and call priority for one buyer. */
-export function buyerInsight(buyer: BuyerReadingFacts, ctx: InsightContext): BuyerInsight {
+export function buyerInsight(buyer: BuyerReadingFacts, ctxIn: InsightContext): BuyerInsight {
+  const ctx: InsightContext = { ...ctxIn, pages: pagesForBuyer(buyer, ctxIn.pages) };
   const core = coreOf(buyer, ctx);
   const sigs = signalsOf(buyer, core, ctx);
   const status = statusOf(buyer, core, sigs, ctx.now);
@@ -728,17 +780,30 @@ export function pageHeadline(page: DocumentPage, doc: { pages: DocumentPage[]; o
   if (page.readers > 0 && ratio >= 1.5 && page.expectedMs >= 5_000 && perReader >= 20_000) {
     return `Readers spend ${timesWord(ratio)} the expected reading time here — ${formatReadingTime(perReader)} each on average.`;
   }
-  if (page.readers >= 2 && !page.pageLevelOnly) {
+  // A section buyers first saw collapsed: its opened parts count only once someone opened it.
+  const collapsedOnly = page.blocks.some((bl) => bl.key === "summary") && (page.interactions.expand ?? 0) <= 0;
+  if (page.readers >= 2 && !page.pageLevelOnly && !collapsedOnly) {
     const unread = page.blocks
-      .filter((bl) => !QUIET_KINDS.has(bl.kind) && bl.attentionMs < READING_RULES.unreadBlockMs)
+      .filter((bl) => !QUIET_KINDS.has(bl.kind) && bl.attentionMs < READING_RULES.unreadBlockMs && bl.visibleMs < READING_RULES.readerMinMs)
       .sort((a, b) => kindWeight(b.kind) - kindWeight(a.kind));
-    if (unread.length > 0) return `Nobody stopped on ${blockPhrase(unread[0].label)}.`;
+    if (unread.length > 0) {
+      // A section buyers first saw collapsed: only those who opened it could stop on its rows.
+      const collapsible = page.blocks.some((bl) => bl.key === "summary");
+      return collapsible
+        ? `Of the buyers who opened this section, nobody stopped on ${blockPhrase(unread[0].label)}.`
+        : `Nobody stopped on ${blockPhrase(unread[0].label)}.`;
+    }
   }
   return null;
 }
 
 function kindWeight(kind: string): number {
   return kind === "table" ? 4 : kind === "metric" || kind === "chart" ? 3 : kind === "highlight" ? 2 : 1;
+}
+
+/** A drop worth pointing at: at least 2 buyers AND at least 10% of those who opened the CIM. */
+export function isMarkedDrop(drop: number, openedBy: number): boolean {
+  return drop >= 2 && drop >= 0.1 * openedBy;
 }
 
 /** "Most buyers stopped around page 14 · Employees & Management (9 → 4 readers)", or null. */
@@ -753,9 +818,15 @@ export function reachHeadline(reach: ReachPoint[]): string | null {
     if (d > 0 && (!drop || d > drop.from - drop.at.buyers)) drop = { at: pts[i], from: pts[i - 1].buyers };
   }
   const last = pts[pts.length - 1];
-  const significant = drop && (drop.from - drop.at.buyers >= 2 || (n <= 4 && drop.from - drop.at.buyers >= 1));
+  if (n === 1) {
+    // One buyer (or a view filtered to one): where they got to, never "most buyers".
+    if (last.buyers >= 1) return "The buyer who opened the CIM reached the last page.";
+    const furthest = [...pts].reverse().find((p) => p.buyers >= 1);
+    return furthest ? `This buyer got as far as page ${furthest.label} · ${furthest.title}.` : null;
+  }
+  const significant = !!drop && isMarkedDrop(drop.from - drop.at.buyers, n);
   if (!drop || !significant) {
-    if (last.buyers === n) return n === 1 ? "The buyer who opened the CIM reached the last page." : `All ${n} buyers who opened the CIM reached the last page.`;
+    if (last.buyers === n) return `All ${n} buyers who opened the CIM reached the last page.`;
     return `${last.buyers} of ${plural(n, "buyer")} reached the last page.`;
   }
   const lead = drop.at.buyers < drop.from / 2 ? "Most buyers stopped" : "The biggest drop is";
@@ -778,7 +849,8 @@ const EVENT_MOMENT: Partial<Record<string, (title: string, detail?: string) => s
 };
 
 /** Deterministic key moments of one visit ("Went straight to Financials after the cover"). */
-export function journeyMoments(visit: VisitFacts, buyer: BuyerReadingFacts, ctx: InsightContext): KeyMoment[] {
+export function journeyMoments(visit: VisitFacts, buyer: BuyerReadingFacts, ctxIn: InsightContext): KeyMoment[] {
+  const ctx: InsightContext = { ...ctxIn, pages: pagesForBuyer(buyer, ctxIn.pages) };
   const start = ms(visit.startedAt);
   const end = Math.max(ms(visit.lastSeenAt), start);
   const iso = (t: number) => new Date(t).toISOString();

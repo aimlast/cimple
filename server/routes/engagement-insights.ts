@@ -34,7 +34,7 @@ import { KIND_GROUPS, kindGroupOf, type KindGroup } from "@shared/cim-blocks";
 import { getCimLayout } from "@shared/cim-layouts";
 import { requireBroker, requireOwnedDeal } from "../broker-auth/routes.js";
 import { getDealAccess, ownedLiveDeals } from "../engagement/access";
-import { loadDealReadingFacts } from "../engagement/facts";
+import { cachedDealReadingFacts, cachedFactsForDeals } from "../engagement/facts-cache";
 import { buyerInsight, rankBuyers, readingSummary, type InsightContext } from "../engagement/insights";
 import { BriefNothingToSayError, BriefUnavailableError, buyerBrief } from "../engagement/narrative";
 import { industryBenchmarkRows, roleBenchmarks } from "../engagement/benchmarks";
@@ -44,21 +44,9 @@ const CALL_LIST_SIZE = 15;
 const CACHE_MS = 30_000;
 const DAY = 86_400_000;
 
-/** Load facts for several deals, a few at a time (each is a handful of SQL reads). */
-async function factsForDeals(deals: Deal[], now: Date): Promise<Array<{ deal: Deal; facts: DealReadingFacts }>> {
-  const out: Array<{ deal: Deal; facts: DealReadingFacts }> = [];
-  for (let i = 0; i < deals.length; i += 4) {
-    const batch = await Promise.all(deals.slice(i, i + 4).map(async (deal) => {
-      try {
-        return { deal, facts: await loadDealReadingFacts(deal, DEFAULT_ENGAGEMENT_FILTERS, now) };
-      } catch (err) {
-        console.warn(`[engagement] facts for deal ${deal.id} failed:`, (err as Error).message);
-        return null;
-      }
-    }));
-    for (const b of batch) if (b) out.push(b);
-  }
-  return out;
+/** Load facts for several deals, a few at a time (the shared 30 s cache: server/engagement/facts-cache.ts). */
+async function factsForDeals(deals: Deal[], _now: Date): Promise<Array<{ deal: Deal; facts: DealReadingFacts }>> {
+  return cachedFactsForDeals(deals, DEFAULT_ENGAGEMENT_FILTERS);
 }
 
 function ctxOf(facts: DealReadingFacts): InsightContext {
@@ -249,7 +237,7 @@ export function registerEngagementInsightRoutes(app: Express): void {
       const deal = res.locals.deal as Deal;
       const access = await getDealAccess(deal.id, req.params.accessId);
       if (!access) return res.status(404).json({ error: "Not found" });
-      const facts = await loadDealReadingFacts(deal, DEFAULT_ENGAGEMENT_FILTERS);
+      const facts = await cachedDealReadingFacts(deal, DEFAULT_ENGAGEMENT_FILTERS);
       res.json(await buyerBrief(deal, facts, access.id));
     } catch (err) {
       if (err instanceof BriefNothingToSayError) return res.status(409).json({ error: "They haven't read any of the CIM yet — there's nothing to summarise." });

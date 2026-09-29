@@ -16,7 +16,7 @@ import {
 import { DEFAULT_ENGAGEMENT_FILTERS, READING_RULES } from "@shared/analytics-v2";
 import { CONTACT_PAGE_ID, DISCLAIMER_PAGE_ID } from "@shared/cim-blocks";
 import { storage } from "../storage";
-import { loadDealReadingFacts } from "../engagement/facts";
+import { cachedFactsForDeals } from "../engagement/facts-cache";
 import { buyerInsight } from "../engagement/insights";
 
 /**
@@ -141,7 +141,7 @@ async function readingByAccess(accessIds: string[]): Promise<Map<string, AccessE
     first: sql<number>`(extract(epoch from min(${buyerVisits.startedAt})) * 1000)::float8`,
     last: sql<number>`(extract(epoch from max(${buyerVisits.lastSeenAt})) * 1000)::float8`,
   }).from(buyerVisits)
-    .where(and(inArray(buyerVisits.buyerAccessId, accessIds), eq(buyerVisits.selfView, false)))
+    .where(and(inArray(buyerVisits.buyerAccessId, accessIds), eq(buyerVisits.selfView, false), eq(buyerVisits.clamped, false)))
     .groupBy(buyerVisits.buyerAccessId);
   if (visits.length === 0) return out;
   const ids = visits.map((v) => v.accessId);
@@ -153,7 +153,7 @@ async function readingByAccess(accessIds: string[]): Promise<Map<string, AccessE
       att: sql<number>`coalesce(sum(${readingRollups.attentionMs}), 0)::float8`,
     }).from(readingRollups)
       .innerJoin(buyerVisits, eq(buyerVisits.id, readingRollups.visitId))
-      .where(and(inArray(readingRollups.buyerAccessId, ids), eq(buyerVisits.selfView, false)))
+      .where(and(inArray(readingRollups.buyerAccessId, ids), eq(buyerVisits.selfView, false), eq(buyerVisits.clamped, false)))
       .groupBy(readingRollups.buyerAccessId, readingRollups.pageId),
     db.select({ id: buyerAccess.id, dealId: buyerAccess.dealId }).from(buyerAccess).where(inArray(buyerAccess.id, ids)),
   ]);
@@ -273,21 +273,19 @@ export async function readingIntentByAccess(accesses: Array<{ id: string; dealId
   const out = new Map<string, number>();
   if (accesses.length === 0) return out;
   const withVisits = await db.selectDistinct({ accessId: buyerVisits.buyerAccessId }).from(buyerVisits)
-    .where(and(inArray(buyerVisits.buyerAccessId, accesses.map((a) => a.id)), eq(buyerVisits.selfView, false)));
+    .where(and(inArray(buyerVisits.buyerAccessId, accesses.map((a) => a.id)), eq(buyerVisits.selfView, false), eq(buyerVisits.clamped, false)));
   const measured = new Set(withVisits.map((r) => r.accessId));
   const byDeal = new Map<string, string[]>();
   for (const a of accesses) if (measured.has(a.id)) byDeal.set(a.dealId, [...(byDeal.get(a.dealId) ?? []), a.id]);
-  const now = new Date();
-  for (const [dealId, ids] of Array.from(byDeal.entries())) {
-    try {
-      const deal = await storage.getDeal(dealId);
-      if (!deal) continue;
-      const facts = await loadDealReadingFacts(deal, { ...DEFAULT_ENGAGEMENT_FILTERS, buyers: ids }, now);
-      const ctx = { now, pages: facts.pages, buyers: facts.buyers };
-      for (const b of facts.buyers) if (b.visits.length > 0) out.set(b.accessId, buyerInsight(b, ctx).intent);
-    } catch (err) {
-      console.warn(`[profile-data] reading intent for deal ${dealId} failed:`, (err as Error).message);
-    }
+  // The deals' facts load a few at a time, from the same 30 s cache as the
+  // Engagement tab and the call list (the whole deal's buyers, so the intent
+  // is the very number the call list ranks by).
+  const dealRows = (await Promise.all(Array.from(byDeal.keys()).map((id) => storage.getDeal(id).catch(() => undefined))))
+    .filter((d): d is NonNullable<typeof d> => !!d);
+  for (const { deal, facts } of await cachedFactsForDeals(dealRows, DEFAULT_ENGAGEMENT_FILTERS)) {
+    const wanted = new Set(byDeal.get(deal.id) ?? []);
+    const ctx = { now: new Date(facts.now), pages: facts.pages, buyers: facts.buyers };
+    for (const b of facts.buyers) if (wanted.has(b.accessId) && b.visits.length > 0) out.set(b.accessId, buyerInsight(b, ctx).intent);
   }
   return out;
 }

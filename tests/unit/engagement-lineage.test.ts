@@ -15,6 +15,7 @@ import { buildDocumentResponse } from "../../server/engagement/responses";
 import { DEFAULT_ENGAGEMENT_FILTERS, viewerPageKey } from "../../shared/analytics-v2";
 import type { BuyerSection } from "../../shared/cim-buyer-view";
 import { legacySessions } from "../../scripts/backfill-legacy-reading";
+import { legacyKeyResolver, legacyRows, mainAccessLevel } from "../../server/engagement/legacy";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -169,6 +170,39 @@ test("old section exits → one page-level visit per 30-min session, overlaps sc
   assert.ok((b.pages.get("P-team")! + b.pages.get("P-fin")!) <= b.wallMs + 1);
   assert.equal(legacySessions(exits, (k) => (k === "fin" ? "P-fin" : null)).length, 3);
   assert.equal(s[0].visitId, legacySessions(exits, (k) => (k === "fin" ? "P-fin" : k === "team" ? "P-team" : null))[0].visitId, "stable ids: re-runs change nothing");
+});
+
+test("old-tracker reading is shown on the fly (read-only): page totals on the CIM, filters apply, never 'changed since'", () => {
+  const at = (m: number) => new Date(Date.UTC(2026, 8, 25, 10, m));
+  const sessions = legacySessions([
+    { accessId: "oldReader", key: "fin", seconds: 90, at: at(2) },
+    { accessId: "oldReader", key: "grid", seconds: 30, at: at(3) },
+    { accessId: "newReader", key: "s_new-grid", seconds: 40, at: at(40) },   // a blind view's neutral key
+  ], legacyKeyResolver([{ id: "new-fin", sectionKey: "fin" }, { id: "new-grid", sectionKey: "grid" }], (id) => `s_${id}`));
+  const rows = legacyRows(sessions, { since: null, device: "all", accessIds: null }, (id) => (id === "new-fin" ? "L-fin" : "L-grid"));
+  assert.equal(rows.visits.length, 2);
+  assert.ok(rows.visits.every((v) => v.legacy && v.renditionId === null && v.deviceClass === null));
+  assert.equal(rows.sums.find((x) => x.accessId === "oldReader" && x.pageId === "new-fin")!.attentionMs, 90_000);
+  // Filters: phones only drops them (no device known); a buyer filter keeps only that buyer; a date range on the last activity.
+  assert.equal(legacyRows(sessions, { since: null, device: "phone", accessIds: null }, (x) => x).visits.length, 0);
+  assert.deepEqual(legacyRows(sessions, { since: null, device: "all", accessIds: ["newReader"] }, (x) => x).visits.map((v) => v.accessId), ["newReader"]);
+  assert.equal(legacyRows(sessions, { since: at(30), device: "all", accessIds: null }, (x) => x).visits.length, 1);
+  // Assembled on the version as it would be served now: page-level only, no false "changed since".
+  const facts = assembleFacts(base({
+    renditions: [{ id: "r-new", mode: "normal", variant: "full", createdAt: at(0), visits: 0 }],
+    chosen: { id: "r-new", mode: "normal", variant: "full", createdAt: at(0), visits: 0 },
+    indexes: new Map([["r-new", newIdx]]),
+    visits: rows.visits, sums: rows.sums, visitPages: rows.visitPages,
+  }));
+  assert.equal(facts.legacyOnly, true);
+  const doc = buildDocumentResponse(facts);
+  const finPage = doc.pages.find((p) => p.pageId === "new-fin")!;
+  assert.equal(finPage.attentionMs, 90_000);
+  assert.equal(finPage.changedSince, null, "old-tracker reading is not a changed version");
+  assert.equal(finPage.pageLevelOnly, true);
+  assert.equal(doc.openedBy, 2);
+  assert.equal(mainAccessLevel(["full", "full", "loi", "teaser", "teaser", "teaser"]), "teaser");
+  assert.equal(mainAccessLevel(["full", "teaser"]), "full", "a tie prefers the full version");
 });
 
 console.log(`\n${passed} passed`);

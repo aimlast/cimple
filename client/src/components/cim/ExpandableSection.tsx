@@ -25,6 +25,12 @@ interface ExpandableSectionProps {
   brokerMode?: boolean;
   onToggle?: (sectionKey: string, expanded: boolean) => void;
   onFinancialToggle?: (sectionKey: string, view: "reported" | "normalized") => void;
+  /**
+   * Controlled open/closed state (the broker's reading view draws either
+   * view on demand). Omitted: the section starts collapsed and toggles itself.
+   */
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 /**
@@ -98,9 +104,12 @@ export function ExpandableSection({
   brokerMode = false,
   onToggle,
   onFinancialToggle,
+  expanded: expandedProp,
+  onExpandedChange,
 }: ExpandableSectionProps) {
   const config = getExpandableConfig(section);
-  const [expanded, setExpanded] = useState(!config.isExpandable);
+  const [expandedState, setExpanded] = useState(!config.isExpandable);
+  const expanded = expandedProp ?? expandedState;
   const themeVars = useThemeStyle();
   const number = useSectionNumber(section.id);
   // Reading analytics (blocks.tsx): the page wrapper, the collapsed summary
@@ -145,7 +154,8 @@ export function ExpandableSection({
 
   const toggle = () => {
     const next = !expanded;
-    setExpanded(next);
+    if (expandedProp === undefined) setExpanded(next);
+    onExpandedChange?.(next);
     onToggle?.(section.sectionKey, next);
     interaction(next ? "expand" : "collapse");
   };

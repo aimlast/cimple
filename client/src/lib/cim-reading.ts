@@ -17,11 +17,18 @@
  *   - a 1 s tick: hidden / away / idle / active (with tab election over a
  *     BroadcastChannel so two tabs never both count), the reading band
  *     under the [data-reading-chrome] bars, the part under the pointer;
- *   - sessionStorage resume (a reload within 30 min continues the visit);
- *   - a send every 15 s while anything changed, sendBeacon (text/plain) when
- *     the tab hides or closes, retry 15 → 30 → 60 s when offline. Counters
- *     are cumulative and the server keeps the GREATEST, so a lost, repeated
- *     or late send can never corrupt the totals.
+ *   - sessionStorage resume (a reload within 30 min of the last active
+ *     second continues the visit);
+ *   - a NEW VISIT once the buyer comes back to a tab that sat unread for 30
+ *     minutes or more (the old one is sent first): a CIM left open all
+ *     morning and studied in the afternoon is two visits, not one;
+ *   - a send every 15 s while the buyer is actually reading (or clicked
+ *     something) — never for idle or hidden seconds alone, so the server's
+ *     "last active" time (buyer_visits.last_seen_at) means reading, not an
+ *     open tab — and a sendBeacon (text/plain, with the idle/hidden clocks)
+ *     when the tab hides or closes; retry 15 → 30 → 60 s when offline.
+ *     Counters are cumulative and the server keeps the GREATEST, so a lost,
+ *     repeated or late send can never corrupt the totals.
  *
  * Nothing it sends carries CIM text: page ids are the section ids the buyer
  * was served and block keys are structural positions ("row:3").
@@ -116,6 +123,8 @@ interface Stored {
   visitId: string;
   renditionId: string;
   savedAt: number;
+  /** Last second the buyer was actively reading (absent in older saves). */
+  lastActiveAt?: number;
   snap: AllocatorSnapshot;
   acked: Array<[string, BlockCounters]>;
   ackedPathLen: number;
@@ -161,6 +170,8 @@ class ReadingSession {
   private nextFlushAt = 0;
   private lastTickAt = 0;
   private lastSaveAt = 0;
+  /** When this visit last accrued active time (a gap of 30 min starts a new visit). */
+  private lastActiveAt = Date.now();
   private lastSheetTop: number | null = null;
 
   private lastInputAt = Date.now();
@@ -291,9 +302,11 @@ class ReadingSession {
       const raw = window.sessionStorage.getItem(this.storeKey);
       stored = raw ? (JSON.parse(raw) as Stored) : null;
     } catch { stored = null; }
+    const lastActive = typeof stored?.lastActiveAt === "number" ? stored.lastActiveAt : stored?.savedAt ?? 0;
     if (stored && stored.v === 1 && stored.renditionId === this.renditionId && Date.now() - stored.savedAt < READING_RULES.visitGapMs
-      && typeof stored.visitId === "string") {
+      && Date.now() - lastActive < READING_RULES.visitGapMs && typeof stored.visitId === "string") {
       this.visitId = stored.visitId;
+      this.lastActiveAt = lastActive;
       this.alloc = new ReadingAllocator(this.pageOrder, stored.snap);
       this.acked = new Map(stored.acked ?? []);
       this.ackedPathLen = stored.ackedPathLen ?? 0;
@@ -307,6 +320,7 @@ class ReadingSession {
 
   private beginVisit(): void {
     this.visitId = uuid();
+    this.lastActiveAt = Date.now();
     this.alloc = new ReadingAllocator(this.pageOrder);
     this.acked = new Map();
     this.ackedPathLen = 0;
@@ -319,7 +333,7 @@ class ReadingSession {
     this.lastSaveAt = Date.now();
     try {
       const s: Stored = {
-        v: 1, visitId: this.visitId, renditionId: this.renditionId, savedAt: this.lastSaveAt,
+        v: 1, visitId: this.visitId, renditionId: this.renditionId, savedAt: this.lastSaveAt, lastActiveAt: this.lastActiveAt,
         snap: this.alloc.snapshot(), acked: Array.from(this.acked.entries()), ackedPathLen: this.ackedPathLen,
         ackedClocks: this.ackedClocks, seq: this.seq, pending: this.pending,
       };
@@ -464,22 +478,41 @@ class ReadingSession {
       });
       frame = { ...measured, state };
     }
+    // Back after 30+ minutes without reading (a tab left open): send the old
+    // visit as it stands and start a new one before this second counts.
+    if (frame.state === "active" && this.alloc.clocks.activeMs > 0 && now - this.lastActiveAt >= READING_RULES.visitGapMs) {
+      this.rotateVisit();
+    }
     const activeBefore = this.alloc.clocks.activeMs;
     this.alloc.tick(dt, frame);
+    if (this.alloc.clocks.activeMs > activeBefore) this.lastActiveAt = now;
     try { this.bc?.postMessage({ tab: this.tabId, focused: document.hasFocus(), pointerAt: this.lastPointerAt }); } catch { /* closed */ }
     if (now - this.lastSaveAt >= SAVE_EVERY_MS) this.save();
     // Send every 15 s while the buyer reads (or has something new to report).
-    const progressed = this.alloc.clocks.activeMs > activeBefore || this.pending.length > 0;
-    if (now >= this.nextFlushAt && (progressed || this.hasUnsent())) void this.flush("fetch");
+    if (now >= this.nextFlushAt && this.hasUnsent("fetch")) void this.flush("fetch");
   }
 
   // ── sending ───────────────────────────────────────────────────────────
 
-  private hasUnsent(): boolean {
+  /** The visit so far goes out (a beacon), and a fresh visit begins. */
+  private rotateVisit(): void {
+    this.flush("beacon");
+    this.beginVisit();
+    this.save();
+  }
+
+  /**
+   * Anything the server doesn't have yet. A periodic send ("fetch") only
+   * goes for reading, parts, path or clicks — idle and hidden seconds alone
+   * never cause one; the beacon on hide/close also carries those clocks.
+   */
+  private hasUnsent(mode: "fetch" | "beacon" = "fetch"): boolean {
     if (this.pending.length > 0 || this.alloc.path.length > this.ackedPathLen) return true;
     const c = this.alloc.roundedClocks();
     const a = this.ackedClocks;
-    if (!a || a.activeMs !== c.activeMs || a.wallMs !== c.wallMs) return true;
+    if (!a) return c.activeMs > 0 || (mode === "beacon" && c.wallMs > 0);
+    if (a.activeMs !== c.activeMs) return true;
+    if (mode === "beacon" && a.wallMs !== c.wallMs) return true;
     const blocks = this.alloc.roundedBlocks();
     let changed = false;
     blocks.forEach((v, k) => { if (!changed && !sameCounters(this.acked.get(k), v)) changed = true; });
@@ -531,7 +564,7 @@ class ReadingSession {
 
   async flush(mode: "fetch" | "beacon"): Promise<void> {
     if (this.dead || !this.alloc) return;
-    if (!this.hasUnsent()) return;
+    if (!this.hasUnsent(mode)) return;
     const payloads = this.payloads();
     if (mode === "beacon") {
       // The page is going away: fire and forget (a later send repeats it harmlessly).

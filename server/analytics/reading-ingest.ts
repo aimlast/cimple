@@ -14,10 +14,18 @@
  *   - a visit id already stored under another buyer link → 409;
  *   - counters are cumulative and merged with GREATEST, so a resend, a
  *     beacon racing a fetch or a late packet can never double count;
- *   - the CLAMP: a visit can't have more active time than the server has
- *     seen elapse since it started (+20 s slack), and its parts can't hold
- *     more reading time than its active time — anything more is scaled
- *     down and the visit is marked `clamped`;
+ *   - the CLAMP, on the server's own clock: a visit's FIRST send may claim
+ *     at most 3 minutes of active time (the tracker sends after 15 s; the
+ *     server never saw the visit start, so a longer claim is implausible
+ *     whatever the rendition's age), each later send may add at most the
+ *     time since the visit was last active (+20 s slack), never more than
+ *     6 h of active time in all, and its parts can't hold more reading time
+ *     than its active time — anything more is scaled down and the visit is
+ *     marked `clamped` (clamped visits are left out of every number:
+ *     server/engagement/queries.ts);
+ *   - last_seen_at is the last ACTIVE moment: it advances only when a send
+ *     brings more active time (an idle or hidden tab never moves it), so
+ *     "Reading now" and recency mean reading, not an open tab;
  *   - the owning broker previewing the room is stored as a self view and
  *     excluded everywhere; it never counts as a view;
  *   - a new visit with no other visit on this link in the last 30 minutes
@@ -167,11 +175,21 @@ export function planIngest(
   const nowMs = now.getTime();
   // The visit can't have started before this version was first served (a seeder writing the past skips the floor).
   const floor = rendition.createdAt.getTime() <= nowMs ? rendition.createdAt.getTime() : -Infinity;
-  const startedAt = existing?.startedAt ?? new Date(Math.max(nowMs - Math.min(p.visit.wallMs, READING_RULES.visitMaxMs), floor));
-  const limit = Math.max(0, Math.min(nowMs - startedAt.getTime() + slack, READING_RULES.visitMaxMs + slack));
+  const startedAt = existing?.startedAt ?? new Date(Math.max(nowMs - p.visit.wallMs, floor));
+  // Wall-clock counters: never more than the time since the visit started.
+  const wallLimit = Math.max(0, nowMs - startedAt.getTime() + slack);
+  // Active time: a first send claims at most firstSendMaxActiveMs; a later
+  // one adds at most the time since the visit was last active; 6 h in all.
+  const activeLimit = Math.max(0, Math.min(
+    wallLimit,
+    READING_RULES.visitMaxMs + slack,
+    existing
+      ? existing.activeMs + Math.max(0, nowMs - existing.lastSeenAt.getTime()) + slack
+      : READING_RULES.firstSendMaxActiveMs,
+  ));
   let clamped = false;
   const cap = (n: number) => {
-    if (n > limit) { clamped = true; return limit; }
+    if (n > wallLimit) { clamped = true; return wallLimit; }
     return n;
   };
   const clocks: VisitClockRow = {
@@ -179,25 +197,28 @@ export function planIngest(
     hiddenMs: cap(p.visit.hiddenMs), awayMs: cap(p.visit.awayMs), outsideMs: cap(p.visit.outsideMs),
   };
   let activeScale = 1;
-  if (clocks.activeMs > limit) {
-    activeScale = limit / clocks.activeMs;
-    clocks.activeMs = limit;
+  if (clocks.activeMs > activeLimit) {
+    activeScale = activeLimit / clocks.activeMs;
+    clocks.activeMs = activeLimit;
     clamped = true;
   }
   if (clocks.outsideMs > clocks.activeMs) clocks.outsideMs = clocks.activeMs;
+  const limit = clocks.activeMs;
 
   // ── Merge (GREATEST) ──
   const key = (pageId: string, blockKey: string) => `${pageId}|${blockKey}`;
   const merged = new Map<string, RollupRow>();
+  // Visible / pointer time can't exceed the visit's active time either (a stored visit keeps what it had).
+  const existingVisibleCap = existing?.activeMs ?? 0;
   for (const r of existingRollups) merged.set(key(r.pageId, r.blockKey), { ...r });
   const touched = new Set<string>();
   for (const [[pageId, blockKey], v] of blockEntries) {
     const k = key(pageId, blockKey);
     const inc = {
       attentionMs: Math.floor(v[0] * activeScale), skimMs: Math.floor(v[1] * activeScale),
-      visibleMs: Math.min(v[2], limit), pointerMs: Math.min(v[3], limit),
+      visibleMs: Math.min(v[2], Math.max(limit, existingVisibleCap)), pointerMs: Math.min(v[3], Math.max(limit, existingVisibleCap)),
     };
-    if (v[2] > limit || v[3] > limit) clamped = true;
+    if (v[2] > Math.max(limit, existingVisibleCap) || v[3] > Math.max(limit, existingVisibleCap)) clamped = true;
     const prev = merged.get(k);
     if (!prev && !inc.attentionMs && !inc.skimMs && !inc.visibleMs && !inc.pointerMs) continue;
     merged.set(k, {
@@ -238,7 +259,10 @@ export function planIngest(
     buyerAccessId: access.id,
     renditionId: rendition.id,
     startedAt,
-    lastSeenAt: existing && existing.lastSeenAt > now ? existing.lastSeenAt : now,
+    // The last ACTIVE moment: only a send that brings more active time moves it.
+    lastSeenAt: !existing
+      ? (mergedActive > 0 ? now : startedAt)
+      : mergedActive > existing.activeMs && now > existing.lastSeenAt ? now : existing.lastSeenAt,
     wallMs: g(existing?.wallMs, clocks.wallMs),
     activeMs: mergedActive,
     idleMs: g(existing?.idleMs, clocks.idleMs),

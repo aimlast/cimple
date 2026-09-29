@@ -13,10 +13,10 @@ import {
   type VisitFacts, DEFAULT_ENGAGEMENT_FILTERS, viewerPageKey,
 } from "../../shared/analytics-v2";
 import {
-  INSIGHT_RULES, blockPhrase, buyerInsight, journeyMoments, pageHeadline, rankBuyers, reachHeadline, readingSummary,
+  INSIGHT_RULES, blockPhrase, buyerInsight, earningsBasis, isMarkedDrop, journeyMoments, pageHeadline, rankBuyers, reachHeadline, readingSummary,
   whenText, type InsightContext,
 } from "../../server/engagement/insights";
-import { kindMixHeadline, readLabel } from "../../shared/cim-reading-model";
+import { groupReadLabel, kindMixHeadline, pageReadLabel, readLabel } from "../../shared/cim-reading-model";
 import { pageRole } from "../../shared/cim-page-role";
 import { calculateQualifiedLeadScore } from "../../server/scoring/buyer-score";
 import { attentionMix, buildCallList, dealCompareRow } from "../../server/routes/engagement-insights";
@@ -54,7 +54,7 @@ const spec: P[] = [
   ["cim-contact", "Contact", "front_matter", 5_000],
 ];
 const pages: FactPage[] = spec.map(([pageId, title, role, expectedMs, extra], i) => ({
-  pageId, part: 0, index: i, label: String(i + 1), lineageId: pageId, title, servedTitle: null,
+  pageId, part: 0, index: i, label: String(i + 1), lineageId: pageId, title, servedTitle: null, blindTitle: title,
   layoutType: "prose_highlight", role, locked: false, expectedMs,
   blocks: [
     { key: "heading", kind: "heading", label: `Title: ${title}`, expectedMs: 500, part: 0 },
@@ -175,6 +175,70 @@ await test("price_first when the first real page is price & terms", () => {
   assert.match(ins(priceFirst).talkingPoints.map((t) => t.text).join(" "), /Went straight to price and structure/);
   assert.ok(!ids(pe).includes("price_first"), "reading the summary first isn't price-first");
 });
+await test("skimmed is never said about a buyer who studied a page (straight to the numbers)", () => {
+  // One short visit: 1 min 40 s in all, but the income statement studied for 39 s+.
+  const focused = buyer("focus", { inc: 2.2, exec: 0.02 }, { mode: "normal", visits: [visit("f-v1", 3 * H, 2, [[0, "cover"], [3, "inc"]])] });
+  // A long CIM: 107 s of reading is well under a fifth of what it needs.
+  const big = pages.map((p) => (p.pageId === "exec" ? { ...p, expectedMs: 900_000 } : p));
+  const i = buyerInsight(focused, { now: NOW, pages: big, buyers: [focused] });
+  assert.ok(!i.signals.some((x) => x.id === "skimmed"), JSON.stringify(i.signals.map((x) => x.id)));
+  assert.ok(i.signals.some((x) => x.id === "financial_deep_dive"));
+  assert.ok(!/skimmed/i.test(i.why), i.why);
+  assert.notEqual(i.status, "skimmed");
+});
+
+await test("front matter is 'Opened', never 'Studied' (a buyer who opened it and walked away)", () => {
+  const away = buyer("away", { cover: 12 }, { mode: "normal", visits: [visit("a-v1", 3 * H, 1, [[0, "cover"]])] });
+  assert.equal(ins(away).pageLabels[viewerPageKey("cover", 0)], "opened");
+  // Their "why": they never read past the cover — not "skimmed it (1 min)".
+  assert.match(ins(away).why, /didn't read past the cover/);
+  assert.doesNotMatch(ins(away).why, /1 min/);
+  assert.equal(pageReadLabel("front_matter", 59_000, 5_000), "opened");
+  assert.equal(pageReadLabel("front_matter", 59_000, 5_000, false), null);
+  assert.equal(pageReadLabel("financials", 59_000, 5_000), "studied");
+  assert.equal(groupReadLabel(["opened", "opened"]), "opened");
+  assert.equal(groupReadLabel(["opened", "read", "studied"]), "read");
+});
+
+await test("the earnings wording follows the deal's basis: SDE deals never hear 'EBITDA'", () => {
+  const P = (title: string, labels: string[] = []) => ({ role: "normalization" as PageRole, title, blocks: labels.map((label) => ({ key: "x", kind: "table" as const, label, expectedMs: 1, part: 0 })) });
+  assert.equal(earningsBasis([P("Seller's Discretionary Earnings Build-Up", ["Row: Adjusted EBITDA"])]), "sde");
+  assert.equal(earningsBasis([P("Normalization", ["Row: SDE"])]), "sde");
+  assert.equal(earningsBasis([P("Adjusted EBITDA Bridge")]), "ebitda");
+  assert.equal(earningsBasis([P("Adjustments", ["Row: Owner salary"])]), null);
+  assert.equal(earningsBasis([{ ...P("x"), role: "financials" as PageRole }]), null);
+  // The talking point on a dental (SDE) deal.
+  const sdePages = pages.map((p) => (p.pageId === "bridge" ? { ...p, title: "Seller's Discretionary Earnings Build-Up", blindTitle: "Seller's Discretionary Earnings Build-Up" } : p));
+  const ctx2: InsightContext = { now: NOW, pages: sdePages, buyers: [pe] };
+  const tp = buyerInsight(pe, ctx2).talkingPoints.map((t) => t.text).join(" ");
+  assert.ok(!/EBITDA/.test(tp), tp);
+  assert.match(tp, /SDE build-up/);
+});
+
+await test("blind buyers: talking points and why lines use the title THEY saw; the real one is broker-only context", () => {
+  const blindPages = pages.map((p) => (p.pageId === "cust"
+    ? { ...p, title: "Harbourline Dental Group — Patients", blindTitle: "Patient Base" }
+    : p.pageId === "cover" ? { ...p, title: "Harbourline Dental Group", blindTitle: "Project Atlas" } : p));
+  const who = buyer("bl", { cust: 3, exec: 1 }, { mode: "blind", visits: [visit("bl-v1", 3 * H, 20, [[0, "cover"], [5, "cust"]])] });
+  const i = buyerInsight(who, { now: NOW, pages: blindPages, buyers: [who] });
+  const words = [i.why, ...i.signals.map((x) => x.evidence), ...i.talkingPoints.map((t) => `${t.text} ${t.evidence}`)].join(" | ");
+  assert.ok(!/Harbourline/.test(words), words);
+  assert.match(words, /Patient Base/);
+  const ref = i.signals.flatMap((x) => x.pageRefs).find((r) => r.pageId === "cust")!;
+  assert.equal(ref.servedTitle, "Patient Base");
+  assert.equal(ref.title, "Harbourline Dental Group — Patients", "the real title rides along for the broker");
+  // No blind title known for a page: it is "page N", never the real title.
+  const unknown = blindPages.map((p) => (p.pageId === "cust" ? { ...p, blindTitle: null } : p));
+  const j = buyerInsight(who, { now: NOW, pages: unknown, buyers: [who] });
+  assert.ok(!/Harbourline/.test([j.why, ...j.signals.map((x) => x.evidence)].join(" ")));
+  // A named buyer on the same page hears the real title.
+  const named = { ...who, accessId: "nm", mode: "normal" as const };
+  assert.match(buyerInsight(named, { now: NOW, pages: blindPages, buyers: [named] }).signals.map((x) => x.evidence).join(" "), /Harbourline Dental Group — Patients/);
+  // Journey moments too.
+  const m = journeyMoments(who.visits[0], who, { now: NOW, pages: blindPages, buyers: [who] });
+  assert.ok(!/Harbourline/.test(m.map((x) => x.text).join(" ")), m.map((x) => x.text).join(" | "));
+});
+
 await test("skimmed: one visit, well under the CIM's reading time", () => {
   const s = ins(skimmer).signals.find((x) => x.id === "skimmed")!;
   assert.ok(s);
@@ -308,6 +372,14 @@ await test("reach headline: the steepest drop, or how many reached the end", () 
   assert.equal(reachHeadline([r("1", 9), r("2", 7), r("3", 5)]), "The biggest drop is around page 2 · Page 2 (9 → 7 readers).");
   assert.equal(reachHeadline([r("1", 4), r("2", 4)]), "All 4 buyers who opened the CIM reached the last page.");
   assert.equal(reachHeadline([r("1", 1), r("2", 1)]), "The buyer who opened the CIM reached the last page.");
+  // One buyer (or a view filtered to one): never "most buyers", never a one-buyer "drop".
+  assert.equal(reachHeadline([r("1", 1), r("2", 1), r("10", 0, "Customers"), r("11", 0)]), "This buyer got as far as page 2 · Page 2.");
+  // A one-buyer drop in a group is noise; so is a drop under 10% of the buyers.
+  assert.equal(reachHeadline([r("1", 5), r("2", 4), r("3", 4)]), "4 of 5 buyers reached the last page.");
+  assert.equal(reachHeadline([r("1", 30), r("2", 28), r("3", 28)]), "28 of 30 buyers reached the last page.");
+  assert.equal(isMarkedDrop(1, 3), false);
+  assert.equal(isMarkedDrop(2, 30), false);
+  assert.equal(isMarkedDrop(3, 30), true);
   assert.equal(reachHeadline([r("1", 12), r("2", 11), r("3", 11)]), "11 of 12 buyers reached the last page.");
   assert.equal(reachHeadline([]), null);
   assert.equal(reachHeadline([r("1", 0)]), null);

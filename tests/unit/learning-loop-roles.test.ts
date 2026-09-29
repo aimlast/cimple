@@ -15,7 +15,7 @@ import {
   BENCHMARK_MIN_DEALS, computeBenchmarkRows, roleBenchmarks, type BenchmarkRollupRow, type IndustryBenchmarkRow,
 } from "../../server/engagement/benchmarks";
 import {
-  LEARNING_MIN_DEALS, aggregateEngagementInsights, isGenericSectionType, learningInsightsFrom,
+  LEARNING_MIN_DEALS, aggregateEngagementInsights, isGenericSectionType, learningInsightsFrom, scheduleLearningRefresh,
 } from "../../server/cim/learning-loop";
 import { assembleKnowledgeBase } from "../../server/cim/layout-engine";
 
@@ -149,6 +149,27 @@ await test("old section_exit events write nothing (they only schedule the readin
   const fake = { upsertEngagementInsight: async (...a: unknown[]) => { calls.push(a); }, getDeal: async () => ({ industry: "Healthcare" }), getCimSectionsByDeal: async () => sections } as any;
   await aggregateEngagementInsights("deal-x", [{ eventType: "section_exit", sectionKey: "kitchener_clinic_team", timeSpentSeconds: 40 }], fake);
   assert.equal(calls.length, 0);
+});
+
+await test("the refresh is debounced but never postponed past the max wait by a steady stream of writes", async () => {
+  const runs: number[] = [];
+  const t0 = Date.now();
+  const run = async () => { runs.push(Date.now() - t0); };
+  // A write every 20 ms with a 60 ms debounce would never fire; a 150 ms max wait makes it fire.
+  for (let i = 0; i < 15; i++) {
+    scheduleLearningRefresh("deal-stream", {} as any, 60, 150, run);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  await new Promise((r) => setTimeout(r, 120));
+  assert.ok(runs.length >= 1, "fired while writes kept coming");
+  assert.ok(runs[0] <= 260, `first run after ${runs[0]} ms`);
+  // A quiet deal still waits the debounce after its last write.
+  const quiet: number[] = [];
+  const q0 = Date.now();
+  scheduleLearningRefresh("deal-quiet", {} as any, 40, 10_000, async () => { quiet.push(Date.now() - q0); });
+  await new Promise((r) => setTimeout(r, 90));
+  assert.equal(quiet.length, 1);
+  assert.ok(quiet[0] >= 35);
 });
 
 console.log(`\n${passed} passed`);

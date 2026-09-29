@@ -79,6 +79,12 @@ export function BuyersView({ dealId, filters, nav }: EngagementViewProps) {
     for (const p of doc?.pages ?? []) m.set(viewerPageKey(p.pageId, p.part), p.title);
     return m;
   }, [doc]);
+  // What blind buyers saw: a blind buyer's strip never names a page by its real title.
+  const blindTitles = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of doc?.pages ?? []) m.set(viewerPageKey(p.pageId, p.part), p.blindTitle || `page ${p.label}`);
+    return m;
+  }, [doc]);
   const maxMs = useMemo(() => stripScale((data?.buyers ?? []).map((b) => b.pageStrip)), [data]);
   const byAccess = useMemo(() => new Map(accessRows.map((a) => [a.id, a])), [accessRows]);
 
@@ -157,6 +163,7 @@ export function BuyersView({ dealId, filters, nav }: EngagementViewProps) {
                   card={card}
                   first={i === 0}
                   titles={titles}
+                  blindTitles={blindTitles}
                   maxMs={maxMs}
                   nav={nav}
                   onEmail={row?.buyerUserId ? () => openEmail(card.accessId) : row ? () => copyEmail(row.buyerEmail) : undefined}

@@ -34,6 +34,8 @@ import type { IndustryBenchmarkRow } from "../engagement/benchmarks.js";
 export const LEARNING_MIN_DEALS = 3;
 /** A deal's refresh waits this long after its last reading write (bursts of beacons → one refresh). */
 export const LEARNING_DEBOUNCE_MS = 10 * 60_000;
+/** …but never later than this after the first write it covers (a CIM open all day still refreshes). */
+export const LEARNING_MAX_WAIT_MS = 30 * 60_000;
 
 export interface LearningInsight {
   sectionType: string;
@@ -122,22 +124,33 @@ export async function refreshDealLearning(dealId: string, storage: IStorage): Pr
   await refreshIndustryInsights(res.industry, storage);
 }
 
-const pending = new Map<string, ReturnType<typeof setTimeout>>();
+const pending = new Map<string, { timer: ReturnType<typeof setTimeout>; firstAt: number }>();
 
 /**
  * Debounced refresh after reading is written for a deal (the reading ingest
  * calls this): one refresh per deal, LEARNING_DEBOUNCE_MS after its last
- * write. Never throws; the timer doesn't keep the process alive.
+ * write — but at most LEARNING_MAX_WAIT_MS after the first write it covers,
+ * so buyers reading all day can't postpone it forever. Never throws; the
+ * timer doesn't keep the process alive.
  */
-export function scheduleLearningRefresh(dealId: string, storage: IStorage, delayMs = LEARNING_DEBOUNCE_MS): void {
+export function scheduleLearningRefresh(
+  dealId: string,
+  storage: IStorage,
+  delayMs = LEARNING_DEBOUNCE_MS,
+  maxWaitMs = LEARNING_MAX_WAIT_MS,
+  run: (dealId: string, storage: IStorage) => Promise<void> = refreshDealLearning,
+): void {
+  const now = Date.now();
   const prev = pending.get(dealId);
-  if (prev) clearTimeout(prev);
-  const t = setTimeout(() => {
+  if (prev) clearTimeout(prev.timer);
+  const firstAt = prev?.firstAt ?? now;
+  const wait = Math.max(0, Math.min(delayMs, firstAt + maxWaitMs - now));
+  const timer = setTimeout(() => {
     pending.delete(dealId);
-    refreshDealLearning(dealId, storage).catch((err) => console.warn("[learning-loop] refresh failed:", (err as Error).message));
-  }, delayMs);
-  (t as { unref?: () => void }).unref?.();
-  pending.set(dealId, t);
+    run(dealId, storage).catch((err) => console.warn("[learning-loop] refresh failed:", (err as Error).message));
+  }, wait);
+  (timer as { unref?: () => void }).unref?.();
+  pending.set(dealId, { timer, firstAt });
 }
 
 interface AnalyticsEventLike {

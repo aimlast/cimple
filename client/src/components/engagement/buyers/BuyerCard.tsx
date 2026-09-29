@@ -33,6 +33,8 @@ function fitText(card: BuyerEngagementCard): string | null {
 export interface BuyerCardProps {
   card: BuyerEngagementCard;
   titles: Map<string, string>;
+  /** The titles blind buyers saw (page N when unknown), for a blind buyer's strip. */
+  blindTitles: Map<string, string>;
   maxMs: number;
   nav: EngagementNav;
   first?: boolean;
@@ -49,15 +51,26 @@ export interface BuyerCardProps {
 function PageLink({ refs, onOpen }: { refs: PageRef[]; onOpen: (r: PageRef) => void }) {
   if (refs.length === 0) return null;
   const r = refs[0];
+  // A blind buyer's words quote the title they saw; the real one is yours only.
+  const yours = r.servedTitle && r.servedTitle !== r.title ? r.title : null;
   return (
-    <button type="button" onClick={() => onOpen(r)} className="whitespace-nowrap text-teal hover:underline" data-testid="talking-point-page">
-      See page {r.label}
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => onOpen(r)}
+        className="whitespace-nowrap text-teal hover:underline"
+        title={yours ? `Your title: ${yours}` : r.title}
+        data-testid="talking-point-page"
+      >
+        See page {r.label}
+      </button>
+      {yours && <span className="text-muted-foreground/80"> · your title: {yours}</span>}
+    </>
   );
 }
 
 export function BuyerCard(props: BuyerCardProps) {
-  const { card, titles, maxMs, nav, first } = props;
+  const { card, titles, blindTitles, maxMs, nav, first } = props;
   const [more, setMore] = useState(false);
   const type = buyerTypeWord(card.buyerType);
   const fit = fitText(card);
@@ -103,7 +116,7 @@ export function BuyerCard(props: BuyerCardProps) {
 
       {/* Where they read */}
       <div className="mt-3">
-        <PageStrip cells={card.pageStrip} titles={titles} maxMs={maxMs} onOpen={(c: PageStripCell) => openPage(c)} />
+        <PageStrip cells={card.pageStrip} titles={card.mode === "blind" ? blindTitles : titles} maxMs={maxMs} onOpen={(c: PageStripCell) => openPage(c)} />
       </div>
 
       {/* What to say */}

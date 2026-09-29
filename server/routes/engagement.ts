@@ -14,12 +14,12 @@
  * Tenancy: requireBroker + requireOwnedDeal on every route; an accessId or
  * renditionId must belong to the deal (else 404, like a missing deal).
  * Filters: parseEngagementFilters(req.query) — lenient, unknown → defaults.
- * Facts are cached 30 s per (deal, filters, last write in this process).
+ * Facts are cached 30 s per (deal, filters, last write in this process) —
+ * server/engagement/facts-cache.ts, shared with the call list and buyer lists.
  */
 import type { Express } from "express";
 import type { BuyerAccessEvent, Deal } from "@shared/schema";
 import {
-  READING_RULES,
   parseEngagementFilters,
   type EngagementFilters,
   type CimMode,
@@ -31,8 +31,7 @@ import { dealPublishedForBuyers } from "@shared/buyer-publish-gate";
 import { requireBroker, requireOwnedDeal } from "../broker-auth/routes.js";
 import { storage } from "../storage";
 import { getDealAccess } from "../engagement/access";
-import { decisionHistory, loadDealReadingFacts, readingSource, type CaptureFacts } from "../engagement/facts";
-import { readingVersion } from "../analytics/reading-ingest";
+import { decisionHistory, readingSource, type CaptureFacts } from "../engagement/facts";
 import {
   buildBuyersResponse,
   buildDocumentResponse,
@@ -40,28 +39,15 @@ import {
   buildSummaryResponse,
 } from "../engagement/responses";
 import { invalidateBrokerEngagement } from "./engagement-insights";
+import { cachedDealReadingFacts, invalidateDealFacts } from "../engagement/facts-cache";
+import { liveRendition } from "../engagement/legacy";
 
 const BASE = "/api/deals/:dealId/engagement";
 
-const cache = new Map<string, { at: number; facts: Promise<CaptureFacts> }>();
-const CACHE_MAX = 200;
-
 /** Reading facts for a deal and filter set — cached briefly (the tab polls every 20 s). */
-function factsFor(deal: Deal, filters: EngagementFilters): Promise<CaptureFacts> {
-  const key = `${deal.id}|${readingVersion(deal.id)}|${JSON.stringify(filters)}`;
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < READING_RULES.cacheMs) return hit.facts;
-  const facts = loadDealReadingFacts(deal, filters);
-  cache.set(key, { at: Date.now(), facts });
-  facts.catch(() => cache.delete(key));
-  if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value as string);
-  return facts;
-}
-
+const factsFor = (deal: Deal, filters: EngagementFilters): Promise<CaptureFacts> => cachedDealReadingFacts(deal, filters);
 /** Forget a deal's cached facts (a broker action changed what they show). */
-function invalidate(dealId: string): void {
-  cache.forEach((_v, k) => { if (k.startsWith(`${dealId}|`)) cache.delete(k); });
-}
+const invalidate = invalidateDealFacts;
 
 export function registerEngagementRoutes(app: Express): void {
   app.get(`${BASE}/summary`, requireBroker, requireOwnedDeal, async (req, res) => {
@@ -100,7 +86,16 @@ export function registerEngagementRoutes(app: Express): void {
       const deal = res.locals.deal as Deal;
       const rid = String(req.params.renditionId || "");
       if (!/^[0-9a-f]{32}$/.test(rid)) return res.status(404).json({ error: "Not found" });
-      const row = await readingSource().rendition(deal.id, rid);
+      let row = await readingSource().rendition(deal.id, rid);
+      if (!row) {
+        // Old-tracker reading is drawn on the CIM as it would be served now
+        // (server/engagement/legacy.ts): that version isn't stored — rebuild it.
+        const levels = Array.from(new Set([...(await storage.getBuyerAccessByDeal(deal.id)).map((a) => a.accessLevel), "loi"]));
+        for (const level of levels) {
+          const lr = await liveRendition(deal, level);
+          if (lr?.raw.id === rid) { row = lr.row; break; }
+        }
+      }
       if (!row) return res.status(404).json({ error: "Not found" });
       // Real (named) titles, broker side: the page's own section, else the
       // section that continues it after a regeneration (lineage).

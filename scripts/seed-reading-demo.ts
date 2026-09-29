@@ -265,16 +265,18 @@ async function main() {
       const base: Omit<ReadingPayload, "blocks" | "path" | "events" | "visit" | "sentAt"> = { visitId, renditionId: r.id, device: v.device };
       const visitClock = { wallMs, activeMs, idleMs: idle, hiddenMs: 0, awayMs: 0, outsideMs: outside, maxPageIndex: maxOrder };
       const entries = Array.from(blocks.entries());
-      // Two sends, as a tab would: half-way, then the rest (cumulative, merged with GREATEST).
-      const half = entries.slice(0, Math.ceil(entries.length / 2));
+      // Two sends, as a tab would: the first after 15 s (the server clamps a
+      // first send to a few minutes), then the rest (cumulative, merged with GREATEST).
+      const firstMs = Math.min(15_000, activeMs);
+      const f = activeMs > 0 ? firstMs / activeMs : 0;
       const sends: ReadingPayload[] = [
-        { ...base, sentAt: "", visit: { ...visitClock, wallMs: Math.round(wallMs / 2), activeMs: Math.round(activeMs / 2), idleMs: Math.round(idle / 2), outsideMs: 0 },
-          blocks: Object.fromEntries(half.map(([k, c]) => [k, c.map((x) => Math.floor(x / 2)) as BlockCounters])), path: { from: 0, entries: path.slice(0, 1) }, events: [] },
+        { ...base, sentAt: "", visit: { ...visitClock, wallMs: firstMs, activeMs: firstMs, idleMs: 0, outsideMs: 0 },
+          blocks: Object.fromEntries(entries.map(([k, c]) => [k, c.map((x) => Math.floor(x * f)) as BlockCounters])), path: { from: 0, entries: path.slice(0, 1) }, events: [] },
         { ...base, sentAt: "", visit: visitClock, blocks: Object.fromEntries(entries), path: { from: 0, entries: path }, events },
       ];
       if (dryRun) { report.push({ buyer: a.buyerName, persona, visitPages: v.pages.length, activeMs }); continue; }
       for (const [k, p] of sends.entries()) {
-        const now = new Date(v.start + (k === 0 ? wallMs / 2 : wallMs) + 2_000);
+        const now = new Date(v.start + (k === 0 ? firstMs : wallMs) + 2_000);
         const res = await ingestReading(dbReadingStore, {
           deal: { id: deal.id }, access: { id: a.id, dealId: deal.id, accessLevel: a.accessLevel },
           payload: { ...p, sentAt: now.toISOString() }, now, selfView: false,

@@ -39,7 +39,7 @@ import {
   type ReadLabel,
 } from "@shared/analytics-v2";
 import { KIND_GROUPS, kindGroupOf, type KindGroup } from "@shared/cim-blocks";
-import { groupReadLabel, readLabel } from "@shared/cim-reading-model";
+import { groupReadLabel, pageReadLabel } from "@shared/cim-reading-model";
 import { buyerInsight, journeyMoments, pageHeadline, pulseSentence, rankBuyers, reachHeadline, type InsightContext } from "./insights";
 
 /** Optional extras the aggregation adds (server/engagement/facts.ts CaptureFacts). */
@@ -97,7 +97,7 @@ export function buildBuyersResponse(facts: DealReadingFacts): EngagementBuyersRe
         part: p.part,
         label: p.label,
         attentionMs: att,
-        readLabel: (insight.pageLabels[key] as ReadLabel | undefined) ?? readLabel(att, p.expectedMs, reached),
+        readLabel: (insight.pageLabels[key] as ReadLabel | undefined) ?? pageReadLabel(p.role, att, p.expectedMs, reached),
         reached,
       };
     });
@@ -176,7 +176,9 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
         if (c[0] >= READING_RULES.unreadBlockMs) readers++;
         if (c[0] > 0 && (!top || c[0] > top.attentionMs)) top = { accessId: b.accessId, name: b.name, attentionMs: c[0] };
       }
-      if (blk.when && att + skim + vis + ptr === 0) continue; // another view nobody opened
+      // Another view nobody opened (Normalized rows). A collapsed section's
+      // summary is always listed: it is what every buyer first saw.
+      if (blk.when && blk.when !== "collapsed" && att + skim + vis + ptr === 0) continue;
       let topPoint: BlockAttention["topPoint"] = null;
       for (const pt of p.blocks) {
         if (!pt.virtual || !pt.key.startsWith(`${blk.key}/point:`)) continue;
@@ -207,11 +209,11 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
     const changedN = f.changedReaders?.[p.pageId]?.length ?? 0;
     return {
       pageId: p.pageId, part: p.part, index: p.index, label: p.label,
-      lineageId: p.lineageId, title: p.title, servedTitle: p.servedTitle, layoutType: p.layoutType, role: p.role, locked: p.locked,
+      lineageId: p.lineageId, title: p.title, servedTitle: p.servedTitle, blindTitle: p.blindTitle ?? null, layoutType: p.layoutType, role: p.role, locked: p.locked,
       readers: perBuyer.filter((x) => x.att >= READING_RULES.readerMinMs).length,
       reachedBy: reachedBuyers.length,
       attentionMs, skimMs, expectedMs: p.expectedMs,
-      readLabel: groupReadLabel(reachedBuyers.map((b) => readLabel(attentionOn(b, p), p.expectedMs, true))),
+      readLabel: groupReadLabel(reachedBuyers.map((b) => pageReadLabel(p.role, attentionOn(b, p), p.expectedMs, true))),
       headline: null,
       blocks,
       buyers,

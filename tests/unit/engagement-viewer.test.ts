@@ -24,7 +24,7 @@ import type {
 import {
   effectiveScope, heatIntensity, heatMaxMs, interactionLines, legendTicks, msAtIntensity, orderPages, paperTint,
   parsePageParam, partVisibility, partVisibilityCss, pathWidths, reachFallback, readersText, selectPageIndex,
-  steepestDrop, topBlocks, unreadBlocks, TINT_STRENGTH,
+  steepestDrop, topBlocks, unreadBlocks, TINT_STRENGTH, defaultSectionView, inView, isUnread, pageInView, pageOfText,
 } from "../../client/src/components/engagement/document/viewer-model";
 import { PageCanvas } from "../../client/src/components/engagement/document/PageCanvas";
 
@@ -140,6 +140,49 @@ test("'Nobody read this' marks parts under a second on pages buyers reached — 
   assert.deepEqual(unreadBlocks(q, [{ key: "row:0" }, { key: "nrow:0", when: "normalized" }, { key: "summary", when: "collapsed" }]), []);
 });
 
+test("a part that sat on screen isn't 'nobody read this' (small KPI items beside the reading)", () => {
+  const p = page(0, [
+    block("metric:0", 400, "metric", { visibleMs: 60_000 }),   // on screen the whole minute
+    block("metric:1", 0, "metric", { visibleMs: 1_200 }),      // scrolled past
+    block("para:0", 30_000),
+  ]);
+  assert.deepEqual(unreadBlocks(p), ["metric:1"]);
+  assert.equal(isUnread({ attentionMs: 400, visibleMs: 60_000 }), false);
+  assert.equal(isUnread({ attentionMs: 400, visibleMs: 0 }), true);
+});
+
+test("a collapsible section: drawn collapsed as buyers first saw it; its rows count only once someone opened it", () => {
+  const rp = { blocks: [{ key: "heading" }, { key: "row:0" }, { key: "row:1" }, { key: "summary", when: "collapsed" as const }] } as any;
+  const read = page(0, [
+    block("heading", 0, "heading"), block("row:0", 0, "table"), block("row:1", 0, "table"),
+    block("summary", 16_900, "summary", { visibleMs: 17_000 }),
+  ]);
+  // Nobody opened it: collapsed, the summary is painted; no row is "nobody read".
+  assert.equal(defaultSectionView(read, rp), "collapsed");
+  assert.deepEqual(unreadBlocks(read, rp.blocks, "collapsed"), []);
+  assert.deepEqual(unreadBlocks(read, rp.blocks, "opened"), [], "rows never on screen are not 'nobody read'");
+  assert.deepEqual(pageInView(read, "collapsed").blocks.map((b) => b.key), ["summary"]);
+  assert.deepEqual(topBlocks(pageInView(read, "collapsed")), ["summary"]);
+  assert.ok(!pageInView(read, "opened").blocks.some((b) => b.key === "summary"));
+  assert.equal(inView("row:0", null), true);
+  // A summary nobody read, on a page buyers reached, is outlined in the collapsed view.
+  const skipped = page(0, [block("summary", 0, "summary", { visibleMs: 0 }), block("row:0", 0, "table")]);
+  assert.deepEqual(unreadBlocks(skipped, rp.blocks, "collapsed"), ["summary"]);
+  // Opened by buyers who read the rows more than the summary: opened first; unopened rows can be "nobody read".
+  const opened = page(0, [block("summary", 4_000, "summary"), block("row:0", 30_000, "table"), block("row:1", 0, "table", { visibleMs: 0 })], { interactions: { expand: 2 } });
+  assert.equal(defaultSectionView(opened, rp), "opened");
+  assert.deepEqual(unreadBlocks(opened, rp.blocks, "opened"), ["row:1"]);
+  // Not collapsible: no view.
+  assert.equal(defaultSectionView(read, { blocks: [{ key: "row:0" }] } as any), null);
+});
+
+test("page numbers count the CIM's pages, not its printed parts", () => {
+  const ps = ["1", "2", "3a", "3b", "4", "32"].map((label) => ({ label }));
+  assert.equal(pageOfText("4", ps), "Page 4 of 32");
+  assert.equal(pageOfText("3a", ps), "Page 3 of 32 (3a)");
+  assert.equal(pageOfText("x", [{ label: "x" }]), "Page x of 1");
+});
+
 test("what buyers did, in words, most frequent first; video progress folds into plays", () => {
   const lines = interactionLines({ financial_view: 3, copy: 1, media_play: 2, media_progress: 5, contact_click: 1 });
   assert.deepEqual(lines.map((l) => l.type), ["financial_view", "media_play", "copy", "contact_click"]);
@@ -157,6 +200,9 @@ test("how far buyers got: the steepest drop, and a facts-only sentence when no h
   const reach = [9, 9, 8, 4, 4, 3].map((buyers, i) => ({ buyers, index: i }));
   assert.deepEqual(steepestDrop(reach), { index: 3, from: 8, to: 4 });
   assert.equal(steepestDrop([{ buyers: 2 }, { buyers: 2 }]), null);
+  assert.equal(steepestDrop([{ buyers: 1 }, { buyers: 1 }, { buyers: 0 }]), null, "one buyer stopping is not marked");
+  assert.equal(steepestDrop([{ buyers: 6 }, { buyers: 5 }, { buyers: 5 }]), null, "a one-buyer drop is not marked");
+  assert.equal(steepestDrop([{ buyers: 40 }, { buyers: 38 }]), null, "a drop under 10% is not marked");
   assert.equal(reachFallback([{ buyers: 3 }, { buyers: 3 }], 3), "All 3 buyers who opened the CIM reached the last page.");
   assert.equal(reachFallback([{ buyers: 6 }, { buyers: 2 }], 6), "6 buyers opened the CIM; 2 reached the last page.");
   assert.equal(reachFallback([], 0), null);
@@ -249,6 +295,35 @@ test("a blind version renders what the blind buyer saw — never the real title 
   assert.match(html, /Historical Financial Summary/);
   assert.match(html, /Project Atlas/);
   assert.doesNotMatch(html, /Harbourline/);
+});
+
+const collapsible = {
+  id: "00000000-0000-4000-8000-00000000f002", dealId: "d1", sectionKey: "financialPerformance", sectionTitle: "Financial Performance",
+  order: 2, layoutType: "financial_table", isVisible: true, aiDraftContent: null, brokerEditedContent: null,
+  layoutData: { headers: ["", "FY2024", "FY2025"], rows: rows.slice(0, 12), expandable: true, summary: "Revenue grew 11% to $3.2M." },
+};
+function renderView(view: "collapsed" | "opened"): string {
+  const b = blocksOf(collapsible);
+  const rp: RenditionPage = {
+    pageId: collapsible.id, lineageId: collapsible.id, order: 0, parts: partCount(b), servedTitle: collapsible.sectionTitle, layoutType: "financial_table", locked: false,
+    expectedMs: expectedMsOf(b), blockFingerprint: "x", blocks: b.map((x) => ({ key: x.key, kind: x.kind, label: x.label, expectedMs: x.expectedMs, part: x.part, ...(x.when ? { when: x.when } : {}) })),
+  };
+  return renderToStaticMarkup(React.createElement(PageCanvas, {
+    rendition: rendition([collapsible], "normal", [rp]), pageId: collapsible.id, part: 0, renditionPage: rp, page: null, paint: true, showHeat: true,
+    showUnread: false, maxMs: 1, selectedKey: null, hoveredKey: null, onSelectKey() {}, onHoverKey() {}, touch: false, view,
+  }));
+}
+
+test("a collapsible income statement renders collapsed (its summary is the painted part) or opened, as picked", () => {
+  const closed = renderView("collapsed");
+  assert.match(closed, /data-cim-block="summary"/);
+  assert.match(closed, /Show full details/);
+  const open = renderView("opened");
+  assert.doesNotMatch(open, /data-cim-block="summary"/);
+  assert.match(open, /data-cim-block="row:0"/);
+  assert.match(open, /Show less/);
+  // The summary sits on the section's first printed part.
+  assert.equal(blocksOf(collapsible).find((x) => x.key === "summary")!.part, 0);
 });
 
 test("a page missing from this version says so instead of rendering something else", () => {

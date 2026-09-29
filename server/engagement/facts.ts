@@ -47,6 +47,8 @@ import {
 import { cimModeForAccessLevel } from "@shared/cim-layouts";
 import { chartOfPoint, headingKey } from "@shared/cim-blocks";
 import { pageRole } from "@shared/cim-page-role";
+import { blindSectionKey } from "@shared/cim-buyer-view";
+import { legacyKeyResolver, legacyRows, legacySessions, liveRendition, mainAccessLevel, type LegacyExit } from "./legacy";
 import { storage } from "../storage";
 import {
   dbReadingSource,
@@ -94,7 +96,7 @@ export async function loadDealReadingFacts(
     device: filters.device,
     accessIds: filters.buyers.length > 0 || filters.segment !== "all" ? listed.map((a) => a.id) : null,
   };
-  const [renditions, visits, sums, visitPages, events, questions, decisions] = await Promise.all([
+  const [renditionsStored, visitsStored, sumsStored, visitPagesStored, events, questions, decisions, exits] = await Promise.all([
     source.renditions(deal.id),
     source.visits(q),
     source.blockSums(q),
@@ -102,12 +104,37 @@ export async function loadDealReadingFacts(
     source.events(q),
     source.questions(deal.id),
     source.decisions(deal.id),
+    source.legacyExits(deal.id).catch((): LegacyExit[] => []),
   ]);
-  const chosen = chooseRendition(renditions, visits, filters.rendition);
+  // Reading from the old tracker (before part-by-part tracking), read on the
+  // fly and never stored: page totals, marked legacy.
+  const known = new Set(accesses.map((a) => a.id));
+  const sessions = legacySessions(exits.filter((e) => known.has(e.accessId)), legacyKeyResolver(live, blindSectionKey));
+  const lineageOf = new Map(live.map((s) => [s.id, s.analyticsLineage || s.id]));
+  const legacy = legacyRows(sessions, q, (pageId) => lineageOf.get(pageId) ?? pageId);
+  const visits = [...visitsStored, ...legacy.visits];
+  const sums = [...sumsStored, ...legacy.sums];
+  const visitPages = [...visitPagesStored, ...legacy.visitPages];
+  let renditions = renditionsStored;
+  let chosen = chooseRendition(renditions, visits, filters.rendition);
+  const liveIndexes = new Map<string, RenditionPage[]>();
+  if (!chosen && legacy.visits.length > 0) {
+    // Nothing was served since part-by-part tracking began: draw the old
+    // reading on the CIM as it would be served now (not stored).
+    const levels = accesses.filter((a) => legacy.visits.some((v) => v.accessId === a.id)).map((a) => a.accessLevel);
+    const since = new Date(Math.min(...legacy.visits.map((v) => v.startedAt.getTime())));
+    const lr = (await liveRendition(deal, mainAccessLevel(levels), since)) ?? (await liveRendition(deal, "loi", since));
+    if (lr) {
+      renditions = [...renditions, lr.raw];
+      chosen = lr.raw;
+      liveIndexes.set(lr.raw.id, lr.row.pageIndex);
+    }
+  }
   const needed = new Set<string>();
   if (chosen) needed.add(chosen.id);
   for (const v of visits) if (v.renditionId) needed.add(v.renditionId);
-  const indexes = await source.pageIndexes(Array.from(needed));
+  const indexes = await source.pageIndexes(Array.from(needed).filter((id) => !liveIndexes.has(id)));
+  liveIndexes.forEach((v, k) => indexes.set(k, v));
   return assembleFacts({
     deal, filters, now, accesses: listed, live, renditions, chosen, indexes, visits, sums, visitPages, events, questions, decisions,
   });
@@ -186,6 +213,20 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
   const pageById = new Map(chosenPages.map((p) => [p.pageId, p]));
   const pageByLineage = new Map(chosenPages.map((p) => [p.lineageId, p]));
   const viewer = viewerPagesOf(chosenPages);
+  // What BLIND buyers saw as each page's title: from the chosen version when
+  // it is blind, else from the newest blind version (full before teaser) of
+  // the same page (by id, else lineage).
+  const blindTitleOf = new Map<string, string>();
+  const blindRenditions = input.renditions
+    .filter((r) => r.mode === "blind" && indexes.has(r.id))
+    .sort((a, b) => (a.variant === "teaser" ? 1 : 0) - (b.variant === "teaser" ? 1 : 0) || b.createdAt.getTime() - a.createdAt.getTime());
+  if (chosen?.mode === "blind") blindRenditions.unshift(chosen);
+  for (const r of blindRenditions) {
+    for (const bp of indexes.get(r.id) ?? []) {
+      if (!blindTitleOf.has(bp.pageId)) blindTitleOf.set(bp.pageId, bp.servedTitle);
+      if (!blindTitleOf.has(`lin:${bp.lineageId}`)) blindTitleOf.set(`lin:${bp.lineageId}`, bp.servedTitle);
+    }
+  }
   const pages: FactPage[] = viewer.map((v) => {
     const p = pageById.get(v.pageId)!;
     const real = realOf(p);
@@ -196,6 +237,7 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
       lineageId: p.lineageId,
       title,
       servedTitle: headingKey(p.servedTitle) !== headingKey(title) ? p.servedTitle : null,
+      blindTitle: blindTitleOf.get(p.pageId) ?? blindTitleOf.get(`lin:${p.lineageId}`) ?? null,
       layoutType: p.layoutType,
       role: pageRole({ layoutType: p.layoutType, title, sectionKey: real?.sectionKey ?? null, pageId: p.pageId }),
       locked: p.locked,
@@ -259,7 +301,7 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
       a.att += s.attentionMs; a.skim += s.skimMs; a.vis = Math.max(a.vis, s.visibleMs);
       stamp(a, s);
     } else {
-      if (!same && s.attentionMs >= 1) {
+      if (!same && s.renditionId && s.attentionMs >= 1) {
         const set = changed.get(target.pageId) ?? new Set<string>();
         set.add(s.accessId);
         changed.set(target.pageId, set);

@@ -3,7 +3,9 @@
  * buyer_visits / analytics_events / cim_renditions for one deal and one
  * filter set. Every query is a GROUP BY or a bounded per-deal read — raw
  * events are never loaded wholesale into JS. Self views (the owning broker
- * previewing the room) are excluded here, once, for everything above.
+ * previewing the room) and CLAMPED visits (a send claimed more reading than
+ * the server saw time pass — a buggy or forged client) are excluded here,
+ * once, for everything above.
  *
  * `ReadingSource` is the seam: dbReadingSource runs the SQL; tests build
  * one from the in-memory ingest store (memoryReadingSource) so the
@@ -12,6 +14,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { EngagementDevice, RenditionPage } from "@shared/analytics-v2";
 import { asDate, type MemoryReadingStore } from "../analytics/reading-ingest";
+import type { LegacyExit } from "./legacy";
 
 export interface ReadingQuery {
   dealId: string;
@@ -118,6 +121,12 @@ export interface ReadingSource {
   events(q: ReadingQuery): Promise<RawEvent[]>;
   questions(dealId: string): Promise<RawQuestion[]>;
   decisions(dealId: string): Promise<RawDecision[]>;
+  /**
+   * The OLD tracker's section exits (server/engagement/legacy.ts) that no
+   * stored visit covers: none once a legacy backfill was written, and only
+   * those before the deal's first part-by-part visit (no double counting).
+   */
+  legacyExits(dealId: string): Promise<LegacyExit[]>;
 }
 
 const num = (v: unknown) => Number(v ?? 0) || 0;
@@ -134,7 +143,7 @@ function deviceMatches(device: EngagementDevice, cls: string | null): boolean {
 // ── Postgres ─────────────────────────────────────────────────────────────
 
 function visitFilter(q: ReadingQuery, v = sql.raw("v")): SQL {
-  const parts: SQL[] = [sql`${v}.deal_id = ${q.dealId}`, sql`NOT ${v}.self_view`];
+  const parts: SQL[] = [sql`${v}.deal_id = ${q.dealId}`, sql`NOT ${v}.self_view`, sql`NOT ${v}.clamped`];
   if (q.since) parts.push(sql`${v}.last_seen_at >= ${q.since.toISOString()}::timestamp`);
   if (q.device === "phone") parts.push(sql`${v}.device_class = 'phone'`);
   if (q.device === "desktop") parts.push(sql`COALESCE(${v}.device_class, 'desktop') <> 'phone'`);
@@ -154,7 +163,7 @@ export const dbReadingSource: ReadingSource = {
   async renditions(dealId) {
     const r = await rows(sql`
       SELECT r.id, r.mode, r.variant, r.created_at,
-        (SELECT COUNT(*) FROM buyer_visits v WHERE v.rendition_id = r.id AND NOT v.self_view) AS visits
+        (SELECT COUNT(*) FROM buyer_visits v WHERE v.rendition_id = r.id AND NOT v.self_view AND NOT v.clamped) AS visits
       FROM cim_renditions r WHERE r.deal_id = ${dealId} ORDER BY r.created_at`);
     return r.map((x) => ({ id: String(x.id), mode: String(x.mode), variant: String(x.variant), createdAt: asDate(x.created_at), visits: num(x.visits) }));
   },
@@ -248,6 +257,16 @@ export const dbReadingSource: ReadingSource = {
       .map((x) => ({ accessId: String(x.buyer_access_id), decision: String((x.event_data as { decision?: string } | null)?.decision ?? ""), at: asDate(x.created_at) }))
       .filter((d) => !!d.decision);
   },
+  async legacyExits(dealId) {
+    const r = await rows(sql`
+      SELECT e.buyer_access_id, e.section_key, e.time_spent_seconds, e.created_at FROM analytics_events e
+      WHERE e.deal_id = ${dealId} AND e.event_type = 'section_exit' AND e.buyer_access_id IS NOT NULL AND e.section_key IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM buyer_visits v WHERE v.deal_id = ${dealId} AND v.legacy)
+        AND e.created_at < COALESCE((SELECT MIN(v.started_at) FROM buyer_visits v WHERE v.deal_id = ${dealId} AND NOT v.legacy AND NOT v.self_view), 'infinity'::timestamp)
+      ORDER BY e.buyer_access_id, e.created_at
+      LIMIT 50000`);
+    return r.map((x) => ({ accessId: String(x.buyer_access_id), key: String(x.section_key), seconds: Number(x.time_spent_seconds ?? 0) || 0, at: asDate(x.created_at) }));
+  },
 };
 
 // ── In memory (tests) ────────────────────────────────────────────────────
@@ -255,17 +274,17 @@ export const dbReadingSource: ReadingSource = {
 /** A source over the in-memory ingest store, plus fixture questions/decisions. */
 export function memoryReadingSource(
   store: MemoryReadingStore,
-  extra: { questions?: RawQuestion[]; decisions?: RawDecision[]; sections?: Map<string, unknown[]> } = {},
+  extra: { questions?: RawQuestion[]; decisions?: RawDecision[]; sections?: Map<string, unknown[]>; legacyExits?: LegacyExit[] } = {},
 ): ReadingSource {
-  const visitOk = (q: ReadingQuery, v: { dealId: string; buyerAccessId: string; selfView: boolean; lastSeenAt: Date; deviceClass: string }) =>
-    v.dealId === q.dealId && !v.selfView && (!q.since || v.lastSeenAt >= q.since) && deviceMatches(q.device, v.deviceClass)
+  const visitOk = (q: ReadingQuery, v: { dealId: string; buyerAccessId: string; selfView: boolean; clamped: boolean; lastSeenAt: Date; deviceClass: string }) =>
+    v.dealId === q.dealId && !v.selfView && !v.clamped && (!q.since || v.lastSeenAt >= q.since) && deviceMatches(q.device, v.deviceClass)
     && (!q.accessIds || q.accessIds.includes(v.buyerAccessId));
   const visits = () => Array.from(store.visits.values());
   return {
     async renditions(dealId) {
       return Array.from(store.renditions.values()).filter((r) => r.dealId === dealId)
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-        .map((r) => ({ id: r.id, mode: r.mode, variant: r.variant, createdAt: r.createdAt, visits: visits().filter((v) => v.renditionId === r.id && !v.selfView).length }));
+        .map((r) => ({ id: r.id, mode: r.mode, variant: r.variant, createdAt: r.createdAt, visits: visits().filter((v) => v.renditionId === r.id && !v.selfView && !v.clamped).length }));
     },
     async rendition(dealId, id) {
       const r = store.renditions.get(id);
@@ -323,6 +342,10 @@ export function memoryReadingSource(
     },
     async decisions() {
       return extra.decisions ?? [];
+    },
+    async legacyExits(dealId) {
+      const first = visits().filter((v) => v.dealId === dealId && !v.selfView).reduce<number>((m, v) => Math.min(m, v.startedAt.getTime()), Infinity);
+      return (extra.legacyExits ?? []).filter((e) => e.at.getTime() < first);
     },
   };
 }

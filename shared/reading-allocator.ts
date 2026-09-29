@@ -13,8 +13,13 @@
  *     80% of the viewport height, across the CIM sheet. Each second is
  *     shared between the parts inside the band by how much of the band each
  *     one covers (vertical × horizontal, so side-by-side columns split).
- *     Nested parts credit the innermost; band area on a page but outside
- *     every part goes to the page itself (block key "").
+ *     Nested parts credit the innermost: a container (a two-column side, a
+ *     list) passes the band area it covers between its children on to
+ *     those children, in proportion to their size, and so does a page for
+ *     the margins between its parts — so the gaps between six small KPI
+ *     items count for the items, not for a container nobody can see. Only
+ *     band area on a page with none of its parts on screen stays on the
+ *     page itself (block key "").
  *   - A pointer that moved in the last 3 s over the sheet pulls 30% of the
  *     second onto the part under it, and its hover time is kept separately
  *     (pointerMs — chart points live only there).
@@ -27,6 +32,10 @@
  *
  * Invariant (tested): Σ(attention + skim) + outside = active ≤ wall, where
  * wall = active + idle + hidden + away.
+ *
+ * The 6-hour ceiling applies to ACTIVE time: a tab left open on screen all
+ * day keeps its idle/hidden clocks running and still records the afternoon's
+ * reading (the tracker also starts a new visit after 30 idle minutes).
  */
 import { READING_RULES, blockId, type BlockCounters } from "./analytics-v2";
 
@@ -137,8 +146,11 @@ function parentKey(key: string): string {
 /**
  * How much of the band each part covers, innermost first: a part's own
  * share is its band area minus its direct children's; a page's own share
- * ("" key) is its band area minus its top-level parts'. Pure geometry.
- * Returns blockId → band-area units.
+ * ("" key) is its band area minus its top-level parts'. Then every
+ * container with children on screen hands its own share down to those
+ * children in proportion to their band area (outermost first, so it
+ * reaches the leaves): containers and page margins keep nothing while any
+ * of their parts is on screen. Pure geometry. Returns blockId → band-area units.
  */
 export function exclusiveAreas(frame: Pick<Frame, "pages" | "blocks">, band: Rect): Map<string, number> {
   const out = new Map<string, number>();
@@ -167,12 +179,31 @@ export function exclusiveAreas(frame: Pick<Frame, "pages" | "blocks">, band: Rec
       while (parent && !blocks.has(parent)) parent = parentKey(parent);
       childSum.set(parent, (childSum.get(parent) ?? 0) + a);
     });
+    // Own (exclusive) area of every part, and of the page ("").
+    const own = new Map<string, number>();
+    const children = new Map<string, string[]>();
     blocks.forEach((a, key) => {
-      const own = Math.max(0, a - (childSum.get(key) ?? 0));
-      if (own > 0) out.set(blockId(pageId, key), own);
+      own.set(key, Math.max(0, a - (childSum.get(key) ?? 0)));
+      let parent = parentKey(key);
+      while (parent && !blocks.has(parent)) parent = parentKey(parent);
+      const list = children.get(parent) ?? [];
+      list.push(key);
+      children.set(parent, list);
     });
-    const remainder = Math.max(0, (pageArea.get(pageId) ?? 0) - (childSum.get("") ?? 0));
-    if (remainder > 0) out.set(blockId(pageId, ""), remainder);
+    own.set("", Math.max(0, (pageArea.get(pageId) ?? 0) - (childSum.get("") ?? 0)));
+    // Hand each container's own area down to its children (outermost first).
+    const depth = (k: string) => (k === "" ? -1 : k.split("/").length);
+    const order = ["", ...Array.from(blocks.keys()).sort((x, y) => depth(x) - depth(y))];
+    for (const key of order) {
+      const kids = children.get(key);
+      const mine = own.get(key) ?? 0;
+      if (!kids || kids.length === 0 || mine <= 0) continue;
+      const total = kids.reduce((s, k) => s + (blocks.get(k) ?? 0), 0);
+      if (total <= 0) continue;
+      for (const k of kids) own.set(k, (own.get(k) ?? 0) + mine * ((blocks.get(k) ?? 0) / total));
+      own.set(key, 0);
+    }
+    own.forEach((a, key) => { if (a > 0) out.set(blockId(pageId, key), a); });
   });
   return out;
 }
@@ -202,9 +233,9 @@ export class ReadingAllocator {
     return this.dominant ?? (this.path.length ? this.path[this.path.length - 1][1] : null);
   }
 
-  /** The visit reached its 6-hour ceiling: nothing more accrues. */
+  /** The visit reached its 6-hour ceiling of ACTIVE time: no more reading accrues (idle/hidden clocks still run). */
   get capped(): boolean {
-    return this.clocks.wallMs >= READING_RULES.visitMaxMs;
+    return this.clocks.activeMs >= READING_RULES.visitMaxMs;
   }
 
   private counters(id: string): BlockCounters {
@@ -217,9 +248,10 @@ export class ReadingAllocator {
   }
 
   tick(dtRaw: number, frame: Frame): void {
-    if (this.capped) return;
     const dt = Math.max(0, Math.min(ALLOCATOR_RULES.maxTickMs, Number.isFinite(dtRaw) ? dtRaw : 0));
     if (dt === 0) return;
+    // Past the ceiling an active second is simply not counted (wall stays = the sum of the clocks).
+    if (frame.state === "active" && this.capped) return;
     this.clocks.wallMs += dt;
     if (frame.state !== "active") {
       if (frame.state === "idle") this.clocks.idleMs += dt;
@@ -249,11 +281,18 @@ export class ReadingAllocator {
     const share = new Map<string, number>();
     raw.forEach((a, id) => share.set(id, a / total));
     if (frame.pointer) {
-      const target = blockId(frame.pointer.pageId, frame.pointer.key);
-      const k = ALLOCATOR_RULES.pointerBlend;
-      share.forEach((s, id) => share.set(id, s * (1 - k)));
-      share.set(target, (share.get(target) ?? 0) + k);
-      this.counters(blockId(frame.pointer.pageId, frame.pointer.pointKey || frame.pointer.key))[3] += dt;
+      const { pageId: pp, key: pk } = frame.pointer;
+      const target = blockId(pp, pk);
+      // A pointer resting in the gap of a container (between a list's items, a
+      // page's margin) doesn't pull time onto the container: its parts already
+      // share that area.
+      const container = frame.blocks.some((b) => b.pageId === pp && (pk === "" ? !!b.key : b.key.startsWith(`${pk}/`)) && overlapArea(b.rect, band) > 0);
+      if (!container) {
+        const k = ALLOCATOR_RULES.pointerBlend;
+        share.forEach((s, id) => share.set(id, s * (1 - k)));
+        share.set(target, (share.get(target) ?? 0) + k);
+      }
+      this.counters(blockId(pp, frame.pointer.pointKey || pk))[3] += dt;
     }
 
     // Attention vs skim.

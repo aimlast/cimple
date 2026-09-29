@@ -30,11 +30,12 @@ import { KIND_GROUPS, kindGroupOf } from "@shared/cim-blocks";
 import { AttentionByKind } from "../AttentionByKind";
 import { heatChrome } from "../heat";
 import { Segmented } from "../FilterBar";
-import { interactionLines, paintable, perReaderMs, readersText } from "./viewer-model";
+import { expandCount, interactionLines, isUnread, pageInView, paintable, perReaderMs, readersText, type SectionView } from "./viewer-model";
 import { Link } from "wouter";
 import { cn } from "@/lib/utils";
 
 export const READ_LABEL_HELP: Record<string, string> = {
+  opened: "The cover, disclaimer or contact page: opened, not judged by reading time",
   skipped: "Most buyers scrolled past it",
   glanced: "Most buyers spent under half the time a careful read takes",
   read: "Most buyers spent about the time a careful read takes",
@@ -75,7 +76,7 @@ function pageKinds(page: DocumentPage, renditionPage: RenditionPage | undefined)
 }
 
 export function PagePanel({
-  page, doc, dealId, renditionPage, selectedKey, onHoverKey, onSelectKey, onOnlyBuyer, filteredToOne, paint, className,
+  page, doc, dealId, renditionPage, selectedKey, onHoverKey, onSelectKey, onOnlyBuyer, filteredToOne, paint, className, sectionView = null,
 }: {
   page: DocumentPage;
   doc: EngagementDocumentResponse;
@@ -88,13 +89,16 @@ export function PagePanel({
   filteredToOne: boolean;
   paint: boolean;
   className?: string;
+  /** A collapsible section: the view drawn (the parts listed are that view's). */
+  sectionView?: SectionView | null;
 }) {
   const [mode, setMode] = useState<"page" | "kinds">("page");
   const [allParts, setAllParts] = useState(false);
   const parts = useMemo(
-    () => page.blocks.filter((b) => paintable(b) && b.kind !== "heading").sort((a, b) => b.attentionMs - a.attentionMs),
-    [page],
+    () => pageInView(page, sectionView).blocks.filter((b) => paintable(b) && b.kind !== "heading").sort((a, b) => b.attentionMs - a.attentionMs),
+    [page, sectionView],
   );
+  const openedNobody = sectionView === "opened" && expandCount(page) === 0;
   const maxPart = parts[0]?.attentionMs ?? 0;
   const maxBuyer = page.buyers[0]?.attentionMs ?? 0;
   const perReader = perReaderMs(page);
@@ -184,8 +188,12 @@ export function PagePanel({
 
           {parts.length > 0 && (
             <section>
-              <h4 className="mb-2 text-xs font-medium text-foreground/90">Parts of this page</h4>
-              {!paint ? (
+              <h4 className="mb-2 text-xs font-medium text-foreground/90">
+                Parts of this page{sectionView === "collapsed" ? " (collapsed, as buyers first see it)" : sectionView === "opened" ? " (opened)" : ""}
+              </h4>
+              {openedNobody ? (
+                <p className="text-xs text-muted-foreground">Nobody has opened this section yet.</p>
+              ) : !paint ? (
                 <p className="text-xs text-muted-foreground">Part-by-part reading isn't available for this page.</p>
               ) : (
                 <ul className="space-y-1" onMouseLeave={() => onHoverKey(null)}>
@@ -204,7 +212,7 @@ export function PagePanel({
                       >
                         <span className="truncate text-xs" title={b.label}>{b.label}</span>
                         <span className="text-[11px] tabular-nums text-muted-foreground">
-                          {b.attentionMs < 1000 ? "not read" : formatReadingTime(b.attentionMs)}
+                          {b.attentionMs >= 1000 ? formatReadingTime(b.attentionMs) : isUnread(b) ? "not read" : `on screen ${formatReadingTime(b.visibleMs)}`}
                         </span>
                         <span className="col-span-2 mt-0.5 h-1.5 overflow-hidden rounded-full bg-muted">
                           <span
@@ -217,7 +225,7 @@ export function PagePanel({
                   ))}
                 </ul>
               )}
-              {paint && parts.length > 8 && (
+              {paint && !openedNobody && parts.length > 8 && (
                 <button type="button" onClick={() => setAllParts((v) => !v)} className="mt-1 text-xs text-teal hover:underline">
                   {allParts ? "Show the top 8" : `Show all ${parts.length} parts`}
                 </button>

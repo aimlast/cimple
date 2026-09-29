@@ -2692,6 +2692,9 @@ export const buyerVisits = pgTable("buyer_visits", {
   // SESSION_SECRET) — only for "opened from N places". Never the raw IP.
   ipHash: text("ip_hash"),
   startedAt: timestamp("started_at").defaultNow().notNull(),
+  // The last moment the buyer was actively READING (advances only when
+  // active_ms grows — an open, idle tab never moves it). Drives "Reading now",
+  // recency and the date filters.
   lastSeenAt: timestamp("last_seen_at").defaultNow().notNull(),
   wallMs: integer("wall_ms").notNull().default(0),
   activeMs: integer("active_ms").notNull().default(0),

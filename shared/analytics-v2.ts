@@ -41,14 +41,20 @@ export const READING_CHROME_ATTR = "data-reading-chrome";
 // ── Timing rules (one definition, used by capture, aggregation and UI) ───
 
 export const READING_RULES = {
-  /** A visit whose last flush is this recent is "Reading now". */
+  /** A visit whose last ACTIVE reading is this recent is "Reading now" (buyer_visits.last_seen_at = last active). */
   readingNowMs: 90_000,
   /** A gap this long starts a new visit (and counts a new view). */
   visitGapMs: 30 * 60_000,
-  /** A visit stops accruing after this long. */
+  /** A visit stops accruing reading after this much ACTIVE time. */
   visitMaxMs: 6 * 3_600_000,
   /** Server clamp slack over its own elapsed time. */
   clampSlackMs: 20_000,
+  /**
+   * The most active time a visit's FIRST send may claim (the server hasn't
+   * seen it start): the tracker sends after 15 s, so this covers a few
+   * failed retries. Later sends may grow by the time since the last one.
+   */
+  firstSendMaxActiveMs: 180_000,
   /** A buyer "read" a page with at least this much attention on it. */
   readerMinMs: 3_000,
   /** Blocks under this are "Nobody read this". */
@@ -328,8 +334,9 @@ export function filterSince(f: Pick<EngagementFilters, "range">, now: Date = new
 // ── Labels, statuses, signals ────────────────────────────────────────────
 
 /** How one buyer (or the median buyer) read a page, against its expected time. */
-export type ReadLabel = "skipped" | "glanced" | "read" | "studied";
-export const READ_LABEL_TEXT: Record<ReadLabel, string> = { skipped: "Skipped", glanced: "Glanced", read: "Read", studied: "Studied" };
+/** "opened" is for front matter (cover, disclaimer, contact): opened, never judged by reading time. */
+export type ReadLabel = "skipped" | "glanced" | "read" | "studied" | "opened";
+export const READ_LABEL_TEXT: Record<ReadLabel, string> = { skipped: "Skipped", glanced: "Glanced", read: "Read", studied: "Studied", opened: "Opened" };
 
 export const BUYER_STATUSES = [
   "reading_now", "interested", "not_interested", "hot", "warming", "went_quiet", "skimmed", "opened", "not_opened", "lapsed",
@@ -362,6 +369,8 @@ export interface PageRef {
   label: string;
   /** The real title (broker side). */
   title: string;
+  /** For a blind buyer: the title THEY saw (the words used in talking points about them). */
+  servedTitle?: string;
 }
 
 export interface Signal {
@@ -422,6 +431,12 @@ export interface FactPage extends ViewerPageRef {
   title: string;
   /** The title the buyer saw, when it differs (blind). */
   servedTitle: string | null;
+  /**
+   * The title BLIND buyers saw on this page (from the blind version, even
+   * when the chosen version is the named one); null when no blind version
+   * of the page is known. Words about a blind buyer use this, never `title`.
+   */
+  blindTitle?: string | null;
   layoutType: string;
   role: PageRole;
   locked: boolean;
@@ -618,6 +633,8 @@ export interface DocumentPage extends ViewerPageRef {
   lineageId: string;
   title: string;
   servedTitle: string | null;
+  /** What blind buyers saw as this page's title (FactPage.blindTitle). */
+  blindTitle?: string | null;
   layoutType: string;
   role: PageRole;
   locked: boolean;

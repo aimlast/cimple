@@ -192,6 +192,62 @@ await test("the clamp: never more active time than the server saw elapse, never 
   assert.equal(s2.visits.get(V1)!.clamped, true);
 });
 
+await test("the clamp is anchored to the visit, not the version's age: a first send claiming 6 h gets at most 3 min", async () => {
+  const s = freshStore();
+  // The rendition has been live for an hour (T0 - 1 h); a 5-second-old visit claims 6 h.
+  const sixH = 6 * 3_600_000;
+  const r = await ingestReading(s, input(payload({
+    visit: { wallMs: sixH, activeMs: sixH, idleMs: 0, hiddenMs: 0, awayMs: 0, outsideMs: 0, maxPageIndex: 2 },
+    blocks: { [`${P2}|row:1`]: [sixH - 1000, 0, sixH, 0] },
+  }), new Date(T0.getTime() + 5_000)));
+  assert.equal(r.clamped, true);
+  const v = s.visits.get(V1)!;
+  assert.ok(v.activeMs <= 180_000, `active ${v.activeMs}`);
+  assert.ok(s.rollups.get(`${V1}|${P2}|row:1`)!.attentionMs <= v.activeMs);
+  assert.ok(s.rollups.get(`${V1}|${P2}|row:1`)!.visibleMs <= v.activeMs);
+  // A later send may only add the time since the visit was last active.
+  await ingestReading(s, input(payload({
+    visit: { wallMs: sixH + 30_000, activeMs: sixH + 30_000, idleMs: 0, hiddenMs: 0, awayMs: 0, outsideMs: 0, maxPageIndex: 2 },
+    blocks: { [`${P2}|row:1`]: [sixH + 20_000, 0, sixH, 0] },
+  }), new Date(T0.getTime() + 35_000)));
+  assert.ok(s.visits.get(V1)!.activeMs <= v.activeMs + 30_000 + 20_000, `${s.visits.get(V1)!.activeMs}`);
+  // An honest visit is never clamped: 15 s sends that grow with real time.
+  const h = freshStore();
+  let t = T0.getTime();
+  for (let k = 1; k <= 8; k++) {
+    t += 15_000;
+    const res = await ingestReading(h, input(payload({
+      visitId: V1, events: [],
+      visit: { wallMs: k * 15_000, activeMs: k * 15_000 - 200, idleMs: 0, hiddenMs: 0, awayMs: 0, outsideMs: 0, maxPageIndex: 2 },
+      blocks: { [`${P2}|row:1`]: [k * 15_000 - 400, 0, k * 15_000 - 400, 0] },
+      path: { from: 0, entries: [] },
+    }), new Date(t + 300)));
+    assert.equal(res.clamped, false, `send ${k}`);
+  }
+  assert.equal(h.visits.get(V1)!.activeMs, 8 * 15_000 - 200);
+});
+
+await test("last_seen_at is the last ACTIVE moment: idle or hidden time never moves it", async () => {
+  const s = freshStore();
+  const t1 = new Date(T0.getTime() + 61_000);
+  await ingestReading(s, input(payload(), t1));
+  assert.equal(s.visits.get(V1)!.lastSeenAt.getTime(), t1.getTime());
+  // The buyer walked away: the beacon on hide brings idle + hidden time only.
+  const idle = payload({ visit: { ...payload().visit, wallMs: 400_000, idleMs: 200_000, hiddenMs: 140_000 }, events: [], path: { from: 2, entries: [] } });
+  await ingestReading(s, input(idle, new Date(t1.getTime() + 340_000)));
+  const v = s.visits.get(V1)!;
+  assert.equal(v.lastSeenAt.getTime(), t1.getTime(), "an idle tab is not 'reading now'");
+  assert.equal(v.idleMs, 200_000);
+  // Reading again moves it.
+  const back = new Date(t1.getTime() + 400_000);
+  await ingestReading(s, input(payload({ visit: { ...idle.visit, wallMs: 460_000, activeMs: 70_000 }, events: [], path: { from: 2, entries: [] } }), back));
+  assert.equal(s.visits.get(V1)!.lastSeenAt.getTime(), back.getTime());
+  // A visit whose first send has no active time at all: last active = its start.
+  const s2 = freshStore();
+  await ingestReading(s2, input(payload({ visit: { wallMs: 50_000, activeMs: 0, idleMs: 50_000, hiddenMs: 0, awayMs: 0, outsideMs: 0, maxPageIndex: 0 }, blocks: {}, path: { from: 0, entries: [] }, events: [] }), t1));
+  assert.equal(s2.visits.get(V1)!.lastSeenAt.getTime(), t1.getTime() - 50_000);
+});
+
 await test("self views are stored as such and never count as a view", async () => {
   const s = freshStore();
   const r = await ingestReading(s, input(payload(), undefined, { selfView: true }));

@@ -1,5 +1,7 @@
 /**
- * Legacy reading backfill: turns the OLD tracker's section-exit events
+ * Legacy reading backfill (optional: the Engagement tab already shows this
+ * reading on the fly, read-only — server/engagement/legacy.ts; storing it
+ * makes it permanent): turns the OLD tracker's section-exit events
  * (analytics_events.event_type = 'section_exit', before reading analytics v2)
  * into page-level reading on synthetic legacy visits, so a deal's older
  * buyers still show in the Engagement tab ("Page-level only — recorded
@@ -19,74 +21,17 @@
  *
  *   ANTHROPIC_API_KEY=disabled DATABASE_URL=… npx tsx scripts/backfill-legacy-reading.ts --deal <id> [--apply] [--allow-real]
  */
-import { createHash } from "crypto";
 import { sql } from "drizzle-orm";
 import { db } from "../server/db";
 import { storage } from "../server/storage";
 import { asDate } from "../server/analytics/reading-ingest";
 import { cimModeForAccessLevel } from "../shared/cim-layouts";
 import { blindSectionKey } from "../shared/cim-buyer-view";
-import { READING_RULES } from "../shared/analytics-v2";
+import { legacySessions, type LegacyExit } from "../server/engagement/legacy";
 
 
-/** A uuid-shaped id derived from a string (stable across runs). */
-function stableUuid(s: string): string {
-  const h = createHash("sha256").update(s).digest("hex");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
-}
-
-interface Exit { accessId: string; key: string; seconds: number; at: Date }
-
-export interface LegacySession {
-  visitId: string;
-  accessId: string;
-  startedAt: Date;
-  lastSeenAt: Date;
-  activeMs: number;
-  wallMs: number;
-  path: Array<[number, string]>;
-  pages: Map<string, number>;   // pageId → attention ms
-}
-
-/** Section-exit events of one buyer → legacy sessions (pure). */
-export function legacySessions(exits: Exit[], resolve: (key: string) => string | null): LegacySession[] {
-  const out: LegacySession[] = [];
-  const byAccess = new Map<string, Exit[]>();
-  for (const e of exits) byAccess.set(e.accessId, [...(byAccess.get(e.accessId) ?? []), e]);
-  byAccess.forEach((list, accessId) => {
-    list.sort((a, b) => a.at.getTime() - b.at.getTime());
-    let cur: Exit[] = [];
-    const flush = () => {
-      const used = cur.map((e) => ({ ...e, pageId: resolve(e.key) })).filter((e) => e.pageId && e.seconds > 0) as Array<Exit & { pageId: string }>;
-      cur = [];
-      if (used.length === 0) return;
-      const start = new Date(used[0].at.getTime() - used[0].seconds * 1000);
-      const end = used[used.length - 1].at;
-      const wallMs = Math.max(1000, end.getTime() - start.getTime());
-      const raw = used.reduce((s, e) => s + e.seconds * 1000, 0);
-      const f = raw > wallMs ? wallMs / raw : 1;   // overlapping sections were double counted
-      const pages = new Map<string, number>();
-      const path: Array<[number, string]> = [];
-      let t = 0;
-      for (const e of used) {
-        const ms = Math.round(e.seconds * 1000 * f);
-        pages.set(e.pageId, (pages.get(e.pageId) ?? 0) + ms);
-        if (!path.length || path[path.length - 1][1] !== e.pageId) path.push([Math.floor(t / 1000), e.pageId]);
-        t += ms;
-      }
-      out.push({
-        visitId: stableUuid(`legacy|${accessId}|${start.toISOString()}`),
-        accessId, startedAt: start, lastSeenAt: end, wallMs, activeMs: Math.min(wallMs, Math.round(raw * f)), path, pages,
-      });
-    };
-    for (const e of list) {
-      if (cur.length && e.at.getTime() - cur[cur.length - 1].at.getTime() > READING_RULES.visitGapMs) flush();
-      cur.push(e);
-    }
-    flush();
-  });
-  return out;
-}
+export { legacySessions, stableUuid, type LegacySession } from "../server/engagement/legacy";
+type Exit = LegacyExit;
 
 async function main() {
   const args = process.argv.slice(2);

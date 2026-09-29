@@ -10,7 +10,9 @@
  *   - the heat scale (busiest part in the whole CIM, or on this page) and the
  *     seconds legend that reads it;
  *   - which parts are drawn on a split page ("7b" shows only its own parts);
- *   - the top-3 pins, "Nobody read this", the words for what buyers did.
+ *   - the top-3 pins, "Nobody read this", the words for what buyers did;
+ *   - a section buyers could collapse: which view to draw (collapsed, as
+ *     they first saw it, or opened) and which parts belong to it.
  *
  * Words: "reading time", seconds and minutes — never percent-of-max.
  */
@@ -133,6 +135,47 @@ export function legendTicks(maxMs: number, steps = 4): Array<{ t: number; label:
   return out;
 }
 
+// ── Collapsible sections ─────────────────────────────────────────────────
+
+/** How a section buyers could collapse is drawn: as they first saw it, or opened. */
+export type SectionView = "collapsed" | "opened";
+
+/** The page is a section buyers first saw collapsed (its registry has a collapsed "summary" block). */
+export function isCollapsible(rp: Pick<RenditionPage, "blocks"> | undefined | null): boolean {
+  return !!rp?.blocks.some((b) => b.key === "summary" && b.when === "collapsed");
+}
+
+/** Buyers who opened this section (expand clicks on the page). */
+export function expandCount(page: Pick<DocumentPage, "interactions">): number {
+  return page.interactions.expand ?? 0;
+}
+
+/**
+ * The view to draw first: collapsed (as every buyer first saw it) unless
+ * buyers opened the section and read more in it opened than in the
+ * collapsed summary. Null for a page that can't collapse.
+ */
+export function defaultSectionView(
+  page: Pick<DocumentPage, "blocks" | "interactions">,
+  rp: Pick<RenditionPage, "blocks"> | undefined | null,
+): SectionView | null {
+  if (!isCollapsible(rp)) return null;
+  const summary = page.blocks.find((b) => b.key === "summary")?.attentionMs ?? 0;
+  const opened = page.blocks.filter((b) => b.key !== "summary" && paintable(b) && b.kind !== "heading").reduce((s, b) => s + b.attentionMs, 0);
+  return expandCount(page) > 0 && opened > summary ? "opened" : "collapsed";
+}
+
+/** Whether a part belongs to the drawn view (every part when the page can't collapse). */
+export function inView(key: string, view: SectionView | null): boolean {
+  if (!view) return true;
+  return view === "collapsed" ? key === "summary" : key !== "summary";
+}
+
+/** The page with only the parts of the drawn view (pins, outlines, the panel's list and the shades use this). */
+export function pageInView<T extends Pick<DocumentPage, "blocks">>(page: T, view: SectionView | null): T {
+  return view ? { ...page, blocks: page.blocks.filter((b) => inView(b.key, view)) } : page;
+}
+
 /** The parts of this page with the most reading time (pins 1–3). Titles never get a pin. */
 export function topBlocks(page: Pick<DocumentPage, "blocks">, n = 3): string[] {
   return page.blocks
@@ -143,19 +186,33 @@ export function topBlocks(page: Pick<DocumentPage, "blocks">, n = 3): string[] {
 }
 
 /**
- * Parts nobody read (under a second in total) on a page that buyers reached.
- * Headings don't count, and only parts of the page's default view (a table's
- * Normalized rows or a collapsed summary are only on screen when the buyer
- * switched to them) — pass the page's rendition blocks to say which.
+ * A part nobody read: under a second of reading time AND hardly on screen
+ * (under 3 s in view in all). A small KPI item that sat on screen for a
+ * minute while its neighbours took the reading time was seen — it is not
+ * "nobody read this".
+ */
+export function isUnread(b: Pick<BlockAttention, "attentionMs" | "visibleMs">): boolean {
+  return b.attentionMs < READING_RULES.unreadBlockMs && b.visibleMs < READING_RULES.readerMinMs;
+}
+
+/**
+ * Parts nobody read on a page that buyers reached. Headings don't count,
+ * and only parts buyers could have had on screen: a table's Normalized rows
+ * only after a switch; for a section buyers first saw collapsed, the
+ * collapsed view is its summary, and the opened view's parts count only
+ * when some buyer opened it — pass the page's rendition blocks and the
+ * drawn view to say which.
  */
 export function unreadBlocks(
-  page: Pick<DocumentPage, "blocks" | "reachedBy">,
+  page: Pick<DocumentPage, "blocks" | "reachedBy"> & Partial<Pick<DocumentPage, "interactions">>,
   renditionBlocks?: ReadonlyArray<Pick<RenditionPage["blocks"][number], "key" | "virtual" | "when">>,
+  view: SectionView | null = null,
 ): string[] {
   if (page.reachedBy <= 0) return [];
-  const otherView = new Set((renditionBlocks ?? []).filter((b) => b.virtual || b.when).map((b) => b.key));
+  if (view === "opened" && (page.interactions?.expand ?? 0) <= 0) return [];
+  const otherView = new Set((renditionBlocks ?? []).filter((b) => b.virtual || (b.when && !(view === "collapsed" && b.when === "collapsed"))).map((b) => b.key));
   return page.blocks
-    .filter((b) => paintable(b) && b.kind !== "heading" && !otherView.has(b.key) && b.attentionMs < READING_RULES.unreadBlockMs)
+    .filter((b) => paintable(b) && b.kind !== "heading" && inView(b.key, view) && !otherView.has(b.key) && isUnread(b))
     .map((b) => b.key);
 }
 
@@ -236,14 +293,33 @@ export function perReaderMs(page: Pick<DocumentPage, "attentionMs" | "readers">)
 
 // ── How far buyers got ───────────────────────────────────────────────────
 
-/** The steepest drop between neighbouring pages (for the chart's marker), or null when nobody dropped off. */
+/**
+ * The steepest drop between neighbouring pages (for the chart's marker), or
+ * null when no drop is worth pointing at: a drop must be at least 2 buyers
+ * AND at least 10% of those who opened the CIM (one buyer stopping is not a
+ * pattern) — the same rule as the headline (server insights isMarkedDrop).
+ */
 export function steepestDrop(reach: ReadonlyArray<Pick<ReachPoint, "buyers">>): { index: number; from: number; to: number } | null {
+  const n = reach.reduce((m, r) => Math.max(m, r.buyers), 0);
   let best: { index: number; from: number; to: number } | null = null;
   for (let i = 1; i < reach.length; i++) {
     const d = reach[i - 1].buyers - reach[i].buyers;
-    if (d > 0 && (!best || d > best.from - best.to)) best = { index: i, from: reach[i - 1].buyers, to: reach[i].buyers };
+    if (d >= 2 && d >= 0.1 * n && (!best || d > best.from - best.to)) best = { index: i, from: reach[i - 1].buyers, to: reach[i].buyers };
   }
   return best;
+}
+
+/**
+ * "Page 19 of 32", and "Page 19 of 32 (19a)" for a printed part: the count
+ * is the CIM's page numbers (a long section's parts 19a/19b are one page
+ * number), not the number of viewer pages.
+ */
+export function pageOfText(label: string, pages: ReadonlyArray<Pick<DocumentPage, "label">>): string {
+  const num = (l: string) => { const m = /^(\d+)/.exec(l); return m ? Number(m[1]) : NaN; };
+  const total = pages.reduce((m, p) => (Number.isFinite(num(p.label)) ? Math.max(m, num(p.label)) : m), 0) || pages.length;
+  const n = num(label);
+  if (!Number.isFinite(n)) return `Page ${label} of ${total}`;
+  return `Page ${n} of ${total}${String(n) !== label ? ` (${label})` : ""}`;
 }
 
 /** A plain fallback sentence when no computed headline came back: facts only. */

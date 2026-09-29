@@ -47,7 +47,7 @@ test("a tall block (taller than the screen) gets reading AND visible time", () =
   invariant(a);
 });
 
-test("nested parts credit the innermost; the container keeps only its own area; the page keeps the rest", () => {
+test("nested parts credit the innermost; containers and page margins hand their area down to the parts on screen", () => {
   const f = frame({
     pages: [{ pageId: "p", rect: R(0, 1000) }],
     blocks: [
@@ -58,17 +58,44 @@ test("nested parts credit the innermost; the container keeps only its own area; 
     ],
   });
   const areas = exclusiveAreas(f, band);
-  assert.equal(areas.get("p|left/para:0"), 300 * 400);
-  assert.equal(areas.get("p|left"), 300 * 400, "the left column's own area below its paragraph");
-  assert.equal(areas.get("p|right/chart"), 600 * 400);
+  // The page's margin (60 px × 800) splits between the two columns by size (equal here),
+  // and the left column's own area below its paragraph goes to the paragraph.
+  const margin = (660 - 600) * 800;
+  assert.equal(areas.get("p|left/para:0"), 300 * 400 + 300 * 400 + margin / 2);
+  assert.equal(areas.get("p|left"), undefined, "a container keeps nothing while its parts are on screen");
+  assert.equal(areas.get("p|right/chart"), 600 * 400 + margin / 2);
   assert.equal(areas.get("p|right"), undefined, "fully covered by its chart");
-  assert.equal(areas.get("p|"), (660 - 600) * 800, "the page's band area outside every part");
+  assert.equal(areas.get("p|"), undefined, "the page keeps nothing while any of its parts is on screen");
+  let sum = 0;
+  areas.forEach((a) => { sum += a; });
+  assert.equal(sum, 660 * 800, "the whole band is still shared out");
   const a = new ReadingAllocator(["p"]);
   a.tick(1000, f);
   const total = [...a.blocks.values()].reduce((s, c) => s + c[0], 0);
   assert.ok(near(total, 1000));
-  assert.ok(at(a, "p", "right/chart")[0] > at(a, "p", "left/para:0")[0], "the taller chart gets more");
+  assert.ok(near(at(a, "p", "right/chart")[0], at(a, "p", "left/para:0")[0]), "each column's share reaches its only part");
   invariant(a);
+});
+
+test("small items in a list get the gaps between them, not the invisible list container", () => {
+  // A column of six small KPI items with gaps (the review's "Patient Base" page).
+  const blocks = [{ pageId: "p", key: "right", rect: R(100, 700, 400, 800) }];
+  for (let i = 0; i < 6; i++) blocks.push({ pageId: "p", key: `right/item:${i}`, rect: R(110 + i * 100, 150 + i * 100, 420, 780) });
+  const f = frame({ pages: [{ pageId: "p", rect: R(0, 1000) }], blocks });
+  const a = new ReadingAllocator(["p"]);
+  for (let i = 0; i < 60; i++) a.tick(1000, f);
+  assert.equal(at(a, "p", "right")[0], 0, "the container is never credited");
+  assert.equal(at(a, "p", "")[0], 0, "nor the page margin");
+  for (let i = 0; i < 6; i++) assert.ok(near(at(a, "p", `right/item:${i}`)[0], 10_000, 1), `item ${i}: ${at(a, "p", `right/item:${i}`)[0]}`);
+  invariant(a);
+});
+
+test("a page with none of its parts on screen keeps its band area", () => {
+  const areas = exclusiveAreas(frame({
+    pages: [{ pageId: "p", rect: R(0, 1000) }],
+    blocks: [{ pageId: "p", key: "row:0", rect: R(900, 1000) }],
+  }), band);
+  assert.equal(areas.get("p|"), 660 * 800);
 });
 
 test("side-by-side columns split the second by width", () => {
@@ -159,13 +186,26 @@ test("snapshot → restore continues the visit exactly", () => {
   invariant(b);
 });
 
-test("a tick never credits more than 2 s; a visit stops after 6 h", () => {
+test("a tick never credits more than 2 s; a visit stops after 6 h of ACTIVE time", () => {
   const a = new ReadingAllocator(["p"]);
   a.tick(60_000, frame({ pages: [{ pageId: "p", rect: R(0, 1000) }] }));
   assert.equal(a.clocks.activeMs, ALLOCATOR_RULES.maxTickMs);
+  a.clocks.activeMs = READING_RULES.visitMaxMs;
   a.clocks.wallMs = READING_RULES.visitMaxMs;
   a.tick(1000, frame({ pages: [{ pageId: "p", rect: R(0, 1000) }] }));
-  assert.equal(a.clocks.activeMs, ALLOCATOR_RULES.maxTickMs);
+  assert.equal(a.clocks.activeMs, READING_RULES.visitMaxMs);
+  a.tick(1000, frame({ state: "idle", pages: [{ pageId: "p", rect: R(0, 1000) }] }));
+  assert.equal(a.clocks.idleMs, 1000, "idle clocks still run");
+});
+
+test("a tab left open for 6 idle hours still records the afternoon's reading", () => {
+  const a = new ReadingAllocator(["p"]);
+  const f = { pages: [{ pageId: "p", rect: R(0, 1000) }], blocks: [{ pageId: "p", key: "row:0", rect: R(0, 1000) }] };
+  for (let i = 0; i < 6 * 3600; i++) a.tick(1000, frame({ ...f, state: "idle" }));
+  for (let i = 0; i < 600; i++) a.tick(1000, frame(f));
+  assert.equal(a.clocks.activeMs, 600_000);
+  assert.ok(near(at(a, "p", "row:0")[0], 600_000));
+  invariant(a);
 });
 
 test("random frames keep the invariant", () => {

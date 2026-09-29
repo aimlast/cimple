@@ -598,6 +598,8 @@ export class DbStorage implements IStorage {
     await db.execute(sql`DELETE FROM reading_rollups WHERE deal_id = ${id}`);
     await db.execute(sql`DELETE FROM buyer_visits WHERE deal_id = ${id}`);
     await db.execute(sql`DELETE FROM cim_renditions WHERE deal_id = ${id}`);
+    // Its anonymous reading benchmarks stop feeding other brokers' benchmarks and layout hints.
+    await db.execute(sql`DELETE FROM reading_benchmarks WHERE deal_id = ${id}`);
     await db.delete(deals).where(eq(deals.id, id));
   }
 

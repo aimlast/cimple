@@ -141,17 +141,39 @@ export interface RenditionWriter {
 /** Ids this process has already written (a GET is polled every 10–60 s: don't re-insert). */
 const known = new Map<string, number>();
 const KNOWN_MAX = 2_000;
-/** Re-assert a known row daily (unread renditions are pruned after 30 days). */
+/** Re-assert a known row daily (it may have been pruned meanwhile). */
 const KNOWN_TTL_MS = 86_400_000;
+/** A version nobody read is kept this long after it was first served. */
+export const RENDITION_PRUNE_AFTER_DAYS = 30;
 
 export const dbRenditionWriter: RenditionWriter = {
   async insert(row) {
     const { db } = await import("../db");
-    await db.execute(sql`
+    const inserted = (await db.execute(sql`
       INSERT INTO cim_renditions (id, deal_id, mode, variant, cim_layout_version, sections, design, page_index)
       VALUES (${row.id}, ${row.dealId}, ${row.mode}, ${row.variant}, ${row.cimLayoutVersion},
               ${JSON.stringify(row.sections)}::jsonb, ${JSON.stringify(row.design ?? null)}::jsonb, ${JSON.stringify(row.pageIndex)}::jsonb)
-      ON CONFLICT (id) DO NOTHING`);
+      ON CONFLICT (id) DO NOTHING
+      RETURNING id`)) as unknown as unknown[];
+    // A new version was just served: drop this deal's old versions that
+    // nobody ever read (each row holds the whole served CIM, and one is
+    // written per access level × CIM edit). Kept: anything with a visit, an
+    // event or a question on it, the newest version per mode × variant, and
+    // any version this process is still serving.
+    if (inserted.length > 0) {
+      const serving = Array.from(known.keys()).concat(row.id).join(",");
+      await db.execute(sql`
+        DELETE FROM cim_renditions c
+        WHERE c.deal_id = ${row.dealId}
+          AND c.created_at < ${new Date(Date.now() - RENDITION_PRUNE_AFTER_DAYS * 86_400_000).toISOString()}::timestamp
+          AND c.id <> ALL(string_to_array(${serving}, ','))
+          AND c.id NOT IN (SELECT DISTINCT ON (mode, variant) id FROM cim_renditions
+                           WHERE deal_id = ${row.dealId} ORDER BY mode, variant, created_at DESC)
+          AND NOT EXISTS (SELECT 1 FROM buyer_visits v WHERE v.deal_id = c.deal_id AND v.rendition_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM analytics_events e WHERE e.deal_id = c.deal_id AND e.rendition_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM buyer_questions q WHERE q.deal_id = c.deal_id AND q.rendition_id = c.id)`)
+        .catch((err: Error) => console.warn("[reading] rendition prune skipped:", err.message));
+    }
   },
 };
 

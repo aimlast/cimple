@@ -42,10 +42,24 @@ export function readLabel(attentionMs: number, expectedMs: number, reached = tru
   return "studied";
 }
 
+/**
+ * How one buyer read a page, by its role: front matter (the cover, the
+ * disclaimer, the contact page) is "Opened" once on screen — a buyer who
+ * opened the CIM and walked away left the cover up for a minute, which is
+ * not studying it. Every other page: readLabel.
+ */
+export function pageReadLabel(role: string | null | undefined, attentionMs: number, expectedMs: number, reached = true): ReadLabel | null {
+  if (!reached) return null;
+  if (role === "front_matter") return "opened";
+  return readLabel(attentionMs, expectedMs, reached);
+}
+
 /** The label of a group of buyers: the median buyer's label (null when none reached it). */
 export function groupReadLabel(perBuyer: ReadonlyArray<ReadLabel | null>): ReadLabel | null {
+  const given = perBuyer.filter((l): l is ReadLabel => !!l);
+  if (given.length > 0 && given.every((l) => l === "opened")) return "opened";
   const order: ReadLabel[] = ["skipped", "glanced", "read", "studied"];
-  const ranks = perBuyer.filter((l): l is ReadLabel => !!l).map((l) => order.indexOf(l)).sort((a, b) => a - b);
+  const ranks = given.filter((l) => l !== "opened").map((l) => order.indexOf(l)).sort((a, b) => a - b);
   if (ranks.length === 0) return null;
   return order[ranks[Math.floor((ranks.length - 1) / 2)]];
 }

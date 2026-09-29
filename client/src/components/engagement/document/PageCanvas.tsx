@@ -19,8 +19,13 @@
  *   - optionally a dashed outline on the parts nobody read.
  *
  * A split section ("7b") renders whole and hides the other part's blocks
- * (viewer-model partVisibility). The CIM paper is theme-locked (.cim-doc):
- * every colour drawn on it is an explicit hex/rgba, never an app token.
+ * (viewer-model partVisibility). A section buyers could collapse renders
+ * through the view room's own ExpandableSection, in the view the broker
+ * picked: collapsed (what every buyer first saw — its summary painted) or
+ * opened (the parts buyers who opened it read). Overlays are clipped to the
+ * table's own scroll box on a phone and follow it when it scrolls sideways.
+ * The CIM paper is theme-locked (.cim-doc): every colour drawn on it is an
+ * explicit hex/rgba, never an app token.
  */
 import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -44,8 +49,11 @@ import { CimSheet } from "@/components/cim/CimSheet";
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { CimContactPage, CimDisclaimerPage } from "@/components/cim/CimFrontBackPages";
 import { FinancialToggle } from "@/components/cim/FinancialToggle";
+import { ExpandableSection } from "@/components/cim/ExpandableSection";
 import { HEAT_PAPER_STOPS } from "../heat";
-import { heatIntensity, paperTint, partVisibility, partVisibilityCss, topBlocks, unreadBlocks } from "./viewer-model";
+import {
+  heatIntensity, isUnread, pageInView, paperTint, partVisibility, partVisibilityCss, topBlocks, unreadBlocks, type SectionView,
+} from "./viewer-model";
 
 /** Paper-side colours (theme-locked, like the CIM itself). */
 const INK = "#201D18";
@@ -77,6 +85,10 @@ export interface PageCanvasProps {
   onHoverKey(key: string | null): void;
   /** Phones: no hover card (a tap opens the bottom sheet instead). */
   touch: boolean;
+  /** A section buyers could collapse: the view drawn (null for any other page). */
+  view?: SectionView | null;
+  /** The section's own "Show full details / Show less" button was clicked. */
+  onViewChange?(view: SectionView): void;
 }
 
 export function PageCanvas(props: PageCanvasProps) {
@@ -92,9 +104,11 @@ export function PageCanvas(props: PageCanvasProps) {
   );
   const branding = useMemo(() => buildBranding(null, null), []);
   const section = sections.find((s) => s.id === pageId) ?? null;
-  const css = renditionPage ? partVisibilityCss(`#${scope}`, partVisibility(renditionPage, part)) : "";
+  const view = props.view ?? null;
+  // Collapsed, the whole section is its summary (it sits on the first part).
+  const css = renditionPage && view !== "collapsed" ? partVisibilityCss(`#${scope}`, partVisibility(renditionPage, part)) : "";
 
-  const rects = useBlockRects(hostRef, wrapRef, `${rendition.id}|${pageId}|${part}`);
+  const rects = useBlockRects(hostRef, wrapRef, `${rendition.id}|${pageId}|${part}|${view ?? ""}`);
 
   let content: React.ReactNode;
   if (pageId === _DISCLAIMER) content = <CimDisclaimerPage />;
@@ -103,13 +117,22 @@ export function PageCanvas(props: PageCanvasProps) {
     // As the view room shows it: a financial table with a Normalized view keeps
     // its "As reported | Normalized" switch (outside every measured part, so the
     // broker can flip it and see the Normalized rows' reading). A section the
-    // buyer could collapse is shown open, with every part painted; its
-    // collapsed summary's reading is listed under "Parts of this page".
+    // buyer could collapse goes through the view room's ExpandableSection in
+    // the chosen view: collapsed (its summary is one painted part) or opened.
     const shown = { ...section, isVisible: true };
     const expandable = !!(section.layoutData as { expandable?: unknown } | null)?.expandable;
-    content = section.layoutType === "financial_table" && !expandable
-      ? <FinancialToggle section={shown} branding={branding} />
-      : <CimSectionRenderer section={shown} branding={branding} />;
+    content = expandable
+      ? (
+        <ExpandableSection
+          section={shown}
+          branding={branding}
+          expanded={view !== "collapsed"}
+          onExpandedChange={(open) => props.onViewChange?.(open ? "opened" : "collapsed")}
+        />
+      )
+      : section.layoutType === "financial_table"
+        ? <FinancialToggle section={shown} branding={branding} />
+        : <CimSectionRenderer section={shown} branding={branding} />;
   }
   else content = <p className="py-16 text-center text-sm" style={{ color: INK, opacity: 0.6 }}>This page isn't in this version of the CIM.</p>;
 
@@ -154,12 +177,17 @@ function useBlockRects(hostRef: RefObject<HTMLDivElement>, wrapRef: RefObject<HT
         if (!alive) return;
         const c = wrap.getBoundingClientRect();
         const out = new Map<string, Rect>();
+        const clips = new Map<Element, DOMRect | null>();
         host.querySelectorAll<HTMLElement>(`[${CIM_BLOCK_ATTR}]`).forEach((el) => {
           if (el.querySelector(`[${CIM_BLOCK_ATTR}]`)) return;
           const k = el.getAttribute(CIM_BLOCK_ATTR);
           if (k == null) return;
-          const r = el.getBoundingClientRect();
-          if (r.width < 2 || r.height < 2) return;
+          const raw = el.getBoundingClientRect();
+          // A wide table in a sideways-scrolling box (phones): draw only the
+          // part inside the box, where the buyer's eye could be.
+          const box = clipBoxOf(el, host, clips);
+          const r = box ? intersect(raw, box) : raw;
+          if (!r || r.width < 2 || r.height < 2) return;
           const rect = { top: r.top - c.top, left: r.left - c.left, width: r.width, height: r.height };
           const prev = out.get(k);
           if (prev) {
@@ -183,6 +211,8 @@ function useBlockRects(hostRef: RefObject<HTMLDivElement>, wrapRef: RefObject<HT
     const timers = [250, 700, 1500].map((ms) => window.setTimeout(measure, ms));
     document.fonts?.ready.then(measure).catch(() => {});
     window.addEventListener("resize", measure);
+    // A table scrolled sideways inside the page moves its rows: follow it.
+    host.addEventListener("scroll", measure, true);
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
@@ -190,9 +220,34 @@ function useBlockRects(hostRef: RefObject<HTMLDivElement>, wrapRef: RefObject<HT
       mo.disconnect();
       timers.forEach(clearTimeout);
       window.removeEventListener("resize", measure);
+      host.removeEventListener("scroll", measure, true);
     };
   }, [hostRef, wrapRef, key]);
   return rects;
+}
+
+/** The nearest box between the element and the page that clips what overflows it (a scrolling table), or null. */
+function clipBoxOf(el: Element, host: Element, cache: Map<Element, DOMRect | null>): DOMRect | null {
+  let p = el.parentElement;
+  while (p && p !== host) {
+    let box = cache.get(p);
+    if (box === undefined) {
+      const cs = window.getComputedStyle(p);
+      box = /(auto|scroll|hidden|clip)/.test(`${cs.overflowX} ${cs.overflowY}`) ? p.getBoundingClientRect() : null;
+      cache.set(p, box);
+    }
+    if (box) return box;
+    p = p.parentElement;
+  }
+  return null;
+}
+
+function intersect(a: DOMRect, b: DOMRect): { top: number; left: number; width: number; height: number } | null {
+  const top = Math.max(a.top, b.top);
+  const left = Math.max(a.left, b.left);
+  const bottom = Math.min(a.bottom, b.bottom);
+  const right = Math.min(a.right, b.right);
+  return bottom > top && right > left ? { top, left, width: right - left, height: bottom - top } : null;
 }
 
 function sameRects(a: Map<string, Rect>, b: Map<string, Rect>): boolean {
@@ -211,11 +266,11 @@ function edgeColour(t: number): string {
 }
 
 const HeatOverlay = memo(function HeatOverlay({
-  page, paint, showHeat, showUnread, maxMs, rects, selectedKey, hoveredKey, onSelectKey, onHoverKey, touch, renditionPage, wrapRef,
+  page, paint, showHeat, showUnread, maxMs, rects, selectedKey, hoveredKey, onSelectKey, onHoverKey, touch, renditionPage, wrapRef, view = null,
 }: PageCanvasProps & { rects: Map<string, Rect>; wrapRef: RefObject<HTMLDivElement> }) {
   const blocks = useMemo(() => new Map((page?.blocks ?? []).map((b) => [b.key, b])), [page]);
-  const pins = useMemo(() => (page && paint ? topBlocks(page) : []), [page, paint]);
-  const unread = useMemo(() => new Set(page && paint && showUnread ? unreadBlocks(page, renditionPage?.blocks) : []), [page, paint, showUnread, renditionPage]);
+  const pins = useMemo(() => (page && paint ? topBlocks(pageInView(page, view)) : []), [page, paint, view]);
+  const unread = useMemo(() => new Set(page && paint && showUnread ? unreadBlocks(page, renditionPage?.blocks, view) : []), [page, paint, showUnread, renditionPage, view]);
   // The card follows the pointer (a tall paragraph would push a card anchored
   // to the part off screen); a clicked part keeps its card where it was clicked.
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
@@ -327,10 +382,16 @@ function BlockHoverCard({ block, page, expectedMs, at }: {
 /** What the broker learns about one part: used by the hover card and the phone bottom sheet. */
 export function BlockDetails({ block, page, expectedMs }: { block: BlockAttention; page: DocumentPage; expectedMs: number | null }) {
   const nobody = block.attentionMs < 1000;
+  const seen = nobody && !isUnread(block);
   return (
     <div className="space-y-1.5">
       <p className="text-[11px] leading-snug text-muted-foreground line-clamp-2">{block.label}</p>
-      {nobody ? (
+      {seen ? (
+        <p className="text-sm">
+          <span className="font-medium">On screen for {formatReadingTime(block.visibleMs)}</span>
+          <span className="text-muted-foreground">, while the parts around it took the reading time</span>
+        </p>
+      ) : nobody ? (
         <p className="text-sm font-medium">Nobody read this part</p>
       ) : (
         <p className="text-sm">

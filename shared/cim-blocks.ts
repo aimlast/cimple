@@ -638,6 +638,11 @@ export function paginate(blocks: ReadonlyArray<Pick<CimBlock, "key" | "height" |
       out[i] = 0;
       return;
     }
+    // A collapsed section's summary is where the section starts: its first part.
+    if (x.when === "collapsed") {
+      out[i] = 0;
+      return;
+    }
     if (x.key.includes("/") || !counted(x)) {
       // Children, chart points and other-view blocks follow their parent's part
       // (the Normalized rows follow the reported rows' split by index).
