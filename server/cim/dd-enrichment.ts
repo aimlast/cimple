@@ -38,7 +38,7 @@ import { splitFactsForCim, factValueText } from "../information/cim-facts";
 import { cimFinancialsFor, renderCimFinancialsBlock, type CimFinancials } from "./cim-financials";
 import { isBridgeAddback } from "../financial/addback-seed";
 import { isDistributionLine } from "../financial/normalization-rules";
-import { isKnownFigure, knownFiguresFrom, normalizeForLookup, parseFigures, type Figure } from "./figure-check";
+import { isKnownFigure, knownFiguresFrom, normalizeForLookup, parseFigures, parseFiguresAt, type Figure } from "./figure-check";
 import { keepOutFromNotes, mentionsHeldPerson, neutralBridgeLabel, screenConfidentialText, screenFactsForCim, type KeepOut } from "./sensitive-facts";
 import { keepOutFor } from "./keep-out";
 import type { ResolvedDiscrepancyNote } from "./resolved-block";
@@ -300,6 +300,10 @@ const PUBLIC_BODIES = [
   "canada revenue agency", "revenue canada", "revenu quebec", "internal revenue service", "service canada",
   "statistics canada", "employment and social development canada", "workplace safety and insurance board",
   "worksafebc", "wsib", "cnesst", "department of labor", "ministry of finance", "franchise tax board",
+  // Taxes and official records a DD note checks figures against ("Harmonized Sales Tax filings are current").
+  "harmonized sales tax", "harmonised sales tax", "goods and services tax", "provincial sales tax", "quebec sales tax",
+  "retail sales tax", "employer health tax", "canada pension plan", "employment insurance", "notice of assessment",
+  "notice of reassessment", "record of employment", "general ledger", "trial balance", "statement of account",
 ].map((b) => ` ${b} `);
 const REGION_PHRASES = new Set(REGION_NAMES.map((n) => normalizeForLookup(n)));
 
@@ -312,12 +316,43 @@ function isPlaceOrPublicBody(name: string): boolean {
   return norm.trim().split(" ").every((w) => isRegionWord(w) || isBroadRegionWord(w) || FUNCTION_WORDS.has(w));
 }
 
+/** Short forms written with a full stop inside a name ("St. Lawrence", "Dr. Park", "J. Smith", "U.S. Foods"). */
+const NAME_ABBREVIATION = /^(?:[A-Za-z]|(?:[A-Za-z]\.)+[A-Za-z]|mr|mrs|ms|mx|dr|st|ste|mt|ft|pt|prof|hon|rev|messrs)$/i;
+
+/**
+ * A matched run of capitalised words cut where a sentence ends inside it:
+ * NAME_RE lets a word carry a full stop (for "St." and "Inc."), so "The
+ * owner is Helen Park. The master agreement …" matched "Helen Park. The"
+ * and "… Maplecrest Senior Living. Linda Chu manages …" one name made of
+ * two — each then read as an invented name (free round 2 check, C5 step
+ * 3a). A full stop ends the name unless it closes a short form that sits
+ * inside names ("St. Lawrence") and the next word isn't a sentence opener.
+ * A legal ending ("Inc.", "LLP.") always ends it.
+ */
+function namePhrases(run: string): string[] {
+  const words = run.trim().split(/\s+/);
+  const out: string[][] = [[]];
+  words.forEach((w, i) => {
+    out[out.length - 1].push(w);
+    if (!w.endsWith(".") || i === words.length - 1) return;
+    const core = w.replace(/\.+$/, "");
+    const next = words[i + 1].replace(/[^A-Za-z]/g, "").toLowerCase();
+    if (!NAME_ABBREVIATION.test(core) || FUNCTION_WORDS.has(next)) out.push([]);
+  });
+  return out.map((ws) => ws.join(" "));
+}
+
 function namesIn(text: string): string[] {
-  return Array.from(stripDdMarkers(text).matchAll(NAME_RE))
-    .map((m) => {
+  // One line (a label, a cell, a paragraph) at a time: text joined from a
+  // chart's rows is one label per line, never one name across two.
+  return stripDdMarkers(text)
+    .split(/\n|\s\|\s/)
+    .flatMap((line) => Array.from(line.matchAll(NAME_RE)).flatMap((m) => namePhrases(m[1])))
+    .map((phrase) => {
       // "The Receivables Ledger": the opening "The" belongs to the sentence, not the name.
-      const words = m[1].trim().replace(/[.,;:]+$/, "").split(/\s+/);
-      while (words.length > 0 && FUNCTION_WORDS.has(words[0].toLowerCase())) words.shift();
+      const words = phrase.trim().replace(/[.,;:]+$/, "").split(/\s+/).filter(Boolean);
+      // "Serving Ontario", "Verified Add-backs": an inflected verb opens a clause, not a name.
+      while (words.length > 0 && (FUNCTION_WORDS.has(words[0].toLowerCase()) || inflectedOrdinary(words[0]))) words.shift();
       return words.join(" ");
     })
     .filter((n) => n.includes(" "));
@@ -328,7 +363,7 @@ function namesIn(text: string): string[] {
 /** Row fields that name what the row is (a chart slice, a table row, a card). */
 const LABEL_KEYS = ["name", "label", "title", "customer", "client", "company", "supplier", "vendor"];
 /** Row fields that hold the row's own figure. */
-const ROW_VALUE_KEYS = ["value", "secondaryValue", "percent", "percentage", "share", "amount", "revenue"];
+const ROW_VALUE_KEYS = ["value", "secondaryValue", "percent", "percentage", "share", "amount", "revenue", "left", "right"];
 
 /** An anonymised or generic label ("Customer A", "Top 5 customers", "Other") — not a name. */
 const GENERIC_ROW_LABEL =
@@ -340,16 +375,30 @@ interface ChangedLabel {
   baseLabel: string;
   /** The row the label names (its figures are the label's). */
   row: Record<string, unknown>;
+  /** The unit its figures are in, from the row or the chart around it ("%", "$"). */
+  unit: string;
+  /** Labels of one chart or table share a group (their figures are compared with each other). */
+  group: number;
 }
 
+let labelGroups = 0;
+
+/** The unit a chart, table or row declares ("%", "$", "USD"), else the one around it. */
+const unitOf = (o: Record<string, unknown>, around: string): string =>
+  typeof o.unit === "string" && o.unit.trim() ? o.unit : typeof o.currency === "string" && o.currency.trim() ? o.currency : around;
+
 /**
- * Labels the enrichment changed or added, row by row (charts, tables, cards):
- * a revealed customer name sits here, where the prose check can't see it.
+ * Labels the enrichment changed or added, row by row (charts, tables, cards)
+ * and column by column (a table's headers): a revealed customer name sits
+ * here, where the prose check can't see it. A changed column header names
+ * the column's cells ("Customer A" -> "Brightway Foods" over the 31% column
+ * was a swap the row check never saw — free round 2 check, C5).
  */
-function changedLabels(base: unknown, next: unknown, out: ChangedLabel[] = [], depth = 0): ChangedLabel[] {
+function changedLabels(base: unknown, next: unknown, out: ChangedLabel[] = [], depth = 0, unit = ""): ChangedLabel[] {
   if (depth > 8 || next == null) return out;
   if (Array.isArray(next)) {
     const b = Array.isArray(base) ? base : [];
+    const group = ++labelGroups;
     next.forEach((row, i) => {
       if (row && typeof row === "object" && !Array.isArray(row)) {
         const r = row as Record<string, unknown>;
@@ -357,19 +406,45 @@ function changedLabels(base: unknown, next: unknown, out: ChangedLabel[] = [], d
         for (const k of LABEL_KEYS) {
           const v = r[k];
           if (typeof v === "string" && v.trim() && stripDdMarkers(v).trim() !== stripDdMarkers(String(br[k] ?? "")).trim()) {
-            out.push({ label: stripDdMarkers(v).trim(), baseLabel: stripDdMarkers(String(br[k] ?? "")).trim(), row: r });
+            out.push({ label: stripDdMarkers(v).trim(), baseLabel: stripDdMarkers(String(br[k] ?? "")).trim(), row: r, unit: unitOf(r, unit), group });
           }
         }
       }
-      changedLabels(b[i], row, out, depth + 1);
+      changedLabels(b[i], row, out, depth + 1, unit);
     });
     return out;
   }
   if (typeof next === "object") {
+    const o = next as Record<string, unknown>;
     const b = (base && typeof base === "object" ? base : {}) as Record<string, unknown>;
-    for (const [k, v] of Object.entries(next as Record<string, unknown>)) changedLabels(b[k], v, out, depth + 1);
+    const here = unitOf(o, unit);
+    columnLabels(b, o, here, out);
+    for (const [k, v] of Object.entries(o)) changedLabels(b[k], v, out, depth + 1, here);
   }
   return out;
+}
+
+/**
+ * Column headers a table's enrichment changed: a financial_table's
+ * `headers[j]` names every row's `values[j-1]`; a comparison_table's
+ * leftLabel / rightLabel name every row's `left` / `right`.
+ */
+function columnLabels(base: Record<string, unknown>, next: Record<string, unknown>, unit: string, out: ChangedLabel[]): void {
+  const rows = Array.isArray(next.rows) ? (next.rows as unknown[]).filter((r): r is Record<string, unknown> => !!r && typeof r === "object" && !Array.isArray(r)) : [];
+  if (rows.length === 0) return;
+  const group = ++labelGroups;
+  const text = (v: unknown) => stripDdMarkers(typeof v === "string" ? v : "").trim();
+  const push = (label: unknown, baseLabel: unknown, cells: unknown[]) => {
+    if (!text(label) || text(label) === text(baseLabel)) return;
+    out.push({ label: text(label), baseLabel: text(baseLabel), row: { values: cells.filter((c) => c != null && c !== "") }, unit, group });
+  };
+  if (Array.isArray(next.headers)) {
+    const bh = Array.isArray(base.headers) ? (base.headers as unknown[]) : [];
+    (next.headers as unknown[]).forEach((h, j) => {
+      if (j > 0) push(h, bh[j], rows.map((r) => (Array.isArray(r.values) ? r.values[j - 1] : undefined)));
+    });
+  }
+  for (const side of ["left", "right"] as const) push(next[`${side}Label`], base[`${side}Label`], rows.map((r) => r[side]));
 }
 
 const LEGAL_ENDING = /\b(?:co-op|incorporated|inc|ltd|limited|llc|llp|lp|plc|corp|corporation|company|co)\b\.?/gi;
@@ -391,7 +466,8 @@ function labelParts(label: string): string[] {
     asides.push(a ?? b ?? "");
     return " | ";
   });
-  return [...head.split(/\s+[-—–]\s+|\s*[—–]\s*|:\s+|\s+\/\s+|\s*\|\s*/), ...asides]
+  // ", " too: "Customer A, Acme Logistics" is the generic label and the name, not one name (free round 2 check).
+  return [...head.split(/\s+[-—–]\s+|\s*[—–]\s*|:\s+|,\s+|\s+\/\s+|\s*\|\s*/), ...asides]
     .map((p) => p.replace(LEGAL_ENDING, " ").replace(/\s+/g, " ").trim().replace(/^[.,;:]+|[.,;:]+$/g, "").trim())
     .filter(Boolean);
 }
@@ -407,7 +483,51 @@ function isNameLike(part: string): boolean {
 /** A word that names nothing: everyday, a function word, a place, or one carrying digits ("FY2024"). */
 function ordinaryWord(w: string): boolean {
   const l = w.toLowerCase().replace(/['’]s$/, "");
-  return /\d/.test(l) || FUNCTION_WORDS.has(l) || LEGAL_WORD.test(l) || isCommonWord(l) || isRegionWord(l) || isBroadRegionWord(l);
+  if (/\d/.test(l) || FUNCTION_WORDS.has(l) || LEGAL_WORD.test(l) || STANDARD_ACRONYMS.has(l) || isCommonWord(l) || isRegionWord(l) || isBroadRegionWord(l)) return true;
+  // Inflections only of the verbs and nouns a DD note is written in — "Browning" or "Manning" isn't "brown" or "man".
+  return wordForms(l).some((f) => DD_VOCABULARY.has(f));
+}
+
+/**
+ * The words a due-diligence note is written in — what was checked, against
+ * what, and when — that the everyday-word list doesn't carry: "[[dd]]Verified
+ * against …", "Reviewed by …", "December year-end statements …" each read
+ * as an invented name (free round 2 check, C5 residual). Base forms; the
+ * inflections come from wordForms.
+ */
+const DD_VOCABULARY = new Set(`
+verify confirm reconcile audit prepare trace agree inspect examine validate sample obtain receive compare assess
+harmonize corroborate substantiate document disclose normalize adjust accrue amortize depreciate capitalize file remit
+statement ledger notice assessment reassessment filing invoice receipt deposit schedule summary register aging ageing
+reconciliation certificate engagement compilation schedule remittance payable workpaper subledger journal
+figure amount balance total variance discrepancy difference margin return book books
+controller bookkeeper auditor accountant treasurer
+review check test match support provide serve base report record list price bill pay own operate manage lease rent
+supply deliver install repair maintain process sell hire train grow expand sign renew extend require state show
+january february march april may june july august september october november december
+monday tuesday wednesday thursday friday saturday sunday
+`.split(/\s+/).filter(Boolean));
+
+/** A word and the plain forms it may be inflected from ("verified" → "verify", "reconciled" → "reconcile", "reviewing" → "review"). */
+function wordForms(l: string): string[] {
+  const out = [l];
+  const add = (s: string) => { if (s.length >= 3) out.push(s); };
+  if (l.endsWith("ied")) add(`${l.slice(0, -3)}y`);
+  if (l.endsWith("ed")) { add(l.slice(0, -2)); add(l.slice(0, -1)); if (/(.)\1ed$/.test(l)) add(l.slice(0, -3)); }
+  if (l.endsWith("ing")) { add(l.slice(0, -3)); add(`${l.slice(0, -3)}e`); if (/(.)\1ing$/.test(l)) add(l.slice(0, -4)); }
+  if (l.endsWith("ies")) add(`${l.slice(0, -3)}y`);
+  if (l.endsWith("es")) add(l.slice(0, -2));
+  if (l.length > 3 && l.endsWith("s")) add(l.slice(0, -1));
+  if (l.endsWith("ments")) add(l.slice(0, -5));
+  else if (l.endsWith("ment")) add(l.slice(0, -4));
+  if (l.endsWith("ly")) add(l.slice(0, -2));
+  return out;
+}
+
+/** An inflected verb form of an ordinary word ("Serving", "Verified", "Based") — it opens a clause, never a name. */
+function inflectedOrdinary(w: string): boolean {
+  const l = w.toLowerCase();
+  return /(?:ed|ing)$/.test(l) && ordinaryWord(l);
 }
 
 /**
@@ -415,10 +535,15 @@ function ordinaryWord(w: string): boolean {
  * 2011", "Largest account, served by Sysco") that aren't on file: the
  * one-word name a two-word pattern can't see.
  */
-function unknownCapitals(part: string, baseWords: Set<string>, knownWords: Set<string>): string[] {
+function unknownCapitals(part: string, baseWords: Set<string>, knownWords: Set<string>, lowercaseToo = false): string[] {
   const out: string[] = [];
   for (const tok of part.match(/[A-Za-z][A-Za-z0-9&'’-]*/g) ?? []) {
-    if (!/^[A-Z]/.test(tok) || tok.length < 3) continue;
+    if (tok.length < 3) continue;
+    if (!/^[A-Z]/.test(tok)) {
+      // In a revealed row, a name written in lower case ("Customer A (sysco)") names someone too.
+      if (lowercaseToo && !describesOnly(tok, baseWords, knownWords)) out.push(tok);
+      continue;
+    }
     if (/^[A-Z0-9&-]+$/.test(tok) && tok.length <= 5) continue; // an acronym (MSA, YTD, CRA)
     const w = tok.replace(/['’]s$/i, "").toLowerCase();
     if (baseWords.has(w) || knownWords.has(w) || ordinaryWord(w)) continue;
@@ -427,13 +552,54 @@ function unknownCapitals(part: string, baseWords: Set<string>, knownWords: Set<s
   return out;
 }
 
+/**
+ * Words that describe a revealed row rather than name it — "Customer A
+ * (Anchor Client)", "Customer A (Largest Account)", "(FY2024)": the row
+ * still reads "Customer A", and the aside says what kind of account it is.
+ */
+const ROW_DESCRIPTORS = new Set(`
+anchor key largest biggest second third flagship principal primary major main top lead leading national regional provincial
+municipal federal government public institutional commercial residential industrial retail wholesale recurring contract
+contracted exclusive preferred strategic legacy longstanding long standing founding repeat direct indirect account client
+customer distributor partner since fy ytd ltm multi site year years term renewal renewed msa master service agreement
+annual monthly anchor-tenant tenant new existing former formerly previously now renamed trading operating dba aka
+current active inactive single sole group
+`.split(/\s+/).filter(Boolean));
+
+/** Every piece of a word ("multi-year", "long-standing") is ordinary, descriptive, or the file's own. */
+function describesOnly(tok: string, baseWords: Set<string>, knownWords: Set<string>): boolean {
+  return tok
+    .toLowerCase()
+    .replace(/['’]s$/, "")
+    .split(/[-'’]/)
+    .filter(Boolean)
+    .every((w) => w.length < 3 || /\d/.test(w) || ROW_DESCRIPTORS.has(w) || baseWords.has(w) || knownWords.has(w) || ordinaryWord(w));
+}
+
 /** Is the name written in the file (whole, as a phrase — not just its first word)? */
 function onFile(name: string, knownNorm: string): boolean {
   const norm = normalizeForLookup(name).trim();
   return !norm || knownNorm.includes(` ${norm} `);
 }
 
-const figureClose = (a: number, b: number) => Math.abs(a - b) <= Math.max(0.05, Math.abs(b) * 0.005);
+/** A figure with what it measures: a share, an amount, or a bare number (which may be either). */
+interface KindedFigure {
+  value: number;
+  kind: "money" | "percent" | "plain";
+  /** Half the unit of its last written digit ("$3.0M" -> 50,000): it says no more precisely than that. */
+  tolerance: number;
+}
+
+/** A share compares with a share and an amount with an amount; a bare number with either. */
+const sameKind = (a: KindedFigure, b: KindedFigure) => a.kind === "plain" || b.kind === "plain" || a.kind === b.kind;
+
+/**
+ * Two figures agree to the precision each is written with: the file's "about
+ * $3.0M (31%)" gives Acme 3,000,000 +/- 50,000, so a DD chart showing
+ * 3,040,000 agrees (it was rejected at a fixed 0.5% — free round 2 check).
+ */
+const figureClose = (a: KindedFigure, b: KindedFigure) =>
+  Math.abs(Math.abs(a.value) - Math.abs(b.value)) <= Math.max(0.05, Math.abs(b.value) * 0.005, a.tolerance, b.tolerance);
 
 /** A word after a name that turns to the next party ("…; second Brightway Foods 18%", "others 12%"). */
 const NEXT_PARTY = /^(?:second|third|fourth|fifth|next|other|others|remaining|rest|followed|while|whereas|versus|vs|compared)(?:$|-)/i;
@@ -468,24 +634,44 @@ function mentionWindow(after: string): string {
  * dollar chart ("Acme Logistics 3,040,000") was rejected as "the file gives
  * it 31" (free round 2 check).
  */
-function statedFigureFor(name: string, knownText: string): number[] {
-  const out: number[] = [];
+function statedFigureFor(name: string, knownText: string): KindedFigure[] {
+  const out: KindedFigure[] = [];
   const clauses = stripDdMarkers(knownText).split(/[;\n]|(?<=[.!?])\s+/);
   const re = new RegExp(String.raw`(?<![\p{L}\p{N}])${name.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(String.raw`\s+`)}(?![\p{L}\p{N}])`, "giu");
-  const figs = (t: string) => parseFigures(t).filter((f) => f.kind !== "plain");
+  // Shares and amounts; a bare number only when it is written as an amount ("3,040,000"), never a count or a year.
+  const figs = (t: string) =>
+    parseFigures(t).filter((f) => f.kind !== "plain" || (/,\d{3}/.test(f.text) && !(f.value >= 1900 && f.value <= 2100)));
   for (const clause of clauses) {
     for (const m of Array.from(clause.matchAll(re))) {
       const at = m.index ?? 0;
       const after = figs(mentionWindow(clause.slice(at + m[0].length)));
       if (after.length > 0) {
-        out.push(...after.map((f) => f.value));
+        out.push(...after);
         continue;
       }
       const before = figs(clause.slice(Math.max(0, at - 40), at));
-      if (before.length > 0) out.push(before[before.length - 1].value);
+      if (before.length > 0) out.push(before[before.length - 1]);
     }
   }
-  return Array.from(new Set(out));
+  // A fact written as a pair of keys — "topCustomer: Acme Logistics" and
+  // "topCustomerShare: 31%": the share is the name's (a swap over such a
+  // file went unseen — free round 2 check, C5).
+  if (out.length === 0) {
+    const lines = stripDdMarkers(knownText).split("\n").map((l) => l.match(/^\s*([A-Za-z_][\w.]*)\s*:\s*(.+)$/)).filter((m): m is RegExpMatchArray => !!m);
+    for (const [, key, value] of lines) {
+      re.lastIndex = 0;
+      if (!re.test(value) || value.replace(re, "").replace(/[\s.,;()-]+/g, "").length > 3) continue; // the value IS the name
+      for (const [, k2, v2] of lines) {
+        if (k2 !== key && k2.toLowerCase().startsWith(key.toLowerCase()) && /^(?:share|percent|percentage|pct|revenue|sales|amount|value|billings)/i.test(k2.slice(key.length))) {
+          out.push(...figs(v2));
+        }
+      }
+    }
+  }
+  const seen = new Set<string>();
+  return out
+    .map((f) => ({ value: f.value, kind: f.kind, tolerance: f.tolerance }))
+    .filter((f) => !seen.has(`${f.kind}:${f.value}`) && !!seen.add(`${f.kind}:${f.value}`));
 }
 
 /** The prose fields of a section's data (where [[dd]] spans may sit). */
@@ -502,15 +688,20 @@ function proseTexts(value: unknown, parentKey = "", out: string[] = [], depth = 
 }
 
 /** Every figure a row shows (its value fields, and a table row's cells). */
-function rowFigures(row: Record<string, unknown>): number[] {
+function rowFigures(row: Record<string, unknown>, unit = ""): KindedFigure[] {
   const texts: string[] = [];
   for (const k of ROW_VALUE_KEYS) if (row[k] != null && row[k] !== "") texts.push(String(row[k]));
   if (Array.isArray(row.values)) for (const v of row.values) if (v != null && v !== "") texts.push(String(v));
-  const out: number[] = [];
+  // A bare number is in the chart's unit: 31 in a "%" chart is a share, 3040000 in a "$" chart an amount.
+  const unitKind: KindedFigure["kind"] = /%|percent/i.test(unit) ? "percent" : /\$|usd|cad|dollar|eur|gbp/i.test(unit) ? "money" : "plain";
+  const out: KindedFigure[] = [];
   for (const t of texts) {
     const n = Number(String(t).replace(/[,$%\s]/g, ""));
-    if (/^\s*-?[\d,.]+\s*%?\s*$/.test(t) && Number.isFinite(n)) out.push(n);
-    else out.push(...parseFigures(t).map((f) => f.value));
+    if (/^\s*-?\$?\s*-?[\d,.]+\s*%?\s*$/.test(t) && Number.isFinite(n)) {
+      out.push({ value: n, kind: /%/.test(t) ? "percent" : /\$/.test(t) ? "money" : unitKind, tolerance: 0 });
+    } else {
+      out.push(...parseFigures(t).map((f) => ({ value: f.value, kind: f.kind === "plain" ? unitKind : f.kind, tolerance: f.tolerance })));
+    }
   }
   return out;
 }
@@ -526,10 +717,11 @@ function unknownSingleNames(rawText: string, baseWords: Set<string>, knownWords:
   const WORD = /\[\[dd\]\]|\[\[\/dd\]\]|[A-Za-z][A-Za-z0-9&'’-]*|[.!?:]/g;
   let prev = "."; // start of text = start of a sentence
   let afterOpen = false;
+  let inSpan = false;
   for (const m of Array.from(rawText.matchAll(WORD))) {
     const tok = m[0];
-    if (tok === "[[dd]]") { afterOpen = true; continue; }
-    if (tok === "[[/dd]]") continue;
+    if (tok === "[[dd]]") { afterOpen = true; inSpan = true; continue; }
+    if (tok === "[[/dd]]") { inSpan = false; continue; }
     if (/^[.!?:]$/.test(tok)) { prev = tok; continue; }
     const sentenceStart = /^[.!?:]$/.test(prev);
     const checked = afterOpen || !sentenceStart;
@@ -538,10 +730,68 @@ function unknownSingleNames(rawText: string, baseWords: Set<string>, knownWords:
     if (!checked || !/^[A-Z]/.test(tok) || tok.length < 3) continue;
     const w = tok.replace(/['’]s$/i, "").toLowerCase();
     if (baseWords.has(w) || knownWords.has(w) || ordinaryWord(w)) continue;
-    if (/^[A-Z0-9&-]+$/.test(tok) && tok.length <= 5) continue; // an acronym (EBITDA, CRA, HST)
+    // An acronym (CRA, HST, T4) is an ordinary term — except one a revealed span
+    // names that neither the file nor the finance vocabulary knows: "[[dd]]the
+    // LCBO[[/dd]]" is a customer (free round 2 check, C5).
+    if (/^[A-Z0-9&-]+$/.test(tok) && tok.length <= 5 && (!inSpan || STANDARD_ACRONYMS.has(w))) continue;
     out.add(tok.replace(/['’]s$/i, ""));
   }
   return Array.from(out);
+}
+
+/** Acronyms of finance, tax, payroll and reporting a DD note uses without naming anyone (lowercase). */
+const STANDARD_ACRONYMS = new Set(`
+cra irs hst gst pst qst rst eht cpp qpp ei wsib wcb roe noa t1 t2 t3 t4 t4a t5 t5018 w2 w9 k1 ein bn sin ssn
+sde ebitda ebit ebt nwc wc ar ap gl p&l pl bs cf coa capex opex cogs roi roa roe kpi kpis ytd ltm ttm fy fye mtd qtd yoy
+cpa ca cga cma cfo ceo coo cto vp hr it ops qa qc sop sops msa sla slas sow nda loi apa spa lpa psa rfp rfq po pos
+gaap ifrs aspe ifrs sox aml kyc pipeda hipaa iso osha whmis ul csa ce fda ohip odsp nihb
+us usa usd cad eur gbp llc llp lp ltd inc plc ulc corp co
+b2b b2c oem mro erp crm pms emr ehr sku skus edi api saas
+`.split(/\s+/).filter(Boolean).map((a) => a.toLowerCase()));
+
+/** Wording that ties a figure to a party as its share or amount of the business ("accounts for 31%", "31% of revenue"). */
+const CLAIM_BEFORE =
+  /(?:accounts?(?:ed)?\s+for|accounting\s+for|represent(?:s|ed|ing)?|makes?\s+up|made\s+up|contribut\w*|comprise[sd]?|generat\w*|billed|brings?\s+in|share\s+of|worth|at)\s*(?:about|approximately|roughly|nearly|around|over|under|some|just\s+(?:over|under)|~)?\s*$/i;
+const CLAIM_AFTER = /^\s*(?:of\s+(?:the\s+)?(?:[\w'’-]+\s+){0,3}?(?:revenue|revenues|sales|billings|volume|income|business|turnover))/i;
+
+/**
+ * A name revealed in the prose with a share or amount the file gives
+ * another party: "Customer A ([[dd]]Brightway Foods[[/dd]]) accounts for
+ * 31% of revenue" when the file gives Brightway 18%. Labels had this check;
+ * prose didn't (free round 2 check, C5). Only a figure worded as the party's
+ * share or amount of the business is compared, and only against the file's
+ * figures of the same kind — "Acme's volume grew 12%" is not a share.
+ */
+function proseMispairings(texts: string[], knownText: string, knownNorm: string): string[] {
+  const out: string[] = [];
+  for (const raw of texts) {
+    if (!raw.includes(DD_OPEN)) continue;
+    const plain = stripDdMarkers(raw);
+    for (const m of Array.from(raw.matchAll(/\[\[dd\]\]([\s\S]*?)\[\[\/dd\]\]/g))) {
+      const span = stripDdMarkers(m[1]).trim();
+      const whole = span.replace(/^(?:the|our)\s+/i, "").replace(/[.,;:]+$/, "");
+      const candidates = new Set(namesIn(span));
+      if (whole && whole.split(/\s+/).length <= 5 && isNameLike(whole)) candidates.add(whole);
+      // Where the span sits in the plain text: the markers before it are gone there.
+      const at = stripDdMarkers(raw.slice(0, m.index ?? 0)).length;
+      const spanEnd = at + stripDdMarkers(m[0]).length;
+      const sentenceEnd = plain.slice(spanEnd).search(/(?<=[.!?])\s+(?=[A-Z])|\n/);
+      const after = mentionWindow(plain.slice(spanEnd, sentenceEnd < 0 ? undefined : spanEnd + sentenceEnd));
+      const claimed = parseFiguresAt(after)
+        .filter((f) => f.kind !== "plain" && (CLAIM_BEFORE.test(after.slice(Math.max(0, f.index - 40), f.index)) || CLAIM_AFTER.test(after.slice(f.end))))
+        .map((f) => ({ value: f.value, kind: f.kind, tolerance: f.tolerance }) as KindedFigure);
+      if (claimed.length === 0) continue;
+      for (const name of Array.from(candidates)) {
+        const inside = plain.slice(at, spanEnd);
+        if (!onFile(name, knownNorm) || !inside.includes(name)) continue;
+        const stated = statedFigureFor(name, knownText).filter((s) => claimed.some((c) => sameKind(c, s) && c.kind === s.kind));
+        if (stated.length > 0 && !claimed.some((c) => stated.some((s) => c.kind === s.kind && figureClose(c, s)))) {
+          out.push(`shows "${name}" at ${claimed.map((c) => c.value.toLocaleString("en-US")).join(" / ")}, but the file gives it ${stated.map((s) => s.value.toLocaleString("en-US")).join(" / ")}`);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -602,6 +852,8 @@ export function validateDdOverride(
   for (const name of Array.from(new Set(namesIn(newText)))) {
     const norm = normalizeForLookup(name);
     if (baseNames.has(norm) || knownNorm.includes(norm) || isPlaceOrPublicBody(name)) continue;
+    // "Anchor Client", "Largest Account", "HST and T4": a kind of account or a finance term, not a name.
+    if (name.split(/\s+/).every((w) => NAME_CONNECTORS.has(w.toLowerCase()) || ROW_DESCRIPTORS.has(w.toLowerCase()) || STANDARD_ACRONYMS.has(w.toLowerCase()) || /\d/.test(w))) continue;
     const words = norm.trim().split(" ").filter((w) => w.length >= 4);
     if (words.length > 0 && words.every((w) => knownNorm.includes(` ${w} `))) continue;
     problems.push(`named "${name}", which isn't on file`);
@@ -609,7 +861,7 @@ export function validateDdOverride(
   // 3a. A name it reveals in the prose ([[dd]] … [[/dd]]) is on file as a
   // whole — "Brightway Logistics" built from two words the file uses for
   // two different parties is an invented name, as it is in a label.
-  const spans = Array.from(newText.matchAll(/\[\[dd\]\]([\s\S]*?)\[\[\/dd\]\]/g)).map((m) => m[1]).join(" | "); // never one name across two spans
+  const spans = Array.from(newText.matchAll(/\[\[dd\]\]([\s\S]*?)\[\[\/dd\]\]/g)).map((m) => m[1]).join(" | "); // never one name across two spans (namesIn splits at " | ")
   for (const name of Array.from(new Set(namesIn(spans)))) {
     const bare = name.replace(LEGAL_ENDING, " ").replace(/\s+/g, " ").trim();
     if (!bare.includes(" ") || onFile(bare, knownNorm) || baseNames.has(normalizeForLookup(bare)) || isPlaceOrPublicBody(bare)) continue;
@@ -631,15 +883,20 @@ export function validateDdOverride(
   // Words the file writes in lower case — ordinary words there ("verified", "add-backs"), never part of a name.
   const lowerWords = new Set((stripDdMarkers(`${knownText}\n${baseText}`).match(/(?<![A-Za-z0-9&'’-])[a-z][a-z0-9&'’-]*/g) ?? []));
   const knownWords = wordSet(knownText);
-  for (const { label, baseLabel, row } of changedLabels(base.layoutData, enriched.layoutData)) {
+  /** Revealed names whose figures the file gives only in another measure (amounts for a share chart), by chart. */
+  const byOrder: Array<{ name: string; group: number; shown: KindedFigure; stated: KindedFigure }> = [];
+  for (const { label, baseLabel, row, unit, group } of changedLabels(base.layoutData, enriched.layoutData)) {
     const parts = labelParts(label);
     const reveal = [...parts, ...labelParts(baseLabel)].some((p) => GENERIC_ROW_LABEL.test(p));
+    // The label still reads "Customer A": its other parts describe the account unless they name someone.
+    const keepsGeneric = parts.some((p) => GENERIC_ROW_LABEL.test(p));
     const names: string[] = [];
     for (const part of parts) {
       if (GENERIC_ROW_LABEL.test(part) || !/[A-Za-z]{2,}/.test(part)) continue;
       if (!isNameLike(part)) {
-        // A description ("anchor account since 2011"): only a capitalised word in it can name someone.
-        for (const w of unknownCapitals(part, baseWords, knownWords)) flag(w);
+        // A description ("anchor account since 2011"): only a capitalised word in it can name someone —
+        // or, in a revealed row, any word that isn't ordinary ("Customer A (sysco)").
+        for (const w of unknownCapitals(part, baseWords, knownWords, reveal)) flag(w);
         continue;
       }
       if (onFile(part, knownNorm) || baseNames.has(normalizeForLookup(part))) {
@@ -647,21 +904,45 @@ export function validateDdOverride(
         continue;
       }
       if (isPlaceOrPublicBody(part)) continue;
+      if (keepsGeneric && part.split(/\s+/).every((w) => NAME_CONNECTORS.has(w.toLowerCase()) || ROW_DESCRIPTORS.has(w.toLowerCase()) || /\d/.test(w))) continue;
       // A heading in title case ("Bank Deposits", "Verified Add-backs") names nothing — unless it took the place of "Customer A".
       if (!reveal && part.split(/\s+/).every((w) => NAME_CONNECTORS.has(w.toLowerCase()) || ordinaryWord(w) || lowerWords.has(w.toLowerCase()))) continue;
       flag(part);
     }
-    const shown = rowFigures(row);
+    const shown = rowFigures(row, unit);
     for (const name of names) {
       const stated = statedFigureFor(name, knownText);
-      if (stated.length > 0 && shown.length > 0 && !shown.some((v) => stated.some((s) => figureClose(Math.abs(v), Math.abs(s))))) {
-        problems.push(`shows "${name}" at ${shown.map((v) => v.toLocaleString("en-US")).join(" / ")}, but the file gives it ${stated.map((v) => v.toLocaleString("en-US")).join(" / ")}`);
+      if (stated.length === 0 || shown.length === 0) continue;
+      const comparable = stated.filter((s) => shown.some((v) => sameKind(v, s)));
+      if (comparable.length > 0) {
+        if (!shown.some((v) => comparable.some((s) => sameKind(v, s) && figureClose(v, s)))) {
+          problems.push(`shows "${name}" at ${shown.map((v) => v.value.toLocaleString("en-US")).join(" / ")}, but the file gives it ${comparable.map((v) => v.value.toLocaleString("en-US")).join(" / ")}`);
+        }
+      } else if (stated.length === 1) {
+        // The file gives Acme $3,040,000 and the chart its share: can't compare, but the order must hold.
+        byOrder.push({ name, group, shown: shown[0], stated: stated[0] });
+      }
+    }
+  }
+  // 3b'. Names shown in a chart in a measure the file doesn't give them in
+  // (shares where the file has amounts): each is on file, but the larger
+  // party in the file must not be the smaller one in the chart — a swap.
+  for (const a of byOrder) {
+    for (const b of byOrder) {
+      if (a.group !== b.group || a.name === b.name || a.stated.kind !== b.stated.kind || a.shown.kind !== b.shown.kind) continue;
+      if (figureClose(a.stated, b.stated) || figureClose(a.shown, b.shown)) continue;
+      if (a.stated.value > b.stated.value && a.shown.value < b.shown.value) {
+        problems.push(`shows "${a.name}" below "${b.name}", but the file gives "${a.name}" more (${a.stated.value.toLocaleString("en-US")} vs ${b.stated.value.toLocaleString("en-US")})`);
       }
     }
   }
   // 3c. One-word names in the prose it added.
   const proseNew = [...proseTexts(enriched.layoutData), enriched.contentOverride || ""].join("\n");
   for (const w of unknownSingleNames(proseNew, baseWords, knownWords)) flag(w);
+  // 3c'. A name revealed in the prose carries the share the file gives it.
+  for (const p of proseMispairings([...proseTexts(enriched.layoutData), enriched.contentOverride || ""], knownText, knownNorm)) {
+    if (!problems.includes(p)) problems.push(p);
+  }
   // 3d. Never a name the seller or broker asked to keep out.
   const held = mentionsHeldPerson(stripDdMarkers(newText), heldNames);
   if (held) problems.push(`named "${held}", whom the CIM must leave out`);

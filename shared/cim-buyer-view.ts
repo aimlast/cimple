@@ -199,20 +199,94 @@ export function withoutAskingPrice<T extends { layoutType: string; layoutData: u
  */
 const PRICE_MENTION =
   /\b(?:asking|list(?:ing|ed)?|offering|purchase)\s+(?:price|multiple)\b|\b(?:listed|priced|offered)\s+(?:at|for)\b|\bprice\s*(?:\/|to|-to-)\s*(?:sde|ebitda|earnings|revenue|sales|cash\s*flow)\b|\bimplied\s+(?:price|multiple|valuation)\b/i;
+/**
+ * A valuation multiple of THIS deal — "SDE Multiple 5.2x", "Revenue Multiple
+ * 1.45x", "EBITDA Multiple", "Implied EV / EBITDA 6.1x", "Price to EBITDA",
+ * "Implied SDE multiple": with the SDE or revenue beside it, a buyer works the
+ * removed price straight back out. PRICE_MENTION only knew labels that say
+ * "price", so the multiples this app actually wrote (Harborview's "Asking
+ * Price & Valuation" section) stayed (free round 2 check, C7).
+ */
+const MULTIPLE_MENTION =
+  /\b(?:sde|ebitda|ebit|revenue|sales|earnings|cash[- ]?flow|ev|enterprise[- ]value|valuation|price)\s*(?:\/\s*)?multiples?\b|\bmultiples?\s+(?:of|on|to)\s+(?:sde|ebitda|ebit|revenue|sales|earnings|cash\s*flow)\b|\b(?:ev|enterprise\s+value|valuation|price)\s*(?:\/|to|-to-)\s*(?:sde|ebitda|ebit|earnings|revenue|sales|cash\s*flow)\b|\bimplied\s+(?:[\w/-]+\s+){0,3}?(?:multiple|valuation)\b|\b\d+(?:\.\d+)?\s?[x×]\s+(?:sde|ebitda|ebit|earnings|revenue|sales|cash\s*flow)\b/i;
+/** A multiple written as one ("5.2x", "1.45×", "4.6 times"). */
+const MULTIPLE_FIGURE = /\b\d+(?:\.\d+)?\s?(?:[x×](?![a-z])|times\b)/i;
+/**
+ * Wording about the market, not this deal: "Industry SDE multiple 2.5–3.5x",
+ * "comparable transactions sold at 4x" — no price can be worked out from it.
+ */
+const MARKET_WORDING = /\b(?:industry|comparable|comparables|comps?|market|sector|peers?|typical(?:ly)?|average|median|benchmark|precedent|transactions?|range)\b/i;
+/** Wording that ties a multiple to this deal even beside market words ("the implied multiple of 5.2x is below the industry average"). */
+const DEAL_MULTIPLE = /\b(?:implied|this\s+(?:deal|transaction|opportunity|offering|price|valuation|business|company)|asking|purchase\s+price|listed|represents?|reflects?|equates?\s+to|works?\s+out\s+to)\b/i;
+
+/** The deal's own multiple is stated: a multiple wording with a multiple figure, not about the market alone. */
+function statesDealMultiple(label: string, figureText: string): boolean {
+  if (!MULTIPLE_MENTION.test(label) || !MULTIPLE_FIGURE.test(figureText)) return false;
+  return !MARKET_WORDING.test(label) || DEAL_MULTIPLE.test(label);
+}
+
 /** A figure such wording can give away: an amount or a multiple. */
 const PRICE_FIGURE = /\$\s?\d|\b\d[\d,.]*\s?(?:k|m|mm|million|thousand)\b|\b\d+(?:\.\d+)?\s?[x×](?![a-z])|\b\d{1,3}(?:,\d{3})+\b/i;
 /** Arrays whose entries are columns (a table's cells): emptied in place, never dropped. */
 const POSITIONAL = new Set(["values", "headers", "columns", "cells"]);
 const ROW_LABEL_KEYS = ["label", "name", "title", "term", "metric", "key", "primaryLabel"];
 
-const statesPrice = (s: string) => PRICE_MENTION.test(s) && PRICE_FIGURE.test(s);
+/** Wording that can only be about this deal's price: "asking price", "listing price", "Price / SDE". */
+const DEAL_PRICE_TERM =
+  /\b(?:asking|listing|listed|offering)\s+(?:price|multiple)\b|\bprice\s*(?:\/|to|-to-)\s*(?:sde|ebitda|earnings|revenue|sales|cash\s*flow)\b|\bimplied\s+(?:price|multiple|valuation)\b/i;
+/**
+ * Wording that is the deal's price only when a price figure goes with it:
+ * "purchase price", "list price", "listed at", "priced at", "offered at".
+ * "Memberships are priced at $189 per year", "the manufacturer's list price
+ * of $12,500", "the 2012 purchase price of the building", "listed at #42 on
+ * the Growth 500 with revenue of $6.2M" and "vendor financing of 10% of the
+ * purchase price and the $250,000 of inventory" each lost their sentence
+ * when any figure anywhere in it counted (free round 2 check, C7).
+ */
+const OTHER_PRICE_TERM = /\b(?:purchase|list)\s+price\b|\b(?:listed|priced|offered)(?:\s+for\s+sale)?\s+(?:at|for)\b/gi;
+/** A price of something else: "…'s list price", "the 2012 purchase price", "purchase price of the building". */
+const OTHER_THING_BEFORE = /(?:['’]s|\b(?:19|20)\d{2}|\b(?:its|their|his|her|original|historical|historic|equipment|building|property|vehicle|unit|retail|manufacturer|wholesale|member|membership|ticket|menu|product))\s*$/i;
+const OTHER_THING_AFTER = /^\s+(?:of|for)\s+(?:the\s+|its\s+|their\s+|a\s+|an\s+|each\s+)?(?!business\b|company\b|shares?\b|deal\b|transaction\b|opportunity\b|practice\b|assets\b)[a-z]/i;
+/** An amount a business sells for, or a multiple: "$4.8M", "$4,800,000", "4.8 million", "3.8x" — never "$189 per year". */
+function isDealFigure(text: string): boolean {
+  const m = text.match(/\$\s?(\d[\d,.]*)\s?(k|m|mm|million|thousand|b|billion)?\b|\b(\d[\d,.]*)\s?(million|mm|m)\b|\b\d+(?:\.\d+)?\s?[x×](?![a-z])/i);
+  if (!m) return false;
+  const after = text.slice((m.index ?? 0) + m[0].length);
+  if (/^\s*(?:\/|per\b|a\s+(?:year|month|week|day|hour|visit|unit|member)|each\b|an\s+hour)/i.test(after)) return false;
+  if (m[1] !== undefined && !m[2]) return Number(m[1].replace(/,/g, "")) >= 10000;
+  return true;
+}
+
+/** The sentence states the deal's price, or a multiple of it. */
+function statesPrice(sentence: string): boolean {
+  if (DEAL_PRICE_TERM.test(sentence) && PRICE_FIGURE.test(sentence)) return true;
+  if (statesDealMultiple(sentence, sentence)) return true;
+  for (const m of Array.from(sentence.matchAll(OTHER_PRICE_TERM))) {
+    const at = m.index ?? 0;
+    const before = sentence.slice(0, at);
+    const after = sentence.slice(at + m[0].length);
+    if (/price$/i.test(m[0]) && (OTHER_THING_BEFORE.test(before) || OTHER_THING_AFTER.test(after))) continue;
+    // "listed at $18M", "offered for sale at $4.8M": the figure follows at once.
+    if (!/price$/i.test(m[0])) {
+      if (/^\s*(?:about|approximately|roughly|around|just\s+(?:under|over)|under|over|an?\s+(?:asking\s+)?price\s+of)?\s*\$?\s?\d/i.test(after) && isDealFigure(after.slice(0, 40))) return true;
+      continue;
+    }
+    // "the purchase price of $4.8M", "a purchase price is $4.8M", "a $4.8M purchase price": in the same clause.
+    const clause = after.split(/[;:]|,\s|\s+(?:and|but|while|plus)\s+/)[0].slice(0, 60); // "$4,800,000" keeps its commas
+    if (isDealFigure(clause) || isDealFigure(before.slice(-20))) return true;
+  }
+  return false;
+}
+
+/** Sentences of a paragraph: never split after "Ltd." / "Inc." / "St." ("Pacific Coast Logistics Ltd. is offered …" is one). */
+const SENTENCE_BREAK = /(?<!\b(?:Ltd|Inc|Co|Corp|Ltée|Ltee|LLC|LLP|St|Ste|Dr|Mr|Mrs|Ms|Jr|Sr|No|vs|approx|est|[A-Z])\.)(?<=[.!?])\s+/;
 
 /** Text without the sentences that state the price or its multiple. */
 function withoutPriceSentences(text: string): string {
-  if (!PRICE_MENTION.test(text)) return text;
+  if (!PRICE_MENTION.test(text) && !MULTIPLE_MENTION.test(text)) return text;
   return text
     .split(/(\n+)/)
-    .map((part) => (/^\n+$/.test(part) ? part : part.split(/(?<=[.!?])\s+/).filter((s) => !statesPrice(s)).join(" ")))
+    .map((part) => (/^\n+$/.test(part) ? part : part.split(SENTENCE_BREAK).filter((s) => !statesPrice(s)).join(" ")))
     .join("")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -220,9 +294,17 @@ function withoutPriceSentences(text: string): string {
 
 /** A row (key number, table row, term) whose label is the price or its multiple and that shows a figure. */
 function isPriceRow(row: Record<string, unknown>): boolean {
-  const label = ROW_LABEL_KEYS.map((k) => row[k]).find((v) => typeof v === "string" && PRICE_MENTION.test(v)) as string | undefined;
+  const labels = ROW_LABEL_KEYS.map((k) => row[k]).filter((v): v is string => typeof v === "string");
+  const figures = Object.entries(row)
+    .filter(([k]) => !ROW_LABEL_KEYS.includes(k))
+    .map(([, v]) => (Array.isArray(v) ? v.join(" ") : String(v ?? "")))
+    .join(" ");
+  // "Revenue Multiple 1.45x", "SDE multiple | 3.8x | 2.5-3.5x" (this deal's column states it).
+  if (labels.some((l) => statesDealMultiple(l, `${figures} ${l}`))) return true;
+  // "Asking price", "Purchase price" rows with a price figure; never "Membership price $189/yr" or "Equipment purchase price".
+  const label = labels.find((v) => DEAL_PRICE_TERM.test(v) || (PRICE_MENTION.test(v) && !/\bper\b|\/\s*(?:sq|ft|yr|year|month|unit)/i.test(v) && statesPrice(`${v} ${figures}`)));
   if (!label) return false;
-  return Object.entries(row).some(([k, v]) => !ROW_LABEL_KEYS.includes(k) && PRICE_FIGURE.test(Array.isArray(v) ? v.join(" ") : String(v ?? ""))) || PRICE_FIGURE.test(label);
+  return PRICE_FIGURE.test(figures) || PRICE_FIGURE.test(label);
 }
 
 function scrubPrice(v: unknown, key: string, depth: number): unknown {
@@ -247,12 +329,40 @@ function scrubPrice(v: unknown, key: string, depth: number): unknown {
   return v;
 }
 
+/**
+ * A key figure a callout shows on its own (primaryLabel / primaryValue):
+ * "Asking Price / SDE 3.8x" or "Implied SDE multiple 3.8x" in a stat_callout
+ * isn't a row, so the row check never saw it (free round 2 check, C7). The
+ * first other stat takes its place; with none, the callout says the price is
+ * on request.
+ */
+function withoutPriceCallout(d: Record<string, unknown>): Record<string, unknown> {
+  const label = String(d.primaryLabel ?? "");
+  const value = String(d.primaryValue ?? "");
+  const states = statesDealMultiple(label, `${value} ${label}`) || ((DEAL_PRICE_TERM.test(label) || statesPrice(`${label} ${value}`)) && PRICE_FIGURE.test(`${value} ${label}`) && !ASKING_LABEL.test(label));
+  if (!states) return d;
+  const stats = Array.isArray(d.secondaryStats) ? (d.secondaryStats as unknown[]) : [];
+  const next = stats.findIndex((x) => x && typeof x === "object" && String((x as Record<string, unknown>).label ?? "").trim() && String((x as Record<string, unknown>).value ?? "").trim());
+  if (next >= 0) {
+    const promoted = stats[next] as Record<string, unknown>;
+    return withoutPriceCallout({ ...d, primaryLabel: promoted.label, primaryValue: promoted.value, secondaryStats: stats.filter((_x, i) => i !== next) });
+  }
+  if (typeof d.secondaryLabel === "string" && d.secondaryLabel.trim() && d.secondaryValue != null && String(d.secondaryValue).trim()) {
+    const { secondaryLabel, secondaryValue, ...rest } = d;
+    return { ...rest, primaryLabel: secondaryLabel, primaryValue: secondaryValue };
+  }
+  return { ...d, primaryLabel: "Asking price", primaryValue: PRICE_ON_REQUEST };
+}
+
 /** A section with every statement of the price, or of a multiple of it, taken out (its data and its prose). */
 function withoutPriceMentions<T extends { layoutType: string; layoutData: unknown }>(section: T): T {
   const s = section as T & { aiDraftContent?: unknown; brokerEditedContent?: unknown };
   const json = JSON.stringify([s.layoutData ?? null, s.aiDraftContent ?? null, s.brokerEditedContent ?? null]);
-  if (!PRICE_MENTION.test(json)) return section;
-  const out = { ...section, layoutData: s.layoutData && typeof s.layoutData === "object" ? scrubPrice(s.layoutData, "", 0) : s.layoutData } as T & {
+  if (!PRICE_MENTION.test(json) && !MULTIPLE_MENTION.test(json)) return section;
+  const data = s.layoutData && typeof s.layoutData === "object" && !Array.isArray(s.layoutData) && "primaryLabel" in (s.layoutData as object)
+    ? withoutPriceCallout(s.layoutData as Record<string, unknown>)
+    : s.layoutData;
+  const out = { ...section, layoutData: data && typeof data === "object" ? scrubPrice(data, "", 0) : data } as T & {
     aiDraftContent?: unknown;
     brokerEditedContent?: unknown;
   };

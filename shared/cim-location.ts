@@ -61,8 +61,24 @@ export function splitLeaseType(v: unknown): { badge: string | null; terms: strin
   return { badge: null, terms: t };
 }
 
-/** Words saying the business leases or rents the premises ("leased to the business", "leases it back", "pays rent"). */
-const LEASED_TO_BUSINESS = /\b(?:leased|leases|leasing|lease|rented|rents|renting|rent|sub-?let|tenant)\b/i;
+/**
+ * Words saying the BUSINESS is the one that leases or rents the premises:
+ * "leased to the business", "leased back to the company", "the business
+ * pays rent", "rented to the operating company", "sale-leaseback". Any
+ * lease word used to do: "Owned — the upper floor is rented to a tenant",
+ * "Owned; second unit leased to a dental practice", "part of the building is
+ * sublet", "available by lease or purchase", "rental income", "leasehold
+ * improvements" each showed "Leased" for premises the business owns (free
+ * round 2 check, known-2).
+ */
+const BUSINESS_WORD = String.raw`(?:the\s+|our\s+|its\s+)?(?:business|company|corporation|operating\s+(?:company|entity)|opco|operator|practice|pharmacy|clinic|dealership|store|restaurant|shop|firm|tenant\s+business)`;
+const LEASED_TO_BUSINESS = new RegExp(
+  String.raw`\b(?:leased|rented|sub-?let|let)\s+(?:back\s+)?to\s+${BUSINESS_WORD}\b` +
+    String.raw`|\b${BUSINESS_WORD}\s+(?:pays|paid|is\s+paying|leases|rents|is\s+charged)\b` +
+    String.raw`|\brent\s+(?:is\s+)?(?:paid|charged)\s+(?:by|to)\s+${BUSINESS_WORD}\b` +
+    String.raw`|\b(?:sale[- ])?lease-?back\b|\bleases?\s+(?:it|them|the\s+(?:premises|building|property|space|unit))\s+(?:back\s+)?to\s+${BUSINESS_WORD}\b`,
+  "i",
+);
 
 /** A lease kind at the start of the text, and what follows it. */
 const LEASE_KIND_FIRST =
