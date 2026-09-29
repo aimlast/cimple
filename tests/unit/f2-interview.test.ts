@@ -10,6 +10,7 @@ import path from "node:path";
 import {
   detectPause,
   sellerResumed,
+  interviewerOfferedBreak,
   detectStopSignal,
   PAUSE_REPLY,
   buildPauseNudge,
@@ -31,6 +32,7 @@ import { typedNumericValues } from "../../server/interview/info-merger";
 import {
   PAUSES, PAUSE_ACCEPTS, PAUSE_OFFER, RETURNS, CLOSING_ANSWERS, CLOSING_PREV,
   BUSINESS, NEUTRAL, STOP_PATTERN_MUST, DEFERRALS, DEFERRAL_PREV,
+  RETURNS_AFTER_PAUSE, NOT_PAUSES, BUSINESS_BREAK_Q,
 } from "../interview/seller-intent-corpus.data";
 
 const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
@@ -38,8 +40,8 @@ let n = 0;
 const ok = (name: string) => { n++; process.stdout.write(`✓ ${name}\n`); };
 
 /** The turn's stop state from the patterns alone, exactly as processTurn starts it. */
-function patternsTurn(message: string, prevAi: string | undefined, priorStopCount: number) {
-  const q = quickIntent(message, prevAi);
+function patternsTurn(message: string, prevAi: string | undefined, priorStopCount: number, afterPause = false) {
+  const q = quickIntent(message, prevAi, { afterPause });
   const start = {
     stopNow: q.stop !== "none",
     stopSignalCount: q.stop !== "none" ? priorStopCount + 1 : q.pause ? priorStopCount : 0,
@@ -60,7 +62,14 @@ function patternsTurn(message: string, prevAi: string | undefined, priorStopCoun
       assert.equal(st.forcedEnd, false, m);
       assert.equal(sellerResumed(m), true, m);
     }
-    // A real answer to the closing turn still ends the interview (the stop wins).
+    // Right after a "take your time", an apology for the wait opens a return too.
+    for (const m of RETURNS_AFTER_PAUSE) {
+      assert.equal(patternsTurn(m, CLOSING_PREV, 1, true).st.forcedEnd, false, m);
+      assert.equal(patternsTurn(m, CLOSING_PREV, 1, false).st.forcedEnd, true, `${m} (no break before it: the closing turn's answer)`);
+    }
+    // A real answer to the closing turn still ends the interview (the stop
+    // wins) — "Revenue is back now…", "I'm back full-time…", "Sorry about
+    // that. It dipped in 2020…" included (round 2).
     for (const m of CLOSING_ANSWERS) {
       const { q, st } = patternsTurn(m, CLOSING_PREV, 1);
       assert.equal(q.continueRequest, false, m);
@@ -130,6 +139,73 @@ function patternsTurn(message: string, prevAi: string | undefined, priorStopCoun
     assert.match(src, /says they are back from a break and carrying on/);
     assert.match(intentPrompt({ sellerMessage: "brb", prevAiMessage: PAUSE_OFFER, recentFacts: [] }), /brb/);
     ok("F2-INT-2: a short break is a pause (no stop, no closing turn); a return from one carries on; a real closing answer still ends");
+  }
+  // ── F2-INT-2, round 2: the patterns never overrule the classifier on a break or a return ──
+  {
+    const PREV = "Who holds the lease — you personally or the corporation?";
+    // Pattern precision: questions, objections and deferrals opening with a pause word, business sentences.
+    for (const m of NOT_PAUSES) {
+      assert.equal(detectPause(m, PREV), false, m);
+      assert.equal(quickIntent(m, PREV).pause, false, m);
+    }
+    // A question about the business's own breaks is not the interviewer's offer of one.
+    assert.equal(interviewerOfferedBreak(BUSINESS_BREAK_Q), false);
+    assert.equal(interviewerOfferedBreak(PAUSE_OFFER), true);
+    assert.equal(interviewerOfferedBreak("Want to take a few minutes, or stop here for today? Everything so far is saved."), true);
+    assert.equal(detectPause("Yes, every 4 hours", BUSINESS_BREAK_Q), false);
+    assert.equal(detectPause("Yes", BUSINESS_BREAK_Q), false);
+    assert.equal(detectPause("Yes please", PAUSE_OFFER), true);
+    // Still pauses: the corpus, and the checker's own positives.
+    for (const m of ["brb", "Hang on, let me grab the lease.", "Give me two minutes.", "One sec, someone's at the door.", "Back in 5", "Hold on, let me think.", "Let me grab my accountant's file, one moment.", "I've got to take this call.", "Sorry, let me answer the phone — back in five."]) {
+      assert.equal(detectPause(m, PREV), true, m);
+    }
+    // Returns open the message; an answer that mentions being back is not one.
+    for (const m of ["Since my knee surgery I'm back full-time in the shop.", "Revenue is back now to where it was pre-covid, about $2M.", "Ready to sell as soon as possible, honestly.", "Sorry for the delay, I'm really out of time. Around $2.5M.", "Sorry about that, the asking price is around $2.5M."]) {
+      assert.equal(sellerResumed(m), false, m);
+      assert.equal(quickIntent(m, CLOSING_PREV).continueRequest, false, m);
+    }
+    assert.equal(sellerResumed("Sorry about that, the asking price is around $2.5M.", { afterPause: true }), true);
+    const reading = (o: Record<string, unknown>) => parseIntent({ stop: "none", pause: false, continueRequest: false, sellerQuestion: "", retractions: [], corrections: [], privacyRequests: [], ...o })!;
+    // The classifier's "no break" wins over a pattern pause (a question it
+    // may have missed, business wording): no "take your time".
+    const q1 = { ...quickIntent("brb", PREV) };
+    assert.equal(q1.pause, true);
+    assert.equal(combineIntent(q1, reading({})).pause, false, "the classifier reads carrying on: no pause");
+    assert.equal(combineIntent(q1, reading({ pause: true })).pause, true);
+    assert.equal(combineIntent(q1, null).pause, true, "without the classifier the patterns decide");
+    // …but its soft stop and the patterns' break agree the seller is stepping away: the break wins (nothing ends).
+    assert.deepEqual([combineIntent(q1, reading({ stop: "soft" })).stop, combineIntent(q1, reading({ stop: "soft" })).pause], ["none", true]);
+    // A return only the patterns saw is the classifier's call once it is in.
+    const back = quickIntent("OK I'm back. The lease runs to 2031.", CLOSING_PREV);
+    assert.deepEqual([back.continueRequest, back.resumeOnly], [true, true]);
+    assert.equal(combineIntent(back, reading({})).continueRequest, false, "classifier continueRequest:false wins over a pattern return");
+    assert.equal(combineIntent(back, reading({ continueRequest: true })).continueRequest, true);
+    assert.equal(combineIntent(back, null).continueRequest, true);
+    // An explicit "let's keep going" still stands with the patterns (as before this round).
+    const keep = quickIntent("Let's keep going.", CLOSING_PREV);
+    assert.equal(keep.resumeOnly, undefined);
+    assert.equal(combineIntent(keep, reading({})).continueRequest, true);
+    // The final stop state follows the final reading: a pattern return or
+    // break after a closing turn the classifier doesn't confirm is the
+    // closing turn's answer (forced end); a pattern break the classifier
+    // reads as an ordinary turn resets the count.
+    const start = (q: SellerIntent, prior: number) => ({
+      stopNow: q.stop !== "none",
+      stopSignalCount: q.stop !== "none" ? prior + 1 : q.pause ? prior : 0,
+      stopLevel: q.stop,
+      closingAnswerTurn: q.stop === "none" && prior > 0 && !q.continueRequest && !q.pause,
+    });
+    const retFinal = resolveStopState(start(back, 1), 1, combineIntent(back, reading({})));
+    assert.deepEqual([retFinal.closingAnswerTurn, retFinal.forcedEnd, retFinal.paused], [true, true, false]);
+    const brbFinal = resolveStopState(start(q1, 1), 1, combineIntent(q1, reading({})));
+    assert.deepEqual([brbFinal.forcedEnd, brbFinal.stopSignalCount, brbFinal.paused], [true, 0, false], "a break the classifier doesn't read, after a closing turn, answers it");
+    const brbFresh = resolveStopState(start(q1, 0), 0, combineIntent(q1, reading({})));
+    assert.deepEqual([brbFresh.forcedEnd, brbFresh.stopSignalCount, brbFresh.paused], [false, 0, false]);
+    // The classifier is told these are not breaks / not returns.
+    const src = fs.readFileSync(path.join(REPO, "server/interview/seller-intent.ts"), "utf8");
+    assert.match(src, /Also pause false: a question or objection that opens with a pause word/);
+    assert.match(src, /An answer that only mentions being back/);
+    ok("F2-INT-2 r2: questions, objections and deferrals that open with a pause word are not breaks; returns open the message; the classifier's reading decides both once it is in");
   }
   {
     // The transcript: "be right back" and the answer after it both answer the question before the pause reply.

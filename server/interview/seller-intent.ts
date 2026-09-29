@@ -27,7 +27,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { agentConfig } from "./config/load-config";
-import { detectStopSignal, detectFirmStop, firmStopLevel, sellerDeclinedWrapUp, sellerAskedQuestion, detectPause } from "./turn-guard";
+import { detectStopSignal, detectFirmStop, firmStopLevel, sellerDeclinedWrapUp, sellerAskedQuestion, detectPause, sellerResumed } from "./turn-guard";
 import {
   detectRetraction,
   detectCorrection,
@@ -102,6 +102,12 @@ export interface SellerIntent {
    * the classifier. A firm stop the patterns are less sure of doesn't.
    */
   firmStopStands?: boolean;
+  /**
+   * The patterns' continueRequest comes only from a return ("OK I'm back.",
+   * sellerResumed) — the classifier's reading decides that one once it is
+   * in (combineIntent), unlike an explicit "let's keep going".
+   */
+  resumeOnly?: boolean;
 }
 
 // =====================
@@ -114,7 +120,7 @@ export interface SellerIntent {
  * answer when the classifier fails. Precision over recall: a business
  * sentence must never read as a stop, a withdrawal or a privacy request.
  */
-export function quickIntent(sellerMessage: string, prevAiMessage?: string): SellerIntent {
+export function quickIntent(sellerMessage: string, prevAiMessage?: string, opts: { afterPause?: boolean } = {}): SellerIntent {
   const correction = detectCorrection(sellerMessage);
   const privacy = detectPrivacyRequest(sellerMessage);
   const firm = firmStopLevel(sellerMessage);
@@ -122,11 +128,16 @@ export function quickIntent(sellerMessage: string, prevAiMessage?: string): Sell
   // "sorry, I have to take this call, back in ten" — never over a firm one.)
   const pause = !firm && detectPause(sellerMessage, prevAiMessage);
   const stop: StopLevel = firm ? "firm" : !pause && detectStopSignal(sellerMessage, prevAiMessage) ? "soft" : "none";
+  // Carrying on: an explicit "let's keep going", or a return from a break
+  // ("OK I'm back.", or — right after a "take your time" — "Sorry about that").
+  const declined = sellerDeclinedWrapUp(prevAiMessage, sellerMessage);
+  const resumed = !declined && stop === "none" && !pause && sellerResumed(sellerMessage, opts);
   return {
     stop,
     pause,
     firmStopStands: firm === "stands",
-    continueRequest: sellerDeclinedWrapUp(prevAiMessage, sellerMessage),
+    continueRequest: declined || resumed,
+    ...(resumed ? { resumeOnly: true } : {}),
     sellerQuestion: sellerQuestionFromMessage(sellerMessage),
     retractions: detectRetraction(sellerMessage) && !correction && !privacy ? [{ what: sellerMessage.trim().slice(0, 300) }] : [],
     corrections: correction ? [{ old: "", new: "" }] : [],
@@ -188,11 +199,18 @@ export function privateDetailFromMessage(sellerMessage: string): string {
 export function combineIntent(quick: SellerIntent, model: SellerIntent | null): SellerIntent {
   if (!model) return quick;
   const stands = quick.stop === "firm" && !!quick.firmStopStands;
-  // A short break — the classifier's reading, or the patterns' (they only
-  // fire on plain "be right back" / "give me five minutes" wording) — wins
-  // over a soft stop: the seller is coming back. Never over a firm one.
+  // A short break is the classifier's reading (it sees the question asked
+  // and the whole message): the patterns' pause is only the instant path
+  // and the fallback — "Hang on, why do you need that?", "Let me check and
+  // get back to you", "Yes, every 4 hours" (to a question about the
+  // business's breaks) are not breaks, and a pattern pause the classifier
+  // reads as carrying on no longer swaps the reply for "take your time"
+  // (review F2-INT-2, round 2). One exception: where the classifier reads a
+  // soft stop and the patterns a break ("yes, a short break would help"
+  // after the interviewer offered one), both say the seller is stepping
+  // away — the break, which ends nothing, wins. Never over a firm stop.
   const modelStop: StopLevel = stands ? "firm" : model.stop;
-  const pause = modelStop !== "firm" && (model.pause || quick.pause);
+  const pause = modelStop !== "firm" && (model.pause || (quick.pause && modelStop === "soft"));
   const stop: StopLevel = pause ? "none" : modelStop;
   return {
     ...model,
@@ -200,7 +218,9 @@ export function combineIntent(quick: SellerIntent, model: SellerIntent | null): 
     pause,
     firmStopStands: stands,
     sellerQuestion: model.sellerQuestion || quick.sellerQuestion,
-    continueRequest: stop === "none" ? model.continueRequest || quick.continueRequest : model.continueRequest,
+    // (A return the patterns saw — "OK I'm back." — is the classifier's call
+    // once it is in: "Revenue is back now…" answers a stop's closing turn.)
+    continueRequest: stop === "none" ? model.continueRequest || (quick.continueRequest && !quick.resumeOnly) : model.continueRequest,
     via: "model",
   };
 }
@@ -274,9 +294,9 @@ stop:
 - "soft": the seller wants to end THIS SESSION now or continue the whole conversation another time — "can we wrap this up?", "I have to run" (with no sign of coming back shortly), "sorry, have to go to a meeting", "can we pick this up tomorrow?", "I'm exhausted, can we do this another time?", "my head's spinning — can I come back to this after the weekend?", "I think that's enough for one day", "I'll finish this tomorrow" (said of the interview, with no task in play), "I can't do any more today" — or accepts the interviewer's offer to wrap up ("that covers it" after "anything else before we wrap up?"). If it is unclear whether "this" is one question or the whole session, and the seller gives no sign of wanting to leave (tired, busy, another commitment, "for today"), it is "none".
 - "firm": they want the questions to stop right now, with no closing question — "please stop asking me questions", "no more questions", "Stop.", "I'm done, I'm not answering anything else", or clear annoyance at being asked more.
 
-pause: true when the seller is stepping away for a SHORT while and coming back to this same conversation — "be right back", "brb", "give me five minutes", "hang on, let me grab the lease", "one sec, I need to take this call", "sorry, customer just walked in — back in ten", "can we take a quick break?", or accepting the interviewer's offer of a short break ("yes, a short break would help"). A pause is NOT a stop: set stop "none" with it. Coming back "tomorrow", "next week" or "another time" is leaving — a soft stop, not a pause. Fetching a document and answering in the same message ("one sec… OK, the lease runs to 2031") is an answer: pause false.
+pause: true when the seller is stepping away for a SHORT while and coming back to this same conversation — "be right back", "brb", "give me five minutes", "hang on, let me grab the lease", "one sec, I need to take this call", "sorry, customer just walked in — back in ten", "can we take a quick break?", or accepting the interviewer's offer of a short break ("yes, a short break would help"). A pause is NOT a stop: set stop "none" with it. Coming back "tomorrow", "next week" or "another time" is leaving — a soft stop, not a pause. Fetching a document and answering in the same message ("one sec… OK, the lease runs to 2031") is an answer: pause false. Also pause false: a question or objection that opens with a pause word ("Hang on, why do you need that?", "Just a sec, what do you mean by recurring revenue?", "Hold on, that's not what I said."); setting one question aside to check later ("Let me check and get back to you.", "Let me pull up the P&L and send it to you."); and an answer about the business's own breaks ("Yes, every 4 hours" to "Do your therapists take a break between patient blocks?").
 
-continueRequest: true only when the seller says they want to keep going now ("let's keep going", "I've got a few more minutes", "sure, what else do you need?") or says they are back from a break and carrying on ("OK, I'm back", "back now", "ok, ready", "sorry about that — where were we?", "sorry about that, the asking price is around $2.5M" after stepping away).
+continueRequest: true only when the seller says they want to keep going now ("let's keep going", "I've got a few more minutes", "sure, what else do you need?") or says they are back from a break and carrying on ("OK, I'm back", "back now", "ok, ready", "sorry about that — where were we?", "sorry about that, the asking price is around $2.5M" after stepping away). An answer that only mentions being back ("Revenue is back now to where it was pre-covid", "since my surgery I'm back full-time") is not one — after a stop's closing question it is the answer to that question: continueRequest false.
 
 sellerQuestion: a direct question the seller asks the interviewer in this message, copied verbatim ("Before I go, is there one thing you most need from me?"); "" if none. A hedge like "maybe $1.3M?" is not a question.
 

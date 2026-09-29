@@ -4,6 +4,8 @@
 // after an "Interview together" call. No network, no paid model.
 // Run: DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=unused npx tsx tests/interview/f2-interview-turns.test.ts
 import assert from "node:assert/strict";
+import Anthropic from "@anthropic-ai/sdk";
+import type { ConversationMessage } from "@shared/schema";
 import { installHarness, baseDeal, ai, seller, type Harness } from "./turn-harness";
 import { processTurn, startOrResumeSession } from "../../server/interview/session-manager";
 import { PAUSE_REPLY, DEGRADED_TURN_MESSAGE, TRANSIENT_RETRY } from "../../server/interview/turn-guard";
@@ -170,6 +172,99 @@ const CLOSING = "Before you go, the one thing I'd most like to pin down is your 
     ok("known leftover: loading 'Start AI Interview' after the broker's own session ended shows it finished (no paid opening); Continue starts a new one");
   }
 
+  // ── Round 2 (F2-INT-2): the classifier's reading decides a break and a return ──
+  {
+    // The seller's question / objection / deferral opening with a pause word
+    // reaches the model; its reply is shown (the checker's p2 probes).
+    const cases: Array<[string, Record<string, unknown>, string, ConversationMessage[]?]> = [
+      ["Hang on, why do you need that?", { stop: "none", pause: false, sellerQuestion: "why do you need that?" }, "Buyers and lenders look at who holds the lease because an assignment needs the landlord's consent. Is the lease in the corporation's name?"],
+      ["Let me check and get back to you.", { stop: "none", pause: false }, "How many treatment rooms does the Hillhurst clinic have?"],
+      ["Hold on, that's not what I said.", { stop: "none", pause: false }, "Which part should I correct — the staff numbers?"],
+      ["Yes, every 4 hours", { stop: "none", pause: false }, "Who covers the front desk during those breaks?", [...history.slice(0, 2), ai("Do your therapists take a break between patient blocks?", { suggestedAnswers: ["Yes", "No"] })]],
+    ];
+    for (const [msg, intent, reply, hist] of cases) {
+      const h = installHarness(baseDeal(), { messages: [...(hist ?? history)] });
+      h.intents.push(intent);
+      h.script.push({ message: reply, targetSection: "location_site" });
+      const t = await processTurn("deal-1", "sess-1", msg);
+      assert.notEqual(t.message, PAUSE_REPLY, msg);
+      assert.equal(t.message, reply, msg);
+      assert.equal(h.sessions[0].messages[h.sessions[0].messages.length - 1].pause, undefined, msg);
+      assert.equal(has(h, /short break/), false, msg);
+    }
+    // A pattern break the classifier reads as carrying on: the draft written
+    // for a break is redone once for an ordinary turn — never "take your time".
+    {
+      const h = installHarness(baseDeal(), { messages: [...history] });
+      h.intents.push({ stop: "none", pause: false });
+      h.script.push({ message: "Sure.", shouldEnd: false });
+      h.script.push({ message: "Is the lease in the corporation's name or yours?", targetSection: "location_site" });
+      const t = await processTurn("deal-1", "sess-1", "brb");
+      assert.equal(t.message, "Is the lease in the corporation's name or yours?");
+      assert.equal(has(h, /Intent re-call on session sess-1: not a short break/), true);
+      assert.match(h.systems[0], /# SHORT BREAK/);
+      assert.doesNotMatch(h.systems[1], /# SHORT BREAK/);
+    }
+    ok("F2-INT-2 r2: a question, objection or deferral opening with a pause word gets the model's answer; a pattern break the classifier doesn't confirm is redone as an ordinary turn");
+  }
+  {
+    // After a stop's closing turn, answers that mention being back end the
+    // interview (the checker's p3 probes) — and a pattern return the
+    // classifier doesn't confirm is the closing turn's answer too.
+    for (const msg of [
+      "Revenue is back now to where it was pre-covid, about $2M.",
+      "Since my knee surgery I'm back full-time, and revenue has been flat at about $1.9M.",
+      "Sorry about that. It dipped in 2020 and has grown about 8% a year since.",
+      "OK I'm back. It dipped in 2020 and has grown about 8% a year since.",
+      "Grew about 8% a year since 2021.",
+    ]) {
+      const h = installHarness(baseDeal(), { messages: [...history, seller("Sorry, I have to go to a meeting."), ai(CLOSING)], sessionMeta: { _stopSignalCount: 1 } });
+      h.intents.push({ stop: "none", continueRequest: false });
+      h.script.push({ message: "What share of that revenue comes from WSIB and MVA claims?", targetSection: "financial_overview" });
+      h.script.push({ message: "Thanks — that's saved, and we can start with the payer mix next time.", shouldEnd: true, endReason: "seller asked to stop" });
+      const t = await processTurn("deal-1", "sess-1", msg);
+      assert.equal(t.shouldEnd, true, msg);
+      assert.equal(h.deal.interviewCompleted, true, msg);
+      assert.doesNotMatch(t.message, /\?/, msg);
+    }
+    // A return right after a "take your time" carries on, apology included.
+    {
+      const h = installHarness(baseDeal(), {
+        messages: [...history, seller("Sorry, I have to go to a meeting."), ai(CLOSING), seller("Hang on, let me grab the number."), ai(PAUSE_REPLY, { pause: true })],
+        sessionMeta: { _stopSignalCount: 1 },
+      });
+      h.script.push({ message: "Is that $2.5M for the shares or the assets?", targetSection: "transaction_overview" });
+      const t = await processTurn("deal-1", "sess-1", "Sorry about that. Asking price — around $2.5M.");
+      assert.equal(t.shouldEnd, false, "after the break, 'Sorry about that' is a return (patterns only)");
+    }
+    ok("F2-INT-2 r2: after a stop's closing turn, 'revenue is back now…', 'I'm back full-time…', 'Sorry about that. It dipped…' end the interview; the classifier's 'not carrying on' wins over a pattern return");
+  }
+  {
+    // A break only the classifier sees, arriving after the stream gate
+    // showed the model's question: the shown question stays, is saved as an
+    // ordinary turn (no pause flag), and nothing ends.
+    const h = installHarness(baseDeal(), { messages: [...history] });
+    const proto = (Anthropic as any).Messages.prototype;
+    const create = proto.create;
+    proto.create = async function (params: any) {
+      if (params?.tools?.[0]?.name === "seller_intent") await new Promise((r) => setTimeout(r, 5_600));
+      return create.call(this, params);
+    };
+    h.intents.push({ stop: "none", pause: true });
+    h.script.push({ message: "Is the Hillhurst lease in the corporation's name?", targetSection: "location_site" });
+    let shown = "";
+    const t = await processTurn("deal-1", "sess-1", "Sorry, delivery guy at the door", (c) => { shown += c; });
+    proto.create = create;
+    assert.equal(shown, "Is the Hillhurst lease in the corporation's name?");
+    assert.equal(t.message, shown, "the reply shown is never swapped for 'take your time'");
+    const last = h.sessions[0].messages[h.sessions[0].messages.length - 1];
+    assert.equal(last.pause, undefined);
+    assert.equal(last.content, shown);
+    assert.equal(t.shouldEnd, false);
+    assert.equal(has(h, /Seller break read after the reply was shown/), true);
+    ok("F2-INT-2 r2: a break the classifier reads only after the reply was shown keeps the shown reply (never swapped)");
+  }
+
   console.log(`\n${n} groups passed`);
   process.exit(0);
-})().catch((e) => { console.error(e); process.exit(1); });
+})().catch((e) => { process.stderr.write(String(e?.stack ?? e) + "\n"); process.exit(1); });

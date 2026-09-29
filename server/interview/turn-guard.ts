@@ -1247,7 +1247,7 @@ const CONTINUE_RE =
 export function sellerDeclinedWrapUp(_prevAiMessage: string | undefined, sellerMessage: string): boolean {
   const text = sellerMessage.replace(/[’‘]/g, "'");
   if (matchesStopRequest(text) || COMPLETION_RE.test(text)) return false;
-  return CONTINUE_RE.test(text) || sellerResumed(text);
+  return CONTINUE_RE.test(text);
 }
 
 // ── Short breaks and returns ────────────────────────────────────────────
@@ -1258,38 +1258,77 @@ export function sellerDeclinedWrapUp(_prevAiMessage: string | undefined, sellerM
 // coming back ("OK I'm back. The lease runs to 2031…") is carrying on, never
 // answering a closing turn: a short break read as a stop used to force the
 // goodbye on the first message back (review F2-INT-2).
+// These patterns are the instant reading and the fallback only: once the
+// classifier's reading is in, IT decides (seller-intent.ts combineIntent) —
+// a pattern false positive swapped the seller's question, objection or
+// deferral for a canned "take your time" (review F2-INT-2, round 2).
 
 const SHORT_SPAN = String.raw`(?:a (?:sec(?:ond)?|moment|min(?:ute)?|jiffy|tick|bit)|one (?:sec(?:ond)?|moment|min(?:ute)?)|(?:a )?(?:few|couple(?: of)?) (?:min(?:ute)?s?|sec(?:ond)?s|moments)|(?:\d{1,2}|two|three|five|ten|fifteen|twenty)(?!\d)(?:(?:-| )?(?:min(?:ute)?s?|sec(?:ond)?s)|(?=\s*(?:[.!?,;:—–-]|$)))|half an hour)`;
+// The end of a clause: a pause said on its own ("brb.", "I have to take this call —").
+const ALONE_END = String.raw`(?=\s*(?:[.!?,;:—–-]|$))`;
 const PAUSE_SENTENCE_RE = new RegExp(
   [
-    String.raw`\bbrb\b`,
+    // (On its own — "brb is what my staff text me all day" is not one.)
+    String.raw`\bbrb\b${ALONE_END}`,
     String.raw`\b(?:be|i'?ll be|i will be) (?:right|straight) back\b`,
     String.raw`\b(?:(?:i'?ll |i will )?be )?back in ${SHORT_SPAN}`,
     String.raw`\b(?:give|gimme|allow) me ${SHORT_SPAN}`,
-    String.raw`\b(?:hold on|hang on|hold that thought|bear with me|one (?:sec(?:ond)?|moment|min(?:ute)?)|just a (?:sec(?:ond)?|moment|min(?:ute)?)|wait a (?:sec(?:ond)?|moment|min(?:ute)?))\b`,
+    // (Not "hold on to your hat".)
+    String.raw`\b(?:hold on|hang on|hold that thought|bear with me|one (?:sec(?:ond)?|moment|min(?:ute)?)|just a (?:sec(?:ond)?|moment|min(?:ute)?)|wait a (?:sec(?:ond)?|moment|min(?:ute)?))\b(?! to\b)`,
     // Going to fetch something ("let me grab the lease") — not "let me get
-    // back to you", "let me find out", "let me check with my accountant"
-    // (a question set aside, the interview goes on).
-    String.raw`\blet me (?:go |quickly |just |run and )?(?:grab|get|find|fetch|pull (?:up|out)|dig (?:out|up)|look (?:it |that |this )?up|check)\b(?! (?:back|out|to you|you|with|in with|on (?:that|this|it) (?:later|tomorrow)))`,
+    // back to you", "let me find out", "let me check with my accountant",
+    // "let me get this straight" (DEFER_RE below catches the rest of a
+    // question set aside: "…and send it over", "…after the call").
+    String.raw`\blet me (?:go |quickly |just |run and )?(?:grab|get|find|fetch|pull (?:up|out)|dig (?:out|up)|look (?:it |that |this )?up|check)\b(?! (?:back|out|to you|you|with|in with|on (?:that|this|it) (?:later|tomorrow)|(?:this|that|it) straight))`,
     // A break asked for or accepted — "a short break would help", "can we
     // take a quick break?", "I need a breather" — never the business's own
     // ("we give the crew a short break at noon").
     String.raw`\b(?:short|quick|brief|little|(?:\d{1,2}|five|ten|fifteen)[- ]min(?:ute)?) (?:break|breather|pause)(?=\s*(?:[.!?,;:—–-]|$|(?:would|could|might|will) (?:help|be (?:good|nice|great))|please|first|now|sounds good))`,
     String.raw`\b(?:(?:can|could|shall|may) (?:we|i)|let'?s|i(?:'d| would)? (?:need|like|could use|want)) (?:take |have |grab )?(?:a )?(?:quick |short |little |brief )?(?:break|breather|pause|five|minute|moment)\b`,
     String.raw`\b(?:take|taking) five\b(?=\s*(?:[.!?,;:—–-]|$|please))`,
-    // An incoming call ("I have to take this call") — not "I need to jump on
-    // another call", which is leaving: a stop.
-    String.raw`\b(?:(?:i )?(?:need|have|got|gotta) to|let me|i'?ve got to|i must) (?:take|answer|grab|get) (?:this|the) (?:call|phone call|phone)\b`,
+    // An incoming call, said of the seller themself and on its own ("I have
+    // to take this call", "Sorry, let me answer the phone —") — not "we have
+    // to take the call from dispatch at any hour", "I need to take this call
+    // seriously", or "I need to jump on another call" (leaving: a stop).
+    String.raw`(?:^|\bi |\bi'?ve |\bsorry,? (?:i |i'?ve )?)(?:(?:need|have|got|gotta) to|must) (?:take|answer|grab|get) (?:this|the) (?:call|phone call|phone)${ALONE_END}`,
+    String.raw`\blet me (?:take|answer|grab|get) (?:this|the) (?:call|phone call|phone)${ALONE_END}`,
   ].join("|"),
   "i",
 );
 // A break "until tomorrow" is the seller leaving: a stop, not a pause.
 const LATER_DAY_RE =
   /\b(?:tomorrow|tonight|another (?:day|time)|some ?other (?:day|time)|next (?:week|time|session)|(?:on |this |next )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend)s?|after the weekend|for (?:the day|today))\b/i;
-// The interviewer offered a break ("Do you want to take a short break…?").
-const BREAK_OFFER_RE = /\b(?:take|want|like|need) (?:a )?(?:short |quick |little |few |couple of )?(?:break|breather|pause|minutes?|moment)\b/i;
+// Setting ONE question aside (the interview goes on), never a break: "let
+// me check and get back to you", "…and circle back", "…and send it to you",
+// "let me look that up after the call".
+const DEFER_RE =
+  /\b(?:get back to|come back to|circle back|follow up|send (?:it|that|this|them|those|you)\b|email (?:it|that|you)\b|forward (?:it|that)\b|later\b|afterwards?\b|after (?:the|this|our) (?:call|chat|interview|meeting)\b)/i;
+// Objecting to what the interviewer said ("Hold on, that's not what I said.",
+// "Wait a minute, I never said that.", "Hold on. I already answered that.").
+const OBJECTION_RE =
+  /\b(?:that'?s not (?:what i (?:said|meant)|right|true|correct)|that is not (?:what i said|right|true|correct)|not what i (?:said|meant)|i (?:never|didn'?t|did not) (?:say|said|tell|told|mean|meant)|i(?:'ve| have)? already (?:answered|told|said|gave|given|covered|sent|explained)|you(?:'ve| have)? (?:got|get) (?:that|it|this) wrong|that'?s wrong|you already (?:have|asked))\b/i;
+// A sentence asking for a break ("Can we take a quick break?") is the only
+// kind of question a pause may carry — "Hang on, why do you need that?" and
+// "Just a sec, what do you mean by recurring revenue?" are the seller's own
+// questions, which the interviewer answers.
+const BREAK_WORD_RE = /\b(?:break|breather|pause|take five)\b/i;
+const WH_QUESTION_RE = /\b(?:why|what|who|whom|whose|how|which|where|when|isn'?t|didn'?t|is (?:this|that|it)|are (?:you|they|these)|does|did)\b/i;
+// The interviewer's own offer of a short break to the seller (prompts:
+// "Want to take a few minutes? Everything so far is saved, and we'll carry
+// on from here when you're back.") — not a question about the business's
+// breaks ("Do your therapists take a break between patient blocks?").
+const BREAK_OFFER_RE =
+  /\b(?:take|want|like|need) (?:a )?(?:short |quick |little |brief |few |couple of )(?:break|breather|pause|minutes?|moments?)\b|\b(?:want|like|need) (?:a )?(?:breather|pause|moment)\b/i;
+const OFFER_MARKER_RE = /\b(?:saved|when you'?re (?:back|ready)|stop here for today|carry on from here)\b/i;
 const ACCEPT_RE = /^\W*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|please|that would|that'?d|a (?:short |quick )?break|(?:a )?(?:few |couple (?:of )?)?(?:minutes?|moment)|good idea|thanks|thank you)\b/i;
 const DECLINE_RE = /\b(?:no|nope|not (?:now|yet|necessary|needed)|i'?m (?:fine|ok(?:ay)?|good)|keep going|carry on|let'?s continue|push on)\b/i;
+
+/** The interviewer offered the seller a short break ("Want to take a few minutes? Everything so far is saved…"). */
+export function interviewerOfferedBreak(aiMessage: string | undefined): boolean {
+  if (!aiMessage) return false;
+  const text = aiMessage.replace(/[’‘]/g, "'");
+  return BREAK_OFFER_RE.test(text) && OFFER_MARKER_RE.test(text);
+}
 
 /**
  * The seller is stepping away for a moment, not asking to stop: the pause
@@ -1297,15 +1336,24 @@ const DECLINE_RE = /\b(?:no|nope|not (?:now|yet|necessary|needed)|i'?m (?:fine|o
  * on, let me grab the lease. It's in the office."), or they accept the
  * interviewer's offer of a short break. Never with a firm stop, and never
  * "until tomorrow" (that is leaving — a stop). An answer after the pause
- * ("One sec. The lease runs to 2031.") is an answer.
+ * ("One sec. The lease runs to 2031.") is an answer; so is a question or an
+ * objection that opens with a pause word ("Hang on, why do you need
+ * that?", "Hold on, that's not what I said."), and so is setting one
+ * question aside ("Let me check and get back to you.").
  */
 export function detectPause(sellerMessage: string, prevAiMessage?: string): boolean {
   const text = sellerMessage.replace(/[’‘]/g, "'").trim();
   if (!text || firmStopTier(text) !== null || LATER_DAY_RE.test(text)) return false;
-  if (prevAiMessage && BREAK_OFFER_RE.test(prevAiMessage) && wordCount(text) <= 12 && ACCEPT_RE.test(text) && !DECLINE_RE.test(text)) {
+  if (OBJECTION_RE.test(text) || DEFER_RE.test(text)) return false;
+  const sentences = sentencesOf(text);
+  if (sentences.some((s) => s.includes("?") && (!BREAK_WORD_RE.test(s) || WH_QUESTION_RE.test(s)))) return false;
+  // ("Stop. Hang on." — a stop said on its own is never a break.)
+  if (sentences.some((s) => /^\W*(?:please\W+)?stop\W*$/i.test(s))) return false;
+  // Accepting the interviewer's own offer — a few words, no figure ("Yes,
+  // every 4 hours" answers a question about the business's breaks).
+  if (interviewerOfferedBreak(prevAiMessage) && wordCount(text) <= 10 && !/\d/.test(text) && ACCEPT_RE.test(text) && !DECLINE_RE.test(text)) {
     return true;
   }
-  const sentences = sentencesOf(text);
   const at = sentences.findIndex((s) => PAUSE_SENTENCE_RE.test(s) && !HABIT_RE.test(s));
   if (at < 0) return false;
   // What follows the pause — in its own sentence ("Hold on, let me think —
@@ -1320,25 +1368,37 @@ export function detectPause(sellerMessage: string, prevAiMessage?: string): bool
   return wordCount(text) <= 40 || at === sentences.length - 1;
 }
 
-// Words that open a message from someone coming back ("OK I'm back.",
-// "Sorry about that —", "Ok, ready.", "Where were we?").
+// Words that OPEN a message from someone coming back ("OK I'm back.",
+// "Back now.", "Ok, ready.", "Where were we?") — at the start only:
+// "Revenue is back now to where it was", "since my knee surgery I'm back
+// full-time" are answers (review F2-INT-2, round 2: after a stop's closing
+// turn they carried the interview on).
 const RESUME_LEAD =
   String.raw`^(?:(?:ok(?:ay)?|alright|all right|right|so|hi|hey|hello|yes|yep|thanks|thank you)[,.!\s—–-]*)*` +
-  String.raw`(?:i'?m back|i am back|back (?:now|again)|(?:i'?m |i am )?ready(?: now| to (?:go|continue|keep going|carry on|pick (?:this|it) (?:back )?up))?|(?:sorry|apologies)(?: about| for) (?:that|the (?:wait|delay|interruption|break))|that took (?:longer|a (?:while|bit|minute))(?: than i thought)?|where were we)` +
+  // ("Sorry about that — where were we?": an apology, then the return itself.)
+  String.raw`(?:(?:sorry|apologies)(?: about| for) (?:that|the (?:wait|delay|interruption|break))[,.!\s—–-]+)?` +
+  String.raw`(?:i'?m back|i am back|back (?:now|again)|(?:i'?m |i am )?ready(?: now| to (?:go|continue|keep going|carry on|pick (?:this|it) (?:back )?up))?|that took (?:longer|a (?:while|bit|minute))(?: than i thought)?|where were we)` +
   String.raw`(?=\s*(?:[.!?,;:—–-]|$))`;
 const RESUME_LEAD_RE = new RegExp(RESUME_LEAD, "i");
-const RESUME_ANYWHERE_RE = /\b(?:i'?m back|i am back|back now|where were we|ready to (?:continue|keep going|carry on|pick (?:this|it) back up))\b/i;
+// An apology for the wait opens a return only right after a "take your
+// time" reply: after a stop's closing turn, "Sorry about that. It dipped in
+// 2020…" is the closing turn's answer.
+const APOLOGY_LEAD_RE =
+  /^(?:(?:ok(?:ay)?|alright|all right|right|so|hi|hey|hello|oh)[,.!\s—–-]*)*(?:sorry|apologies)(?: about| for) (?:that|the (?:wait|delay|interruption|break))(?=\s*(?:[.!?,;:—–-]|$))/i;
 
 /**
  * The seller is back from a break and carrying on ("OK I'm back. The lease
- * runs to 2031…", "Back now.", "Ok, ready.", "Sorry about that — asking
- * price is around $2.5M."). Counts as wanting to continue: never read as
- * the answer to a stop's closing turn.
+ * runs to 2031…", "Back now.", "Ok, ready.") — opening the message with it.
+ * Right after a short break's "take your time" (`afterPause`), an apology
+ * for the wait counts too ("Sorry about that — asking price is around
+ * $2.5M."). Counts as wanting to continue: never read as the answer to a
+ * stop's closing turn. The patterns' reading only — the classifier's
+ * continueRequest decides once it is in (seller-intent.ts combineIntent).
  */
-export function sellerResumed(sellerMessage: string): boolean {
+export function sellerResumed(sellerMessage: string, opts: { afterPause?: boolean } = {}): boolean {
   const text = sellerMessage.replace(/[’‘]/g, "'").trim();
   if (!text || matchesStopRequest(text)) return false;
-  return RESUME_LEAD_RE.test(text) || RESUME_ANYWHERE_RE.test(text);
+  return RESUME_LEAD_RE.test(text) || (!!opts.afterPause && APOLOGY_LEAD_RE.test(text));
 }
 
 /**

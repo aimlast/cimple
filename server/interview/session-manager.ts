@@ -1382,7 +1382,9 @@ async function processTurnLocked(
   // seller asked), and the classifier is told which lines are the broker's.
   const intentMessage = conductedBy === "broker_with_seller" ? (sellerSideOf(sellerMessage) ?? "") : sellerMessage;
   const labelledExchange = conductedBy === "broker_with_seller" && intentMessage !== sellerMessage;
-  const quickRaw = quickIntent(intentMessage, prevAiMessage);
+  // (Right after a "take your time" reply, "Sorry about that — …" is a return.)
+  const afterPause = [...existingMessages].reverse().find((m) => m.role === "ai")?.pause === true;
+  const quickRaw = quickIntent(intentMessage, prevAiMessage, { afterPause });
   // (A short break is the seller alone at their screen: broker-led, the
   // room simply waits — the exchange pipeline never sends "hang on".)
   const pauseAllowed = conductedBy !== "broker_with_seller";
@@ -1693,9 +1695,16 @@ async function processTurnLocked(
   // …or the patterns' firm stop went into the prompt (a goodbye, nothing
   // asked) and the classifier reads a soft one: the seller gets their one
   // closing question (a second stop in a row ends anyway).
+  // …or the prompt was written for a short break (or a return) the
+  // patterns saw and the classifier doesn't: "Hang on, why do you need
+  // that?" is the seller's question, and after a stop's closing turn
+  // "Revenue is back now to where it was…" is its answer (review F2-INT-2,
+  // round 2).
   const promptMisfits = (i: SellerIntent): boolean =>
     // (A short break the patterns missed.)
     (i.pause && !pauseInPrompt) ||
+    (pauseInPrompt && !i.pause) ||
+    (!closingInPrompt && !patternStopInPrompt && priorStopCount > 0 && i.stop === "none" && !i.pause && !i.continueRequest) ||
     (i.stop !== "none" && (stopNudgeLevel === "none" || (i.stop === "firm" && stopNudgeLevel === "soft"))) ||
     (patternStopInPrompt && stopNudgeLevel === "firm" && i.stop === "soft" && priorStopCount === 0) ||
     (closingInPrompt && i.stop === "none" && i.continueRequest) ||
@@ -2241,7 +2250,15 @@ async function processTurnLocked(
     const st = resolveStopState({ stopNow, stopSignalCount, stopLevel, closingAnswerTurn }, priorStopCount, intent);
     ({ stopNow, stopSignalCount, stopLevel, closingAnswerTurn } = st);
     pauseNow = st.paused;
-    if (pauseNow) {
+    if (pauseNow && shown.released) {
+      // The classifier's break came in after the stream gate had already
+      // shown the model's reply (it waits STREAM_INTENT_WAIT_MS): a reply on
+      // the seller's screen is never swapped — it stays, and is saved as an
+      // ordinary turn. Nothing ends and no stop is counted (the break's
+      // stop state stands).
+      console.log(`[session-manager] Seller break read after the reply was shown on session ${sessionId} — the shown reply stays`);
+      pauseNow = false;
+    } else if (pauseNow) {
       console.log(`[session-manager] Seller is taking a short break on session ${sessionId} (${intent.via}) — no stop, nothing ends`);
     } else if (st.change === "classifier_stop") {
       console.log(`[session-manager] Seller stop signal #${stopSignalCount} (${intent.stop}, classifier) detected on session ${sessionId}`);
@@ -2266,9 +2283,16 @@ async function processTurnLocked(
     if (stopNow) {
       blocks.push(stopNudge(stopLevel, stopSignalCount, intent.sellerQuestion));
       stopNudgeLevel = stopLevel;
+    } else if (closingAnswerTurn) {
+      // (The patterns read a return or a break the classifier doesn't: this
+      // is the answer to the stop's closing turn — the goodbye.)
+      blocks.push({ type: "text", text: buildClosingAnswerNudge() });
+      stopNudgeLevel = "firm";
     }
     callParams.system = blocks;
-    console.warn(`[session-manager] Intent re-call on session ${sessionId}: ${stopNow ? `seller stop (${stopLevel})` : "seller chose to continue"}`);
+    console.warn(
+      `[session-manager] Intent re-call on session ${sessionId}: ${stopNow ? `seller stop (${stopLevel})` : closingAnswerTurn ? "answer to the closing turn" : pauseInPrompt ? "not a short break" : "seller chose to continue"}`,
+    );
     intentSettled = true;
     intentRecallPending = false;
     reaskAttempt = 0;

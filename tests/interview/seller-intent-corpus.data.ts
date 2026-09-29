@@ -268,7 +268,53 @@ export const RETURNS: string[] = [
   "OK I'm back. The lease runs to 2031 with two five-year renewals.",
   "Back now. Got the lease — it runs to 2031.",
   "Ok, ready.",
-  "Sorry about that. Asking price — around $2.5M.",
+  "Sorry about that — where were we?",
 ];
-/** Answers to the closing turn (after CLOSING_PREV): the interview ends. */
-export const CLOSING_ANSWERS: string[] = ["Around $2.5M.", "Let's start there next time.", "Next time is fine."];
+/** Right after a short break's "take your time": an apology for the wait opens a return too. */
+export const RETURNS_AFTER_PAUSE: string[] = ["Sorry about that. Asking price — around $2.5M.", "Sorry for the wait — the corporation holds the lease."];
+/** Answers to the closing turn (after CLOSING_PREV): the interview ends — including answers that only mention being back (review F2-INT-2, round 2). */
+export const CLOSING_ANSWERS: string[] = [
+  "Around $2.5M.",
+  "Let's start there next time.",
+  "Next time is fine.",
+  "Revenue is back now to where it was pre-covid, about $2M.",
+  "Since my knee surgery I'm back full-time, and revenue has been flat at about $1.9M.",
+  "Sorry about that. It dipped in 2020 and has grown about 8% a year since.",
+  "Sorry about that, the asking price is around $2.5M.",
+  "Ready to sell as soon as possible, honestly.",
+];
+/**
+ * Not a break (review F2-INT-2, round 2): the seller's own questions and
+ * objections that open with a pause word, one question set aside, and
+ * business sentences — each used to get "take your time" in place of an
+ * answer.
+ */
+export const NOT_PAUSES: string[] = [
+  "Hang on, why do you need that?",
+  "Hold on, that's not what I said.",
+  "Wait a minute, I never said that.",
+  "Just a sec, what do you mean by recurring revenue?",
+  "One moment — who will see this?",
+  "Hold on — who's going to read this?",
+  "Wait a sec, is this going to buyers?",
+  "Hang on, didn't I already tell you that?",
+  "Hold on. I already answered that.",
+  "Let me check and get back to you.",
+  "Let me check the numbers and come back to you on that.",
+  "Let me get the exact figure from Donna and circle back.",
+  "Let me dig up the lease later and send it over.",
+  "Let me look that up after the call.",
+  "Let me check with Donna.",
+  "Let me pull up the P&L and send it to you.",
+  "Let me get this straight: we own the building, the opco leases it.",
+  "Give me a few minutes of anyone's time and I'll sell them a furnace.",
+  "Hold on to your hat — we grew 40% last year.",
+  "We never take a break in July, it's our busiest month.",
+  "The crew takes five at 10 and lunch at noon.",
+  "We have to take the call from dispatch at any hour.",
+  "I need to take this call seriously, a buyer asked about the lease.",
+  "brb is what my staff text me all day",
+  "Stop. Hang on.",
+];
+/** A question about the business's own breaks — not the interviewer offering one. */
+export const BUSINESS_BREAK_Q = "Do your therapists take a break between patient blocks?";

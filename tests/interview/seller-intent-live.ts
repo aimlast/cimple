@@ -6,9 +6,10 @@ import { classifySellerIntent, combineIntent, quickIntent, planIntentEdits, type
 import {
   STOP_FIRM, STOP_SOFT, BUSINESS, NEUTRAL, CORRECTIONS, RETRACTIONS, PRIVACY, CONTEXT, DEFERRALS, DEFERRAL_PREV,
   PAUSES, PAUSE_ACCEPTS, PAUSE_OFFER, RETURNS, CLOSING_ANSWERS, CLOSING_PREV,
+  RETURNS_AFTER_PAUSE, NOT_PAUSES, BUSINESS_BREAK_Q,
 } from "./seller-intent-corpus.data";
 
-type Case = { kind: string; message: string; prevAi?: string; facts?: Array<{ key: string; value: string }>; check: (i: SellerIntent) => string | null };
+type Case = { kind: string; message: string; prevAi?: string; prevSeller?: string; afterPause?: boolean; facts?: Array<{ key: string; value: string }>; check: (i: SellerIntent) => string | null };
 
 const PREV = "What's the lease term on the main location, and who holds it?";
 const cases: Case[] = [
@@ -66,6 +67,10 @@ const cases: Case[] = [
   ...PAUSE_ACCEPTS.map((m) => ({ kind: "pause-accept", message: m, prevAi: PAUSE_OFFER, check: (i: SellerIntent) => (i.pause && i.stop === "none" ? null : `stop=${i.stop} pause=${i.pause}`) })),
   ...RETURNS.map((m) => ({ kind: "return", message: m, prevAi: CLOSING_PREV, check: (i: SellerIntent) => (i.stop === "none" && i.continueRequest ? null : `stop=${i.stop} continue=${i.continueRequest}`) })),
   ...CLOSING_ANSWERS.map((m) => ({ kind: "closing-answer", message: m, prevAi: CLOSING_PREV, check: (i: SellerIntent) => (!i.continueRequest && !i.pause ? null : `continue=${i.continueRequest} pause=${i.pause}`) })),
+  // Round 2: the classifier's reading decides a break — a question, objection or deferral opening with a pause word is not one.
+  ...NOT_PAUSES.map((m) => ({ kind: "not-pause", message: m, check: (i: SellerIntent) => (!i.pause ? null : `pause=${i.pause}`) })),
+  { kind: "not-pause", message: "Yes, every 4 hours", prevAi: BUSINESS_BREAK_Q, check: (i: SellerIntent) => (!i.pause && i.stop === "none" ? null : `stop=${i.stop} pause=${i.pause}`) },
+  ...RETURNS_AFTER_PAUSE.map((m) => ({ kind: "return-after-pause", message: m, prevAi: CLOSING_PREV, prevSeller: "Hang on, let me grab the lease.", afterPause: true, check: (i: SellerIntent) => (i.stop === "none" && i.continueRequest ? null : `stop=${i.stop} continue=${i.continueRequest}`) })),
 ];
 
 (async () => {
@@ -75,10 +80,10 @@ const cases: Case[] = [
     while (next < cases.length) {
       const c = cases[next++];
       const t = Date.now();
-      const m = await classifySellerIntent({ sellerMessage: c.message, prevAiMessage: c.prevAi ?? PREV, recentFacts: c.facts ?? [] }, 30_000);
+      const m = await classifySellerIntent({ sellerMessage: c.message, prevAiMessage: c.prevAi ?? PREV, ...(c.prevSeller ? { prevSellerMessage: c.prevSeller } : {}), recentFacts: c.facts ?? [] }, 30_000);
       const ms = Date.now() - t;
       if (!m) { results.push({ kind: c.kind, message: c.message, err: "classifier failed", ms }); continue; }
-      const intent = combineIntent(quickIntent(c.message, c.prevAi ?? PREV), m);
+      const intent = combineIntent(quickIntent(c.message, c.prevAi ?? PREV, { afterPause: !!c.afterPause }), m);
       // The business/neutral checks judge the classifier alone (the patterns are tested offline).
       results.push({ kind: c.kind, message: c.message, err: c.check(["business", "neutral"].includes(c.kind) ? m : intent), ms });
     }

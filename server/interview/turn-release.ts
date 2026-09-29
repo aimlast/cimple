@@ -62,6 +62,14 @@ export function resolveStopState(
     stopSignalCount = 0;
     closingAnswerTurn = priorStopCount > 0 && !intent.continueRequest;
     change = "classifier_cleared";
+  } else if (!stopNow) {
+    // No stop either way: the final reading decides whether this answers a
+    // stop's closing turn — the patterns may have read a break or a return
+    // ("Revenue is back now…", "Hang on, why do you need that?") that the
+    // classifier doesn't (review F2-INT-2, round 2). And an ordinary turn
+    // resets the count (a break the patterns saw kept it).
+    stopSignalCount = 0;
+    closingAnswerTurn = priorStopCount > 0 && !intent.continueRequest;
   }
   // The final reading decides the level: combineIntent already keeps a firm
   // stop said to the interviewer beyond doubt; a firm stop only the patterns
