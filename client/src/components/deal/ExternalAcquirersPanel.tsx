@@ -51,7 +51,8 @@ const host = (u: string) => {
   try { return new URL(u.startsWith("http") ? u : `https://${u}`).hostname.replace(/^www\./, ""); } catch { return u; }
 };
 
-export function ExternalAcquirersPanel({ dealId }: { dealId: string }) {
+/** `embedded`: shown as the Buyers tab's "Find new buyers" stage, which already titles and explains it. */
+export function ExternalAcquirersPanel({ dealId, embedded = false }: { dealId: string; embedded?: boolean }) {
   const { toast } = useToast();
   const key = ["/api/deals", dealId, "external-acquirers"];
   const { data } = useQuery<SearchState>({
@@ -83,17 +84,32 @@ export function ExternalAcquirersPanel({ dealId }: { dealId: string }) {
   });
 
   const results = data?.results ?? [];
+  const indexed = results.map((a, i) => ({ a, i }));
+  const fresh = indexed.filter((x) => !x.a.inYourList);
+  const listed = indexed.filter((x) => x.a.inYourList);
+  const renderAcquirer = ({ a, i }: { a: Acquirer; i: number }) => <AcquirerCard key={`${a.name}-${i}`} a={a} i={i} />;
   return (
     <div className="space-y-3" data-testid="external-acquirers">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-            <Globe className="h-4 w-4 text-teal" />
-            Buyers outside your list
-          </h3>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Companies and investors actively buying in this space, found on the web with sources. The search only uses the industry, region and size — never the business's name.
-          </p>
+          {embedded ? (
+            <p className="text-xs text-muted-foreground">
+              {data?.status === "done" && data.finishedAt
+                ? `Last searched ${new Date(data.finishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}. `
+                : ""}
+              The search only uses the industry, region and size — never the business&apos;s name. Nothing is sent to anyone.
+            </p>
+          ) : (
+            <>
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Globe className="h-4 w-4 text-teal" />
+                Buyers outside your list
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Companies and investors actively buying in this space, found on the web with sources. The search only uses the industry, region and size — never the business's name.
+              </p>
+            </>
+          )}
         </div>
         <div className="flex shrink-0 flex-col items-start gap-1 sm:items-end">
           <Button size="sm" variant="outline" disabled={running || start.isPending} onClick={() => start.mutate()} data-testid="button-find-external">
@@ -125,6 +141,16 @@ export function ExternalAcquirersPanel({ dealId }: { dealId: string }) {
         </div>
       )}
 
+      {(!data || data.status === "none") && !running && (
+        <div className="rounded-lg border border-dashed border-border p-8 text-center" data-testid="empty-find-buyers">
+          <Globe className="h-5 w-5 mx-auto text-muted-foreground/50 mb-2" />
+          <p className="text-sm text-foreground">No outside buyers yet</p>
+          <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+            Click “Find outside buyers” and Cimple researches companies and investors buying businesses like this one. It takes a minute or two — you can leave the page.
+          </p>
+        </div>
+      )}
+
       {data?.status === "failed" && <p className="text-xs text-red-400">{data.error || "The research didn't finish — try again."}</p>}
       {data?.mode === "knowledge" && results.length > 0 && (
         <p className="text-2xs text-amber-400">Web search was unavailable, so these come from the AI's general knowledge — check each one before reaching out.</p>
@@ -149,8 +175,24 @@ export function ExternalAcquirersPanel({ dealId }: { dealId: string }) {
       )}
 
       <div className="space-y-2">
-        {results.map((a, i) => (
-          <div key={`${a.name}-${i}`} className="rounded-md border border-border bg-muted/10 p-3 space-y-1.5" data-testid={`external-acquirer-${i}`}>
+        {/* New names first (what the stage counts); ones already in the
+            broker's buyers follow under their own heading. */}
+        {fresh.map(renderAcquirer)}
+        {listed.length > 0 && (
+          <p className="pt-2 text-2xs font-medium uppercase tracking-wide text-muted-foreground" data-testid="external-in-your-list-heading">
+            Also found — already in your buyers ({listed.length})
+          </p>
+        )}
+        {listed.map(renderAcquirer)}
+      </div>
+    </div>
+  );
+}
+
+/** One researched acquirer. `i` = its position in the stored results (stable test ids). */
+function AcquirerCard({ a, i }: { a: Acquirer; i: number }) {
+  return (
+          <div className="rounded-md border border-border bg-muted/10 p-3 space-y-1.5" data-testid={`external-acquirer-${i}`}>
             <div className="flex flex-wrap items-center gap-2">
               <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="text-sm font-medium">{a.name}</span>
@@ -190,8 +232,5 @@ export function ExternalAcquirersPanel({ dealId }: { dealId: string }) {
               ))}
             </div>
           </div>
-        ))}
-      </div>
-    </div>
   );
 }

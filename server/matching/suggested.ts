@@ -85,17 +85,22 @@ export async function scoreBuyersForDeal(deal: Deal): Promise<ScoredBuyer[]> {
 export function reachedBuyers(
   outreach: Array<{ buyerUserId?: string | null; buyerEmail?: string | null }>,
   access: Array<{ buyerUserId?: string | null; buyerEmail?: string | null }>,
-): (buyer: { id: string; email?: string | null }) => { alreadyHasAccess: boolean; alreadyContacted: boolean } {
+  approvals: Array<{ buyerEmail?: string | null; status?: string | null }> = [],
+): (buyer: { id: string; email?: string | null }) => { alreadyHasAccess: boolean; alreadyContacted: boolean; inApproval: boolean } {
   const norm = (e?: string | null) => (e || "").trim().toLowerCase();
   const ids = (rows: typeof outreach) => new Set(rows.map((r) => r.buyerUserId).filter((x): x is string => !!x));
   const emails = (rows: typeof outreach) => new Set(rows.map((r) => norm(r.buyerEmail)).filter(Boolean));
   const accessIds = ids(access), accessEmails = emails(access);
   const contactedIds = ids(outreach), contactedEmails = emails(outreach);
+  // Submitted for approval (waiting on the broker or the seller, approved, or
+  // turned down): already in the pipeline, so never suggested again.
+  const approvalEmails = new Set(approvals.filter((a) => a.status !== "withdrawn").map((a) => norm(a.buyerEmail)).filter(Boolean));
   return (buyer) => {
     const email = norm(buyer.email);
     return {
       alreadyHasAccess: accessIds.has(buyer.id) || (!!email && accessEmails.has(email)),
       alreadyContacted: contactedIds.has(buyer.id) || (!!email && contactedEmails.has(email)),
+      inApproval: !!email && approvalEmails.has(email),
     };
   };
 }
@@ -111,7 +116,8 @@ export function isExcludedBuyer(s: Pick<ScoredBuyer, "breakdown">): boolean {
  * definition for both, so the button's count, the job's "N reviewed" and the
  * list always agree:
  *   - `pool`: buyers who could still be approached (no access to this deal
- *     yet) and don't rule out its industry — what the list shows;
+ *     yet, not submitted for approval) and don't rule out its industry —
+ *     what the list shows;
  *   - `candidates`: those in the pool who pass the first pass — what the
  *     deep check reads;
  *   - `excluded`: buyers who rule out the industry (listed apart, never
@@ -119,11 +125,12 @@ export function isExcludedBuyer(s: Pick<ScoredBuyer, "breakdown">): boolean {
  */
 export function suggestionPools<T extends ScoredBuyer>(
   scored: T[],
-  reached: (buyer: { id: string; email?: string | null }) => { alreadyHasAccess: boolean },
+  reached: (buyer: { id: string; email?: string | null }) => { alreadyHasAccess: boolean; inApproval?: boolean },
 ): { pool: T[]; candidates: T[]; excluded: T[]; withAccess: T[] } {
   const withAccess: T[] = [], excluded: T[] = [], pool: T[] = [];
   for (const s of scored) {
-    if (reached(s.buyer).alreadyHasAccess) withAccess.push(s);
+    const r = reached(s.buyer);
+    if (r.alreadyHasAccess || r.inApproval) withAccess.push(s);
     else if (isExcludedBuyer(s)) excluded.push(s);
     else pool.push(s);
   }

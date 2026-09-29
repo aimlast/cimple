@@ -182,6 +182,7 @@ app.use("/api/deals/:dealId/generate-layout", aiLimiter);
 // Bulk buyer actions: drafting / AI matching on the AI limit, sending on
 // the email limit (server/security/bulk-limits.ts).
 applyBulkRateLimits(app, aiLimiter);
+app.use("/api/deals/:dealId/buyer-fit/:accessId/ai", aiLimiter);
 
 // Session type augmentation
 declare module "express-session" {
