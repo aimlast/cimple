@@ -28,7 +28,7 @@ import {
   type CheckDocument,
 } from "./discrepancy-engine";
 import { dropReason, differentYears } from "./discrepancy-filter";
-import { settleMergeRowsQuietly } from "../documents/merge-conflicts";
+import { applyHeadCountAuthority, settleMergeRowsQuietly } from "../documents/merge-conflicts";
 import { updateDiscrepancyIfStill } from "./discrepancy-cas";
 import { BLOCKING_DISCREPANCY_STATUSES, discrepancyBlocksCim } from "@shared/discrepancy-gate";
 
@@ -357,9 +357,20 @@ export async function ensureDiscrepancyGate(
     }
     ranCheck = true;
   }
+  // Head counts the roster gives differently from the seller (no AI): the
+  // roster's count is applied and the dispute raised — a deal whose facts
+  // were merged before the rule gets it here (Lakeshore's 24 vs 22).
+  const before = new Set((await storage.getDiscrepanciesByDeal(dealId)).map((d) => d.id));
+  try {
+    await applyHeadCountAuthority(dealId);
+  } catch (err) {
+    console.error(`[discrepancy-gate] head-count check failed for ${dealId}:`, err);
+  }
   // A merge row whose conflict no longer stands never blocks.
   await settleMergeRowsQuietly(dealId, "discrepancy-gate");
   const rows = await storage.getDiscrepanciesByDeal(dealId);
+  // A merge row the head-count check just raised is new too (reviewed once before writing).
+  created = [...created, ...rows.filter((d) => !before.has(d.id) && d.source === "merge" && d.status === "open")];
   const gateDeal = await storage.getDeal(dealId);
   const blocking = rows.filter((d) => discrepancyBlocksCim(d, gateDeal?.interviewCompleted));
   if (blocking.length > 0) throw new DiscrepancyGateError(blocking.map((d) => ({ id: d.id, field: d.field })));

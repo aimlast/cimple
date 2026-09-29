@@ -37,7 +37,7 @@ import {
   redoLeakedBlind,
   dealHasBlindVersion,
 } from "../cim/blind-sync";
-import { buildBuyerCim } from "@shared/cim-buyer-view";
+import { buildBuyerCim, buyersReadWorkingCopy } from "@shared/cim-buyer-view";
 import { discrepancyBlocksCim } from "@shared/discrepancy-gate";
 import { factAmounts, withStatedChartTotal } from "@shared/cim-chart-values";
 import { codenameProblem, renameDealCodename } from "../cim/codenames";
@@ -338,8 +338,9 @@ export function registerCimBuilderRoutes(app: Express): void {
             tags: [] as any,
             brokerApproved: false,
             // A live CIM doesn't show a half-finished section: it starts
-            // hidden and the broker shows it when it's ready.
-            isVisible: !deal.isLive,
+            // hidden and the broker shows it when it's ready. (While buyers
+            // read the kept copy of an update under review, it's draft.)
+            isVisible: !buyersReadWorkingCopy(deal),
             accessTier: body.accessTier === "full" ? "full" : "teaser",
             blindStaleAt: new Date(),
           },
@@ -354,10 +355,10 @@ export function registerCimBuilderRoutes(app: Express): void {
 
       if (mode === "ai") {
         const task = await startSectionTask(created, deal, "write", { brief: brief || undefined });
-        return res.status(202).json({ section: { ...created, aiTask: task }, task, startedHidden: !!deal.isLive });
+        return res.status(202).json({ section: { ...created, aiTask: task }, task, startedHidden: buyersReadWorkingCopy(deal) });
       }
       scheduleBlindRefresh(deal.id);
-      res.status(201).json({ section: created, startedHidden: !!deal.isLive });
+      res.status(201).json({ section: created, startedHidden: buyersReadWorkingCopy(deal) });
     } catch (err) {
       console.error("[cim-builder] add section failed:", err);
       res.status(500).json({ error: "Couldn't add the section" });
@@ -385,8 +386,9 @@ export function registerCimBuilderRoutes(app: Express): void {
     try {
       const owned = await ownedSection(req, res);
       if (!owned) return;
-      const copy = await duplicateSection(owned.section, { hidden: !!owned.deal.isLive });
-      res.status(201).json({ section: copy, startedHidden: !!owned.deal.isLive });
+      const hidden = buyersReadWorkingCopy(owned.deal);
+      const copy = await duplicateSection(owned.section, { hidden });
+      res.status(201).json({ section: copy, startedHidden: hidden });
     } catch (err) {
       console.error("[cim-builder] duplicate failed:", err);
       res.status(500).json({ error: "Couldn't duplicate the section" });

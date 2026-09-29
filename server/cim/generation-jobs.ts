@@ -25,7 +25,7 @@ import { settleResolvedFacts, currentResolvedNotes, resolvedNotes } from "./reso
 import { stampSourceDetails } from "../documents/merge-policy";
 import { cimFinancialsFor } from "./cim-financials";
 import { keepOutFor } from "./keep-out";
-import { hasMonthYear } from "./fact-dates";
+import { documentSentencesDating, hasMonthYear } from "./fact-dates";
 import { getFieldSources, isFactKey } from "../interview/info-merger";
 import { factValueText } from "../information/cim-facts";
 import { db } from "../db";
@@ -33,6 +33,7 @@ import { interviewSessions } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { writerFactsSnapshot } from "./cim-staleness";
 import { describeAiFailure } from "../ai-retry";
+import { dropPublishedSnapshot, takePublishedSnapshot } from "./published-snapshot";
 
 export type CimGenerationMode = CimGenerationStatus["mode"];
 
@@ -83,6 +84,37 @@ async function persist(job: CimGenerationJob) {
   }
 }
 
+/** Kinds of source that are a written record (a year they state is on file). */
+const WRITTEN_KINDS: ReadonlySet<string> = new Set(["document", "email", "questionnaire"]);
+
+/** The fact's other values and confirmations from written, non-private sources, as one text. */
+export function writtenValuesFor(info: Record<string, unknown>, key: string): string {
+  const out: string[] = [];
+  for (const store of ["_fieldAlternates", "_fieldCorroborations"]) {
+    const map = (info[store] ?? {}) as Record<string, unknown>;
+    for (const [k, list] of Object.entries(map)) {
+      if (k !== key && !k.startsWith(`${key}.`)) continue;
+      if (!Array.isArray(list)) continue;
+      for (const a of list as Array<{ value?: unknown; source?: string; brokerOnly?: boolean }>) {
+        if (!a || a.brokerOnly || !WRITTEN_KINDS.has(String(a.source))) continue;
+        if (typeof a.value === "string" && a.value.trim()) out.push(a.value);
+      }
+    }
+  }
+  return out.join("\n");
+}
+
+/**
+ * The text of the deal's written sources — documents, emails, the
+ * questionnaire — that the seller side shares (never broker-only material,
+ * CRM notes, websites or spoken transcripts).
+ */
+export function writtenSourceTexts(docs: ReadonlyArray<{ sourceKind?: string | null; visibility?: string | null; extractedText?: string | null }>): string[] {
+  return docs
+    .filter((d) => d.visibility !== "broker_only" && WRITTEN_KINDS.has(d.sourceKind || "document") && typeof d.extractedText === "string" && d.extractedText.trim())
+    .map((d) => d.extractedText as string);
+}
+
 /**
  * For interview facts that state a "Month YYYY": the seller's words on the
  * turn that recorded them (provenance keeps the session and seller turn), so
@@ -94,7 +126,9 @@ export async function factSourceWordsFor(
   info: Record<string, unknown>,
   /** Keys the broker settled in a resolved discrepancy: their value is the broker's, not the seller's words. */
   brokerSettled: ReadonlySet<string> = new Set(),
-): Promise<Record<string, { words: string; at: string }>> {
+  /** The deal's written sources' text (writtenSourceTexts): a date one of them states is kept, whatever fact it was filed under. */
+  writtenTexts: readonly string[] = [],
+): Promise<Record<string, { words: string; at: string; documentWords?: string }>> {
   const sources = getFieldSources(info);
   const wanted = Object.entries(sources).filter(
     ([key, s]) => isFactKey(key) && !brokerSettled.has(key) && s?.sessionId && typeof s.turn === "number" && s.at && key in info && hasMonthYear(factValueText(info[key])),
@@ -103,13 +137,16 @@ export async function factSourceWordsFor(
   try {
     const rows = await db.select({ id: interviewSessions.id, messages: interviewSessions.messages }).from(interviewSessions).where(eq(interviewSessions.dealId, dealId));
     const byId = new Map(rows.map((r) => [r.id, Array.isArray(r.messages) ? (r.messages as Array<{ role?: string; content?: unknown }>) : []]));
-    const out: Record<string, { words: string; at: string }> = {};
+    const out: Record<string, { words: string; at: string; documentWords?: string }> = {};
     for (const [key, s] of wanted) {
       // `turn` counts the seller's messages (1-based) in that session.
       const seller = (byId.get(s.sessionId!) ?? []).filter((m) => m?.role === "user");
       const msg = seller[s.turn! - 1];
       const words = typeof msg?.content === "string" ? msg.content : "";
-      if (words) out[key] = { words, at: s.at! };
+      // What written sources on file say for the same fact: a year one of
+      // them states is never taken out (fact-dates.ts).
+      const documentWords = [writtenValuesFor(info, key), documentSentencesDating(factValueText(info[key]), writtenTexts)].filter(Boolean).join("\n");
+      if (words) out[key] = { words, at: s.at!, ...(documentWords ? { documentWords } : {}) };
     }
     return out;
   } catch (err) {
@@ -148,7 +185,7 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
     // A resolved discrepancy overlays the broker's value on a key whose
     // provenance may still name the interview turn — that value's year is
     // the broker's ruling, never stripped as "not said by the seller".
-    factSourceWordsFor(deal.id, extractedInfo, new Set(resolvedDiscrepancies.map((n) => n.factKey).filter((k): k is string => !!k))),
+    factSourceWordsFor(deal.id, extractedInfo, new Set(resolvedDiscrepancies.map((n) => n.factKey).filter((k): k is string => !!k)), writtenSourceTexts(docs)),
   ]);
   // The deal's design template may carry the brokerage's house structure
   // ("Match my existing CIM") — the planner follows it.
@@ -221,16 +258,25 @@ export function replacementNeedsReview(
  * (the old generate-content path left them dangling).
  *
  * When buyers could open the old CIM (or it was live / approved), the new
- * one is held from every buyer until the broker publishes it again: the deal
- * leaves live, its content and design approvals are cleared (the view room
- * shows buyers a "being updated" state meanwhile — see cimHeldFromBuyers).
- * The hold, the section replacement and the deal's new layout version are
- * written in ONE transaction (storage.replaceDealCim): if any part fails —
- * a DB error, a redeploy mid-write — nothing changed, the old CIM is still
- * there, live and not held. (Written separately, a failure between the
- * deletes and the last insert left a partial CIM; the hold written only in
- * the job's best-effort status write served the unreviewed CIM to every
- * link holder.)
+ * one is held from every buyer until the broker publishes it again, and its
+ * content and design approvals are cleared. A LIVE deal stays live: the CIM
+ * buyers have — exactly what they are served, with the approved versions of
+ * any unapproved changes, and its Blind and DD versions — is kept first
+ * (published-snapshot.ts) and every buyer path keeps serving it until the
+ * broker publishes the new one (servesPublishedSnapshot). Beacon's rebuild
+ * (2026-09-28) put 12 buyers, a due-diligence buyer among them, in front of
+ * "not available" until re-publishing. A deal that wasn't live has no
+ * buyers reading it; it is simply held (cimHeldFromBuyers).
+ * The copy is written BEFORE anything is replaced and is not best-effort:
+ * if it fails the run fails and the old sections stay. The hold, the
+ * section replacement and the deal's new layout version are then written in
+ * ONE transaction (storage.replaceDealCim): if any part fails — a DB error,
+ * a redeploy mid-write — nothing changed, the old CIM is still there, live
+ * and not held (a copy taken for a write that never landed is never served:
+ * only a hold with servingPublished reads it, and the next run replaces it).
+ * (Written separately, a failure between the deletes and the last insert
+ * left a partial CIM; the hold written only in the job's best-effort status
+ * write served the unreviewed CIM to every link holder.)
  */
 async function persistDocument(deal: Deal, mode: CimGenerationMode, document: CimDocument, job: CimGenerationJob): Promise<CimGenerationStatus["buyerHold"] | null> {
   // As the deal is now — it may have gone live while the run was writing.
@@ -241,14 +287,22 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
   ]);
   const links = openBuyerLinks(access);
   const previousHold = (current.cimGeneration as CimGenerationStatus | null | undefined)?.buyerHold ?? null;
-  const hold = replacementNeedsReview(current, links)
+  // A live CIM keeps serving its buyers: the version they have is kept
+  // (once — a second regeneration before publishing keeps the first copy,
+  // which is still what buyers read).
+  const keepServing = !!current.isLive;
+  const hold: CimGenerationStatus["buyerHold"] | null = replacementNeedsReview(current, links)
     ? {
         since: previousHold?.since ?? new Date().toISOString(),
         wasLive: !!current.isLive || !!previousHold?.wasLive,
         buyers: Math.max(links, previousHold?.buyers ?? 0),
         ddCleared: ddBefore.length > 0 || !!previousHold?.ddCleared,
+        ...(keepServing ? { servingPublished: true } : {}),
       }
     : null;
+  // The CIM buyers read now is kept before anything is replaced (throws —
+  // the run then fails and nothing changes).
+  if (hold && keepServing && !previousHold?.servingPublished) await takePublishedSnapshot(current);
   const cimContent: Record<string, string> = {};
   const rows = document.sections.map((section) => {
     if (section.aiDraftContent) cimContent[section.sectionKey] = section.aiDraftContent;
@@ -274,8 +328,10 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
   if (hold) {
     Object.assign(updates, {
       cimGeneration: { ...storedStatus(job), buyerHold: hold },
-      // The approvals were for the CIM that is about to be replaced.
-      isLive: false,
+      // The approvals were for the CIM that is about to be replaced. A deal
+      // that wasn't live stays unpublished until the broker publishes it; a
+      // live one stays live, its buyers reading the kept copy.
+      ...(keepServing ? {} : { isLive: false }),
       contentApprovedByBroker: false,
       contentApprovedBySeller: false,
       designApprovedByBroker: false,
@@ -341,7 +397,14 @@ async function run(job: CimGenerationJob, deal: Deal, beforeWriting?: BeforeWrit
     await persist(job);
     const hold = await persistDocument(deal, job.mode, document, job);
     if (hold) {
-      if (hold.ddCleared) document.warnings = [...(document.warnings ?? []), "The due-diligence version was cleared with the old sections. Generate it again before due-diligence buyers see enriched content."];
+      if (hold.ddCleared) {
+        document.warnings = [
+          ...(document.warnings ?? []),
+          hold.servingPublished
+            ? "The new CIM has no due-diligence version yet (due-diligence buyers keep the previous one until you publish). Generate it before you publish the update."
+            : "The due-diligence version was cleared with the old sections. Generate it again before due-diligence buyers see enriched content.",
+        ];
+      }
     }
     if (factsAt) job.factsAt = factsAt;
     job.status = "done";
@@ -466,8 +529,12 @@ export async function releaseBuyerHold(dealId: string): Promise<void> {
     const { buyerHold: _h, ...rest } = stored;
     await storage.updateDeal(dealId, { cimGeneration: rest } as any);
   }
-  // Buyers who were deciding on the replaced CIM get a fresh review window
-  // on the published one (no reminder or lapse was sent while it was held).
+  // The version buyers kept reading meanwhile is replaced by the published one.
+  await dropPublishedSnapshot(dealId).catch((err) => console.warn(`[cim-generation] could not drop the kept CIM for deal ${dealId}:`, err));
+  // Buyers who kept reading the previous version were never held: their
+  // review clocks run on. Buyers who were held get a fresh window on the
+  // published one (no reminder or lapse was sent while it was held).
+  if (hold.servingPublished) return;
   try {
     const { restartReminderClocks } = await import("../reminders/decision-reminders");
     await restartReminderClocks(dealId, hold.since);

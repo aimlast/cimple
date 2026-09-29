@@ -181,7 +181,7 @@ export interface CimLayoutParams {
    * the turn that recorded the fact, and when — so a year the seller never
    * said is taken out before the writer sees it (fact-dates.ts).
    */
-  factSourceWords?: Record<string, { words: string; at: string }> | null;
+  factSourceWords?: Record<string, { words: string; at: string; documentWords?: string }> | null;
   /**
    * What must stay out of buyer-facing text beyond the facts' own notes: the
    * broker's private notes and the AI review (keep-out.ts keepOutFor). When
@@ -1358,6 +1358,9 @@ const UNFINISHED_FACT_WARNING = (keys: string[]) =>
 const YEAR_FIX_WARNING = (items: string[]) =>
   `Year left out of the CIM: ${items.join(", ")}. The seller named the month but never that year, so the CIM gives the month only. Correct the fact on the Information tab if you know the year.`;
 
+const YEAR_HELD_WARNING = (items: string[]) =>
+  `Held out of the CIM: ${items.join("; ")}. The seller named the month but not the year, and without the year the sentence would be ambiguous (the same month twice). Add the year to the fact on the Information tab if you know it, then regenerate.`;
+
 const PERSONAL_DETAIL_WARNING = (keys: string[]) =>
   `Held back from the CIM for your review: ${keys.map((k) => `"${formatKey(k)}"`).join(", ")} ${keys.length === 1 ? "mentions" : "mention"} a personal health or family detail. The CIM was written without it. If a buyer may see it, move it into a fact yourself; otherwise record it as a private note.`;
 
@@ -1483,6 +1486,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     const leadsSafe = earn.safe.filter(([k]) => k.startsWith("l:")).map(([k, v]) => [untag(k), v] as [string, unknown]);
     const sources = getFieldSources(params.extractedInfo);
     const yearFixes: string[] = [];
+    const yearHeld: string[] = [];
     const stale: string[] = [];
     const line = (key: string, value: unknown, confirmed = false) => {
       // The seller's spoken figures as clean wording ("six-point-something
@@ -1492,12 +1496,20 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
       // the writer gets their sentence for the tense and never adds a year.
       let said = "";
       const src = params.factSourceWords?.[key];
-      const fix = src ? repairInferredYears(text, src.words) : null;
+      const fix = src ? repairInferredYears(text, src.words, src.documentWords ?? "") : null;
       if (fix) {
         text = fix.text;
-        const quote = screenText(fix.quotes.join(" … ")).trim();
-        said = ` [the seller named the month but no year — never add one${quote ? `; keep their tense: "${quote}"` : ""}]`;
-        yearFixes.push(`"${formatKey(key)}" (${fix.changes.join("; ")})`);
+        if (fix.changes.length > 0) {
+          const quote = screenText(fix.quotes.join(" … ")).trim();
+          said = ` [the seller named the month but no year — never add one${quote ? `; keep their tense: "${quote}"` : ""}]`;
+          yearFixes.push(`"${formatKey(key)}" (${fix.changes.join("; ")})`);
+        }
+        // Without the year these would be ambiguous: held out, the broker told.
+        if (fix.held.length > 0) {
+          const quoted = fix.held.map((h) => h.replace(/[.;]\s*$/, "")).map((h) => `"${h.length > 140 ? `${h.slice(0, 137)}…` : h}"`);
+          yearHeld.push(`"${formatKey(key)}": ${quoted.join("; ")}`);
+        }
+        if (!text) return null;
       }
       const when = !fix && hasRelativeTime(text) ? recordedMonth(sources[key]?.dated ?? sources[key]?.at) : null;
       // A target TODAY has reached ("before next birthday (fall 2026)" read
@@ -1528,13 +1540,20 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     const usable = confirmedSafe.filter(([k]) => !unfinished.includes(k) && !inconsistent.includes(k));
     if (usable.length > 0) {
       parts.push("\n--- INTERVIEW DATA (the deal's facts: seller interview, broker, documents, questionnaire) ---");
-      for (const [key, value] of usable) parts.push(line(key, value, true));
+      for (const [key, value] of usable) {
+        const l = line(key, value, true);
+        if (l) parts.push(l);
+      }
     }
     if (leadsSafe.length > 0) {
       pushOther(`\n--- ${CIM_LEADS_HEADING} ---`);
-      for (const [key, value] of leadsSafe) pushOther(line(key, value));
+      for (const [key, value] of leadsSafe) {
+        const l = line(key, value);
+        if (l) pushOther(l);
+      }
     }
     if (yearFixes.length > 0) warnings.push(YEAR_FIX_WARNING(yearFixes));
+    if (yearHeld.length > 0) warnings.push(YEAR_HELD_WARNING(yearHeld));
     if (stale.length > 0) warnings.push(STALE_TIMELINE_WARNING(stale));
   }
 

@@ -97,13 +97,35 @@ export function ndaBlocksBuyer(
 }
 
 /**
- * True while a regenerated CIM waits for the broker to publish it: it
- * replaced one buyers could open, so no buyer path (view room, Q&A chatbot,
- * media) serves anything from it until then (server/cim/generation-jobs.ts).
+ * True while a regenerated CIM waits for the broker to publish it and
+ * buyers get nothing meanwhile: it replaced one buyers could open on a deal
+ * that wasn't live, so no buyer path (view room, Q&A chatbot, media) serves
+ * anything from it until then (server/cim/generation-jobs.ts). A live deal's
+ * buyers keep the version last published instead (servesPublishedSnapshot).
  */
 export function cimHeldFromBuyers(deal: { cimGeneration?: unknown }): boolean {
-  const g = deal.cimGeneration as { buyerHold?: unknown } | null | undefined;
-  return !!g?.buyerHold;
+  const g = deal.cimGeneration as { buyerHold?: { servingPublished?: boolean } | null } | null | undefined;
+  return !!g?.buyerHold && !g.buyerHold.servingPublished;
+}
+
+/**
+ * True while a live deal's regenerated CIM waits for the broker's review:
+ * every buyer path serves the version last published (the snapshot in
+ * cim_published_snapshots), never the draft, until the broker publishes.
+ */
+export function servesPublishedSnapshot(deal: { isLive?: boolean | null; cimGeneration?: unknown }): boolean {
+  const g = deal.cimGeneration as { buyerHold?: { servingPublished?: boolean } | null } | null | undefined;
+  return !!deal.isLive && !!g?.buyerHold?.servingPublished;
+}
+
+/**
+ * Buyers read the working copy right now: the CIM is live and not waiting
+ * for the broker's review of an update. A section added (or duplicated)
+ * then would reach buyers at once, so it starts hidden; while buyers read
+ * the kept copy, a new section is part of the draft like any other.
+ */
+export function buyersReadWorkingCopy(deal: { isLive?: boolean | null; cimGeneration?: unknown }): boolean {
+  return !!deal.isLive && !servesPublishedSnapshot(deal) && !cimHeldFromBuyers(deal);
 }
 
 /**

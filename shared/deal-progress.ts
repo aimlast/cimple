@@ -91,6 +91,8 @@ export type DealProgressInput = Pick<
   | "cimLayoutGeneratedAt"
   | "scrapedAt"
 > & {
+  /** Only its buyerHold matters here (a regenerated live CIM waiting for review). */
+  cimGeneration?: unknown;
   questionnaireData?: unknown;
   /** Intake pages 2 and 3 (the deal list sends "is saved" booleans). */
   operationalSystems?: unknown;
@@ -309,6 +311,10 @@ export function computeNextStep(deal: DealProgressInput, extras: DealProgressExt
   const seller = (label: string, href = overview): NextStep => ({ label, owner: "seller", href });
 
   if (deal.isLive) {
+    // Buyers read the previous version until the broker publishes the regenerated one.
+    if ((deal.cimGeneration as { buyerHold?: { servingPublished?: boolean } } | null | undefined)?.buyerHold?.servingPublished) {
+      return you("review and publish the updated CIM", overview);
+    }
     const withAccess = extras.buyersWithAccess ?? 0;
     const viewing = extras.buyersViewing ?? 0;
     if (withAccess === 0) return you("give buyers access", buyers);

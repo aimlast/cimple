@@ -181,6 +181,12 @@ export interface CimGenerationStatus {
     buyers: number;
     /** The due-diligence version was cleared with the old sections. */
     ddCleared: boolean;
+    /**
+     * The deal stayed live: buyers keep seeing the version last published
+     * (cim_published_snapshots) until the broker publishes the new one.
+     * Absent on holds from before 2026-09-29 — those took the deal off live.
+     */
+    servingPublished?: boolean;
   };
   /**
    * The facts the finished run wrote from (server/cim/cim-staleness.ts):
@@ -2641,4 +2647,23 @@ export type CimTemplateRow = typeof cimTemplates.$inferSelect;
 // @anchor:schema-tail:h-findisc
 // @anchor:schema-tail:h-interview
 // @anchor:schema-tail:h-cim
+
+/**
+ * The CIM buyers were last given — its sections and Blind / DD versions as
+ * they stood — kept while a regenerated CIM waits for the broker's review
+ * (server/cim/published-snapshot.ts). Buyers keep reading this until the
+ * broker publishes the new one; then it is deleted. One row per deal.
+ */
+export const cimPublishedSnapshots = pgTable("cim_published_snapshots", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  /** cim_sections rows as they stood (JSON). */
+  sections: jsonb("sections").notNull(),
+  /** cim_section_overrides rows, mode "blind" / "dd". */
+  blindOverrides: jsonb("blind_overrides").notNull(),
+  ddOverrides: jsonb("dd_overrides").notNull(),
+  blindCodename: text("blind_codename"),
+  takenAt: timestamp("taken_at").defaultNow().notNull(),
+});
+export type CimPublishedSnapshot = typeof cimPublishedSnapshots.$inferSelect;
 // @anchor:schema-tail:h-misc

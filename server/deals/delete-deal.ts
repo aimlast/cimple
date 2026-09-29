@@ -19,7 +19,7 @@ import {
   deals, documents, tasks, interviewSessions, cimSections, buyerQuestions, sellerInvites, buyerAccess,
   analyticsEvents, faqItems, integrationEmails, dealKnowledgeSources, financialAnalyses, addbackVerifications,
   cimSectionOverrides, discrepancies, dealMembers, notifications, buyerApprovalRequests, dealOutreach,
-  dealDocumentRequirements, buyerEmails, dealMedia, buyerUsers,
+  dealDocumentRequirements, buyerEmails, dealMedia, buyerUsers, cimPublishedSnapshots,
 } from "@shared/schema";
 import { resolveDocumentPath } from "../documents/document-path";
 
@@ -51,6 +51,8 @@ export const DEAL_CHILD_TABLES = {
   deal_outreach: { table: dealOutreach, column: dealOutreach.dealId, mode: "delete" },
   deal_document_requirements: { table: dealDocumentRequirements, column: dealDocumentRequirements.dealId, mode: "delete" },
   deal_media: { table: dealMedia, column: dealMedia.dealId, mode: "delete" },
+  // The kept copy of a live CIM while an update is reviewed (published-snapshot.ts).
+  cim_published_snapshots: { table: cimPublishedSnapshots, column: cimPublishedSnapshots.dealId, mode: "delete" },
   buyer_emails: { table: buyerEmails, column: buyerEmails.dealId, mode: "detach", field: "dealId" },
   buyer_users: { table: buyerUsers, column: buyerUsers.invitedByDeal, mode: "detach", field: "invitedByDeal" },
 } as const;

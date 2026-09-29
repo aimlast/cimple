@@ -88,7 +88,7 @@ import {
   type SetAsideYear,
 } from "./merge-policy";
 import { fieldLabel as fieldLabelText } from "../interview/interview-plan";
-import { recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
+import { applyRosterCounts, recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
 import { stampNoteSources } from "./source-visibility";
 import { removeSourceFromFacts } from "./source-removal";
 import { reviewPrivateNotes } from "./private-notes-review";
@@ -418,6 +418,11 @@ export async function reprocessDealDocuments(
     // broker made broker-only (or shared) meanwhile must not be saved with
     // its old stamp — the seller view and the CIM go by it.
     rebuilt = restampChangedVisibility(rebuilt, documents, nowDocuments);
+    // Head counts by role: the roster is the authority (decision A), across
+    // facts — read from the rows the rebuild used that are still on the deal,
+    // as they are now (a roster made broker-only meanwhile is no authority).
+    const rebuiltIds = new Set(documents.map((d) => d.id));
+    applyRosterCounts(rebuilt, nowDocuments.filter((d) => rebuiltIds.has(d.id)));
 
     // The deal's own name, industry and listed price are the broker's facts
     // (deal-mirror.ts): a tax return's NAICS line or a CRM note's "steel fab"

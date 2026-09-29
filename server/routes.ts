@@ -42,7 +42,6 @@ import multer from "multer";
 import { registerDealListRoutes, loadDealSideFacts, moneyValue, dealNextStep } from "./routes/deal-list.js";
 import { registerInformationRoutes } from "./routes/information.js";
 import { listedAskingPrice } from "./information/deal-mirror";
-import { loadPublishedVersions } from "./cim/published-versions";
 import { brokerFactsView } from "./information/facts";
 import { withoutFactsSnapshot } from "./cim/cim-staleness";
 import { checkCimGenerationGate, computeDealReadiness } from "./cim/generation-gate";
@@ -4705,7 +4704,10 @@ Return JSON only.`,
   /** Blind view rooms use neutral section keys — map them back to the real ones. */
   async function translateBlindSectionKeys(dealId: string, events: Array<{ sectionKey?: string | null }>): Promise<void> {
     if (!events.some((e) => typeof e?.sectionKey === "string" && /^s_[0-9a-z]{12}$/.test(e.sectionKey))) return;
-    const map = realSectionKeyMap(await storage.getCimSectionsByDeal(dealId));
+    // (While a regenerated CIM waits for review, buyers read the kept copy — its sections count too.)
+    const { buyerSectionsForAnalytics } = await import("./cim/published-snapshot");
+    const deal = await storage.getDeal(dealId);
+    const map = realSectionKeyMap(deal ? await buyerSectionsForAnalytics(deal) : await storage.getCimSectionsByDeal(dealId));
     for (const e of events) {
       if (typeof e?.sectionKey === "string" && map.has(e.sectionKey)) e.sectionKey = map.get(e.sectionKey)!;
     }
@@ -4787,7 +4789,12 @@ Return JSON only.`,
       // project codename (falls back to a neutral label if redaction hasn't
       // run yet, in which case we serve the "preparing" state below).
       const blindMode = cimMode === "blind";
-      const codename = deal.blindCodename || null;
+      // While buyers read the kept copy of an update under review, the deal
+      // keeps the codename that copy was redacted under.
+      const { servedBlindCodename } = await import("./cim/published-snapshot");
+      const keptCodename = await servedBlindCodename(deal);
+      const servedDeal = keptCodename ? { ...deal, blindCodename: keptCodename } : deal;
+      const codename = servedDeal.blindCodename || null;
       const displayName = blindMode ? (codename || "Confidential Opportunity") : deal.businessName;
 
       // Buyers get a minimal whitelisted deal payload — never the raw deal
@@ -4833,8 +4840,9 @@ Return JSON only.`,
       }
 
       // A regenerated CIM is held from every buyer until the broker reviews
-      // and publishes it (server/cim/generation-jobs.ts) — nothing from it,
-      // or from the one it replaced, is served meanwhile.
+      // and publishes it (server/cim/generation-jobs.ts). On a live deal the
+      // buyers keep the version last published (buyerCimRows serves the kept
+      // copy); on a deal that wasn't live nothing is served meanwhile.
       // A CIM held for the broker's review isn't viewed yet (not served):
       // the decision reminders, anchored to the first view, wait until it is
       // published.
@@ -4853,32 +4861,49 @@ Return JSON only.`,
 
       // Q&A feed: published answers plus this buyer's own pending questions
       // (whitelisted fields — never the seller-approval token or broker draft).
-      const [baseSections, publishedQuestions] = await Promise.all([
-        storage.getCimSectionsByDeal(deal.id),
+      const { buyerCimRows } = await import("./cim/published-snapshot");
+      const [rows, publishedQuestions] = await Promise.all([
+        buyerCimRows(deal, access.accessLevel),
         buildBuyerQuestionFeed(deal, { id: access.id, accessLevel: access.accessLevel }),
       ]);
-      if (cimMode === "normal" && baseSections.length === 0) publicDeal.cimContent = deal.cimContent ?? null;
+      // Serving a kept copy that isn't there: nothing (fail closed) — the same
+      // "being updated" state as a held CIM.
+      if (rows.missing) {
+        console.error(`[view] deal ${deal.id} serves the previously published CIM but no copy is on file — holding`);
+        return res.json({
+          access: accessPayload(await stampAndBuild(false)),
+          deal: publicDeal,
+          sections: [],
+          publishedQuestions: [],
+          branding,
+          design: gatedDesign,
+          cimMode,
+          updating: true,
+        });
+      }
+      const baseSections = rows.sections;
+      if (cimMode === "normal" && baseSections.length === 0 && !rows.fromSnapshot) publicDeal.cimContent = deal.cimContent ?? null;
 
       // Which sections this buyer may receive, in which form — hidden
       // sections, per-section access tiers and blind freshness are all
       // enforced here (shared/cim-buyer-view.ts). Buyers get only what
       // the renderer needs: never aiLayoutReasoning (internal AI notes that
       // name the owners), seller edits, approval flags or AI task state.
-      const [overrides, media, published] = await Promise.all([
-        cimMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(deal.id, cimMode),
-        // Media blocks: only this deal's uploads, blind-safe ones in blind mode.
-        loadMediaAssets(deal.id),
-        // A live CIM's changes wait for the broker's approval: the approved
-        // versions are served meanwhile (shared/cim-published.ts). On a
-        // failed read nothing unapproved is served ([] = no records).
-        loadPublishedVersions(deal).catch(() => []),
-      ]);
-      const buyerCim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal), published });
+      // Media blocks: only this deal's uploads, blind-safe ones in blind mode.
+      const media = await loadMediaAssets(deal.id);
+      const overrides = rows.overrides;
+      // A live CIM's changes wait for the broker's approval: the approved
+      // versions are served meanwhile (shared/cim-published.ts; rows.published
+      // — [] after a failed read, so nothing unapproved is served). The kept
+      // copy of an update under review is already what buyers were served
+      // (published: null).
+      const buyerCim = buildBuyerCim({ deal: servedDeal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published });
       if (buyerCim.preparing) {
         // No redacted version exists yet. Do NOT serve the real, un-redacted
         // sections — that would leak identity to the first viewer. Serve a
         // "preparing" holding state and generate; the client polls back.
-        ensureBlindOverridesInBackground(deal);
+        // (A kept copy is never re-redacted: the draft is not what buyers see.)
+        if (!rows.fromSnapshot) ensureBlindOverridesInBackground(deal);
         return res.json({
           access: accessPayload(await stampAndBuild(false)),
           deal: publicDeal,
@@ -4894,7 +4919,10 @@ Return JSON only.`,
       // edited) are held back until re-redacted — make sure that is running.
       // A blind section that still names something identifying is withheld
       // too, and its redaction is redone.
-      if (buyerCim.leaked.length > 0) {
+      if (rows.fromSnapshot) {
+        // The kept copy is served as it was: a section held back stays back.
+        if (buyerCim.leaked.length > 0) console.warn(`[view] withheld ${buyerCim.leaked.length} blind section(s) of the kept CIM on deal ${deal.id} that still named identifying details`);
+      } else if (buyerCim.leaked.length > 0) {
         console.warn(`[view] withheld ${buyerCim.leaked.length} blind section(s) on deal ${deal.id} that still named identifying details — re-redacting`);
         redoLeakedBlind(deal.id, buyerCim.leaked, buyerCim.leakReasons).catch((err) => console.error("[view] blind redo failed:", err));
       } else if (buyerCim.heldBack > 0) scheduleBlindRefresh(deal.id, 0);
@@ -7321,7 +7349,6 @@ Return JSON only.`,
         return res.status(403).json({ error: "Sign the NDA to ask questions about this business", code: "nda_required" });
       }
       const buyerAccessId = access.id;
-      const chatMode = cimModeForAccessLevel(access.accessLevel);
       // Who may later read this answer: a teaser's blind answer → everyone;
       // a full-access buyer's → full-access buyers and up (it may quote
       // sections locked for teasers); a named-CIM answer → the asker only.
@@ -7348,18 +7375,25 @@ Return JSON only.`,
       // and not-yet-redacted sections never feed the answer. A CIM held for
       // the broker's review answers nothing, not even from earlier answers
       // (it escalates).
-      const held = cimHeldFromBuyers(deal);
-      let chatBaseSections: Awaited<ReturnType<typeof storage.getCimSectionsByDeal>> = [];
+      // (While a regenerated CIM waits for review, the kept copy buyers read
+      // — published-snapshot.ts buyerCimRows — with the codename it was
+      // redacted under; a kept copy that isn't there answers nothing.)
+      let held = cimHeldFromBuyers(deal);
+      let chatBaseSections: Array<{ updatedAt?: Date | string | null }> = [];
       let chatSections: ReturnType<typeof buildBuyerCim>["sections"] = [];
       if (!held) {
-        const [sections, chatOverrides, chatMedia, chatPublished] = await Promise.all([
-          storage.getCimSectionsByDeal(dealId),
-          chatMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(dealId, chatMode),
+        const { buyerCimRows, servedBlindCodename } = await import("./cim/published-snapshot");
+        const [chatRows, chatMedia, chatCodename] = await Promise.all([
+          buyerCimRows(deal, access.accessLevel),
           loadMediaAssets(dealId),
-          loadPublishedVersions(deal).catch(() => []),
+          servedBlindCodename(deal),
         ]);
-        chatBaseSections = sections;
-        chatSections = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections, overrides: chatOverrides, media: chatMedia, askingPrice: listedAskingPrice(deal), published: chatPublished }).sections;
+        if (chatRows.missing) {
+          held = true;
+        } else {
+          chatBaseSections = chatRows.sections;
+          chatSections = buildBuyerCim({ deal: chatCodename ? { ...deal, blindCodename: chatCodename } : deal, accessLevel: access.accessLevel, sections: chatRows.sections, overrides: chatRows.overrides, media: chatMedia, askingPrice: listedAskingPrice(deal), published: chatRows.published }).sections;
+        }
       }
       const answerSections: AnswerSection[] = chatSections
         .filter(s => !s.locked)

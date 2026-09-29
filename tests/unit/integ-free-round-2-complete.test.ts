@@ -52,7 +52,11 @@ const ok = (name: string) => { passed++; console.log(`PASS ${name}`); };
   const start = routes.indexOf('app.post("/api/deals/:dealId/questions"');
   const body = routes.slice(start, routes.indexOf('app.get("/api/deals/:dealId/questions/published"', start));
   assert.ok(body.includes("answerBuyerQuestion("));
-  assert.ok(body.includes("loadPublishedVersions(deal)"), "the buyer's CIM includes the approved versions");
+  // (Since the rebuild merge the rows come from buyerCimRows, which carries
+  // the live CIM's approved versions — or the kept copy under review.)
+  assert.ok(body.includes("buyerCimRows(deal, access.accessLevel)") && body.includes("published: chatRows.published"), "the buyer's CIM includes the approved versions");
+  const snap = read("server/cim/published-snapshot.ts");
+  assert.ok(snap.includes("loadPublishedVersions(deal)"), "buyerCimRows loads the approved versions");
   assert.ok(body.includes("publishedQuestionsFor(deal, reader, { text: cimText, changedAt, held })"), "earlier AI answers checked against the current CIM");
   assert.ok(body.includes("loadCimText: async () => cimText"));
   const ctx = read("server/qa/cim-context.ts");

@@ -122,6 +122,59 @@ export function countMentions(text: string): CountMention[] {
   return out;
 }
 
+// ── Head counts by role, across facts ────────────────────────────────────
+
+/** Words that describe a role without narrowing it ("field technicians" are the technicians). */
+const NEUTRAL_ROLE_WORDS = new Set(["field", "active", "current", "total", "fully", "full", "staff", "our", "all", "onsite", "on-site", "in-house"]);
+const ROLE_SYNONYMS: Record<string, string> = { tech: "technician", techs: "technician", technicians: "technician", employees: "employee", staffers: "staff" };
+/** People a head count counts — a van or a member is not a head count. */
+const ROLE_HEAD = /^(?:technician|employee|staff|worker|driver|nurse|hygienist|dentist|plumber|electrician|mechanic|therapist|pharmacist|installer|apprentice|manager|estimator|dispatcher|machinist|welder|operator|labourer|laborer|carpenter|stylist|chef|cook|server|teacher|instructor|agent|representative|advisor|engineer|developer|consultant|associate|assistant|clerk|guard|cleaner|caregiver|aide|physiotherapist|chiropractor|optometrist|veterinarian|pilot)$/;
+
+export interface RoleCount {
+  value: number;
+  /** "22 licensed field technicians" as written. */
+  text: string;
+  /** What is counted, normalised ("licensed technician"). */
+  role: string;
+}
+
+/**
+ * Head counts by role in a text: "24 licensed techs in the field", "22
+ * licensed field technicians", a roster's "Licensed field technicians -
+ * total,22". The role is normalised so the same people counted in other
+ * words compare ("licensed techs in the field" = "licensed field technicians"
+ * = "licensed technicians"); a narrower role never does ("17 licensed HVAC
+ * technicians" is not the licensed technicians). Hedged figures, ranges and
+ * subsets ("only 2 techs lost") are left out, as in countMentions.
+ */
+export function roleCounts(text: string): RoleCount[] {
+  if (!text) return [];
+  const out: RoleCount[] = [];
+  // "techs in the field" is "field techs".
+  const t = text.replace(/\b((?:[A-Za-z-]+\s+){0,2}?)(techs?|technicians|employees|staff|workers|drivers)\s+in\s+the\s+field\b/gi, "field $1$2");
+  const role = (words: string[]): string | null => {
+    const norm = words
+      .map((w) => w.toLowerCase().replace(/[’']s$/, ""))
+      .map((w) => ROLE_SYNONYMS[w] ?? (w.length > 3 ? w.replace(/(?:ies)$/, "y").replace(/(?<![su])s$/, "") : w));
+    const head = norm[norm.length - 1];
+    if (!ROLE_HEAD.test(head)) return null;
+    return norm.filter((w) => !NEUTRAL_ROLE_WORDS.has(w)).join(" ");
+  };
+  for (const c of countMentions(t)) {
+    if (c.money || c.qualified || !Number.isInteger(c.value) || c.value < 2 || c.value > 5000) continue;
+    const r = role(c.phrase.split(/\s+/));
+    if (r) out.push({ value: c.value, text: `${c.value} ${c.phrase}`, role: r });
+  }
+  // A roster row: "Licensed field technicians - total,22" / "Licensed technicians: 22".
+  for (const m of Array.from(t.matchAll(/^[ \t]*([A-Za-z][A-Za-z '&/-]{2,60}?)\s*(?:[-–]\s*total)?\s*[,:=\t]\s*(\d{1,4})\s*$/gim))) {
+    const words = m[1].trim().split(/\s+/);
+    const r = role(words);
+    const value = Number(m[2]);
+    if (r && value >= 2) out.push({ value, text: `${value} ${m[1].trim().toLowerCase()}`, role: r });
+  }
+  return out;
+}
+
 function yearsNear(text: string, index: number): string[] {
   const window = text.slice(Math.max(0, index - 70), index + 90);
   return Array.from(new Set(window.match(/\b(?:19|20)\d{2}\b/g) ?? []));

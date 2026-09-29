@@ -34,6 +34,7 @@ import { updateDiscrepancyIfStill } from "../cim/discrepancy-cas";
 import { mentionsPrivateSource, type DiscrepancySideSources, type DiscrepancySideSource } from "@shared/discrepancy-sides";
 import {
   applyAddbackRules,
+  type AddbackRuleContext,
   applyWorkingCapitalRules,
   flagEarningsNotes,
   flagEarningsStatements,
@@ -55,6 +56,7 @@ import {
   type FigureIndex,
 } from "./private-figures";
 import { getComparables, type CompsResult } from "./comps";
+import { ownersOnFile, payRosterFrom, payTextsFrom, peopleOnFile } from "./owner-pay-attribution";
 import {
   coerceReclassifiedTable,
   coerceNormalization,
@@ -110,6 +112,8 @@ interface SourceBundle {
   figureIndex: FigureIndex;
   /** Sources read only in part ("Part-read: …") — recorded on the analysis. */
   readNotes: string[];
+  /** Who is paid what, and who stays (owner-pay-attribution.ts) — for the owner-pay rules. */
+  payContext: PayContext;
 }
 
 /**
@@ -507,9 +511,13 @@ async function assembleSources(
   // document with text counts, processed or not (fail closed).
   const figureTexts = dealFigureTexts(allDocs, rawInfo, deal.questionnaireData);
   const figureIndex = buildFigureIndex(figureTexts.shared, figureTexts.private);
+  // Whose pay each owner line is (a statement line of every shareholder's
+  // pay is not the selling owner's).
+  const payContext = payContextFor(rawInfo, figureTexts);
 
   return {
     figureIndex,
+    payContext,
     statements,
     sourceDocumentIds: contributingDocIds,
     otherDocsContext,
@@ -654,7 +662,7 @@ export async function runFinancialAnalysis(
     //     material are marked (an add-back stays out of EBITDA/SDE and the
     //     CIM until the broker approves it; a question's private figures are
     //     never sent to the seller).
-    const ruled = markPrivateMaterial(postProcessAnalysis(freshResult), sources.figureIndex);
+    const ruled = markPrivateMaterial(postProcessAnalysis(freshResult, sources.payContext), sources.figureIndex);
     const reconciled = reconcileNetIncome(ruled.reclassifiedPnl, ruled.normalization, sources.statements);
     const carried: AnalysisOutput = previous
       ? carryForwardBrokerEdits(normalizeFinancialAnalysisRow(previous), {
@@ -742,11 +750,50 @@ export async function runFinancialAnalysis(
 
 // ── Deterministic post-processing ──
 
+/** What the owner-pay rules read: who is paid what, who stays, and the material to read more names in. */
+export type PayContext = Pick<AddbackRuleContext, "roster" | "ownerName" | "owners"> & {
+  /** The texts and names the roster was read from — re-read with the people the add-backs name. */
+  payTexts?: { shared: string[]; private: string[] };
+  payNames?: string[];
+};
+
+/** Who is paid what and who stays, from the deal's material (owner-pay-attribution.ts). */
+export function payContextFor(
+  rawInfo: Record<string, unknown>,
+  figureTexts: { shared: string[]; private: string[] },
+): PayContext {
+  const ownerName = typeof rawInfo.ownerName === "string" ? rawInfo.ownerName : null;
+  const payTexts = payTextsFrom(rawInfo, figureTexts);
+  const payNames = peopleOnFile(rawInfo, ownerName ? [ownerName] : []);
+  return {
+    roster: payRosterFrom(payTexts, payNames),
+    ownerName,
+    owners: ownersOnFile(rawInfo),
+    payTexts,
+    payNames,
+  };
+}
+
+/**
+ * The roster, with the people the add-backs themselves name ("Related
+ * party salary — Maria Moretti") read from the same material — a relative
+ * the facts don't list as staff is still someone whose pay the material may
+ * describe.
+ */
+function withAddbackPeople(ctx: PayContext, n: AnalysisOutput["normalization"]): Omit<AddbackRuleContext, "pnl"> {
+  const { payTexts, payNames, ...rules } = ctx;
+  if (!payTexts || !payNames || !rules.roster || !n || !Array.isArray(n.addbacks)) return rules;
+  const labelled = peopleOnFile({}, n.addbacks.flatMap((a) => [String(a?.label ?? ""), String(a?.description ?? "")]));
+  const extra = labelled.filter((name) => !rules.roster!.people.has(name.toLowerCase()));
+  if (extra.length === 0) return rules;
+  return { ...rules, roster: payRosterFrom(payTexts, [...payNames, ...extra]) };
+}
+
 /** Rules applied to the model's fresh output, before the broker's edits are carried over. */
-export function postProcessAnalysis(result: AnalysisOutput): AnalysisOutput {
+export function postProcessAnalysis(result: AnalysisOutput, ctx: PayContext = {}): AnalysisOutput {
   return {
     ...result,
-    normalization: applyAddbackRules(result.normalization),
+    normalization: applyAddbackRules(result.normalization, { ...withAddbackPeople(ctx, result.normalization), pnl: result.reclassifiedPnl }),
     workingCapital: applyWorkingCapitalRules(result.workingCapital, result.reclassifiedBalanceSheet),
   };
 }

@@ -613,6 +613,8 @@ export class DbStorage implements IStorage {
 
   /** The deal and every row that carries its id (server/deals/delete-deal.ts). Files: deleteDealEverywhere. */
   async deleteDeal(id: string): Promise<void> {
+    // (Includes the kept copy of a live CIM — cim_published_snapshots — which
+    // has no foreign key and would outlive the deal with the CIM buyers were given.)
     await deleteDealRows(db, id);
   }
 

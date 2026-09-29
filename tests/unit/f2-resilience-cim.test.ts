@@ -20,6 +20,11 @@ import { generateCimLayout, _setAnthropicForTests } from "../../server/cim/layou
 import { _setGeneratorForTests, getLiveCimGenerationStatus, startCimGeneration } from "../../server/cim/generation-jobs";
 import { generationShortfall, isKeySection } from "../../server/cim/generation-shortfall";
 import { CIM_FALLBACK_REASONING } from "../../shared/cim-layouts";
+import { _setSnapshotStoreForTests, memorySnapshotStore } from "../../server/cim/published-snapshot";
+
+// A live CIM is kept for its buyers before it is replaced (published-snapshot.ts): in memory here.
+const keptCopies = memorySnapshotStore();
+_setSnapshotStoreForTests(keptCopies);
 
 let passed = 0;
 const ok = (name: string) => { passed++; console.log(`  ✓ ${name}`); };
@@ -161,8 +166,12 @@ const sec = (key: string, failed: boolean, tags: string[] = []) => ({
   assert.equal(job.status, "done");
   assert.equal(replaced.length, 1);
   assert.equal(replaced[0].length, 5);
-  assert.equal(deal.isLive, false, "held for review, in the same write");
-  assert.ok(job.buyerHold);
+  // A live deal stays live: its buyers keep the kept copy while the new CIM is reviewed.
+  assert.equal(deal.isLive, true, "still live");
+  assert.equal(deal.designApprovedByBroker, false, "approvals cleared, in the same write");
+  assert.ok(job.buyerHold?.servingPublished);
+  assert.ok(keptCopies.rows.has(dealId), "the published CIM was kept first");
+  assert.equal(replaced.length, 1);
   ok("a small non-key shortfall is saved in one transaction with the hold");
 
   console.error = origError;

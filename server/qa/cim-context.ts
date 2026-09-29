@@ -23,10 +23,9 @@ import type { BuyerQuestion } from "@shared/schema";
 import { normalizeFinancialTable } from "@shared/financial-table";
 import { formatSqft, rentLabel, splitLeaseType } from "@shared/cim-location";
 import { buildBuyerCim, cimHeldFromBuyers } from "@shared/cim-buyer-view";
-import { cimModeForAccessLevel } from "@shared/cim-layouts";
 import { isKnownFigure, knownFiguresFrom, parseFigures } from "../cim/figure-check";
 import { loadMediaAssets } from "../cim/media-store";
-import { loadPublishedVersions } from "../cim/published-versions";
+import { buyerCimRows, servedBlindCodename } from "../cim/published-snapshot";
 import { listedAskingPrice } from "../information/deal-mirror";
 import { stripDdMarkers } from "../cim/dd-enrichment";
 
@@ -479,32 +478,41 @@ export function answerStillHolds(q: Pick<BuyerQuestion, "aiAnswer" | "publishedA
   return figs.every((f) => isKnownFigure(f, known));
 }
 
+function latestChange(sections: ReadonlyArray<{ updatedAt?: Date | string | null }>): Date | null {
+  return sections.reduce<Date | null>((m, s) => {
+    const t = s.updatedAt ? new Date(s.updatedAt) : null;
+    return t && (!m || t > m) ? t : m;
+  }, null);
+}
+
 /**
  * The CIM a reader gets now, as the answer step reads it — the same
  * authority as the view room (buildBuyerCim), so an answer is only ever
  * checked against what this buyer may see.
  */
 export async function readerCim(deal: QaDeal, reader: QaReader): Promise<ReaderCim> {
-  const sections = await storage.getCimSectionsByDeal(deal.id);
-  const changedAt = sections.reduce<Date | null>((m, s) => {
-    const t = s.updatedAt ? new Date(s.updatedAt) : null;
-    return t && (!m || t > m) ? t : m;
-  }, null);
-  if (cimHeldFromBuyers(deal)) return { text: "", changedAt, held: true };
-  const mode = cimModeForAccessLevel(reader.accessLevel);
-  const [overrides, media, published] = await Promise.all([
-    mode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(deal.id, mode),
+  if (cimHeldFromBuyers(deal)) {
+    const sections = await storage.getCimSectionsByDeal(deal.id);
+    return { text: "", changedAt: latestChange(sections), held: true };
+  }
+  // While a live deal's regenerated CIM waits for review, buyers read the
+  // kept copy (published-snapshot.ts) — under the codename it was redacted
+  // with; a kept copy that isn't there serves nothing (held).
+  const [rows, media, codename] = await Promise.all([
+    buyerCimRows(deal, reader.accessLevel),
     loadMediaAssets(deal.id),
-    loadPublishedVersions(deal).catch(() => []),
+    servedBlindCodename(deal),
   ]);
+  const changedAt = latestChange(rows.sections);
+  if (rows.missing) return { text: "", changedAt, held: true };
   const cim = buildBuyerCim({
-    deal,
+    deal: codename ? { ...deal, blindCodename: codename } : deal,
     accessLevel: reader.accessLevel,
-    sections,
-    overrides,
+    sections: rows.sections,
+    overrides: rows.overrides,
     media,
     askingPrice: listedAskingPrice(deal as Parameters<typeof listedAskingPrice>[0]),
-    published,
+    published: rows.published,
   });
   const text = stripDdMarkers(buildAnswerContext(cim.sections.filter((s) => !s.locked).map((s) => ({
     title: s.sectionTitle,

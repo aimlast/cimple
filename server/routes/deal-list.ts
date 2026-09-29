@@ -443,6 +443,8 @@ const slimColumns = {
   employeeChart: sql<boolean>`(jsonb_typeof(${deals.employeeChart}) = 'array')`,
   cimContent: sql<boolean>`(${deals.cimContent} is not null)`,
   cimDesignData: sql<boolean>`(${deals.cimDesignData} is not null)`,
+  // Only the hold matters to progress (a regenerated live CIM waiting for review).
+  cimGeneration: sql<unknown>`jsonb_build_object('buyerHold', ${deals.cimGeneration}->'buyerHold')`,
   extractedInfo: deals.extractedInfo,
   sectionImportance: deals.sectionImportance,
   interviewOutline: deals.interviewOutline,

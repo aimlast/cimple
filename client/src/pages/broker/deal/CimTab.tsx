@@ -35,7 +35,7 @@ import { useAiGate } from "@/components/cim-builder/useAiGate";
 import { builderRequest, errorText } from "@/components/cim-builder/api";
 import { useDdRun } from "@/components/cim-builder/useDdRun";
 import { CimReviewPanel } from "@/components/cim-builder/CimReviewPanel";
-import { regenerateBuyerImpact } from "@shared/cim-generation-warnings";
+import { regenerateBuyerImpact, reviewingUpdate } from "@shared/cim-generation-warnings";
 import { cn } from "@/lib/utils";
 import { CimDesignCard } from "@/components/cim-design/CimDesignCard";
 import type { CimSection } from "@shared/schema";
@@ -131,7 +131,9 @@ export function CimTab() {
               ? `${sections.length} sections · ${approved} approved${hidden ? ` · ${hidden} hidden` : ""} · last generated ${when(data.deal.cimLayoutGeneratedAt)}`
               : "No CIM yet — generate one from the deal's information, then shape it in the builder."}
           </p>
-          {deal.isLive && <p className="text-xs text-success mt-1 flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Published — buyers with access can open it</p>}
+          {deal.isLive && (reviewingUpdate(deal)
+            ? <p className="text-xs text-amber-500 mt-1 flex items-center gap-1" data-testid="cim-tab-reviewing-update"><Eye className="h-3.5 w-3.5 shrink-0" /> Published — buyers are seeing the previous version until you publish the update</p>
+            : <p className="text-xs text-success mt-1 flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Published — buyers with access can open it</p>)}
         </div>
         <div className="flex flex-wrap gap-2 shrink-0">
           <Button className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5" onClick={() => openBuilder()} data-testid="button-open-cim-builder-tab">
