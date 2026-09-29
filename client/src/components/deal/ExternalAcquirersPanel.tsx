@@ -84,6 +84,10 @@ export function ExternalAcquirersPanel({ dealId, embedded = false }: { dealId: s
   });
 
   const results = data?.results ?? [];
+  const indexed = results.map((a, i) => ({ a, i }));
+  const fresh = indexed.filter((x) => !x.a.inYourList);
+  const listed = indexed.filter((x) => x.a.inYourList);
+  const renderAcquirer = ({ a, i }: { a: Acquirer; i: number }) => <AcquirerCard key={`${a.name}-${i}`} a={a} i={i} />;
   return (
     <div className="space-y-3" data-testid="external-acquirers">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -171,8 +175,24 @@ export function ExternalAcquirersPanel({ dealId, embedded = false }: { dealId: s
       )}
 
       <div className="space-y-2">
-        {results.map((a, i) => (
-          <div key={`${a.name}-${i}`} className="rounded-md border border-border bg-muted/10 p-3 space-y-1.5" data-testid={`external-acquirer-${i}`}>
+        {/* New names first (what the stage counts); ones already in the
+            broker's buyers follow under their own heading. */}
+        {fresh.map(renderAcquirer)}
+        {listed.length > 0 && (
+          <p className="pt-2 text-2xs font-medium uppercase tracking-wide text-muted-foreground" data-testid="external-in-your-list-heading">
+            Also found — already in your buyers ({listed.length})
+          </p>
+        )}
+        {listed.map(renderAcquirer)}
+      </div>
+    </div>
+  );
+}
+
+/** One researched acquirer. `i` = its position in the stored results (stable test ids). */
+function AcquirerCard({ a, i }: { a: Acquirer; i: number }) {
+  return (
+          <div className="rounded-md border border-border bg-muted/10 p-3 space-y-1.5" data-testid={`external-acquirer-${i}`}>
             <div className="flex flex-wrap items-center gap-2">
               <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="text-sm font-medium">{a.name}</span>
@@ -212,8 +232,5 @@ export function ExternalAcquirersPanel({ dealId, embedded = false }: { dealId: s
               ))}
             </div>
           </div>
-        ))}
-      </div>
-    </div>
   );
 }

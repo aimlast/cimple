@@ -7,7 +7,7 @@
  * Fit comes from GET /api/deals/:dealId/buyer-fit and is kept current by the
  * server on every load (server/matching/access-fit.ts).
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AccessLevelSelect } from "@/components/cim-builder/AccessLevelSelect";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import {
   Clock, ThumbsUp, ThumbsDown, Timer, MoreHorizontal, Link2, CalendarPlus, Ban, UserPlus, Send, Lock, Target,
+  ChevronDown, ChevronRight,
 } from "lucide-react";
 import type { AccessFit } from "@shared/buyer-fit";
 import { invalidateBuyerPipeline } from "@/lib/buyer-pipeline";
@@ -69,15 +70,72 @@ const INTEREST: Record<string, { label: string; className: string }> = {
   minimal: { label: "Barely opened", className: "text-muted-foreground/70" },
 };
 
+type GrantPrefill = { buyerEmail?: string | null; buyerName?: string | null; buyerCompany?: string | null };
+
 interface Props {
   dealId: string;
   published: boolean;
   buyers: any[];
-  onGrant: () => void;
+  /** Buyers whose link was revoked (and who haven't been given a new one). */
+  revokedBuyers?: any[];
+  onGrant: (prefill?: GrantPrefill) => void;
   onGoToSend: () => void;
 }
 
-export function HaveCimStage({ dealId, published, buyers, onGrant, onGoToSend }: Props) {
+/**
+ * Buyers whose access was revoked — listed apart, folded away, so a revoked
+ * buyer never simply vanishes from the pipeline. "Give a new link" opens
+ * Grant access for them (the old link stays dead).
+ */
+function RevokedList({ buyers, published, onGrant }: { buyers: any[]; published: boolean; onGrant: (prefill?: GrantPrefill) => void }) {
+  const [open, setOpen] = useState(false);
+  if (!buyers.length) return null;
+  const sorted = [...buyers].sort((a, b) => new Date(b.revokedAt).getTime() - new Date(a.revokedAt).getTime());
+  return (
+    <div className="rounded-lg border border-border" data-testid="revoked-buyers">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-xs text-muted-foreground hover:text-foreground"
+        aria-expanded={open}
+        data-testid="button-toggle-revoked"
+      >
+        {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        {buyers.length === 1 ? "1 buyer" : `${buyers.length} buyers`} whose access you revoked
+      </button>
+      {open && (
+        <ul className="border-t border-border divide-y divide-border">
+          {sorted.map((b) => (
+            <li key={b.id} className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5" data-testid={`revoked-buyer-${b.id}`}>
+              <div className="min-w-0">
+                <p className="text-sm text-foreground truncate">{b.buyerName || b.buyerEmail}</p>
+                {(b.buyerCompany || b.buyerName) && (
+                  <p className="text-xs text-muted-foreground truncate">
+                    {[b.buyerCompany, b.buyerName ? b.buyerEmail : null].filter(Boolean).join(" · ")}
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground/70">Revoked {shortDate(b.revokedAt)}</p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1.5"
+                disabled={!published}
+                title={published ? "Creates a new secure link — the old one stays switched off" : "Publish the CIM first"}
+                onClick={() => onGrant({ buyerEmail: b.buyerEmail, buyerName: b.buyerName, buyerCompany: b.buyerCompany })}
+                data-testid={`button-regrant-${b.id}`}
+              >
+                <UserPlus className="h-3.5 w-3.5" /> Give a new link
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], onGrant, onGoToSend }: Props) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [revokeTarget, setRevokeTarget] = useState<any | null>(null);
@@ -91,10 +149,19 @@ export function HaveCimStage({ dealId, published, buyers, onGrant, onGoToSend }:
       return r.ok ? r.json() : [];
     },
   });
-  const { data: fitData, isLoading: fitLoading } = useQuery<{ fits: AccessFit[] }>({
+  const { data: fitData, isLoading: fitLoading, refetch: refetchFit } = useQuery<{ fits: AccessFit[] }>({
     queryKey: ["/api/deals", dealId, "buyer-fit"],
     enabled: buyers.length > 0,
+    refetchOnWindowFocus: true,
   });
+  // A buyer who arrived from elsewhere (the seller approved them through their
+  // link, a colleague granted a link) gets a fit without a reload.
+  const idsKey = buyers.map((b: any) => b.id).sort().join(",");
+  const lastIds = useRef(idsKey);
+  useEffect(() => {
+    if (lastIds.current !== idsKey && buyers.length > 0) refetchFit();
+    lastIds.current = idsKey;
+  }, [idsKey, buyers.length, refetchFit]);
   const fitMap = new Map((fitData?.fits ?? []).map((f) => [f.accessId, f]));
   const scoreMap = new Map(buyerScores.map((s: any) => [s.buyerId, s]));
 
@@ -143,6 +210,7 @@ export function HaveCimStage({ dealId, published, buyers, onGrant, onGoToSend }:
 
   if (buyers.length === 0) {
     return (
+      <div className="space-y-3">
       <div className="rounded-lg border border-dashed border-border p-8 text-center" data-testid="empty-have-cim">
         {published ? <Target className="h-5 w-5 mx-auto text-muted-foreground/50 mb-2" /> : <Lock className="h-5 w-5 mx-auto text-muted-foreground/50 mb-2" />}
         <p className="text-sm text-foreground">No buyers have the CIM yet</p>
@@ -156,11 +224,13 @@ export function HaveCimStage({ dealId, published, buyers, onGrant, onGoToSend }:
             <Send className="h-3.5 w-3.5" /> See who to send it to
           </Button>
           {published && (
-            <Button size="sm" className="gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90" onClick={onGrant}>
+            <Button size="sm" className="gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => onGrant()}>
               <UserPlus className="h-3.5 w-3.5" /> Grant access
             </Button>
           )}
         </div>
+      </div>
+      <RevokedList buyers={revokedBuyers} published={published} onGrant={onGrant} />
       </div>
     );
   }
@@ -200,7 +270,7 @@ export function HaveCimStage({ dealId, published, buyers, onGrant, onGoToSend }:
     || b.engagement - a.engagement
     || String(a.name).localeCompare(String(b.name)));
 
-  const actions = (r: (typeof rows)[number]) => (
+  const actions = (r: (typeof rows)[number], testIdSuffix = "") => (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
@@ -208,7 +278,7 @@ export function HaveCimStage({ dealId, published, buyers, onGrant, onGoToSend }:
           size="icon"
           className="h-8 w-8 text-muted-foreground"
           aria-label={`Actions for ${r.name}`}
-          data-testid={`button-buyer-actions-${r.buyer.id}`}
+          data-testid={`button-buyer-actions-${r.buyer.id}${testIdSuffix}`}
         >
           <MoreHorizontal className="h-4 w-4" />
         </Button>
@@ -274,8 +344,9 @@ export function HaveCimStage({ dealId, published, buyers, onGrant, onGoToSend }:
         <span className="text-foreground/80 font-medium">Engagement</span> = how much of the CIM they&apos;ve read. Click a fit to see why.
       </p>
 
-      {/* Desktop / tablet: one table */}
-      <div className="hidden md:block rounded-lg border border-border overflow-x-auto">
+      {/* Wide screens: one table. Below lg it doesn't fit beside the sidebar
+          (the NDA column and row menu were cut off at ~820px) — cards instead. */}
+      <div className="hidden lg:block rounded-lg border border-border overflow-x-auto">
         <table className="w-full text-sm" data-testid="table-have-cim">
           <thead>
             <tr className="border-b border-border bg-muted/30 text-left">
@@ -283,7 +354,7 @@ export function HaveCimStage({ dealId, published, buyers, onGrant, onGoToSend }:
               <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground" title="How well this business matches the buyer's criteria">Fit</th>
               <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground">Decision</th>
               <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground" title="How much of the CIM they've read">Engagement</th>
-              <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground">Activity</th>
+              <th className="hidden xl:table-cell px-3 py-2.5 text-xs font-medium text-muted-foreground">Activity</th>
               <th className="px-3 py-2.5 text-xs font-medium text-muted-foreground">NDA &amp; link</th>
               <th className="px-2 py-2.5"><span className="sr-only">Actions</span></th>
             </tr>
@@ -291,7 +362,7 @@ export function HaveCimStage({ dealId, published, buyers, onGrant, onGoToSend }:
           <tbody>
             {rows.map((r) => (
               <tr key={r.buyer.id} className="border-b border-border last:border-0 align-top hover:bg-muted/20 transition-colors" data-testid={`row-have-cim-${r.buyer.id}`}>
-                <td className="px-4 py-3 min-w-[200px]">
+                <td className="px-4 py-3 min-w-[180px]">
                   <p className="font-medium text-foreground">{r.name}</p>
                   {r.buyer.buyerCompany && <p className="text-xs text-muted-foreground mt-0.5">{r.buyer.buyerCompany}</p>}
                   {r.buyer.buyerName && <p className="text-xs text-muted-foreground/60">{r.buyer.buyerEmail}</p>}
@@ -307,8 +378,11 @@ export function HaveCimStage({ dealId, published, buyers, onGrant, onGoToSend }:
                   {decisionPill(r)}
                   {r.nextStep && <p className="text-xs text-muted-foreground mt-1">Next: {r.nextStep}</p>}
                 </td>
-                <td className="px-3 py-3">{engagementCell(r)}</td>
                 <td className="px-3 py-3">
+                  {engagementCell(r)}
+                  <p className="xl:hidden mt-1 text-[11px] text-muted-foreground whitespace-nowrap">{r.activity}</p>
+                </td>
+                <td className="hidden xl:table-cell px-3 py-3">
                   <p className="text-xs text-muted-foreground whitespace-nowrap">{r.activity}</p>
                   {r.lastActive && <p className="text-xs text-muted-foreground/60">{r.lastActive}</p>}
                 </td>
@@ -320,10 +394,10 @@ export function HaveCimStage({ dealId, published, buyers, onGrant, onGoToSend }:
         </table>
       </div>
 
-      {/* Phones: one card per buyer */}
-      <div className="md:hidden space-y-2.5" data-testid="cards-have-cim">
+      {/* Phones and tablets: one card per buyer (two across on tablets) */}
+      <div className="lg:hidden grid gap-2.5 md:grid-cols-2" data-testid="cards-have-cim">
         {rows.map((r) => (
-          <div key={r.buyer.id} className="rounded-lg border border-border bg-card p-3.5 space-y-3" data-testid={`card-have-cim-${r.buyer.id}`}>
+          <div key={r.buyer.id} className="min-w-0 rounded-lg border border-border bg-card p-3.5 space-y-3" data-testid={`card-have-cim-${r.buyer.id}`}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="font-medium text-foreground truncate">{r.name}</p>
@@ -331,12 +405,12 @@ export function HaveCimStage({ dealId, published, buyers, onGrant, onGoToSend }:
                   {[r.buyer.buyerCompany, r.buyer.buyerName ? r.buyer.buyerEmail : null].filter(Boolean).join(" · ")}
                 </p>
               </div>
-              {actions(r)}
+              {actions(r, "-card")}
             </div>
             <div className="grid grid-cols-2 gap-x-3 gap-y-3">
               <div>
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Fit</p>
-                <FitChip fit={r.fit} loading={fitLoading} onOpen={() => setFitFor(r.buyer)} />
+                <FitChip fit={r.fit} loading={fitLoading} onOpen={() => setFitFor(r.buyer)} testIdSuffix="-card" />
               </div>
               <div>
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Decision</p>
@@ -357,12 +431,14 @@ export function HaveCimStage({ dealId, published, buyers, onGrant, onGoToSend }:
               {linkCell(r)}
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] text-muted-foreground">Sees</span>
-                <AccessLevelSelect dealId={dealId} buyer={r.buyer} />
+                <AccessLevelSelect dealId={dealId} buyer={r.buyer} testIdSuffix="-card" />
               </div>
             </div>
           </div>
         ))}
       </div>
+
+      <RevokedList buyers={revokedBuyers} published={published} onGrant={onGrant} />
 
       <BuyerFitDialog
         dealId={dealId}

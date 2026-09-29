@@ -747,7 +747,16 @@ function BuyerRow({
       onClick={onToggle}
       data-testid={`suggested-buyer-${buyer.buyerUserId}`}
     >
-      <Checkbox checked={selected} onCheckedChange={onToggle} className="mt-1" />
+      {/* The row's own click toggles; the checkbox click must not bubble up
+          to it too, or the selection flips twice and nothing changes. */}
+      <Checkbox
+        checked={selected}
+        onCheckedChange={onToggle}
+        onClick={(e) => e.stopPropagation()}
+        className="mt-1"
+        aria-label={`Select ${buyer.name}`}
+        data-testid={`checkbox-suggested-${buyer.buyerUserId}`}
+      />
 
       <div className="flex-1 min-w-0 space-y-1.5">
         {/* Top row: name + tier + already contacted badge */}

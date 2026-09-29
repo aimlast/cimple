@@ -55,6 +55,23 @@ export function defaultBuyerStage(isLive: boolean, activeBuyerCount: number): Bu
   return isLive && activeBuyerCount > 0 ? "have" : "send";
 }
 
+/**
+ * Buyers whose access was revoked and who haven't been given a new link
+ * since — newest revoked row per email. Listed apart under "Have the CIM",
+ * so a revoked buyer never simply disappears from the pipeline.
+ */
+export function revokedWithoutNewLink<T extends { id: string; buyerEmail?: string | null; revokedAt?: string | Date | null }>(rows: T[]): T[] {
+  const norm = (r: T) => String(r.buyerEmail || r.id).trim().toLowerCase();
+  const active = new Set(rows.filter((r) => !r.revokedAt).map(norm));
+  const latest = new Map<string, T>();
+  for (const r of rows) {
+    if (!r.revokedAt || active.has(norm(r))) continue;
+    const prev = latest.get(norm(r));
+    if (!prev || new Date(r.revokedAt).getTime() > new Date(prev.revokedAt!).getTime()) latest.set(norm(r), r);
+  }
+  return Array.from(latest.values());
+}
+
 /** Refresh every list a buyer can move between (and the fit of those who have the CIM). */
 export function invalidateBuyerPipeline(qc: QueryClient, dealId: string): void {
   qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "buyers"] });

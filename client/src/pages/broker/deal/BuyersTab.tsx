@@ -12,7 +12,7 @@
  * by itself. "Grant access" and the deal's NDA terms sit at the top of the
  * tab, whatever the stage.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useSearch } from "wouter";
 import { PanelError } from "@/components/deal/PanelError";
@@ -32,7 +32,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { UserPlus, Loader2, Copy, FileSignature, Lock, Globe, Send, Hourglass, FileCheck2 } from "lucide-react";
 import {
-  BUYER_STAGES, WAITING_APPROVAL_STATUSES, defaultBuyerStage, invalidateBuyerPipeline, isBuyerStage, type BuyerStage,
+  BUYER_STAGES, WAITING_APPROVAL_STATUSES, defaultBuyerStage, invalidateBuyerPipeline, isBuyerStage, revokedWithoutNewLink,
+  type BuyerStage,
 } from "@/lib/buyer-pipeline";
 
 /** Read the server's JSON error body, falling back to a readable default. */
@@ -63,6 +64,11 @@ export function BuyersTab() {
   const [ndaOpen, setNdaOpen] = useState(false);
 
   // ── The four lists (shared cache with the panels, so counts and lists agree) ──
+  // Other people move buyers too (the seller approving through their link, a
+  // buyer deciding in the view room), so the lists refresh when the broker
+  // comes back to the window, on every stage change, and — for the two cheap
+  // lists that change most — every 30s while the page is open.
+  const LIVE = { refetchOnWindowFocus: true } as const;
   const { data: buyerAccessList, error: buyersError, refetch: refetchBuyers } = useQuery<any[]>({
     queryKey: ["/api/deals", dealId, "buyers"],
     queryFn: async () => {
@@ -70,20 +76,31 @@ export function BuyersTab() {
       if (!r.ok) throw new Error("Failed to load buyers");
       return r.json();
     },
+    ...LIVE,
+    refetchInterval: 30_000,
   });
   const { data: suggested } = useQuery<{ suggested: Array<{ alreadyHasAccess: boolean; inApproval?: boolean; excluded?: boolean }> }>({
     queryKey: ["/api/deals", dealId, "suggested-buyers"],
+    ...LIVE,
   });
   const { data: approvals } = useQuery<Array<{ status: string }>>({
     queryKey: [`/api/deals/${dealId}/buyer-approvals`],
+    ...LIVE,
+    refetchInterval: 30_000,
   });
   const { data: outside } = useQuery<{ status: string; results?: Array<{ inYourList?: boolean }> }>({
     queryKey: ["/api/deals", dealId, "external-acquirers"],
+    ...LIVE,
   });
 
-  const activeBuyers = (buyerAccessList ?? []).filter((b: any) => !b.revokedAt);
-  const counts: Record<BuyerStage, number | null> = {
-    find: outside ? (outside.results ?? []).filter((a) => !a.inYourList).length : null,
+  const allAccess = buyerAccessList ?? [];
+  const activeBuyers = allAccess.filter((b: any) => !b.revokedAt);
+  // Revoked links stay findable (under "Have the CIM") unless the buyer has since been given a new one.
+  const revokedBuyers = revokedWithoutNewLink(allAccess);
+  // "Find" has no count until a search has run (0 would read as "found nobody").
+  const searched = !!outside && outside.status !== "none";
+  const counts: Record<BuyerStage, number | null | undefined> = {
+    find: !outside ? null : searched ? (outside.results ?? []).filter((a) => !a.inYourList).length : undefined,
     send: suggested ? suggested.suggested.filter((b) => !b.alreadyHasAccess && !b.inApproval && !b.excluded).length : null,
     approval: approvals ? approvals.filter((r) => WAITING_APPROVAL_STATUSES.has(r.status)).length : null,
     have: buyerAccessList ? activeBuyers.length : null,
@@ -101,6 +118,17 @@ export function BuyersTab() {
   useEffect(() => {
     if (!isBuyerStage(urlStage) && stage) setLocation(`${location}?stage=${stage}`, { replace: true });
   }, [urlStage, stage, location, setLocation]);
+
+  // Opening another stage shows it as it is now, not as it was when the page loaded.
+  const lastStage = useRef<BuyerStage | null>(null);
+  useEffect(() => {
+    if (!stage) return;
+    if (lastStage.current && lastStage.current !== stage) {
+      invalidateBuyerPipeline(queryClient, dealId);
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "external-acquirers"] });
+    }
+    lastStage.current = stage;
+  }, [stage, dealId, queryClient]);
 
   // ── Grant access directly (no email — the broker shares the link) ──
   const grant = useMutation({
@@ -134,8 +162,8 @@ export function BuyersTab() {
       : { title: "Copy the link manually", description: url });
   };
 
-  const openGrant = () => {
-    setGrantForm({ email: "", name: "", company: "" });
+  const openGrant = (prefill?: { buyerEmail?: string | null; buyerName?: string | null; buyerCompany?: string | null }) => {
+    setGrantForm({ email: prefill?.buyerEmail ?? "", name: prefill?.buyerName ?? "", company: prefill?.buyerCompany ?? "" });
     setGrantResult(null);
     setGrantOpen(true);
   };
@@ -178,7 +206,7 @@ export function BuyersTab() {
           <Button
             size="sm"
             className="h-9 gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90"
-            onClick={openGrant}
+            onClick={() => openGrant()}
             disabled={!published}
             title={published ? "Give a buyer a secure link to the CIM" : "Publish the CIM first — buyers can only open a published CIM"}
             data-testid="button-grant-access"
@@ -222,14 +250,16 @@ export function BuyersTab() {
                 <span className={`block text-[11px] ${active ? "text-teal" : "text-muted-foreground"}`}>Step {s.step}</span>
                 <span className={`block text-sm font-medium leading-tight ${active ? "text-foreground" : "text-foreground/85"}`}>{s.label}</span>
               </span>
-              <span
-                className={`ml-1 shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${
-                  active ? "bg-teal text-teal-foreground" : "bg-muted text-muted-foreground"
-                }`}
-                data-testid={`stage-count-${s.key}`}
-              >
-                {count == null ? "·" : count}
-              </span>
+              {count !== undefined && (
+                <span
+                  className={`ml-1 shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${
+                    active ? "bg-teal text-teal-foreground" : "bg-muted text-muted-foreground"
+                  }`}
+                  data-testid={`stage-count-${s.key}`}
+                >
+                  {count === null ? "·" : count}
+                </span>
+              )}
             </button>
           );
         })}
@@ -256,6 +286,7 @@ export function BuyersTab() {
             dealId={dealId}
             published={published}
             buyers={activeBuyers}
+            revokedBuyers={revokedBuyers}
             onGrant={openGrant}
             onGoToSend={() => goTo("send")}
           />

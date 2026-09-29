@@ -11,9 +11,33 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Check, Minus, X, Sparkles, Loader2, PencilLine, UserPlus, Ban } from "lucide-react";
+import { Check, Minus, X, Sparkles, Loader2, PencilLine, UserPlus, Ban, Copy } from "lucide-react";
 import { fitReasons, type AccessFit, type FitReason, type FitTone } from "@shared/buyer-fit";
 import { invalidateBuyerPipeline } from "@/lib/buyer-pipeline";
+import { BUYER_CRITERIA_FIELDS, formatCriterion } from "@/components/buyers/profile/types";
+
+const EXTRA_LABELS: Record<string, string> = {
+  targetIndustries: "Target industries",
+  targetLocations: "Target locations",
+  lookingFor: "Looking for",
+};
+const criterionLabel = (key: string) => BUYER_CRITERIA_FIELDS[key]?.label ?? EXTRA_LABELS[key] ?? key;
+const criterionValue = (key: string, v: unknown) =>
+  Array.isArray(v) && !BUYER_CRITERIA_FIELDS[key] ? v.join(", ") : formatCriterion(key, v);
+
+/** Criteria saved on this deal's access row (the old per-deal editor), read-only. */
+function DealCriteriaList({ criteria, keys }: { criteria: Record<string, unknown>; keys: string[] }) {
+  return (
+    <ul className="grid gap-x-4 gap-y-1 sm:grid-cols-2" data-testid="fit-deal-criteria">
+      {keys.map((k) => (
+        <li key={k} className="min-w-0 text-sm">
+          <span className="text-muted-foreground">{criterionLabel(k)}: </span>
+          <span className="text-foreground/90 break-words">{criterionValue(k, criteria[k])}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 const TONE_CLASS: Record<FitTone, string> = {
   strong: "bg-teal/15 text-teal border-teal/40",
@@ -29,7 +53,7 @@ export function fitChipText(fit: AccessFit): string {
 }
 
 /** The Fit cell: label + score, and a plain line under it. Click opens the why. */
-export function FitChip({ fit, loading, onOpen }: { fit: AccessFit | undefined; loading?: boolean; onOpen: () => void }) {
+export function FitChip({ fit, loading, onOpen, testIdSuffix = "" }: { fit: AccessFit | undefined; loading?: boolean; onOpen: () => void; testIdSuffix?: string }) {
   if (!fit) {
     return loading
       ? <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Checking…</span>
@@ -46,7 +70,7 @@ export function FitChip({ fit, loading, onOpen }: { fit: AccessFit | undefined; 
       onClick={onOpen}
       className="group text-left"
       aria-label={`Fit: ${fitChipText(fit)} — see why`}
-      data-testid={`button-fit-${fit.accessId}`}
+      data-testid={`button-fit-${fit.accessId}${testIdSuffix}`}
     >
       <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium ${TONE_CLASS[fit.tone]}`}>
         {fit.ai && <Sparkles className="h-3 w-3" aria-label="Includes the AI's check" />}
@@ -97,6 +121,29 @@ export function BuyerFitDialog({
 
   // A buyer who isn't on the broker's list yet has no profile to hold
   // criteria: add them (no email is sent), then open their profile.
+  // Criteria saved on this deal's access row -> the broker's private edits of
+  // the buyer's profile (gap-fill only). Returns the profile to open.
+  const copyCriteriaRequest = async (): Promise<{ buyerId: string; copied: string[] }> => {
+    const r = await fetch(`/api/deals/${dealId}/buyer-fit/${buyer!.id}/copy-criteria`, { method: "POST", credentials: "include" });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || "Couldn't copy these criteria");
+    return body;
+  };
+  const copyCriteria = useMutation({
+    mutationFn: async (opts: { thenOpen: boolean }) => ({ ...(await copyCriteriaRequest()), thenOpen: opts.thenOpen }),
+    onSuccess: (body) => {
+      invalidateBuyerPipeline(qc, dealId);
+      if (body.thenOpen) setLocation(`/broker/buyers/${body.buyerId}`);
+      else toast({
+        title: body.copied.length ? "Copied to their profile" : "Already on their profile",
+        description: body.copied.length
+          ? `${body.copied.length} criteri${body.copied.length === 1 ? "on" : "a"} added as your private edits. The fit updates on its own.`
+          : undefined,
+      });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't copy these criteria", description: e.message, variant: "destructive" }),
+  });
+
   const addToList = useMutation({
     mutationFn: async () => {
       const r = await fetch("/api/broker/buyers", {
@@ -112,6 +159,9 @@ export function BuyerFitDialog({
       });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || "Couldn't add this buyer to your list");
+      // Criteria the broker once saved on this deal come along, so the
+      // profile doesn't open empty ("No acquisition criteria on file yet").
+      if (fit?.dealCriteriaToCopy.length) await copyCriteriaRequest();
       return body as { buyerUser: { id: string } };
     },
     onSuccess: (body) => {
@@ -140,6 +190,11 @@ export function BuyerFitDialog({
   const reasons = fitReasons(fit?.breakdown);
   const profileHref = fit?.profileBuyerId ? `/broker/buyers/${fit.profileBuyerId}` : null;
   const canAI = !!fit && fit.tone !== "none" && fit.tone !== "excluded";
+  const toCopy = fit?.dealCriteriaToCopy ?? [];
+  const dealCriteria = fit?.dealCriteria ?? null;
+  // The fit is scored on per-deal criteria that the profile page can't show:
+  // the main action moves them there first.
+  const moveThenEdit = !!profileHref && fit?.criteriaFrom === "deal" && toCopy.length > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -201,6 +256,37 @@ export function BuyerFitDialog({
                 </div>
               )}
 
+              {dealCriteria && fit.criteriaFrom === "deal" && (
+                <div className="rounded-md border border-border p-3 space-y-2" data-testid="fit-deal-criteria-box">
+                  <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">Criteria you saved for {name} on this deal</p>
+                  <DealCriteriaList criteria={dealCriteria} keys={Object.keys(dealCriteria)} />
+                  <p className="text-xs text-muted-foreground">
+                    {toCopy.length
+                      ? "These were saved on this deal before buyer profiles existed. Copy them to their profile to see and edit them there — they then count on every deal."
+                      : "Everything here is already on their profile too."}
+                  </p>
+                </div>
+              )}
+              {dealCriteria && fit.criteriaFrom === "profile" && toCopy.length > 0 && (
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/[0.06] p-3 space-y-2" data-testid="fit-deal-criteria-unused">
+                  <p className="text-sm text-foreground/90">
+                    {toCopy.length === 1 ? "1 criterion" : `${toCopy.length} criteria`} you saved for {name} on this deal {toCopy.length === 1 ? "isn't" : "aren't"} on their profile, so {toCopy.length === 1 ? "it doesn't" : "they don't"} count in this fit:
+                  </p>
+                  <DealCriteriaList criteria={dealCriteria} keys={toCopy} />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => copyCriteria.mutate({ thenOpen: false })}
+                    disabled={copyCriteria.isPending}
+                    data-testid="button-fit-copy-criteria"
+                  >
+                    {copyCriteria.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Copy className="h-3.5 w-3.5" />}
+                    Copy to their profile
+                  </Button>
+                </div>
+              )}
+
               <p className="text-2xs text-muted-foreground">
                 {fit.criteriaFrom === "deal"
                   ? "Based on criteria saved for this buyer on this deal. "
@@ -229,7 +315,18 @@ export function BuyerFitDialog({
               <span className="text-2xs font-normal text-muted-foreground">(uses AI)</span>
             </Button>
           ) : <span />}
-          {profileHref ? (
+          {moveThenEdit ? (
+            <Button
+              size="sm"
+              className="gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90"
+              onClick={() => copyCriteria.mutate({ thenOpen: true })}
+              disabled={copyCriteria.isPending}
+              data-testid="button-fit-move-criteria"
+            >
+              {copyCriteria.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <PencilLine className="h-3.5 w-3.5" />}
+              Copy to their profile and edit
+            </Button>
+          ) : profileHref ? (
             <Button
               size="sm"
               className="gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90"
@@ -247,7 +344,7 @@ export function BuyerFitDialog({
               data-testid="button-fit-add-to-list"
             >
               {addToList.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}
-              Add to my buyers and set criteria
+              {toCopy.length ? "Add to my buyers with these criteria" : "Add to my buyers and set criteria"}
             </Button>
           ) : null}
         </DialogFooter>

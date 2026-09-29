@@ -108,4 +108,8 @@ export interface AccessFit {
   profileBuyerId: string | null;
   computedAt: string | null;
   breakdown: FitBreakdownLike | null;
+  /** Criteria the broker saved for this buyer on this deal before buyer profiles existed (read-only now). */
+  dealCriteria: Record<string, unknown> | null;
+  /** Keys of those not on the buyer's profile yet — "Copy to their profile" adds them (gap-fill, private to the broker). */
+  dealCriteriaToCopy: string[];
 }

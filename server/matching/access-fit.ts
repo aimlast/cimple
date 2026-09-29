@@ -16,7 +16,10 @@
  * are only used when the buyer has no profile criteria.
  */
 import { createHash } from "node:crypto";
-import type { BuyerAccess, BuyerUser, BrokerBuyerContact, Deal } from "@shared/schema";
+import {
+  buyerCriteriaSchema, buyerValueIsSet,
+  type BrokerBuyerOverlay, type BrokerOverlayMeta, type BuyerAccess, type BuyerUser, type BrokerBuyerContact, type Deal,
+} from "@shared/schema";
 import { fitLabel, hasAnyCriteria, type AccessFit, type FitBreakdownLike } from "@shared/buyer-fit";
 import { matchBuyerToDeal, finiteScore, type MatchBreakdown } from "./engine";
 
@@ -30,6 +33,53 @@ export interface CriteriaForAccess {
   criteria: Record<string, any>;
   from: "profile" | "deal" | null;
   profileBuyerId: string | null;
+  /** Criteria saved on this deal's access row (the old per-deal editor), shown read-only in the Fit dialog. */
+  dealCriteria?: Record<string, any> | null;
+  /** Keys of those that aren't on the buyer's profile yet — what "copy to their profile" would add. */
+  dealCriteriaToCopy?: string[];
+}
+
+/** What copying a buyer's per-deal criteria into the broker's private profile edits would add. */
+export interface DealCriteriaGaps {
+  /** Into the overlay's buyerCriteria. */
+  criteria: Record<string, any>;
+  /** Into the overlay's top-level target lists (only when the profile has none). */
+  targetIndustries?: string[];
+  targetLocations?: string[];
+  /** Every key that would be added, in the per-deal criteria's order. */
+  keys: string[];
+}
+
+/**
+ * Criteria saved on a deal's access row that the buyer's profile doesn't
+ * have yet. Gap-fill only: a value already on the profile (the broker's
+ * edit, the buyer's own answer or the CRM's) always stays — including an
+ * explicit "no". Each value is validated on its own, so one old value that
+ * no longer fits the form never blocks the rest.
+ */
+export function dealCriteriaGaps(
+  legacy: Record<string, any> | null | undefined,
+  profile: Pick<BuyerUser, "buyerCriteria" | "targetIndustries" | "targetLocations"> | null,
+): DealCriteriaGaps {
+  const out: DealCriteriaGaps = { criteria: {}, keys: [] };
+  const have = (profile?.buyerCriteria as Record<string, any> | null) || {};
+  for (const [k, raw] of Object.entries(legacy || {})) {
+    if (k.startsWith("_") || !buyerValueIsSet(raw)) continue;
+    const parsed = buyerCriteriaSchema.safeParse({ [k]: raw });
+    if (!parsed.success) continue;
+    const v = (parsed.data as Record<string, any>)[k];
+    if (!buyerValueIsSet(v)) continue;                         // unknown key (stripped) or emptied
+    if (k === "targetIndustries" || k === "targetLocations") {
+      const current = (profile?.[k] as string[] | null) || [];
+      if (current.length) continue;
+      out[k] = v;
+    } else {
+      if (buyerValueIsSet(have[k])) continue;
+      out.criteria[k] = v;
+    }
+    out.keys.push(k);
+  }
+  return out;
 }
 
 /** JSON with sorted keys, so the same inputs always hash the same. */
@@ -74,6 +124,12 @@ export function criteriaForAccess(
   access: Pick<BuyerAccess, "buyerCriteria">,
   entry: { buyerId: string; profile: Pick<BuyerUser, "buyerCriteria" | "targetIndustries" | "targetLocations"> } | null,
 ): CriteriaForAccess {
+  const legacy = (access.buyerCriteria as Record<string, any> | null) || {};
+  const legacySet = Object.fromEntries(Object.entries(legacy).filter(([k, v]) => !k.startsWith("_") && buyerValueIsSet(v)));
+  const extra = {
+    dealCriteria: Object.keys(legacySet).length ? legacySet : null,
+    dealCriteriaToCopy: dealCriteriaGaps(legacySet, entry?.profile ?? null).keys,
+  };
   if (entry) {
     const p = entry.profile;
     const criteria: Record<string, any> = {
@@ -81,11 +137,10 @@ export function criteriaForAccess(
       targetIndustries: (p.targetIndustries as string[] | null) || [],
       targetLocations: (p.targetLocations as string[] | null) || [],
     };
-    if (hasAnyCriteria(criteria)) return { criteria, from: "profile", profileBuyerId: entry.buyerId };
+    if (hasAnyCriteria(criteria)) return { criteria, from: "profile", profileBuyerId: entry.buyerId, ...extra };
   }
-  const legacy = (access.buyerCriteria as Record<string, any> | null) || {};
-  if (hasAnyCriteria(legacy)) return { criteria: legacy, from: "deal", profileBuyerId: entry?.buyerId ?? null };
-  return { criteria: {}, from: null, profileBuyerId: entry?.buyerId ?? null };
+  if (hasAnyCriteria(legacy)) return { criteria: legacy, from: "deal", profileBuyerId: entry?.buyerId ?? null, ...extra };
+  return { criteria: {}, from: null, profileBuyerId: entry?.buyerId ?? null, ...extra };
 }
 
 /** The stored fit, as the Buyers tab shows it. */
@@ -106,6 +161,8 @@ export function toAccessFit(accessId: string, bd: StoredFitBreakdown | null, c: 
     profileBuyerId: c.profileBuyerId,
     computedAt: has && bd?._fit?.at ? bd._fit.at : null,
     breakdown: has && bd ? (({ _fit, ...rest }) => rest)(bd) as FitBreakdownLike : null,
+    dealCriteria: c.dealCriteria ?? null,
+    dealCriteriaToCopy: c.dealCriteriaToCopy ?? [],
   };
 }
 
@@ -206,4 +263,71 @@ export async function loadDealBuyerFits(deal: Deal, opts: { withAIFor?: string }
     return r.fit;
   }));
   return { fits, ...(aiUnavailable ? { aiUnavailable } : {}) };
+}
+
+/**
+ * The broker's private profile edits with a buyer's per-deal criteria
+ * gap-filled in (never overwriting). Meta keys follow the profile page's
+ * PATCH ("criteria.<key>" for criteria, the field name for target lists),
+ * so the page shows them as "Your edit".
+ */
+export function overlayWithDealCriteria(
+  overlay: BrokerBuyerOverlay | null | undefined,
+  meta: BrokerOverlayMeta | null | undefined,
+  gaps: DealCriteriaGaps,
+  nowIso: string,
+): { overlay: BrokerBuyerOverlay; meta: BrokerOverlayMeta } {
+  const nextOverlay: BrokerBuyerOverlay = { ...(overlay ?? {}) };
+  const nextMeta: BrokerOverlayMeta = { ...(meta ?? {}) };
+  const crit: Record<string, any> = { ...(nextOverlay.buyerCriteria ?? {}) };
+  for (const [k, v] of Object.entries(gaps.criteria)) {
+    if (buyerValueIsSet(crit[k])) continue;
+    crit[k] = v;
+    nextMeta[`criteria.${k}`] = { at: nowIso };
+  }
+  if (Object.keys(crit).length) nextOverlay.buyerCriteria = crit;
+  for (const k of ["targetIndustries", "targetLocations"] as const) {
+    const v = gaps[k];
+    if (!v?.length || (nextOverlay[k]?.length ?? 0) > 0) continue;
+    nextOverlay[k] = v;
+    nextMeta[k] = { at: nowIso };
+  }
+  return { overlay: nextOverlay, meta: nextMeta };
+}
+
+/**
+ * "Copy to their profile" in the Fit dialog: moves the criteria a broker
+ * once saved on this deal's access row into their private edits of the
+ * buyer's profile (gap-fill only), so they can be seen and edited on the
+ * profile page and count on every deal. The buyer must already be on the
+ * broker's list. The buyer's own profile is never written.
+ */
+export async function copyDealCriteriaToProfile(
+  deal: Deal,
+  accessId: string,
+): Promise<{ ok: true; buyerId: string; copied: string[] } | { ok: false; status: number; error: string; code?: string }> {
+  const { storage } = await import("../storage");
+  const { mergedForBroker } = await import("../buyers/profile-view");
+  const { loadBrokerScope } = await import("../buyers/provenance-scope");
+  const { ensureContact, updateContact } = await import("../buyers/profile-data");
+  const access = await storage.getBuyerAccess(accessId);
+  if (!access || access.dealId !== deal.id) return { ok: false, status: 404, error: "Buyer not found" };
+  const [list, scope] = await Promise.all([
+    storage.getBrokerBuyerContactList(deal.brokerId!),
+    loadBrokerScope(deal.brokerId!),
+  ]);
+  const e = listEntryFinder(list as Array<{ buyerUser: BuyerUser; contact: BrokerBuyerContact | null }>)(access);
+  if (!e) return { ok: false, status: 409, error: "Add this buyer to your list first.", code: "not_listed" };
+  const { profile } = mergedForBroker(e.buyerUser, e.contact, scope);
+  const gaps = dealCriteriaGaps(access.buyerCriteria as Record<string, any> | null, profile);
+  if (!gaps.keys.length) return { ok: true, buyerId: e.buyerUser.id, copied: [] };
+  const contact = await ensureContact(deal.brokerId!, e.buyerUser.id);
+  const next = overlayWithDealCriteria(
+    contact.brokerProfile as BrokerBuyerOverlay | null,
+    contact.brokerProfileMeta as BrokerOverlayMeta | null,
+    gaps,
+    new Date().toISOString(),
+  );
+  await updateContact(contact.id, { brokerProfile: next.overlay as any, brokerProfileMeta: next.meta as any });
+  return { ok: true, buyerId: e.buyerUser.id, copied: gaps.keys };
 }

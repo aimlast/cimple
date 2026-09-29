@@ -180,7 +180,9 @@ export default function BrokerDashboard() {
       tint: "brass",
       label: "Your move: approve a buyer",
       detail: `${a.buyerName}${a.buyerCompany ? ` (${a.buyerCompany})` : ""} · ${a.dealName}`,
-      href: `/deal/${a.dealId}/buyers`,
+      // Straight to the approval stage — the tab otherwise opens on
+      // "Have the CIM" for a live deal with buyers.
+      href: `/deal/${a.dealId}/buyers?stage=approval`,
       time: a.submittedAt,
     })),
     ...actions.unansweredQuestions.map((q, i): ActionRow => ({

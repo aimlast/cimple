@@ -35,6 +35,15 @@ import {
   UserPlus, Loader2, Search, Building2, Mail, Phone, Shield,
   CheckCircle2, XCircle, Clock, Users, AlertCircle, Sparkles, Copy,
 } from "lucide-react";
+import { BUYER_CATEGORIES } from "@shared/schema";
+
+/** The category's own label ("Private Equity — Portfolio in Space"), never the raw value title-cased. */
+function categoryLabel(value: string | null | undefined): string {
+  const known = BUYER_CATEGORIES.find((c) => c.value === value);
+  if (known) return known.label;
+  const words = String(value ?? "").replace(/_/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : "Other";
+}
 
 interface BuyerCategory { value: string; label: string; description: string; riskLevel: string }
 interface BuyerSearchResult { id: string; name: string; email?: string; phone?: string; company?: string; source: string }
@@ -279,8 +288,8 @@ function Section({
                       {r.buyerCompany && (
                         <span className="text-xs text-muted-foreground truncate">· {r.buyerCompany}</span>
                       )}
-                      <Badge variant="outline" className="text-xs capitalize">
-                        {r.category.replace(/_/g, " ")}
+                      <Badge variant="outline" className="text-xs">
+                        {categoryLabel(r.category)}
                       </Badge>
                       <Badge className={`text-xs ${RISK_COLORS[r.riskLevel] || ""}`}>{r.riskLevel}</Badge>
                       {r.isCompetitor && (
@@ -812,7 +821,7 @@ function ReviewDialog({
             {request.buyerEmail}
           </div>
           <div className="flex gap-2">
-            <Badge variant="outline" className="capitalize">{request.category.replace(/_/g, " ")}</Badge>
+            <Badge variant="outline">{categoryLabel(request.category)}</Badge>
             <Badge className={RISK_COLORS[request.riskLevel] || ""}>{request.riskLevel} risk</Badge>
           </div>
           {request.background && (

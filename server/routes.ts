@@ -974,6 +974,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // "Copy to their profile" (Fit dialog): criteria saved on this deal's access
+  // row by the old per-deal editor go into the broker's private edits of the
+  // buyer's profile — gap-fill only, never the buyer's own profile. No AI.
+  app.post("/api/deals/:dealId/buyer-fit/:accessId/copy-criteria", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const { copyDealCriteriaToProfile } = await import("./matching/access-fit.js");
+      const r = await copyDealCriteriaToProfile(deal, req.params.accessId);
+      if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.code ? { code: r.code } : {}) });
+      res.json({ buyerId: r.buyerId, copied: r.copied });
+    } catch (err) {
+      console.error("[buyer-fit] copy criteria failed:", err);
+      res.status(500).json({ error: "Couldn't copy these criteria" });
+    }
+  });
+
   // AI deep check of every buyer who passes the first-pass match (background).
   app.post("/api/deals/:dealId/buyer-deep-check", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
