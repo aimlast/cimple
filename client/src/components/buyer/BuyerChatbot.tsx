@@ -42,6 +42,24 @@ interface BuyerChatbotProps {
   accessToken: string;
   businessName: string;
   questionFeed: BuyerQuestionFeedItem[];
+  /**
+   * Reading analytics (client/src/lib/cim-reading.ts): the CIM page the
+   * buyer is reading when they ask (a section id they were served — never
+   * text) and the version, so the broker sees which page prompted the
+   * question. Optional; null when nothing is being tracked.
+   */
+  readingContext?: () => { pageId: string | null; renditionId: string | null } | null;
+  /** Told when the buyer opens the chat (reading analytics: chat_open). */
+  onOpen?: () => void;
+}
+
+/** The page and version to file a question under (only well-formed ids; nothing when untracked). */
+function readingFields(ctx: BuyerChatbotProps["readingContext"]): { sectionId?: string; renditionId?: string } {
+  const c = ctx?.() ?? null;
+  const out: { sectionId?: string; renditionId?: string } = {};
+  if (c?.pageId && /^[A-Za-z0-9_-]{1,64}$/.test(c.pageId)) out.sectionId = c.pageId;
+  if (c?.renditionId && /^[0-9a-f]{32}$/.test(c.renditionId)) out.renditionId = c.renditionId;
+  return out;
 }
 
 /** How often to check for a broker answer while a question is outstanding */
@@ -53,6 +71,8 @@ export function BuyerChatbot({
   accessToken,
   businessName,
   questionFeed,
+  readingContext,
+  onOpen,
 }: BuyerChatbotProps) {
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
@@ -86,7 +106,7 @@ export function BuyerChatbot({
       const res = await fetch(`/api/deals/${dealId}/questions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, buyerAccessId, accessToken }),
+        body: JSON.stringify({ question, buyerAccessId, accessToken, ...readingFields(readingContext) }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({} as { error?: string }));
@@ -193,7 +213,7 @@ export function BuyerChatbot({
       {/* ── Floating trigger button ──────────────────────────────── */}
       {!isOpen && (
         <button
-          onClick={() => setIsOpen(true)}
+          onClick={() => { setIsOpen(true); onOpen?.(); }}
           aria-label="Ask a question about this business"
           className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 h-14 w-14 rounded-full bg-teal text-teal-foreground shadow-lg hover:bg-teal/90 transition-all hover:scale-105 flex items-center justify-center group"
           data-testid="button-open-chat"

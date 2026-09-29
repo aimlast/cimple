@@ -246,9 +246,10 @@ async function main() {
   assert.equal(res.status, 200, res.text);
   assert.equal(res.json.sections.length, 1);
   assert.ok(served.firstViewedAt, "F6: first served view starts the clock");
-  assert.equal(served.viewCount, 1);
+  // Views are counted per visit by the reading tracker (server/analytics/reading-ingest.ts), not by the GET.
+  assert.equal(served.viewCount, 0);
   res = await call("GET", `/api/view/${served.accessToken}`);
-  assert.equal(served.viewCount, 1, "same session is one view");
+  assert.equal(served.viewCount, 0, "the GET never counts views");
 
   // ════ F10 — the brokerage's NDA, typed signature, stored record ═══════
   reset();
@@ -568,7 +569,7 @@ async function main() {
   res = await call("GET", `/api/view/${gateStamped.accessToken}`);
   assert.equal(res.status, 200, res.text);
   assert.ok(gateStamped.firstViewedAt && now - new Date(gateStamped.firstViewedAt).getTime() < 60_000, "R2: the first real view starts the clock");
-  assert.equal(gateStamped.viewCount, 1);
+  assert.equal(gateStamped.viewCount, 0, "views are counted by the reading tracker, not the GET");
 
   // ════ R2-F4 — confirming the email brings the shared deal to the dashboard
   reset();

@@ -12,6 +12,8 @@
  *     tracker must not retry, and nothing is revealed);
  *   - the body is text/plain JSON (a beacon) or application/json, ≤ 64 KB,
  *     validated with readingPayloadSchema → 400 when malformed.
+ * Then server/analytics/reading-ingest.ts stores it: 400 for a rendition or
+ * page this buyer was never served, 409 for a visit id of another link.
  * Answer: 204 (accepted). The buyer learns nothing from the response.
  * Rate limit: server/index.ts (per link, not the AI limiter).
  */
@@ -21,6 +23,13 @@ import { dealPublishedForBuyers } from "@shared/buyer-publish-gate";
 import { ndaBlocksBuyer } from "@shared/cim-buyer-view";
 import { storage } from "../storage";
 import { viewLinkProblem } from "../buyers/view-access.js";
+import { dbReadingStore, ingestReading, networkKey, uaFamilyOf, type ReadingStore } from "../analytics/reading-ingest";
+
+let store: ReadingStore = dbReadingStore;
+/** Tests: swap in an in-memory store (server/analytics/reading-ingest.ts memoryReadingStore). */
+export function setReadingStore(s: ReadingStore): void {
+  store = s;
+}
 
 const textBody = express.text({ type: "text/plain", limit: READING_RULES.maxBodyBytes });
 
@@ -40,9 +49,18 @@ export function registerReadingRoutes(app: Express): void {
       const parsed = readingPayloadSchema.safeParse(raw);
       if (!parsed.success) return res.status(400).json({ error: "Malformed" });
       const payload: ReadingPayload = parsed.data as ReadingPayload;
-      // CAPTURE stream: ingestReading({ deal, access, payload, req }) — visit
-      // upsert (GREATEST), rollups, events, clamp, self-view, view_count.
-      void payload;
+      // The owning broker previewing the room: stored, excluded everywhere, never a view.
+      const sessionBroker = (req as { session?: { brokerId?: string } }).session?.brokerId;
+      const result = await ingestReading(store, {
+        deal: { id: deal.id },
+        access: { id: access.id, dealId: access.dealId, accessLevel: access.accessLevel },
+        payload,
+        now: new Date(),
+        selfView: !!sessionBroker && sessionBroker === deal.brokerId,
+        ipHash: networkKey(deal.id, req.ip || req.socket?.remoteAddress || null),
+        uaFamily: uaFamilyOf(typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : null),
+      });
+      if (result.status !== 204) return res.status(result.status).json({ error: result.status === 409 ? "Conflict" : "Malformed" });
       res.status(204).end();
     } catch (err) {
       console.error("[reading] ingest", err);

@@ -246,7 +246,18 @@ Object.assign(storage as any, {
 });
 const { registerEngagementRoutes } = await import("../../server/routes/engagement");
 const { registerEngagementInsightRoutes } = await import("../../server/routes/engagement-insights");
-const { registerReadingRoutes } = await import("../../server/routes/reading");
+const { registerReadingRoutes, setReadingStore } = await import("../../server/routes/reading");
+// Capture: reading is stored/read in memory here (no database in this test).
+const { memoryReadingStore } = await import("../../server/analytics/reading-ingest");
+const { memoryReadingSource } = await import("../../server/engagement/queries");
+const { setReadingSource } = await import("../../server/engagement/facts");
+const memStore = memoryReadingStore();
+memStore.renditions.set("0123456789abcdef0123456789abcdef", {
+  id: "0123456789abcdef0123456789abcdef", dealId: "dealA", mode: "blind", variant: "teaser", createdAt: new Date(Date.now() - 3600_000),
+  pageIndex: ["0f0e0d0c-aaaa-4bbb-8ccc-111122223333", "cim-contact"].map((pageId, order) => ({ pageId, lineageId: pageId, order, parts: 1, servedTitle: pageId, layoutType: "prose_highlight", locked: false, expectedMs: 1000, blockFingerprint: "", blocks: [] })),
+});
+setReadingStore(memStore);
+setReadingSource(memoryReadingSource(memStore));
 const app = express();
 app.use(express.json());
 app.use((req, _res, next) => { (req as any).session = { brokerId: req.headers["x-test-broker"] || undefined }; next(); });
@@ -301,7 +312,7 @@ try {
     assert.equal(b.body.notOpened.length, 3);
     const d = await call("GET", "/api/deals/dealA/engagement/document", "brokerA");
     assert.equal(d.status, 200);
-    assert.deepEqual(d.body.pages, []);
+    assert.ok(Array.isArray(d.body.pages) && d.body.pages.every((p: any) => p.readers === 0), "pages of the served version, nobody read yet");
     const j = await call("GET", "/api/deals/dealA/engagement/buyers/accA1/journey", "brokerA");
     assert.equal(j.status, 200);
     assert.equal(j.body.accessId, "accA1");

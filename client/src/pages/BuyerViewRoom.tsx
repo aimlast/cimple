@@ -2,12 +2,13 @@
  * BuyerViewRoom
  *
  * Buyer-facing CIM viewer. Renders all CimSections in sequence via
- * CimSectionRenderer. Tracks analytics: section enter/exit, heat map,
- * scroll depth — batched and flushed every 8 seconds.
+ * CimSectionRenderer. Reading time per page part (a table row, a chart, a
+ * paragraph) is measured by useCimReading (client/src/lib/cim-reading.ts)
+ * once real content is on screen — never on the NDA or holding screens.
  *
  * Falls back to legacy cimContent text if no AI sections exist yet.
  */
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +34,9 @@ import { ConnectedContent } from "@/components/cim/ConnectedContent";
 import { BuyerChatbot, type BuyerQuestionFeedItem } from "@/components/buyer/BuyerChatbot";
 import { BuyerDecisionPanel } from "@/components/buyer/BuyerDecisionPanel";
 import { NdaBuyerProfileGate } from "@/components/buyer/NdaBuyerProfileGate";
+import { CimBlockScope, CimBlocksProvider } from "@/components/cim/blocks";
+import { READING_SHEET_ATTR, useCimReading } from "@/lib/cim-reading";
+import type { ViewRoomReading } from "@shared/analytics-v2";
 
 type BuyerDecision = "under_review" | "interested" | "not_interested" | "lapsed";
 
@@ -77,6 +81,8 @@ interface ViewData {
   updating?: boolean;
   /** Sections held back until their redacted version is ready (just added/edited). */
   pendingSections?: number;
+  /** Reading analytics: the served version's opaque id + page order (content branch only). */
+  reading?: ViewRoomReading;
 }
 
 /** A section the buyer's access level doesn't open yet (server sends title only). */
@@ -116,117 +122,6 @@ function Watermark({ email }: { email: string }) {
   );
 }
 
-// ── Analytics hook ─────────────────────────────────────────────────────────
-function useAnalytics(dealId: string | undefined, accessId: string | undefined, accessToken?: string) {
-  const queueRef = useRef<object[]>([]);
-  const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const enqueue = useCallback((event: object) => {
-    queueRef.current.push(event);
-  }, []);
-
-  const flush = useCallback(async () => {
-    if (!dealId || !accessToken || queueRef.current.length === 0) return;
-    const batch = queueRef.current.splice(0);
-    try {
-      await fetch(`/api/deals/${dealId}/analytics/batch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accessToken,
-          events: batch.map(e => ({ ...e, buyerAccessId: accessId })),
-        }),
-      });
-    } catch {
-      // Non-blocking — analytics failure should never interrupt the viewer
-    }
-  }, [dealId, accessId, accessToken]);
-
-  // Flush every 8 seconds + on unmount
-  useEffect(() => {
-    if (!dealId) return;
-    flushTimerRef.current = setInterval(flush, 8000);
-    return () => {
-      if (flushTimerRef.current) clearInterval(flushTimerRef.current);
-      flush();
-    };
-  }, [dealId, flush]);
-
-  // Section enter/exit via IntersectionObserver
-  const attachObserver = useCallback(() => {
-    const sectionEls = document.querySelectorAll("[data-track-section]");
-    if (!sectionEls.length) return;
-
-    const enterTimes: Record<string, number> = {};
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach(entry => {
-          const key = (entry.target as HTMLElement).dataset.trackSection!;
-          if (entry.isIntersecting) {
-            enterTimes[key] = Date.now();
-            enqueue({ eventType: "section_enter", sectionKey: key });
-          } else if (enterTimes[key]) {
-            const timeSpentSeconds = Math.round((Date.now() - enterTimes[key]) / 1000);
-            enqueue({ eventType: "section_exit", sectionKey: key, timeSpentSeconds });
-            delete enterTimes[key];
-          }
-        });
-      },
-      { threshold: 0.3 }
-    );
-
-    sectionEls.forEach(el => observer.observe(el));
-    return () => observer.disconnect();
-  }, [enqueue]);
-
-  // Heat map sampling — throttled to 200ms
-  const heatMapThrottle = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (heatMapThrottle.current) return;
-      heatMapThrottle.current = setTimeout(() => {
-        heatMapThrottle.current = null;
-      }, 200);
-      enqueue({
-        eventType: "heat_map_sample",
-        heatMapX: Math.round((e.clientX / window.innerWidth) * 100),
-        heatMapY: Math.round((e.clientY / window.innerHeight) * 100),
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight,
-      });
-    };
-    window.addEventListener("mousemove", handler, { passive: true });
-    return () => window.removeEventListener("mousemove", handler);
-  }, [enqueue]);
-
-  // Scroll depth. The room scrolls inside the BuyerLayout container
-  // (h-screen overflow-auto), not the window, so listen in the capture
-  // phase and measure whichever element actually scrolled — as long as it
-  // contains the CIM (ignores the chat panel's own scroll area).
-  const lastDepth = useRef(0);
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const content = document.querySelector("[data-cim-content]");
-      const target = e.target;
-      const el = target instanceof HTMLElement ? target : document.documentElement;
-      if (content && !el.contains(content)) return;
-      const scrollTop = el === document.documentElement ? (window.scrollY || el.scrollTop) : el.scrollTop;
-      const range = el.scrollHeight - el.clientHeight;
-      if (range <= 0) return;
-      const depth = Math.round((scrollTop / range) * 100);
-      if (depth > lastDepth.current + 5) {
-        lastDepth.current = depth;
-        enqueue({ eventType: "scroll_depth", scrollDepthPercent: depth });
-      }
-    };
-    document.addEventListener("scroll", handler, { passive: true, capture: true });
-    return () => document.removeEventListener("scroll", handler, true);
-  }, [enqueue]);
-
-  return { attachObserver, enqueue };
-}
-
 // ── Main component ─────────────────────────────────────────────────────────
 export default function BuyerViewRoom() {
   const { token } = useParams<{ token: string }>();
@@ -256,9 +151,16 @@ export default function BuyerViewRoom() {
     },
   });
 
-  // The analytics endpoint authenticates every batch with the view-room
-  // token — without it the server rejects the batch and nothing is recorded.
-  const { attachObserver, enqueue } = useAnalytics(data?.deal?.id, data?.access?.id, token);
+  // Reading analytics: starts only once real CIM content is on screen — not
+  // on the NDA form or the preparing/updating screens — and only when the
+  // server sent a `reading` block (it doesn't for the owning broker).
+  const hasContent = !!data?.sections?.some((s) => s.isVisible);
+  const tracker = useCimReading({
+    token,
+    accessId: data?.access?.id,
+    reading: data?.reading ?? null,
+    enabled: hasContent && !data?.ndaGate && !data?.preparing && !data?.updating,
+  });
 
   // Timer
   useEffect(() => {
@@ -268,23 +170,6 @@ export default function BuyerViewRoom() {
     return () => clearInterval(interval);
   }, []);
 
-  // Attach section observer once sections load
-  useEffect(() => {
-    if (!data?.sections?.length) return;
-    // Small delay for DOM to settle after render
-    const timer = setTimeout(attachObserver, 500);
-    return () => clearTimeout(timer);
-  }, [data?.sections, attachObserver]);
-
-  // Track initial view — once per mount, only once real content is served
-  // (the NDA gate and "preparing" holding states are not views).
-  const viewTracked = useRef(false);
-  useEffect(() => {
-    if (!data?.deal?.id || !data?.access?.id) return;
-    if (data.ndaGate || data.preparing || data.updating || viewTracked.current) return;
-    viewTracked.current = true;
-    enqueue({ eventType: "view" });
-  }, [data?.deal?.id, data?.access?.id, data?.ndaGate, data?.preparing, data?.updating, enqueue]);
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
 
@@ -394,12 +279,15 @@ export default function BuyerViewRoom() {
   const cimContent = deal.cimContent as Record<string, string> | null;
   const legacySections = CIM_SECTIONS.filter(s => cimContent?.[s.key]);
 
+  /** A section id from a section key (the sticky strip and "See …" links speak keys). */
+  const pageIdOfKey = (key: string) => visibleSections.find((s) => s.sectionKey === key)?.id ?? null;
+
   return (
     <div className="min-h-screen bg-background">
       {access.watermarkEnabled && <Watermark email={access.buyerEmail} />}
 
       {/* ── Sticky header ──────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-sm">
+      <header data-reading-chrome="" className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             {firmLogo ? (
@@ -430,12 +318,9 @@ export default function BuyerViewRoom() {
       {hasAiSections && (
         <StickyNav
           sections={visibleSections}
-          onNavigate={(sectionKey, sectionTitle) => {
-            enqueue({
-              eventType: "nav_click",
-              sectionKey,
-              eventData: { sectionTitle },
-            });
+          onNavigate={(sectionKey) => {
+            const target = pageIdOfKey(sectionKey);
+            if (target) tracker.record("nav", null, undefined, `sticky:${target}`);
           }}
         />
       )}
@@ -453,6 +338,7 @@ export default function BuyerViewRoom() {
                       <a
                         key={s.id}
                         href={`#section-${s.id}`}
+                        onClick={() => tracker.record("nav", null, undefined, `toc:${s.id}`)}
                         className="flex items-start gap-1.5 px-2 py-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors leading-snug"
                       >
                         <span className="opacity-40 shrink-0 pt-px">{idx + 1}.</span>
@@ -503,7 +389,9 @@ export default function BuyerViewRoom() {
               /* Photos/videos load through /api/media/:id with this link's token. */
               <CimMediaProvider value={{ buyerToken: token }}>
               <CimDesignProvider design={design} sections={visibleSections}>
-              <CimSheet className="px-5 py-6 sm:px-10 sm:py-12">
+              {/* Reading analytics: every page and part carries its id inside this provider. */}
+              <CimBlocksProvider host={tracker}>
+              <CimSheet className="px-5 py-6 sm:px-10 sm:py-12" {...{ [READING_SHEET_ATTR]: "" }}>
                 {withBrokeragePages(visibleSections, {
                   disclaimer: design.brokerage.showDisclaimerPage !== false,
                   contact: design.brokerage.showContactPage !== false,
@@ -515,34 +403,29 @@ export default function BuyerViewRoom() {
                   /* scroll-mt clears the sticky header + section strip so
                      nav clicks, "See …" links and TOC anchors land the
                      heading below the chrome instead of under it. */
-                  <div key={section.id} id={`section-${section.id}`} className="scroll-mt-24">
+                  <div key={section.id} id={`section-${section.id}`} data-cim-page={section.id} className="scroll-mt-24">
+                    {/* The page scope: interactions reported at the section's top level (expand/collapse) know their page. */}
+                    <CimBlockScope pageId={section.id}>
                     <SectionBoundary sectionTitle={section.sectionTitle}>
                     <ExpandableSection
                       section={section}
                       branding={brandingCtx}
                       brokerMode={false}
-                      onToggle={(sectionKey, expanded) => {
-                        enqueue({
-                          eventType: expanded ? "section_expand" : "section_collapse",
-                          sectionKey,
-                        });
-                      }}
                     />
                     <ConnectedContent
                       section={section}
                       allSections={visibleSections}
-                      onNavigate={(fromKey, toKey) => {
-                        enqueue({
-                          eventType: "connected_nav",
-                          sectionKey: fromKey,
-                          eventData: { targetSection: toKey },
-                        });
+                      onNavigate={(_fromKey, toKey) => {
+                        const target = pageIdOfKey(toKey);
+                        if (target) tracker.record("nav", section.id, undefined, `related:${target}`);
                       }}
                     />
                     </SectionBoundary>
+                    </CimBlockScope>
                   </div>
                 ); })())}
               </CimSheet>
+              </CimBlocksProvider>
               </CimDesignProvider>
               </CimMediaProvider>
             ) : legacySections.length > 0 ? (
@@ -550,7 +433,7 @@ export default function BuyerViewRoom() {
               <CimDesignProvider design={design}>
               <CimSheet className="px-5 py-6 sm:px-10 sm:py-12">
                 {legacySections.map(section => (
-                  <div key={section.key} id={`legacy-${section.key}`} data-track-section={section.key} className="scroll-mt-20">
+                  <div key={section.key} id={`legacy-${section.key}`} className="scroll-mt-20">
                     <CimSectionHeading title={section.title} />
                     <div className="prose prose-sm max-w-prose text-sm leading-[1.7]">
                       <div dangerouslySetInnerHTML={{
@@ -593,6 +476,8 @@ export default function BuyerViewRoom() {
         accessToken={token!}
         businessName={deal.businessName}
         questionFeed={publishedQuestions}
+        readingContext={() => ({ pageId: tracker.currentPageId(), renditionId: tracker.renditionId() })}
+        onOpen={() => tracker.record("chat_open")}
       />
 
       {/* ── Footer ──────────────────────────────────────────────────────────── */}
@@ -604,6 +489,9 @@ export default function BuyerViewRoom() {
           <p className="text-xs text-muted-foreground/50">
             This document is confidential and intended solely for the named recipient.
             Unauthorized distribution or reproduction is strictly prohibited.
+          </p>
+          <p className="text-xs text-muted-foreground/50" data-testid="view-room-reading-notice">
+            Your broker can see which parts of this document you read.
           </p>
           {firmName && (
             <p className="text-xs text-muted-foreground/40 mt-2">Prepared by {firmName}</p>

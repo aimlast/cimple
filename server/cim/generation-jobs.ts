@@ -12,6 +12,7 @@
  * short while after finishing (for the watcher's completion toast); the
  * persisted status is the durable record.
  */
+import { assignLineage } from "../analytics/lineage";
 import { storage } from "../storage";
 import { generateCimLayout, type CimLayoutParams, type LayoutProgress } from "./layout-engine";
 import type { CimDocument } from "./layout-types";
@@ -259,12 +260,17 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
     } as any);
     job.buyerHold = hold;
   }
+  // Reading analytics: each new section continues the old one it replaces
+  // (same key, title or unique page role), so page history survives the new ids.
+  const lineage = assignLineage(await storage.getCimSectionsByDeal(deal.id).catch(() => []), document.sections);
   await storage.deleteCimSectionsForDeal(deal.id);
   await storage.deleteCimSectionOverrides(deal.id, "blind");
   await storage.deleteCimSectionOverrides(deal.id, "dd");
   const cimContent: Record<string, string> = {};
-  for (const section of document.sections) {
+  for (let i = 0; i < document.sections.length; i++) {
+    const section = document.sections[i];
     await storage.createCimSection({
+      analyticsLineage: lineage[i],
       dealId: deal.id,
       sectionKey: section.sectionKey,
       sectionTitle: section.sectionTitle,
