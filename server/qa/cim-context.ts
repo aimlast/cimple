@@ -424,6 +424,25 @@ export function isUnreviewedAiAnswer(q: Pick<BuyerQuestion, "aiAnswer" | "publis
   return (q.publishedAnswer ?? q.aiAnswer) === q.aiAnswer;
 }
 
+/**
+ * The broker publishing an AI answer as it stands (PATCH isPublished with
+ * no draft) makes it their word: the answer is recorded as their draft, so
+ * it no longer counts as unreviewed and isn't withdrawn the next time any
+ * section changes — an approval tick included (free round 2 check, C4).
+ * Returns the draft to record, or null when there is nothing to record.
+ */
+export function endorsedDraftOnPublish(
+  existing: Pick<BuyerQuestion, "aiAnswer" | "publishedAnswer" | "brokerDraft" | "sellerApproved" | "status">,
+  body: { isPublished?: unknown; brokerDraft?: unknown; publishedAnswer?: unknown; status?: unknown },
+): string | null {
+  if (body.isPublished !== true || body.brokerDraft !== undefined) return null;
+  if (existing.brokerDraft || existing.sellerApproved) return null;
+  // Only a published answer: a draft on a question back with the broker reads as "sent back by the seller".
+  if ((typeof body.status === "string" ? body.status : existing.status) !== "published") return null;
+  const answer = typeof body.publishedAnswer === "string" ? body.publishedAnswer : existing.publishedAnswer ?? existing.aiAnswer;
+  return typeof answer === "string" && answer.trim() ? answer : null;
+}
+
 /** What a reader's CIM says now, for checking earlier AI answers against it. */
 export interface ReaderCim {
   /** The text the answer step would read for this reader (their version, sections they may open). */

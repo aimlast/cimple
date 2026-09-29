@@ -832,6 +832,16 @@ function unreadableValues(section: SectionLike): string[] {
       if (v === null || v === undefined || str(v).trim() === "") continue;
       if (readChartValue(v, scale).value === null) out.push(`chart value "${str(v).trim()}" for "${str(r?.name)}" isn't one amount, so it can't be drawn`);
     }
+  } else if (section.layoutType === "line_chart") {
+    // A point that isn't an amount is a gap in the line (listed under it).
+    const keys = asArr(d.series).map((s: any) => str(s?.key)).filter(Boolean);
+    for (const r of asArr(d.data)) {
+      for (const k of keys) {
+        const v = r?.[k];
+        if (v === null || v === undefined || str(v).trim() === "") continue;
+        if (readChartValue(v, scale).value === null) out.push(`chart value "${str(v).trim()}" for "${str(r?.name)}" isn't one amount, so it can't be drawn`);
+      }
+    }
   } else if (section.layoutType === "waterfall_chart") {
     for (const it of asArr(d.items)) {
       const v = it?.value;

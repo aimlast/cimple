@@ -99,7 +99,8 @@ const keyNumbers = { id: "k", dealId: "d", sectionKey: "key", sectionTitle: "Key
 const callout = { id: "p", dealId: "d", sectionKey: "price", sectionTitle: "Price", order: 2, layoutType: "stat_callout", isVisible: true, brokerApproved: true, layoutData: { primaryLabel: "Asking price", primaryValue: "$4,800,000" } } as any;
 const unpriced = buildBuyerCim({ deal: { id: "d", businessName: "Lakeshore" }, accessLevel: "loi", sections: [cover, keyNumbers, callout], overrides: [], askingPrice: null });
 assert.equal((unpriced.sections[0].layoutData as any).askingPrice, undefined, "cover price gone");
-assert.deepEqual((unpriced.sections[1].layoutData as any).metrics.map((m: any) => m.label), ["Asking Price / SDE", "Revenue"], "the key number goes; the multiple is the staleness check's to flag");
+// The multiple goes too: next to SDE it gives the removed price away (round-2 check).
+assert.deepEqual((unpriced.sections[1].layoutData as any).metrics.map((m: any) => m.label), ["Revenue"], "the key number and its multiple go");
 assert.equal((unpriced.sections[2].layoutData as any).primaryValue, "Price on request");
 assert.ok(!JSON.stringify(unpriced.sections).includes("4,800,000"));
 // Omitted (unknown) keeps the CIM's figures; a listed price replaces them.

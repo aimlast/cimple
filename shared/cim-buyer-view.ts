@@ -170,23 +170,95 @@ export const PRICE_ON_REQUEST = "Price on request";
  * request"). For a deal whose listed price was removed (free round 2, C7).
  */
 export function withoutAskingPrice<T extends { layoutType: string; layoutData: unknown }>(section: T): T {
-  if (!section.layoutData || typeof section.layoutData !== "object") return section;
-  const d = section.layoutData as Record<string, unknown>;
+  const cleaned = withoutPriceMentions(section);
+  if (!cleaned.layoutData || typeof cleaned.layoutData !== "object") return cleaned;
+  const d = cleaned.layoutData as Record<string, unknown>;
   // "Contact broker" / "Offers invited" on the cover isn't a price: it stays.
-  if (section.layoutType === "cover_page" && "askingPrice" in d && isPriceValue(d.askingPrice) && !/offers?\b|request|contact/i.test(String(d.askingPrice))) {
+  if (cleaned.layoutType === "cover_page" && "askingPrice" in d && isPriceValue(d.askingPrice) && !/offers?\b|request|contact/i.test(String(d.askingPrice))) {
     const { askingPrice: _p, ...rest } = d;
-    return { ...section, layoutData: rest };
+    return { ...cleaned, layoutData: rest };
   }
-  if (section.layoutType === "metric_grid" && Array.isArray(d.metrics)) {
+  if (cleaned.layoutType === "metric_grid" && Array.isArray(d.metrics)) {
     const metrics = (d.metrics as unknown[]).filter((m) =>
       !(m && typeof m === "object" && ASKING_LABEL.test(String((m as Record<string, unknown>).label ?? "")) && isPriceValue((m as Record<string, unknown>).value)),
     );
-    return metrics.length === (d.metrics as unknown[]).length ? section : { ...section, layoutData: { ...d, metrics } };
+    return metrics.length === (d.metrics as unknown[]).length ? cleaned : { ...cleaned, layoutData: { ...d, metrics } };
   }
-  if (section.layoutType === "stat_callout" && ASKING_LABEL.test(String(d.primaryLabel ?? "")) && isPriceValue(d.primaryValue)) {
-    return { ...section, layoutData: { ...d, primaryValue: PRICE_ON_REQUEST } };
+  if (cleaned.layoutType === "stat_callout" && ASKING_LABEL.test(String(d.primaryLabel ?? "")) && isPriceValue(d.primaryValue)) {
+    return { ...cleaned, layoutData: { ...d, primaryValue: PRICE_ON_REQUEST } };
   }
-  return section;
+  return cleaned;
+}
+
+/**
+ * Wording that states the asking price or a multiple worked out from it:
+ * "asking price", "listed at", "purchase price", "Price / SDE", "implied
+ * multiple". With the price removed, "Asking Price / SDE 3.8x" next to SDE
+ * $1,263,000 let a buyer work the price back out, and "The asking price of
+ * $4.8M represents 3.8x SDE" stayed in the prose (free round 2 check, C7).
+ */
+const PRICE_MENTION =
+  /\b(?:asking|list(?:ing|ed)?|offering|purchase)\s+(?:price|multiple)\b|\b(?:listed|priced|offered)\s+(?:at|for)\b|\bprice\s*(?:\/|to|-to-)\s*(?:sde|ebitda|earnings|revenue|sales|cash\s*flow)\b|\bimplied\s+(?:price|multiple|valuation)\b/i;
+/** A figure such wording can give away: an amount or a multiple. */
+const PRICE_FIGURE = /\$\s?\d|\b\d[\d,.]*\s?(?:k|m|mm|million|thousand)\b|\b\d+(?:\.\d+)?\s?[x×](?![a-z])|\b\d{1,3}(?:,\d{3})+\b/i;
+/** Arrays whose entries are columns (a table's cells): emptied in place, never dropped. */
+const POSITIONAL = new Set(["values", "headers", "columns", "cells"]);
+const ROW_LABEL_KEYS = ["label", "name", "title", "term", "metric", "key", "primaryLabel"];
+
+const statesPrice = (s: string) => PRICE_MENTION.test(s) && PRICE_FIGURE.test(s);
+
+/** Text without the sentences that state the price or its multiple. */
+function withoutPriceSentences(text: string): string {
+  if (!PRICE_MENTION.test(text)) return text;
+  return text
+    .split(/(\n+)/)
+    .map((part) => (/^\n+$/.test(part) ? part : part.split(/(?<=[.!?])\s+/).filter((s) => !statesPrice(s)).join(" ")))
+    .join("")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** A row (key number, table row, term) whose label is the price or its multiple and that shows a figure. */
+function isPriceRow(row: Record<string, unknown>): boolean {
+  const label = ROW_LABEL_KEYS.map((k) => row[k]).find((v) => typeof v === "string" && PRICE_MENTION.test(v)) as string | undefined;
+  if (!label) return false;
+  return Object.entries(row).some(([k, v]) => !ROW_LABEL_KEYS.includes(k) && PRICE_FIGURE.test(Array.isArray(v) ? v.join(" ") : String(v ?? ""))) || PRICE_FIGURE.test(label);
+}
+
+function scrubPrice(v: unknown, key: string, depth: number): unknown {
+  if (depth > 8) return v;
+  if (typeof v === "string") return withoutPriceSentences(v);
+  if (Array.isArray(v)) {
+    if (POSITIONAL.has(key)) return v.map((x) => scrubPrice(x, "", depth + 1));
+    const out: unknown[] = [];
+    for (const x of v) {
+      if (x && typeof x === "object" && !Array.isArray(x) && isPriceRow(x as Record<string, unknown>)) continue;
+      const next = scrubPrice(x, "", depth + 1);
+      if (typeof x === "string" && x.trim() && next === "") continue;
+      out.push(next);
+    }
+    return out;
+  }
+  if (v && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = scrubPrice(x, k, depth + 1);
+    return out;
+  }
+  return v;
+}
+
+/** A section with every statement of the price, or of a multiple of it, taken out (its data and its prose). */
+function withoutPriceMentions<T extends { layoutType: string; layoutData: unknown }>(section: T): T {
+  const s = section as T & { aiDraftContent?: unknown; brokerEditedContent?: unknown };
+  const json = JSON.stringify([s.layoutData ?? null, s.aiDraftContent ?? null, s.brokerEditedContent ?? null]);
+  if (!PRICE_MENTION.test(json)) return section;
+  const out = { ...section, layoutData: s.layoutData && typeof s.layoutData === "object" ? scrubPrice(s.layoutData, "", 0) : s.layoutData } as T & {
+    aiDraftContent?: unknown;
+    brokerEditedContent?: unknown;
+  };
+  if (typeof s.aiDraftContent === "string") out.aiDraftContent = withoutPriceSentences(s.aiDraftContent);
+  if (typeof s.brokerEditedContent === "string") out.brokerEditedContent = withoutPriceSentences(s.brokerEditedContent);
+  return out;
 }
 
 /** The neutral key a blind buyer sees for a section (never derived from its title). */

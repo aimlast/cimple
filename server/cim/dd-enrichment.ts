@@ -27,8 +27,8 @@
  * it, and refreshSectionDd() redoes just that section.
  */
 import { and, eq, isNull, lt } from "drizzle-orm";
-import { isMediaLayout } from "@shared/cim-media";
-import { isCommonWord } from "@shared/blind-vocabulary";
+import { isMediaLayout, isRegionWord, REGION_NAMES } from "@shared/cim-media";
+import { isBroadRegionWord, isCommonWord } from "@shared/blind-vocabulary";
 import Anthropic from "@anthropic-ai/sdk";
 import { cimSections, cimSectionOverrides, type CimSection, type Deal } from "@shared/schema";
 import { db } from "../db";
@@ -39,7 +39,7 @@ import { cimFinancialsFor, renderCimFinancialsBlock, type CimFinancials } from "
 import { isBridgeAddback } from "../financial/addback-seed";
 import { isDistributionLine } from "../financial/normalization-rules";
 import { isKnownFigure, knownFiguresFrom, normalizeForLookup, parseFigures, type Figure } from "./figure-check";
-import { keepOutFromNotes, mentionsHeldName, neutralBridgeLabel, screenConfidentialText, screenFactsForCim, type KeepOut } from "./sensitive-facts";
+import { keepOutFromNotes, mentionsHeldPerson, neutralBridgeLabel, screenConfidentialText, screenFactsForCim, type KeepOut } from "./sensitive-facts";
 import { keepOutFor } from "./keep-out";
 import type { ResolvedDiscrepancyNote } from "./resolved-block";
 import { earningsCanon, screenEarningsFacts } from "./earnings-canon";
@@ -187,7 +187,7 @@ export function buildDdContext(input: {
   if (fin) parts.push(`## Verified financials (from the financial statements)\n${fin}`);
 
   const financialDocs = (input.documents ?? []).filter((d) =>
-    d.visibility !== "broker_only" && (d.category === "financials" || d.category === "tax_returns" || d.category === "bank_statements") && !mentionsHeldName(d.name, heldNames),
+    d.visibility !== "broker_only" && (d.category === "financials" || d.category === "tax_returns" || d.category === "bank_statements") && !mentionsHeldPerson(d.name, heldNames),
   );
   if (financialDocs.length > 0) {
     parts.push(`## Supporting documents on file\n${financialDocs.map((d) => `- ${d.name} (${d.category})`).join("\n")}`);
@@ -200,7 +200,7 @@ export function buildDdContext(input: {
 
 /** A label without the held names in it (unchanged when it names none). */
 function heldLabel(label: string, heldNames: readonly string[], type = ""): string {
-  return mentionsHeldName(label, heldNames) ? neutralBridgeLabel(label, heldNames, type) : label;
+  return mentionsHeldPerson(label, heldNames) ? neutralBridgeLabel(label, heldNames, type) : label;
 }
 
 /** The analysis's rows with no held name in a line or add-back label (the bridge keeps every step). */
@@ -217,14 +217,14 @@ export function financialsWithoutHeldNames(fin: CimFinancials | null | undefined
     ...fin,
     lines: fin.lines.map((l) => ({ ...l, name: heldLabel(l.name, heldNames) })),
     bridge,
-    bridgeWithheld: fin.bridgeWithheld && mentionsHeldName(fin.bridgeWithheld, heldNames) ? screenConfidentialText(fin.bridgeWithheld, heldNames) : fin.bridgeWithheld,
+    bridgeWithheld: fin.bridgeWithheld && mentionsHeldPerson(fin.bridgeWithheld, heldNames) ? screenConfidentialText(fin.bridgeWithheld, heldNames) : fin.bridgeWithheld,
   };
 }
 
 /** A rendered block with any line that still names a held party left out (a backstop — labels are neutral already). */
 function withoutHeldLines(text: string, heldNames: readonly string[]): string {
   if (!text || heldNames.length === 0) return text;
-  return text.split("\n").filter((line) => !mentionsHeldName(line, heldNames)).join("\n");
+  return text.split("\n").filter((line) => !mentionsHeldPerson(line, heldNames)).join("\n");
 }
 
 /** Load a deal's DD inputs: shared documents only, the CIM's financial analysis, verified add-backs. */
@@ -276,8 +276,51 @@ function figuresIn(text: string): Figure[] {
 
 const NAME_RE = /\b([A-Z][A-Za-z0-9&'’.-]*(?:\s+(?:of|and|&|the|de|du)?\s*[A-Z][A-Za-z0-9&'’.-]*)+)/g;
 
+/**
+ * Words that open a sentence or a revealed span without naming anything —
+ * "[[dd]]The largest customer …", "[[dd]]These figures …", "[[dd]]Our
+ * review …" were each rejected as an unknown name (free round 2 check).
+ */
+const FUNCTION_WORDS = new Set(`
+a an the this that these those our its their his her my your we they it he she there here
+in on at for by with from as to of and or but nor so yet while when where which what who whom whose
+since during under over after before between through within without across against among per via upon into onto about
+each every all both either neither some any no not none most more many much few several other another such same
+also however although though because if unless until once further moreover additionally meanwhile overall
+based according including excluding following
+`.split(/\s+/).filter(Boolean));
+
+/**
+ * Tax and labour authorities a DD section may name when it says what a
+ * figure was checked against ("the Canada Revenue Agency's Notice of
+ * Assessment") — public bodies, never one of the deal's counterparties.
+ * Folded as normalizeForLookup folds.
+ */
+const PUBLIC_BODIES = [
+  "canada revenue agency", "revenue canada", "revenu quebec", "internal revenue service", "service canada",
+  "statistics canada", "employment and social development canada", "workplace safety and insurance board",
+  "worksafebc", "wsib", "cnesst", "department of labor", "ministry of finance", "franchise tax board",
+].map((b) => ` ${b} `);
+const REGION_PHRASES = new Set(REGION_NAMES.map((n) => normalizeForLookup(n)));
+
+/** A place or a public body ("Ontario", "British Columbia", "Canada Revenue Agency"), not a counterparty. */
+function isPlaceOrPublicBody(name: string): boolean {
+  const norm = normalizeForLookup(name);
+  if (norm.trim() === "") return false;
+  // A body's full name, or two or more of its words ("Canada Revenue") — never one word of it ("Service").
+  if (REGION_PHRASES.has(norm) || PUBLIC_BODIES.some((b) => b === norm || (norm.trim().includes(" ") && b.includes(norm)))) return true;
+  return norm.trim().split(" ").every((w) => isRegionWord(w) || isBroadRegionWord(w) || FUNCTION_WORDS.has(w));
+}
+
 function namesIn(text: string): string[] {
-  return Array.from(stripDdMarkers(text).matchAll(NAME_RE)).map((m) => m[1].trim());
+  return Array.from(stripDdMarkers(text).matchAll(NAME_RE))
+    .map((m) => {
+      // "The Receivables Ledger": the opening "The" belongs to the sentence, not the name.
+      const words = m[1].trim().replace(/[.,;:]+$/, "").split(/\s+/);
+      while (words.length > 0 && FUNCTION_WORDS.has(words[0].toLowerCase())) words.shift();
+      return words.join(" ");
+    })
+    .filter((n) => n.includes(" "));
 }
 
 // ── Revealed labels and names ────────────────────────────────────────────
@@ -293,6 +336,8 @@ const GENERIC_ROW_LABEL =
 
 interface ChangedLabel {
   label: string;
+  /** What the same field said in the base section ("" for a new row). */
+  baseLabel: string;
   /** The row the label names (its figures are the label's). */
   row: Record<string, unknown>;
 }
@@ -312,7 +357,7 @@ function changedLabels(base: unknown, next: unknown, out: ChangedLabel[] = [], d
         for (const k of LABEL_KEYS) {
           const v = r[k];
           if (typeof v === "string" && v.trim() && stripDdMarkers(v).trim() !== stripDdMarkers(String(br[k] ?? "")).trim()) {
-            out.push({ label: stripDdMarkers(v).trim(), row: r });
+            out.push({ label: stripDdMarkers(v).trim(), baseLabel: stripDdMarkers(String(br[k] ?? "")).trim(), row: r });
           }
         }
       }
@@ -327,15 +372,59 @@ function changedLabels(base: unknown, next: unknown, out: ChangedLabel[] = [], d
   return out;
 }
 
-/** The name part of a label: "Acme Logistics (MSA to 2027)", "Acme — 31%", "Acme: anchor" → "Acme Logistics" / "Acme". */
-function labelName(label: string): string {
-  return label
-    .replace(/\s*\(.*?\)\s*$/, "")
-    .replace(/\s*[—–-]\s*\d.*$/, "")
-    .replace(/\s+[—–]\s.*$|\s+-\s.*$|:\s.*$/, "")
-    .replace(/\b(?:co-op|incorporated|inc|ltd|limited|llc|llp|lp|plc|corp|corporation|company|co)\b\.?/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+const LEGAL_ENDING = /\b(?:co-op|incorporated|inc|ltd|limited|llc|llp|lp|plc|corp|corporation|company|co)\b\.?/gi;
+/** A legal ending on its own ("Inc", "Ltd") — part of a name, never one. */
+const LEGAL_WORD = /^(?:co-op|incorporated|inc|ltd|limited|llc|llp|lp|plc|corp|corporation|company|co)\.?$/;
+
+/**
+ * The parts of a row label that may each name something: the head and every
+ * aside. "Acme Logistics (MSA to 2027)" → ["Acme Logistics", "MSA to 2027"];
+ * "Customer A (Sysco)", "Customer A – Sysco", "Customer A: Sysco", "Sysco /
+ * Customer A" → ["Customer A", "Sysco"]. Legal endings are dropped. Round 1
+ * kept only the head, so "Customer A (Sysco)" — the natural way to reveal a
+ * name — read as the generic "Customer A", and an invented or mis-paired
+ * name behind it went through (free round 2, C5).
+ */
+function labelParts(label: string): string[] {
+  const asides: string[] = [];
+  const head = label.replace(/\(([^()]*)\)|\[([^[\]]*)\]/g, (_m, a: string | undefined, b: string | undefined) => {
+    asides.push(a ?? b ?? "");
+    return " | ";
+  });
+  return [...head.split(/\s+[-—–]\s+|\s*[—–]\s*|:\s+|\s+\/\s+|\s*\|\s*/), ...asides]
+    .map((p) => p.replace(LEGAL_ENDING, " ").replace(/\s+/g, " ").trim().replace(/^[.,;:]+|[.,;:]+$/g, "").trim())
+    .filter(Boolean);
+}
+
+const NAME_CONNECTORS = new Set(["of", "and", "&", "the", "de", "du", "des", "la", "le", "et", "for"]);
+
+/** Written as a name — every word capitalised (or a number): "Brightway Foods", "3M Canada", "Sysco". */
+function isNameLike(part: string): boolean {
+  const words = part.split(/\s+/).filter((w) => !NAME_CONNECTORS.has(w.toLowerCase()));
+  return words.length > 0 && words.every((w) => /^[A-Z0-9]/.test(w)) && words.some((w) => /^[A-Z]/.test(w));
+}
+
+/** A word that names nothing: everyday, a function word, a place, or one carrying digits ("FY2024"). */
+function ordinaryWord(w: string): boolean {
+  const l = w.toLowerCase().replace(/['’]s$/, "");
+  return /\d/.test(l) || FUNCTION_WORDS.has(l) || LEGAL_WORD.test(l) || isCommonWord(l) || isRegionWord(l) || isBroadRegionWord(l);
+}
+
+/**
+ * Capitalised words in a descriptive label part ("anchor account since
+ * 2011", "Largest account, served by Sysco") that aren't on file: the
+ * one-word name a two-word pattern can't see.
+ */
+function unknownCapitals(part: string, baseWords: Set<string>, knownWords: Set<string>): string[] {
+  const out: string[] = [];
+  for (const tok of part.match(/[A-Za-z][A-Za-z0-9&'’-]*/g) ?? []) {
+    if (!/^[A-Z]/.test(tok) || tok.length < 3) continue;
+    if (/^[A-Z0-9&-]+$/.test(tok) && tok.length <= 5) continue; // an acronym (MSA, YTD, CRA)
+    const w = tok.replace(/['’]s$/i, "").toLowerCase();
+    if (baseWords.has(w) || knownWords.has(w) || ordinaryWord(w)) continue;
+    out.push(tok.replace(/['’]s$/i, ""));
+  }
+  return out;
 }
 
 /** Is the name written in the file (whole, as a phrase — not just its first word)? */
@@ -346,30 +435,57 @@ function onFile(name: string, knownNorm: string): boolean {
 
 const figureClose = (a: number, b: number) => Math.abs(a - b) <= Math.max(0.05, Math.abs(b) * 0.005);
 
+/** A word after a name that turns to the next party ("…; second Brightway Foods 18%", "others 12%"). */
+const NEXT_PARTY = /^(?:second|third|fourth|fifth|next|other|others|remaining|rest|followed|while|whereas|versus|vs|compared)(?:$|-)/i;
+
 /**
- * The share or amount the file states next to a name ("Acme Logistics
- * 31%", "31% — Acme Logistics", "Acme Logistics ($2.1M)"): per mention, the
- * first such figure after it in the same clause, else the last one before
- * it. Counts and years don't pair ("Acme, a client for 12 years"). Empty
- * when the file gives the name no figure.
+ * The text that belongs to a name's mention: from the name up to where the
+ * clause turns to another party — a capitalised name, "second", "others",
+ * "followed by" — outside brackets. "Acme Logistics (31% of 2024 revenue,
+ * $3,040,000)" gives Acme its share and its dollars; "Acme 31%, Brightway
+ * 18%" gives Acme only 31%.
+ */
+function mentionWindow(after: string): string {
+  let depth = 0;
+  for (const m of Array.from(after.matchAll(/[()]|[A-Za-z][A-Za-z0-9&'’-]*/g))) {
+    const tok = m[0];
+    if (tok === "(") { depth++; continue; }
+    if (tok === ")") { depth = Math.max(0, depth - 1); continue; }
+    if (depth > 0) continue;
+    const newName = /^[A-Z]/.test(tok) && tok.length >= 3 && !(/^[A-Z0-9&-]+$/.test(tok) && tok.length <= 5) && !ordinaryWord(tok);
+    if (newName || NEXT_PARTY.test(tok)) return after.slice(0, m.index);
+  }
+  return after;
+}
+
+/**
+ * The shares and amounts the file states for a name ("Acme Logistics 31%",
+ * "31% — Acme Logistics", "Acme Logistics (31% of revenue, $3,040,000)"):
+ * per mention, every such figure between it and the next party in the same
+ * clause, else the last one before it. Counts and years don't pair ("Acme,
+ * a client for 12 years"). Empty when the file gives the name no figure.
+ * Round 1 kept only the first figure after each mention, so a faithful DD
+ * dollar chart ("Acme Logistics 3,040,000") was rejected as "the file gives
+ * it 31" (free round 2 check).
  */
 function statedFigureFor(name: string, knownText: string): number[] {
   const out: number[] = [];
   const clauses = stripDdMarkers(knownText).split(/[;\n]|(?<=[.!?])\s+/);
-  const re = new RegExp(String.raw`(?<![\p{L}\p{N}])${name.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(String.raw`\s+`)}(?![\p{L}\p{N}])`, "iu");
+  const re = new RegExp(String.raw`(?<![\p{L}\p{N}])${name.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(String.raw`\s+`)}(?![\p{L}\p{N}])`, "giu");
   const figs = (t: string) => parseFigures(t).filter((f) => f.kind !== "plain");
   for (const clause of clauses) {
-    const m = re.exec(clause);
-    if (!m) continue;
-    const after = figs(clause.slice(m.index + m[0].length, m.index + m[0].length + 60));
-    if (after.length > 0) {
-      out.push(after[0].value);
-      continue;
+    for (const m of Array.from(clause.matchAll(re))) {
+      const at = m.index ?? 0;
+      const after = figs(mentionWindow(clause.slice(at + m[0].length)));
+      if (after.length > 0) {
+        out.push(...after.map((f) => f.value));
+        continue;
+      }
+      const before = figs(clause.slice(Math.max(0, at - 40), at));
+      if (before.length > 0) out.push(before[before.length - 1].value);
     }
-    const before = figs(clause.slice(Math.max(0, m.index - 40), m.index));
-    if (before.length > 0) out.push(before[before.length - 1].value);
   }
-  return out;
+  return Array.from(new Set(out));
 }
 
 /** The prose fields of a section's data (where [[dd]] spans may sit). */
@@ -421,14 +537,30 @@ function unknownSingleNames(rawText: string, baseWords: Set<string>, knownWords:
     prev = tok;
     if (!checked || !/^[A-Z]/.test(tok) || tok.length < 3) continue;
     const w = tok.replace(/['’]s$/i, "").toLowerCase();
-    if (baseWords.has(w) || knownWords.has(w) || isCommonWord(w)) continue;
+    if (baseWords.has(w) || knownWords.has(w) || ordinaryWord(w)) continue;
     if (/^[A-Z0-9&-]+$/.test(tok) && tok.length <= 5) continue; // an acronym (EBITDA, CRA, HST)
     out.add(tok.replace(/['’]s$/i, ""));
   }
   return Array.from(out);
 }
 
-const wordSet = (text: string) => new Set(stripDdMarkers(text).toLowerCase().match(/[a-z][a-z0-9&'’-]*/g) ?? []);
+/**
+ * The words of a text, lowercase, with fact keys split into their words
+ * ("taxFilings" → "tax", "filings") and each word's plain form beside it
+ * ("filings" → "filing"): a revealed span opening with "Filings …" is a
+ * word the file uses, not a name.
+ */
+const wordSet = (text: string) => {
+  const plain = stripDdMarkers(text);
+  const split = plain.replace(/([a-z])([A-Z])/g, "$1 $2"); // "McDonald" stays whole in the plain form
+  const words = `${plain}\n${split}`.toLowerCase().match(/[a-z][a-z0-9&'’-]*/g) ?? [];
+  const out = new Set<string>();
+  for (const w of words) {
+    out.add(w);
+    if (w.length > 4 && w.endsWith("s")) out.add(w.slice(0, -1));
+  }
+  return out;
+};
 
 /**
  * Check a DD enrichment against its base section. Problems (empty = safe):
@@ -469,38 +601,69 @@ export function validateDdOverride(
   const baseNames = new Set(namesIn(baseText).map((n) => normalizeForLookup(n)));
   for (const name of Array.from(new Set(namesIn(newText)))) {
     const norm = normalizeForLookup(name);
-    if (baseNames.has(norm) || knownNorm.includes(norm)) continue;
+    if (baseNames.has(norm) || knownNorm.includes(norm) || isPlaceOrPublicBody(name)) continue;
     const words = norm.trim().split(" ").filter((w) => w.length >= 4);
     if (words.length > 0 && words.every((w) => knownNorm.includes(` ${w} `))) continue;
     problems.push(`named "${name}", which isn't on file`);
   }
-  // 3b. Labels it changed (a revealed customer in a chart or table row) are
-  // on file as written, and carry the figure the file gives that name.
+  // 3a. A name it reveals in the prose ([[dd]] … [[/dd]]) is on file as a
+  // whole — "Brightway Logistics" built from two words the file uses for
+  // two different parties is an invented name, as it is in a label.
+  const spans = Array.from(newText.matchAll(/\[\[dd\]\]([\s\S]*?)\[\[\/dd\]\]/g)).map((m) => m[1]).join(" | "); // never one name across two spans
+  for (const name of Array.from(new Set(namesIn(spans)))) {
+    const bare = name.replace(LEGAL_ENDING, " ").replace(/\s+/g, " ").trim();
+    if (!bare.includes(" ") || onFile(bare, knownNorm) || baseNames.has(normalizeForLookup(bare)) || isPlaceOrPublicBody(bare)) continue;
+    if (bare.split(/\s+/).every((w) => NAME_CONNECTORS.has(w.toLowerCase()) || ordinaryWord(w))) continue; // "Notice of Assessment"
+    if (!problems.includes(`named "${name}", which isn't on file`)) problems.push(`named "${name}", which isn't on file`);
+  }
+  // 3b. Labels it changed (a revealed customer in a chart or table row):
+  // every part of the label that names something — the head and any aside,
+  // "Customer A (Sysco)" — is on file as written, and a revealed name
+  // carries the figure the file gives it. A row whose label was generic
+  // ("Customer A") is a reveal: the name it now shows must be on file,
+  // however ordinary its words.
   const flagged = new Set(problems.map((p) => p.match(/^named "(.+)", which/)?.[1] ?? "").filter(Boolean));
-  for (const { label, row } of changedLabels(base.layoutData, enriched.layoutData)) {
-    const name = labelName(label);
-    if (!name || GENERIC_ROW_LABEL.test(name) || !/[A-Za-z]{2,}/.test(name)) continue;
-    if (!onFile(name, knownNorm) && !baseNames.has(normalizeForLookup(name))) {
-      if (!flagged.has(name)) problems.push(`named "${name}", which isn't on file`);
-      flagged.add(name);
-      continue;
+  const flag = (name: string) => {
+    if (!flagged.has(name)) problems.push(`named "${name}", which isn't on file`);
+    flagged.add(name);
+  };
+  const baseWords = wordSet(baseText);
+  // Words the file writes in lower case — ordinary words there ("verified", "add-backs"), never part of a name.
+  const lowerWords = new Set((stripDdMarkers(`${knownText}\n${baseText}`).match(/(?<![A-Za-z0-9&'’-])[a-z][a-z0-9&'’-]*/g) ?? []));
+  const knownWords = wordSet(knownText);
+  for (const { label, baseLabel, row } of changedLabels(base.layoutData, enriched.layoutData)) {
+    const parts = labelParts(label);
+    const reveal = [...parts, ...labelParts(baseLabel)].some((p) => GENERIC_ROW_LABEL.test(p));
+    const names: string[] = [];
+    for (const part of parts) {
+      if (GENERIC_ROW_LABEL.test(part) || !/[A-Za-z]{2,}/.test(part)) continue;
+      if (!isNameLike(part)) {
+        // A description ("anchor account since 2011"): only a capitalised word in it can name someone.
+        for (const w of unknownCapitals(part, baseWords, knownWords)) flag(w);
+        continue;
+      }
+      if (onFile(part, knownNorm) || baseNames.has(normalizeForLookup(part))) {
+        names.push(part);
+        continue;
+      }
+      if (isPlaceOrPublicBody(part)) continue;
+      // A heading in title case ("Bank Deposits", "Verified Add-backs") names nothing — unless it took the place of "Customer A".
+      if (!reveal && part.split(/\s+/).every((w) => NAME_CONNECTORS.has(w.toLowerCase()) || ordinaryWord(w) || lowerWords.has(w.toLowerCase()))) continue;
+      flag(part);
     }
-    const stated = statedFigureFor(name, knownText);
     const shown = rowFigures(row);
-    if (stated.length > 0 && shown.length > 0 && !shown.some((v) => stated.some((s) => figureClose(Math.abs(v), Math.abs(s))))) {
-      problems.push(`shows "${name}" at ${shown.map((v) => v.toLocaleString("en-US")).join(" / ")}, but the file gives it ${stated.map((v) => v.toLocaleString("en-US")).join(" / ")}`);
+    for (const name of names) {
+      const stated = statedFigureFor(name, knownText);
+      if (stated.length > 0 && shown.length > 0 && !shown.some((v) => stated.some((s) => figureClose(Math.abs(v), Math.abs(s))))) {
+        problems.push(`shows "${name}" at ${shown.map((v) => v.toLocaleString("en-US")).join(" / ")}, but the file gives it ${stated.map((v) => v.toLocaleString("en-US")).join(" / ")}`);
+      }
     }
   }
   // 3c. One-word names in the prose it added.
   const proseNew = [...proseTexts(enriched.layoutData), enriched.contentOverride || ""].join("\n");
-  const baseWords = wordSet(baseText);
-  const knownWords = wordSet(knownText);
-  for (const w of unknownSingleNames(proseNew, baseWords, knownWords)) {
-    if (!flagged.has(w)) problems.push(`named "${w}", which isn't on file`);
-    flagged.add(w);
-  }
+  for (const w of unknownSingleNames(proseNew, baseWords, knownWords)) flag(w);
   // 3d. Never a name the seller or broker asked to keep out.
-  const held = mentionsHeldName(stripDdMarkers(newText), heldNames);
+  const held = mentionsHeldPerson(stripDdMarkers(newText), heldNames);
   if (held) problems.push(`named "${held}", whom the CIM must leave out`);
   // 4. No internal wording.
   const internal = stripDdMarkers(newText).match(INTERNAL_WORDING);

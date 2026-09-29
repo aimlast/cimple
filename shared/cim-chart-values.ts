@@ -130,6 +130,47 @@ export function chartSeriesRows<T extends { name?: unknown; value?: unknown }>(
   return { rows: out, unreadable };
 }
 
+/**
+ * A line chart's rows as drawn: each series value read as a number, the
+ * note written after one ("$1,850,000 (9 months YTD)") moved onto the
+ * point's name ("FY2025 (9 months YTD)"), and a value that isn't an amount
+ * ("TBD", "$1.1–1.2M") left as a gap and listed as written — it used to be
+ * a gap nobody was told about (free round 2 check, C6). With one series
+ * the listed name is the point's; with several, "FY2025 · Revenue".
+ */
+export function lineChartRows<T extends AnyRecord>(
+  rows: readonly T[],
+  series: ReadonlyArray<{ key: string; label?: string }>,
+  unit: unknown,
+): { rows: Array<AnyRecord>; unreadable: Array<{ name: string; value: string }> } {
+  const scale = unitScale(unit);
+  const unreadable: Array<{ name: string; value: string }> = [];
+  const out = rows.map((r) => {
+    const next: AnyRecord = { ...r };
+    const notes: string[] = [];
+    for (const s of series) {
+      if (!(s.key in r)) continue;
+      const v = r[s.key];
+      if (typeof v === "number") continue;
+      if (v == null || String(v).trim() === "") {
+        next[s.key] = null;
+        continue;
+      }
+      const read = readChartValue(v, scale);
+      next[s.key] = read.value;
+      if (read.value === null) {
+        const point = String(r.name ?? "").trim();
+        unreadable.push({ name: series.length > 1 ? [point, s.label || s.key].filter(Boolean).join(" · ") : point, value: String(v).trim() });
+      } else if (read.note && !notes.includes(read.note)) {
+        notes.push(read.note);
+      }
+    }
+    if (notes.length > 0) next.name = labelWithNote(r.name, notes.join("; "));
+    return next;
+  });
+  return { rows: out, unreadable };
+}
+
 /** Which unit a set of text values implies, when every one agrees: "$" or "%". */
 function impliedUnit(raw: unknown[]): string | null {
   const texts = raw.filter((v): v is string => typeof v === "string" && v.trim() !== "");
@@ -190,7 +231,19 @@ export function normalizeChartValues(layoutType: string, data: unknown): AnyReco
       data: rows.map((r) => {
         if (!isRecord(r)) return r;
         const next: AnyRecord = { ...r };
-        for (const k of keys) if (k in r) next[k] = num(r[k]);
+        const notes: string[] = [];
+        for (const k of keys) {
+          if (!(k in r)) continue;
+          // "$1,850,000 (9 months YTD)": the amount is the point, the note joins its name.
+          const read = typeof r[k] === "string" ? readChartValue(r[k], scale) : null;
+          if (read && read.value !== null) {
+            next[k] = read.value;
+            if (read.note && !notes.includes(read.note)) notes.push(read.note);
+          } else {
+            next[k] = num(r[k]);
+          }
+        }
+        if (notes.length > 0) next.name = labelWithNote(r.name, notes.join("; "));
         return next;
       }),
     };

@@ -39,6 +39,14 @@ export function splitLeaseType(v: unknown): { badge: string | null; terms: strin
   // "Leased from the owner's holding company …", "Lease: 10 years from 2019"
   // — the kind is the badge, the rest the terms (a bracketed aside is read
   // below). They showed no badge, or a badge holding the whole phrase.
+  // "Owned by the seller's holding company and leased to the business at
+  // $8,000 per month": the business rents it — an "Owned" pill was wrong
+  // (free round 2 check, known-2). Owned by someone else, with no lease
+  // named, isn't the business's own either: no badge, the text as written.
+  if (/^owned\b/i.test(t) && !/^owned\s*$/i.test(t)) {
+    if (LEASED_TO_BUSINESS.test(t) && !/\b(?:no|not|without|free of)\s+(?:\w+\s+)?(?:rent|lease)|\brent[- ]free\b/i.test(t)) return { badge: "Leased", terms: t };
+    if (/^owned\s+by\b/i.test(t) && !/^owned\s+by\s+(?:the\s+)?(?:business|company|corporation|operating\s+company)\b/i.test(t)) return { badge: null, terms: t };
+  }
   const kind = t.match(LEASE_KIND_FIRST);
   if (kind && kind[2].trim() && !kind[2].trim().startsWith("(")) {
     return { badge: leaseBadgeText(kind[1]), terms: cap(kind[2].trim().replace(/^[:;,—–-]\s*/, "")) };
@@ -52,6 +60,9 @@ export function splitLeaseType(v: unknown): { badge: string | null; terms: strin
   }
   return { badge: null, terms: t };
 }
+
+/** Words saying the business leases or rents the premises ("leased to the business", "leases it back", "pays rent"). */
+const LEASED_TO_BUSINESS = /\b(?:leased|leases|leasing|lease|rented|rents|renting|rent|sub-?let|tenant)\b/i;
 
 /** A lease kind at the start of the text, and what follows it. */
 const LEASE_KIND_FIRST =

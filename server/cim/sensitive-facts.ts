@@ -20,6 +20,8 @@
  * holdConfidentialFacts below.
  */
 import { SELLER_KEEP_OUT_REASON_RE, getSellerKeepOut, privatePiecesOf, type SellerKeepOutEntry } from "../interview/seller-keep-out";
+import { GIVEN_NAMES } from "@shared/blind-given-names";
+import { isCommonWord } from "@shared/blind-vocabulary";
 
 const PERSON = String.raw`(?:his|her|my|their|the owner'?s|owner'?s|founder'?s|seller'?s|vendor'?s|wife'?s|husband'?s|spouse'?s|partner'?s|son'?s|daughter'?s|father'?s|mother'?s)`;
 
@@ -389,8 +391,48 @@ export function mentionsHeldName(text: string, heldNames: readonly string[]): st
   return null;
 }
 
+const PERSON_TITLE = /^(?:dr|mr|mrs|ms|miss|mx|prof)\.?$/i;
+/** Given names that are also everyday words ("Grace period", "Will assist", "Frank discussion"): never matched alone. */
+const EVERYDAY_GIVEN = new Set(`
+grace will bill mark rose summer may june april august joy hope faith dawn sky amber ruby pearl iris ivy lily holly daisy
+jade crystal autumn frank grant dean chase drew earl gene guy jack jay max miles pat ray rich rob sandy sue victor wade
+hunter carter mason jordan brook cliff dale glen heath lane reed sage stone harper parker page sterling forest river
+rocky candy cherry destiny charity patience mercy honor noble royal king prince major bishop art gay robin wren penny
+`.split(/\s+/).filter(Boolean));
+
+/**
+ * A held person's given name written on its own: "Wages paid to Maria
+ * (owner's spouse)" for the held "Maria Chen" reached the DD context and
+ * passed the check, which matched only the full name (free round 2, C2).
+ * Only for a held name that starts with a known given name (a person, not a
+ * company) that isn't also an everyday word ("Grace", "Mark"); capitalised
+ * as a name, and not followed by another capitalised word — "Maria Lopez"
+ * is someone else. Null when the held name has no such form.
+ */
+function givenNameRe(name: string, flags = "u"): RegExp | null {
+  const words = name.trim().split(/\s+/).filter((w) => !PERSON_TITLE.test(w));
+  if (words.length < 2) return null;
+  const given = words[0];
+  const folded = given.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (!new RegExp(String.raw`^\p{Lu}[\p{Ll}'’-]{2,}$`, "u").test(given) || !GIVEN_NAMES.has(folded) || isCommonWord(folded) || EVERYDAY_GIVEN.has(folded)) return null;
+  return new RegExp(String.raw`(?<![\p{L}\p{N}])${escapeRe(given)}(?:['’]s)?(?![\p{L}\p{N}])(?!\s+\p{Lu})`, flags);
+}
+
+/**
+ * The held name a text mentions, in full or — for a person — by their given
+ * name alone (givenNameRe). Used wherever text is screened for the CIM (the
+ * named CIM's facts and scrub, the DD version); the keep-out bookkeeping
+ * that decides WHICH names are held still matches full names only.
+ */
+export function mentionsHeldPerson(text: string, heldNames: readonly string[]): string | null {
+  const full = mentionsHeldName(text, heldNames);
+  if (full || !text) return full;
+  for (const name of heldNames) if (givenNameRe(name)?.test(text)) return name;
+  return null;
+}
+
 function holdInValue(value: unknown, heldNames: readonly string[], note: (part: string) => boolean): { value: unknown; clauses: string[]; dropped: boolean } {
-  const isHeld = (s: string) => note(s) || !!mentionsHeldName(s, heldNames);
+  const isHeld = (s: string) => note(s) || !!mentionsHeldPerson(s, heldNames);
   if (typeof value === "string") {
     const parts = clausesOf(value);
     if (!parts.some(isHeld)) return { value, clauses: [], dropped: false };
@@ -424,13 +466,13 @@ function holdInValue(value: unknown, heldNames: readonly string[], note: (part: 
 /** Free text (earlier drafts, the scrape): sentences with a confidentiality note or a held name removed. */
 export function screenConfidentialText(text: string, heldNames: readonly string[]): string {
   if (!text) return text;
-  if (!hasConfidentialNote(text) && !mentionsHeldName(text, heldNames)) return text;
+  if (!hasConfidentialNote(text) && !mentionsHeldPerson(text, heldNames)) return text;
   return text
     .split(/\n{2,}/)
     .map((para) =>
       para
         .split(/(?<=[.!?])\s+/)
-        .filter((s) => !hasConfidentialNote(s) && !mentionsHeldName(s, heldNames))
+        .filter((s) => !hasConfidentialNote(s) && !mentionsHeldPerson(s, heldNames))
         .join(" "),
     )
     .filter((p) => p.trim())
@@ -625,6 +667,8 @@ export function neutralBridgeLabel(label: string, heldNames: readonly string[], 
   for (const name of heldNames) {
     const words = name.trim().split(/\s+/).map(escapeRe).join(String.raw`\s+`);
     t = t.replace(new RegExp(String.raw`(?<![\p{L}\p{N}])${words}(?:'s|’s)?(?![\p{L}\p{N}])`, "giu"), " ");
+    const given = givenNameRe(name, "gu");
+    if (given) t = t.replace(given, " ");
   }
   t = t
     .replace(/\(\s*\)/g, " ")

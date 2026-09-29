@@ -11,7 +11,7 @@
  */
 import type { Express, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { cimSections, type CimGenerationStatus, type CimSection, type CimSectionAiTask, type Deal } from "@shared/schema";
@@ -637,10 +637,14 @@ export function registerCimBuilderRoutes(app: Express): void {
       if (!Array.isArray(ids) || ids.some((i) => typeof i !== "string")) return res.status(400).json({ error: "sectionIds must be a list" });
       let changed = 0;
       for (const id of ids as string[]) {
+        // A tier change is a change to what buyers read (a teaser stops
+        // seeing the section): updatedAt moves, as it does through PATCH, so
+        // an unreviewed AI answer drawn from it is withdrawn (qa/cim-context
+        // answerStillHolds). A section already at that tier is left alone.
         const r = await db
           .update(cimSections)
-          .set({ accessTier: tier })
-          .where(and(eq(cimSections.id, id), eq(cimSections.dealId, deal.id)))
+          .set({ accessTier: tier, updatedAt: new Date() })
+          .where(and(eq(cimSections.id, id), eq(cimSections.dealId, deal.id), sql`${cimSections.accessTier} is distinct from ${tier}`))
           .returning({ id: cimSections.id });
         changed += r.length;
       }

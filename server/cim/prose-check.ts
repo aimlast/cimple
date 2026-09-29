@@ -23,7 +23,7 @@ import type { CimGrowth } from "./cim-financials";
 import { isKnownFigure, parseFiguresAt, type Figure, type KnownFigures } from "./figure-check";
 import { spelledNumbers, CASUAL_FIGURE } from "./spoken-figures";
 import { staleTargets } from "./fact-dates";
-import { mentionsHeldName } from "./sensitive-facts";
+import { mentionsHeldPerson } from "./sensitive-facts";
 import { genderOfGivenName } from "./given-name-gender";
 import { yearOfFigure } from "./consistency-check";
 
@@ -823,7 +823,7 @@ export function proseProblems(
     issues.push(...wrongGrowthPeriod(t.text, pk.growth ?? []));
     if (pk.today) for (const st of staleTargets(t.text, pk.today)) issues.push(`"${st.phrase}" is not in the future any more — today is ${pk.today.toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })}; restate the timeline from the recorded date or leave the date out`);
     issues.push(...guessedGender(t.text, pk));
-    const held = mentionsHeldName(t.text, pk.heldNames ?? []);
+    const held = mentionsHeldPerson(t.text, pk.heldNames ?? []);
     if (held) issues.push(`mentions "${held}", which the facts mark confidential — leave it out`);
     const casual = CASUAL_FIGURE.exec(t.text);
     if (casual) issues.push(`"${casual[0]}" is the seller's spoken wording — write it as a clean figure without changing its meaning`);

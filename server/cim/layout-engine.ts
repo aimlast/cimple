@@ -21,7 +21,7 @@ import { analysisHeadlines, cimGrowth, knownBridges, renderCimFinancialsBlock, r
 import { checkSectionFigures, figureWarningText, isUntracedIssue, knownFiguresFrom, parseFigures, withoutUntracedFigures, type KnownFigures } from "./figure-check";
 import {
   keepOutFromNotes,
-  mentionsHeldName,
+  mentionsHeldPerson,
   neutralBridgeLabel,
   screenConfidentialText,
   screenFactsForCim,
@@ -703,7 +703,7 @@ export function scrubHeldNames(
   if (heldNames.length === 0) return null;
   const names = new Set<string>();
   const note = (s: string) => {
-    const n = mentionsHeldName(s, heldNames);
+    const n = mentionsHeldPerson(s, heldNames);
     if (n) names.add(n);
     return n;
   };
@@ -1516,7 +1516,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
   // and the broker is told), and a confidential one stays out.
   const resolved = (params.resolvedDiscrepancies ?? []).filter((n) => {
     const text = `${n.year ? `${n.year} ` : ""}${n.field}: ${n.resolvedValue}`;
-    if (mentionsHeldName(text, heldNames)) return false;
+    if (mentionsHeldPerson(text, heldNames)) return false;
     if (!canon) return true;
     const read = /ebitda|sde|discretionary/i.test(text) ? text : "";
     if (read && offCanon(read, canon).length > 0) {

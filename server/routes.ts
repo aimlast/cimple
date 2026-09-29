@@ -81,7 +81,7 @@ import {
 } from "./security/body-fields";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders, canSnoozeDecision, buyerFacingDealName } from "./reminders/decision-reminders.js";
-import { buildAnswerContext, buildBuyerQuestionFeed, publishedQuestionsFor, type AnswerSection } from "./qa/cim-context.js";
+import { buildAnswerContext, buildBuyerQuestionFeed, endorsedDraftOnPublish, publishedQuestionsFor, type AnswerSection } from "./qa/cim-context.js";
 import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement, CIM_SECTIONS, mergeBuyerProfile, type CrmBuyerProfile, type BuyerDeepCheck } from "@shared/schema";
 import { withFieldSources, initialFieldSources, type BrokerBuyerOverlay, type BuyerAccessEvent } from "@shared/schema";
 import { isBuyerInBrokerList, filterBuyersInBrokerList } from "./buyers/profile-data.js";
@@ -7414,6 +7414,10 @@ Do not speculate or add information not in the CIM.`,
       // Published by the broker on purpose → for every buyer (a Blind buyer
       // still never sees it if it names the business — buyer-qa-scope.ts).
       if (isPublished === true) updates.answerScope = "all";
+      // Publishing the AI's answer as it stands makes it the broker's word
+      // (kept as their draft): it no longer counts as unreviewed.
+      const endorsed = endorsedDraftOnPublish(existingQ, req.body ?? {});
+      if (endorsed) updates.brokerDraft = endorsed;
 
       // Generate approval token when sending to seller
       if (status === "pending_seller") {
