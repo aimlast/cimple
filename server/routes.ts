@@ -62,6 +62,8 @@ import { registerBuyerAuthRoutes, inviteBuyerUser, reinviteBuyerWithoutPassword 
 import { buildApprovalInviteEmail, type ApprovalEmailVariant } from "./buyers/approval-emails.js";
 import { sellerReviewPayload } from "./buyers/seller-review-payload.js";
 import { outreachReplyTo, outreachFromName, brokerDisplayName } from "./buyers/outreach-reply.js";
+import { answerBuyerQuestion } from "./buyers/question-answer.js";
+import { mapWithLimit, withAiRetry } from "./ai-retry.js";
 import { answerNoticeDue, notifyBuyerQuestionAnswered } from "./qa/answer-notice.js";
 import { buyerNdaFor, signedNdaCopy, type BuyerNdaSignature } from "./buyers/buyer-nda.js";
 import { validSignerName } from "@shared/buyer-nda";
@@ -954,6 +956,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Draft outreach emails for selected buyers (AI-generated, never sent automatically).
   // Returns drafts in-memory; the broker reviews and edits before calling /send-outreach.
+  // Drafts are written a few at a time; a rate-limited or overloaded draft is retried.
+  const OUTREACH_DRAFTS_AT_ONCE = 5;
+  const OUTREACH_RETRY_DELAYS_MS = [2_000, 8_000];
   app.post("/api/deals/:dealId/draft-outreach", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
@@ -988,8 +993,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Only buyers on this broker's own list can be drafted to.
       const listed = await filterBuyersInBrokerList(req.session.brokerId!, buyerUserIds);
 
-      // Draft each email in parallel
-      const drafts = await Promise.all(buyerUserIds.map(async (buyerUserId) => {
+      // A few drafts at a time, each retried on a rate limit or overload:
+      // one parallel call per selected buyer (81 at once) tripped the rate
+      // limit and quietly turned most drafts into the generic template.
+      const drafts = await mapWithLimit(buyerUserIds, OUTREACH_DRAFTS_AT_ONCE, async (buyerUserId) => {
         if (!listed.has(buyerUserId)) return null;
         const ownBuyer = await storage.getBuyerUser(buyerUserId);
         if (!ownBuyer) return null;
@@ -1012,12 +1019,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Try to use Claude Sonnet to personalise; fall back to a deterministic
         // template if the API is unavailable or the draft isn't blind-safe.
         const defaultSubject = `Confidential opportunity: ${deal.industry}${dealSummary.region ? ` — ${dealSummary.region}` : ""}`;
-        const templateBody = () => `Hi ${buyer.name.split(" ")[0]},\n\nI'm reaching out because a ${deal.industry} business${dealSummary.region ? ` in ${dealSummary.region}` : ""} just came to market and it looks like a strong fit for your acquisition criteria${buyer.targetIndustries && (buyer.targetIndustries as string[]).length > 0 ? ` in ${(buyer.targetIndustries as string[]).slice(0, 2).join(" / ")}` : ""}.\n\nQuick highlights:\n• Industry: ${deal.industry}${dealSummary.subIndustry ? ` (${dealSummary.subIndustry})` : ""}\n${dealSummary.revenueBand ? `• Revenue: ${dealSummary.revenueBand}\n` : ""}${dealSummary.tenure ? `• ${dealSummary.tenure}\n` : ""}\nIf you'd like a closer look, just reply and I'll set up secure access to the full confidential overview.\n\nNo pressure either way — happy to answer questions if it's a fit.\n\nBest,\n${brokerName}${brokerCompany ? `\n${brokerCompany}` : ""}`;
+        // First name, past a title ("Dr. Priya Raman" → Priya, never "Hi Dr.,").
+        const firstName = buyer.name.replace(/^\s*(?:dr|mr|mrs|ms|mx|prof)\.?\s+/i, "").split(" ")[0] || buyer.name;
+        const templateBody = () => `Hi ${firstName},\n\nI'm reaching out because a ${deal.industry} business${dealSummary.region ? ` in ${dealSummary.region}` : ""} just came to market and it looks like a strong fit for your acquisition criteria${buyer.targetIndustries && (buyer.targetIndustries as string[]).length > 0 ? ` in ${(buyer.targetIndustries as string[]).slice(0, 2).join(" / ")}` : ""}.\n\nQuick highlights:\n• Industry: ${deal.industry}${dealSummary.subIndustry ? ` (${dealSummary.subIndustry})` : ""}\n${dealSummary.revenueBand ? `• Revenue: ${dealSummary.revenueBand}\n` : ""}${dealSummary.tenure ? `• ${dealSummary.tenure}\n` : ""}\nIf you'd like a closer look, just reply and I'll set up secure access to the full confidential overview.\n\nNo pressure either way — happy to answer questions if it's a fit.\n\nBest,\n${brokerName}${brokerCompany ? `\n${brokerCompany}` : ""}`;
         let subject = defaultSubject;
         let body = "";
+        // Why this draft is the generic template (shown on its card), if it is.
+        let templateReason: "ai_unavailable" | "identifying_details" | "unusable_draft" | null = null;
 
         try {
-          const aiResp = await anthropic.messages.create({
+          const aiResp = await withAiRetry(() => anthropic.messages.create({
             model: "claude-sonnet-4-5",
             max_tokens: 600,
             system: `You are an M&A broker drafting a personalised, low-pressure outreach email to a qualified buyer about a new business-for-sale opportunity. This email goes out BEFORE an NDA: it must be impossible to identify the business from it. Never state the business name, owner, street, city, or exact figures — refer to it by its codename or "a ${deal.industry} business", use only the region and the ranges provided. The tone is professional, warm, and concise — not salesy. Always include a clear, no-pressure invitation to learn more. Return ONLY a JSON object: {"subject": "...", "body": "..."}.`,
@@ -1050,10 +1061,15 @@ Requirements:
 
 Return JSON only.`,
             }],
-          });
+          }), OUTREACH_RETRY_DELAYS_MS);
 
-          const raw = aiResp.content[0].type === "text" ? aiResp.content[0].text : "";
-          const parsed = JSON.parse(raw.replace(/```json\s*/gi, "").replace(/```/g, "").trim());
+          const raw = aiResp.content[0]?.type === "text" ? aiResp.content[0].text : "";
+          let parsed: { subject?: unknown; body?: unknown } = {};
+          try {
+            parsed = JSON.parse(raw.replace(/```json\s*/gi, "").replace(/```/g, "").trim());
+          } catch {
+            templateReason = "unusable_draft";
+          }
           const aiSubject = typeof parsed.subject === "string" ? parsed.subject.trim() : "";
           const aiBody = typeof parsed.body === "string" ? parsed.body.trim() : "";
           const leaks = findBlindLeaks(`${aiSubject}\n${aiBody}`, outreachTerms);
@@ -1061,10 +1077,14 @@ Return JSON only.`,
             if (aiSubject) subject = aiSubject;
             body = aiBody;
           } else if (leaks.length > 0) {
+            templateReason = "identifying_details";
             console.warn("[outreach] AI draft named identifying details — discarded for the blind-safe template");
+          } else {
+            templateReason = templateReason ?? "unusable_draft";
           }
-        } catch (aiErr) {
-          console.warn("[outreach] AI draft failed for", buyer.email, "— falling back to template");
+        } catch (aiErr: any) {
+          templateReason = "ai_unavailable";
+          console.warn("[outreach] AI draft failed for", buyer.email, `(${aiErr?.status ?? aiErr?.message}) — falling back to template`);
         }
         if (!body) {
           subject = defaultSubject;
@@ -1077,8 +1097,11 @@ Return JSON only.`,
           buyerEmail: buyer.email,
           subject,
           body,
+          /** False = the generic template (templateReason says why) — the card says so. */
+          personalised: templateReason === null,
+          templateReason,
         };
-      }));
+      });
 
       const validDrafts = drafts.filter((d): d is NonNullable<typeof d> => !!d);
       // Where buyers' replies will land (the drafts say "just reply").
@@ -1268,6 +1291,10 @@ Return JSON only.`,
       res.json(profile);
     } catch (error: any) {
       console.error("[EQ profiler] Generation failed:", error);
+      // The AI service failed: the current profile was not touched.
+      if (error?.name === "SellerProfileUnavailableError") {
+        return res.status(503).json({ error: "The AI service is unavailable — your current profile was kept. Try again in a few minutes." });
+      }
       res.status(500).json({ error: error.message || "Failed to generate seller profile" });
     }
   });
@@ -2808,8 +2835,10 @@ Return JSON only.`,
   
   app.get("/api/deals/:dealId/documents", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      const documents = await storage.getDocumentsByDeal(req.params.dealId);
-      res.json(documents);
+      // Without the extracted text (never shown, and polled every 2.5 s
+      // while a document is being read) — see documents/document-list.ts.
+      const { listDocumentsForBroker } = await import("./documents/document-list");
+      res.json(await listDocumentsForBroker(req.params.dealId));
     } catch (error: any) {
       console.error("Error fetching documents:", error);
       res.status(500).json({ error: "Failed to fetch documents" });
@@ -5888,29 +5917,24 @@ Return JSON only.`,
       // DD context: shared documents only, CIM-safe facts, the computed
       // financial analysis (never the analyzer's raw JSON or its internal
       // questions) — see dd-enrichment buildDdContext.
-      const { generateDdOverrides, loadDdInputs, markDdFresh } = await import("./cim/dd-enrichment");
+      const { loadDdInputs, startFullDdGeneration, ddRunning } = await import("./cim/dd-enrichment");
+      // One DD run per deal (shared with the builder's "Refresh DD").
+      if (ddRunning.has(dealId)) return res.status(409).json({ error: "The due-diligence version is already being written." });
       const startedAt = new Date();
       const inputs = await loadDdInputs(deal);
-      const overrides = await generateDdOverrides(sections, { businessName: deal.businessName, industry: deal.industry }, inputs);
-
-      // Delete old DD overrides and insert new ones
-      await storage.deleteCimSectionOverrides(dealId, "dd");
-      for (const override of overrides) {
-        await storage.createCimSectionOverride({
-          dealId,
-          cimSectionId: override.cimSectionId,
-          mode: "dd",
-          layoutData: override.layoutData,
-          contentOverride: override.contentOverride,
-        });
+      // Runs in the background (the CIM tab polls the builder state for
+      // dd.running / dd.lastRun). A section the AI couldn't write keeps its
+      // current DD version; a run that wrote nothing changes nothing.
+      try {
+        startFullDdGeneration(deal, sections, inputs, startedAt);
+      } catch (err: any) {
+        if (err?.message === "running") return res.status(409).json({ error: "The due-diligence version is already being written." });
+        throw err;
       }
-      // Sections edited while this ran keep their stale mark.
-      await markDdFresh(dealId, startedAt);
-
-      const warnings = overrides.map((o) => o.warning).filter((w): w is string => !!w);
-      res.json({ success: true, overrideCount: overrides.length, warnings });
+      res.status(202).json({ started: true, sections: sections.length });
     } catch (error: any) {
       console.error("Error generating DD CIM:", error);
+      if (error?.name === "StaleFinancialAnalysisError") return res.status(409).json({ error: error.message });
       res.status(500).json({ error: error.message || "Failed to generate DD CIM" });
     }
   });
@@ -7157,128 +7181,76 @@ Return JSON only.`,
       const shareableText = (answer: string) =>
         scope !== "private" && findBlindLeaks([question, answer], blindTerms).length === 0;
       const reader = { id: access.id, accessLevel: access.accessLevel };
-      storage.createAnalyticsEvent({
-        dealId, buyerAccessId, eventType: "question_asked", sectionKey: null,
-        eventData: { question: String(question).slice(0, 200) },
-      } as any).catch(() => {});
 
-      // ── Step 1: Check knowledge base — has a similar question been answered
-      // before? Only answers THIS buyer may read (scope + identity check):
-      // a teaser is never answered from a full-access buyer's answer.
-      const publishedQs = await publishedQuestionsFor(deal, reader);
-      if (publishedQs.length > 0) {
-        const kbContext = publishedQs
-          .map(q => `Q: ${q.question}\nA: ${q.publishedAnswer || q.aiAnswer}`)
-          .join("\n\n");
-
-        const similarityCheck = await anthropic.messages.create({
-          model: "claude-sonnet-4-5",
-          max_tokens: 600,
-          system: `You are a Q&A similarity matcher for a business CIM. Given a buyer's question and a knowledge base of previously answered questions, determine if any existing answer adequately addresses the new question.
-
-If an existing answer covers the question (even if worded differently), respond with:
-MATCH: <the existing answer, optionally rephrased to directly address the new question>
-
-If no existing answer covers it, respond with exactly: NO_MATCH`,
-          messages: [{
-            role: "user",
-            content: `KNOWLEDGE BASE:\n${kbContext}\n\nNEW QUESTION: ${question}`,
-          }],
-        });
-
-        const matchText = similarityCheck.content[0].type === "text" ? similarityCheck.content[0].text : "";
-        if (matchText.startsWith("MATCH:")) {
-          const matchedAnswer = matchText.slice(6).trim();
-          // Find the matched Q ID for linking
-          const matchedQ = publishedQs.find(q =>
-            matchedAnswer.includes((q.publishedAnswer || q.aiAnswer)?.slice(0, 50) || "___none___")
-          );
-          const share = shareableText(matchedAnswer);
-
-          const saved = await storage.createBuyerQuestion({
-            dealId,
-            buyerAccessId: buyerAccessId || null,
-            question,
-            aiAnswer: matchedAnswer,
-            status: "published",
-            isPublished: share,
-            publishedAnswer: matchedAnswer,
-            addedToKnowledgeBase: share,
-            answerScope: scope,
-            similarQuestionIds: matchedQ ? [matchedQ.id] : [],
-          } as any);
-
-          return res.json({
-            id: saved.id,
-            answer: matchedAnswer,
-            status: "published",
-            message: matchedAnswer,
-            fromKnowledgeBase: true,
-          });
-        }
-      }
-
-      // ── Step 2: Try to answer from CIM content — the SAME version the
-      // buyer is allowed to see. Blind buyers get the redacted overrides; if
-      // redaction hasn't run yet, escalate rather than leak identity.
-      // Only sections the buyer can actually see. Structured layoutData
-      // (metric grids, location cards, financial tables, two-column blocks)
-      // carries most of the facts in a bespoke CIM, so it is flattened into
-      // the context alongside the prose — otherwise "what is the monthly
-      // rent?" escalated even though the Facility section shows it.
-      // Same authority as the view room (shared/cim-buyer-view.ts):
-      // hidden, locked (above the buyer's tier) and not-yet-redacted
-      // sections never feed the answer.
-      const [chatBaseSections, chatOverrides, chatMedia] = await Promise.all([
-        storage.getCimSectionsByDeal(dealId),
-        chatMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(dealId, chatMode),
-        loadMediaAssets(dealId),
-      ]);
-      // A CIM held for the broker's review answers nothing (it escalates).
-      const chatCim = cimHeldFromBuyers(deal)
-        ? { sections: [] as ReturnType<typeof buildBuyerCim>["sections"] }
-        : buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: chatBaseSections, overrides: chatOverrides, media: chatMedia, askingPrice: listedAskingPrice(deal) });
-      const answerSections: AnswerSection[] = chatCim.sections
-        .filter(s => !s.locked)
-        .map(s => ({
-          title: s.sectionTitle,
-          body: s.brokerEditedContent || s.aiDraftContent || "",
-          layoutType: s.layoutType,
-          layoutData: s.layoutData,
-        }));
-      // DD overrides carry [[dd]] highlight sentinels for the renderer — plain text for the model.
-      const cimText = stripDdMarkers(buildAnswerContext(answerSections));
-
-      const aiResponse = cimText.trim().length === 0 ? { content: [] as any[] } : await anthropic.messages.create({
-        model: "claude-sonnet-4-5",
-        max_tokens: 500,
-        system: `You are answering buyer questions about a business for sale based strictly on the CIM document provided.
-If the answer is clearly in the CIM, answer concisely and professionally.
-If the answer is NOT in the CIM, respond with exactly: ESCALATE
-Do not speculate or add information not in the CIM.`,
-        messages: [{ role: "user", content: `CIM CONTENT:\n${cimText}\n\nBUYER QUESTION: ${question}` }],
+      // 1. a published answer this buyer may read (scope + identity check —
+      // a teaser is never answered from a full-access buyer's answer);
+      // 2. the CIM the buyer can see; 3. the broker. Each AI step fails soft
+      // (server/buyers/question-answer.ts): an AI outage forwards the
+      // question to the broker instead of losing it.
+      const result = await answerBuyerQuestion({
+        question,
+        published: await publishedQuestionsFor(deal, reader),
+        ask: async ({ system, user, maxTokens }) => {
+          const r = await anthropic.messages.create({ model: "claude-sonnet-4-5", max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] });
+          return r.content[0]?.type === "text" ? r.content[0].text : "";
+        },
+        // The SAME version of the CIM the buyer is allowed to see. Blind
+        // buyers get the redacted overrides; if redaction hasn't run yet,
+        // escalate rather than leak identity. Structured layoutData (metric
+        // grids, location cards, financial tables, two-column blocks)
+        // carries most of the facts in a bespoke CIM, so it is flattened into
+        // the context alongside the prose — otherwise "what is the monthly
+        // rent?" escalated even though the Facility section shows it. Same
+        // authority as the view room (shared/cim-buyer-view.ts): hidden,
+        // locked (above the buyer's tier) and not-yet-redacted sections never
+        // feed the answer.
+        loadCimText: async () => {
+          const [chatBaseSections, chatOverrides, chatMedia] = await Promise.all([
+            storage.getCimSectionsByDeal(dealId),
+            chatMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(dealId, chatMode),
+            loadMediaAssets(dealId),
+          ]);
+          // A CIM held for the broker's review answers nothing (it escalates).
+          const chatCim = cimHeldFromBuyers(deal)
+            ? { sections: [] as ReturnType<typeof buildBuyerCim>["sections"] }
+            : buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: chatBaseSections, overrides: chatOverrides, media: chatMedia, askingPrice: listedAskingPrice(deal) });
+          const answerSections: AnswerSection[] = chatCim.sections
+            .filter(s => !s.locked)
+            .map(s => ({
+              title: s.sectionTitle,
+              body: s.brokerEditedContent || s.aiDraftContent || "",
+              layoutType: s.layoutType,
+              layoutData: s.layoutData,
+            }));
+          // DD overrides carry [[dd]] highlight sentinels for the renderer — plain text for the model.
+          return stripDdMarkers(buildAnswerContext(answerSections));
+        },
       });
 
-      const aiAnswer = cimText.trim().length === 0 ? null : (aiResponse.content[0].type === "text" ? aiResponse.content[0].text : null);
-      // The model sometimes writes "ESCALATE" and then explains — still an escalation.
-      const needsEscalation = !aiAnswer || /^\s*ESCALATE\b/.test(aiAnswer);
-
+      const needsEscalation = result.kind === "escalate";
+      const aiAnswer = result.kind === "escalate" ? null : result.answer;
       // An answer drawn from the NAMED CIM (LOI / DD buyer) can hold the
       // business name, address or people — it goes to the asker only, never
       // into the shared feed / knowledge base that blind buyers read. A full-
       // access buyer's answer is shared with full-access buyers only.
-      const shareable = !needsEscalation && shareableText(aiAnswer!);
+      const shareable = !!aiAnswer && shareableText(aiAnswer);
       const saved = await storage.createBuyerQuestion({
         dealId,
         buyerAccessId: buyerAccessId || null,
         question,
-        aiAnswer: needsEscalation ? null : aiAnswer,
+        aiAnswer,
         status: needsEscalation ? "pending_broker" : "published",
         isPublished: shareable,
-        publishedAnswer: needsEscalation ? null : aiAnswer,
+        publishedAnswer: aiAnswer,
         addedToKnowledgeBase: shareable,
         answerScope: scope,
+        ...(result.kind === "knowledge_base" ? { similarQuestionIds: result.matchedId ? [result.matchedId] : [] } : {}),
       } as any);
+      // Counted only once the question exists (a lost question used to be counted).
+      storage.createAnalyticsEvent({
+        dealId, buyerAccessId, eventType: "question_asked", sectionKey: null,
+        eventData: { question: String(question).slice(0, 200) },
+      } as any).catch(() => {});
 
       // Notify broker when question needs manual response
       if (needsEscalation) {
@@ -7292,13 +7264,13 @@ Do not speculate or add information not in the CIM.`,
 
       res.json({
         id: saved.id,
-        answer: needsEscalation ? null : aiAnswer,
+        answer: aiAnswer,
         status: needsEscalation ? "pending_broker" : "published",
-        message: needsEscalation
-          ? "Forwarded to your broker."
-          : aiAnswer,
+        message: needsEscalation ? "Forwarded to your broker." : aiAnswer,
+        ...(result.kind === "knowledge_base" ? { fromKnowledgeBase: true } : {}),
       });
     } catch (error: any) {
+      console.error("[buyer-qa] Failed to process question:", error);
       res.status(500).json({ error: "Failed to process question" });
     }
   });

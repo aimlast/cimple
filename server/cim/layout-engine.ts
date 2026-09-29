@@ -281,6 +281,12 @@ export async function generateCimLayout(
       ),
     );
     generated.push(...results);
+    // The AI service is down (credits out, an overload burst): when not one
+    // section of the first batch could be written, stop instead of retrying
+    // every remaining section — the job fails and the deal's CIM stays.
+    if (i === 0 && results.length > 0 && results.every(isFallback)) {
+      throw new Error(`The AI service failed while writing the first ${results.length} sections, so the run was stopped. Nothing was changed. Try again in a few minutes.`);
+    }
   }
 
   // ── Phase 3: every figure must trace to the deal's data ────────────────

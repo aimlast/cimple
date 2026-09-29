@@ -33,7 +33,9 @@ export interface SellerCommunicationProfile {
     | "life_event"
     | "opportunistic"
     | "partnership_dispute"
-    | "growth_beyond_capability";
+    | "growth_beyond_capability"
+    /** Nothing on file says why (the no-data profile) — never guessed. */
+    | "unknown";
 
   /** Experience level with business transactions */
   sophistication: "first_time_seller" | "some_experience" | "serial_entrepreneur";
@@ -45,7 +47,7 @@ export interface SellerCommunicationProfile {
   timeOrientation: "patient" | "moderate" | "urgent";
 
   /** Family dynamics relevant to the sale */
-  familyInvolvement: "family_business" | "spouse_involved" | "solo_operator" | "partner_business";
+  familyInvolvement: "family_business" | "spouse_involved" | "solo_operator" | "partner_business" | "unknown";
 
   /** Topics to approach carefully (e.g., health, family conflict, financial stress) */
   sensitiveTopics: string[];
@@ -92,6 +94,54 @@ export interface SellerCommunicationProfile {
 export const PROFILE_PRIVACY_VERSION = 3;
 
 /**
+ * Thrown by generateSellerProfile when the AI service fails (no credits, an
+ * overload, a timeout, no structured answer). The caller keeps whatever
+ * profile the deal has: a stand-in profile saved in its place used to tell
+ * the interview, for the rest of the deal, that the seller was a retiring
+ * solo operator — "based on" the deal's real sources.
+ */
+export class SellerProfileUnavailableError extends Error {
+  constructor(cause?: unknown) {
+    super("The AI service is unavailable, so the seller profile could not be built. Your current profile was kept.");
+    this.name = "SellerProfileUnavailableError";
+    (this as { cause?: unknown }).cause = cause;
+  }
+}
+
+/** Retry a failed build at most once an hour per deal (in memory: a restart retries once). */
+const PROFILE_RETRY_MS = 60 * 60 * 1000;
+const profileFailedAt = new Map<string, number>();
+
+/** False while a recent build for this deal failed (hourly back-off). */
+export function sellerProfileRetryDue(dealId: string, now = Date.now()): boolean {
+  const at = profileFailedAt.get(dealId);
+  return at === undefined || now - at >= PROFILE_RETRY_MS;
+}
+
+export function noteSellerProfileFailure(dealId: string, now = Date.now()): void {
+  profileFailedAt.set(dealId, now);
+}
+
+export function clearSellerProfileFailure(dealId: string): void {
+  profileFailedAt.delete(dealId);
+}
+
+/**
+ * A stand-in profile an AI failure saved before SellerProfileUnavailableError
+ * existed: the default story with "retirement" / "solo operator" that no
+ * source said. Rebuilt like an out-of-date profile, and its categories are
+ * kept out of the interview meanwhile.
+ */
+export function isInventedFallbackProfile(profile: Partial<SellerCommunicationProfile> | null | undefined): boolean {
+  if (!profile) return false;
+  return (
+    typeof profile.sellerStory === "string" &&
+    profile.sellerStory.includes("Limited information is available about their personal motivations") &&
+    (profile.sellingReason === "retirement" || profile.familyInvolvement === "solo_operator")
+  );
+}
+
+/**
  * True when a stored profile's free text (seller story, sensitive topics,
  * personal insights, industry context) may carry material the seller must
  * never hear, so it must stay out of the interview prompt until rebuilt:
@@ -105,6 +155,7 @@ export function sellerProfileNeedsRebuild(
 ): boolean {
   if (!profile) return false;
   if ((profile.privacyVersion ?? 0) < PROFILE_PRIVACY_VERSION) return true;
+  if (isInventedFallbackProfile(profile)) return true;
   const read = new Set(Array.isArray(profile.sourceDocumentIds) ? profile.sourceDocumentIds : []);
   return documents.some((d) => !!d.id && read.has(d.id) && d.visibility === "broker_only");
 }
@@ -230,6 +281,11 @@ function getAnthropicClient(): Anthropic {
     _anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   }
   return _anthropic;
+}
+
+/** Tests: a stubbed client (no AI calls). */
+export function _setProfilerClientForTests(fake: unknown | null) {
+  _anthropic = (fake as Anthropic | null) ?? null;
 }
 
 const PROFILER_MODEL = agentConfig.models.supportingAgents;
@@ -625,14 +681,16 @@ function buildDefaultProfile(
   return {
     communicationStyle: "conversational",
     emotionalState: "neutral",
-    sellingReason: "retirement",
+    // Nothing on file says why they are selling or who else decides — the
+    // interview hears "not known yet", never a guess.
+    sellingReason: "unknown",
     sophistication: "first_time_seller",
     businessAttachment: "medium",
     timeOrientation: "moderate",
-    familyInvolvement: "solo_operator",
+    familyInvolvement: "unknown",
     sensitiveTopics: [],
     personalInsights: [],
-    sellerStory: `The owner of ${businessName} is preparing to sell their ${industry}${subIndustry ? ` (${subIndustry})` : ""} business. Limited information is available about their personal motivations and communication preferences at this time.`,
+    sellerStory: `The owner of ${businessName} is preparing to sell their ${industry}${subIndustry ? ` (${subIndustry})` : ""} business. Nothing on file yet says why they are selling or who else is involved in the decision.`,
     industryContext: `${businessName} operates in the ${industry} industry. The interview agent should use industry-appropriate language and be attentive to sector-specific sensitivities as they emerge during the conversation.`,
     confidenceScore: 0.1,
     dataSources: [],
@@ -685,10 +743,8 @@ export async function generateSellerProfile(
     // Extract the structured response
     const toolUseBlock = response.content.find((block) => block.type === "tool_use");
     if (!toolUseBlock || toolUseBlock.type !== "tool_use") {
-      console.warn(
-        `[eq-profiler] Claude did not return a structured response for deal ${dealId}, using defaults`,
-      );
-      return buildDefaultProfile(data.businessName, data.industry, data.subIndustry);
+      console.warn(`[eq-profiler] Claude did not return a structured response for deal ${dealId}`);
+      throw new SellerProfileUnavailableError();
     }
 
     const aiProfile = toolUseBlock.input as Record<string, unknown>;
@@ -716,7 +772,7 @@ export async function generateSellerProfile(
           "partnership_dispute",
           "growth_beyond_capability",
         ],
-        "retirement",
+        "unknown",
       ),
       sophistication: validateEnum(
         aiProfile.sophistication as string,
@@ -736,7 +792,7 @@ export async function generateSellerProfile(
       familyInvolvement: validateEnum(
         aiProfile.familyInvolvement as string,
         ["family_business", "spouse_involved", "solo_operator", "partner_business"],
-        "solo_operator",
+        "unknown",
       ),
       sensitiveTopics: Array.isArray(aiProfile.sensitiveTopics)
         ? (aiProfile.sensitiveTopics as string[])
@@ -761,13 +817,11 @@ export async function generateSellerProfile(
 
     return stripNegotiationText(profile);
   } catch (err) {
+    if (err instanceof SellerProfileUnavailableError) throw err;
     console.error(`[eq-profiler] Failed to generate profile for deal ${dealId}:`, err);
-    // Return a default profile rather than crashing the interview startup
-    const fallback = buildDefaultProfile(data.businessName, data.industry, data.subIndustry);
-    fallback.dataSources = sources;
-    fallback.sourceDocumentIds = documentIds;
-    fallback.confidenceScore = Math.max(confidenceScore * 0.5, 0.1);
-    return fallback;
+    // Never a stand-in profile "based on" the real sources: the caller keeps
+    // the deal's current profile (or none) and retries later.
+    throw new SellerProfileUnavailableError(err);
   }
 }
 
@@ -861,6 +915,7 @@ export function renderProfileForPrompt(profile: SellerCommunicationProfile): str
     opportunistic: "Opportunistic (market timing or unsolicited offer)",
     partnership_dispute: "Partnership dispute",
     growth_beyond_capability: "Business has outgrown the owner's capacity",
+    unknown: "Not known yet — let the seller say it in their own words; never assume one",
   };
   lines.push(`- **Selling reason:** ${reasonLabels[profile.sellingReason] || profile.sellingReason}`);
 
@@ -869,6 +924,7 @@ export function renderProfileForPrompt(profile: SellerCommunicationProfile): str
     spouse_involved: "Spouse is involved in or has opinions about the sale. Decision-making may be shared.",
     solo_operator: "Solo operator — decisions are theirs alone.",
     partner_business: "Has business partner(s). Alignment between partners may be a factor.",
+    unknown: "Not known yet — don't assume who else is involved in the decision.",
   };
   lines.push(`- **Family involvement:** ${familyLabels[profile.familyInvolvement]}`);
   lines.push("");

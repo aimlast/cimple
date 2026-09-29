@@ -26,7 +26,7 @@
  * (cim_sections.dd_stale_at), a DD buyer gets the current named content for
  * it, and refreshSectionDd() redoes just that section.
  */
-import { and, eq, isNull, lt } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, notInArray } from "drizzle-orm";
 import { isMediaLayout } from "@shared/cim-media";
 import Anthropic from "@anthropic-ai/sdk";
 import { cimSections, cimSectionOverrides, type CimSection, type Deal } from "@shared/schema";
@@ -101,6 +101,19 @@ export interface DdEnrichmentResult {
   contentOverride: string;
   /** Set when the enrichment was rejected and the named version kept (why, for the broker). */
   warning?: string;
+  /**
+   * Why no enriched version came back: "api" = the AI service failed (credits,
+   * overload, timeout); "unusable" = no usable answer (truncated, no tool
+   * call) — both worth retrying, so an existing DD version is left as it is;
+   * "rejected" = the answer broke the DD rules (the named version is the
+   * DD version).
+   */
+  failed?: "api" | "unusable" | "rejected";
+}
+
+/** A failure worth retrying: the section's current DD version must not be replaced by the named copy. */
+export function ddRetryable(r: Pick<DdEnrichmentResult, "failed">): boolean {
+  return r.failed === "api" || r.failed === "unusable";
 }
 
 /** What the DD writer may use — built once per run (loadDdInputs / buildDdContext). */
@@ -337,7 +350,9 @@ export async function enrichSection(
 ): Promise<DdEnrichmentResult> {
   const layoutData = section.layoutData as any || {};
   const content = section.brokerEditedContent || section.aiDraftContent || "";
-  const keep = (warning?: string): DdEnrichmentResult => ({ cimSectionId: String(section.id), layoutData, contentOverride: content, ...(warning ? { warning } : {}) });
+  const keep = (warning?: string, failed?: DdEnrichmentResult["failed"]): DdEnrichmentResult => ({
+    cimSectionId: String(section.id), layoutData, contentOverride: content, ...(warning ? { warning } : {}), ...(failed ? { failed } : {}),
+  });
 
   // Cover pages and dividers carry nothing to enrich — skip the model call so
   // they can't come back with stray markers or a reworded title.
@@ -399,17 +414,17 @@ Return the enriched section via the dd_section tool.`,
     if (message?.stop_reason !== "max_tokens" && block?.input && typeof block.input === "object") parsed = block.input;
   } catch (err) {
     console.warn(`[dd-enrichment] section ${section.id} failed:`, (err as Error)?.message);
-    return keep(`DD version of "${section.sectionTitle}" couldn't be written — it shows the named CIM.`);
+    return keep(`DD version of "${section.sectionTitle}" couldn't be written (the AI service failed) — its current DD version was kept. Refresh it later.`, "api");
   }
   if (!parsed || !parsed.layoutData || typeof parsed.layoutData !== "object") {
-    return keep(`DD version of "${section.sectionTitle}" couldn't be written — it shows the named CIM.`);
+    return keep(`DD version of "${section.sectionTitle}" couldn't be written — its current DD version was kept. Refresh it later.`, "unusable");
   }
 
   const clean = sanitizeDdOutput(parsed.layoutData, typeof parsed.contentOverride === "string" ? parsed.contentOverride : content);
   const problems = validateDdOverride({ layoutData, content }, clean, inputs.knownText);
   if (problems.length > 0) {
     console.warn(`[dd-enrichment] section ${section.id} rejected: ${problems.join("; ")}`);
-    return keep(`DD version of "${section.sectionTitle}" kept as the named CIM — the enrichment ${problems.slice(0, 3).join("; ")}.`);
+    return keep(`DD version of "${section.sectionTitle}" kept as the named CIM — the enrichment ${problems.slice(0, 3).join("; ")}.`, "rejected");
   }
   return { cimSectionId: String(section.id), layoutData: clean.layoutData, contentOverride: clean.contentOverride };
 }
@@ -423,6 +438,10 @@ Return the enriched section via the dd_section tool.`,
 export async function refreshSectionDd(section: CimSection, deal: Deal): Promise<{ warning?: string }> {
   const inputs = await loadDdInputs(deal);
   const result = await enrichSection(section, inputs, deal);
+  // The AI service failed: the section's DD version (and its stale mark)
+  // stay exactly as they were — never replaced by the named copy and marked
+  // fresh, which hid it from "Refresh DD".
+  if (ddRetryable(result)) throw new DdUnavailableError();
   const stamp = section.ddStaleAt ? new Date(section.ddStaleAt) : null;
   const committed = await db.transaction(async (tx) => {
     const cleared = await tx
@@ -451,4 +470,130 @@ export async function markDdFresh(dealId: string, startedAt: Date): Promise<void
     .update(cimSections)
     .set({ ddStaleAt: null })
     .where(and(eq(cimSections.dealId, dealId), lt(cimSections.ddStaleAt, startedAt)));
+}
+
+// ── The full DD run ("Generate" / "Refresh" on the CIM tab) ──────────────
+//
+// Runs in the background (a multi-minute request with no guard against a
+// second click used to be the only way), one run per deal — shared with the
+// builder's "Refresh DD" so the two never overlap. An AI failure never
+// replaces a good DD version: a section whose enrichment failed on the
+// service keeps its current DD version and stale mark, only sections that
+// were actually written are marked fresh, and a run where nothing could be
+// written changes nothing at all. (During an outage the old route deleted
+// every DD version, inserted the plain named copies, marked them fresh —
+// so "Refresh DD" skipped them — and said "Due-diligence version ready".)
+
+/** Thrown by refreshSectionDd when the AI service failed: nothing was changed. */
+export class DdUnavailableError extends Error {
+  constructor() {
+    super("The AI service is unavailable — the section's DD version was kept. Try again in a few minutes.");
+    this.name = "DdUnavailableError";
+  }
+}
+
+/** Deals with a DD run in progress (the full run or the builder's refresh-all). */
+export const ddRunning = new Set<string>();
+
+export interface DdRunSummary {
+  finishedAt: string;
+  /** Set when the run changed nothing (the AI service failed, or it crashed). */
+  error?: string;
+  /** Sections whose DD version was written this run. */
+  written: number;
+  /** Sections the AI couldn't write — their DD version (if any) was kept. */
+  notWritten: number;
+  warnings: string[];
+}
+const lastRuns = new Map<string, DdRunSummary>();
+
+/** The last full DD run for the deal (kept in memory, for the CIM tab). */
+export function lastDdRun(dealId: string): DdRunSummary | null {
+  return lastRuns.get(dealId) ?? null;
+}
+
+/** Writes a run's results. Swappable for tests. */
+export type DdRunWriter = (dealId: string, allSectionIds: string[], written: DdEnrichmentResult[], startedAt: Date) => Promise<void>;
+
+const dbRunWriter: DdRunWriter = async (dealId, allSectionIds, written, startedAt) => {
+  const ids = written.map((w) => w.cimSectionId);
+  await db.transaction(async (tx) => {
+    // The written sections' old DD rows, and rows of sections since deleted.
+    if (ids.length > 0) {
+      await tx.delete(cimSectionOverrides).where(and(eq(cimSectionOverrides.dealId, dealId), eq(cimSectionOverrides.mode, "dd"), inArray(cimSectionOverrides.cimSectionId, ids)));
+    }
+    if (allSectionIds.length > 0) {
+      await tx.delete(cimSectionOverrides).where(and(eq(cimSectionOverrides.dealId, dealId), eq(cimSectionOverrides.mode, "dd"), notInArray(cimSectionOverrides.cimSectionId, allSectionIds)));
+    }
+    if (written.length > 0) {
+      await tx.insert(cimSectionOverrides).values(
+        written.map((w) => ({ dealId, cimSectionId: w.cimSectionId, mode: "dd", layoutData: w.layoutData, contentOverride: w.contentOverride })),
+      );
+      // Fresh = written this run and not edited while it ran.
+      await tx.update(cimSections).set({ ddStaleAt: null }).where(and(inArray(cimSections.id, ids), lt(cimSections.ddStaleAt, startedAt)));
+    }
+  });
+};
+let runWriter: DdRunWriter = dbRunWriter;
+export function _setDdRunWriterForTests(writer: DdRunWriter | null) {
+  runWriter = writer ?? dbRunWriter;
+}
+
+/** Pure: what a finished run writes, and whether it may write at all. */
+export function planDdRun(results: DdEnrichmentResult[], sections: Array<Pick<CimSection, "id" | "layoutType">>): {
+  write: DdEnrichmentResult[];
+  notWritten: DdEnrichmentResult[];
+  error: string | null;
+} {
+  const attempted = new Set(
+    sections.filter((s) => s.layoutType !== "cover_page" && s.layoutType !== "divider" && !isMediaLayout(s.layoutType)).map((s) => String(s.id)),
+  );
+  const notWritten = results.filter(ddRetryable);
+  const write = results.filter((r) => !ddRetryable(r));
+  const attemptedCount = results.filter((r) => attempted.has(r.cimSectionId)).length;
+  if (attemptedCount > 0 && notWritten.length >= attemptedCount) {
+    return {
+      write: [],
+      notWritten,
+      error: `The AI service failed while writing the due-diligence version (${notWritten.length} of ${attemptedCount} sections). Nothing was changed — try again in a few minutes.`,
+    };
+  }
+  return { write, notWritten, error: null };
+}
+
+async function runFullDd(deal: Deal, sections: CimSection[], inputs: DdInputs, startedAt: Date): Promise<DdRunSummary> {
+  const results = await generateDdOverrides(sections, { businessName: deal.businessName, industry: deal.industry }, inputs);
+  const plan = planDdRun(results, sections);
+  const warnings = results.map((r) => r.warning).filter((w): w is string => !!w);
+  if (plan.error) return { finishedAt: new Date().toISOString(), error: plan.error, written: 0, notWritten: plan.notWritten.length, warnings };
+  await runWriter(deal.id, sections.map((s) => String(s.id)), plan.write, startedAt);
+  return { finishedAt: new Date().toISOString(), written: plan.write.length, notWritten: plan.notWritten.length, warnings };
+}
+
+/**
+ * Start the full DD run in the background (the caller loaded the inputs, so
+ * their errors — e.g. a stale financial analysis — are answered at once).
+ * Throws "running" when a DD run is already in progress for the deal.
+ * Returns the run's promise for tests (the route doesn't wait for it).
+ */
+export function startFullDdGeneration(deal: Deal, sections: CimSection[], inputs: DdInputs, startedAt: Date): { done: Promise<DdRunSummary> } {
+  if (ddRunning.has(deal.id)) throw new Error("running");
+  ddRunning.add(deal.id);
+  const done = runFullDd(deal, sections, inputs, startedAt)
+    .catch((err): DdRunSummary => {
+      console.error(`[dd-enrichment] DD run for deal ${deal.id} failed:`, err);
+      return {
+        finishedAt: new Date().toISOString(),
+        error: "The due-diligence version couldn't be written. Nothing was changed — try again.",
+        written: 0,
+        notWritten: 0,
+        warnings: [],
+      };
+    })
+    .then((summary) => {
+      lastRuns.set(deal.id, summary);
+      ddRunning.delete(deal.id);
+      return summary;
+    });
+  return { done };
 }

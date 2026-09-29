@@ -57,7 +57,7 @@ import {
   startSectionTask,
 } from "../cim/section-tasks";
 import { REWRITE_TONES } from "../cim/layout-engine";
-import { refreshSectionDd } from "../cim/dd-enrichment";
+import { refreshSectionDd, ddRunning, lastDdRun, DdUnavailableError } from "../cim/dd-enrichment";
 import { cimFinancialsFor, StaleFinancialAnalysisError } from "../cim/cim-financials";
 
 /**
@@ -83,8 +83,8 @@ import { historySnapshots } from "@shared/cim-approvals";
 
 const NO_AI_MEDIA = "The AI can't choose photos or videos — add them yourself in the section's editor.";
 
-/** Deals whose out-of-date DD sections are being refreshed right now. */
-const ddRefreshRunning = new Set<string>();
+/** Deals with a DD run in progress — shared with the CIM tab's full DD run (dd-enrichment). */
+const ddRefreshRunning = ddRunning;
 
 /** Context for a blank section's starting data (a map starts at the deal's address). */
 function blankContext(deal: Deal, title: string | null) {
@@ -253,6 +253,8 @@ export function registerCimBuilderRoutes(app: Express): void {
           /** Sections whose DD version is out of date or missing — DD buyers see the named content for them. */
           outOfDate: rows.filter((r) => r.ddStatus === "stale" || r.ddStatus === "missing").length,
           running: ddRefreshRunning.has(deal.id),
+          /** The last full DD run: what couldn't be written, or why nothing changed. */
+          lastRun: lastDdRun(deal.id),
         },
         // `total` = links that can open the CIM now (not revoked, not expired):
         // the count the regenerate dialogs quote and the hold is decided on.
@@ -537,6 +539,7 @@ export function registerCimBuilderRoutes(app: Express): void {
       if (err?.message === "changed") {
         return res.status(409).json({ error: "The section changed while its DD version was being written. Refresh it again." });
       }
+      if (err instanceof DdUnavailableError) return res.status(503).json({ error: err.message });
       if (err instanceof StaleFinancialAnalysisError) return res.status(409).json({ error: err.message });
       console.error("[cim-builder] DD refresh failed:", err);
       res.status(500).json({ error: "Couldn't refresh the DD version" });

@@ -629,14 +629,80 @@ function passageWords(text: string): string[] {
   const unglued = text.replace(/([A-Za-z]{3,})(\d)/g, "$1 $2").replace(/(\d)([A-Za-z]{3,})/g, "$1 $2");
   return (unglued.match(/[A-Za-z0-9][A-Za-z0-9'’&-]*/g) ?? []).filter((w) => w.length >= 2).map(searchWord);
 }
-const chunkCache = new Map<string, Chunk[]>();
+/**
+ * How much of one source is split into cached passages. A general-ledger
+ * export (150,000 rows, 11 MB of text — well inside the upload limit) took
+ * 7–10 s of blocked event loop on the first search after a restart, stalling
+ * every other seller's stream and broker request, and held ~350 MB of heap
+ * (passages cost ~50× their text). Beyond this, a source is searched by
+ * keyword windows for the question at hand (tailChunksFor), never chunked
+ * whole.
+ */
+export const CHUNKED_CHARS_PER_SOURCE = 300_000;
+/** Total source text whose passages stay cached (least recently used goes first). */
+export const CHUNK_CACHE_CHARS = 4_000_000;
+
+const chunkCache = new Map<string, { chunks: Chunk[]; chars: number }>();
+let chunkCacheChars = 0;
+
+function cacheChunks(key: string, chunks: Chunk[], chars: number) {
+  chunkCache.set(key, { chunks, chars });
+  chunkCacheChars += chars;
+  for (const k of Array.from(chunkCache.keys())) {
+    if (chunkCacheChars <= CHUNK_CACHE_CHARS || k === key) break;
+    chunkCacheChars -= chunkCache.get(k)!.chars;
+    chunkCache.delete(k);
+  }
+}
+
+/** Test/diagnostic view of the cache's size. */
+export function _chunkCacheStats(): { entries: number; chars: number } {
+  return { entries: chunkCache.size, chars: chunkCacheChars };
+}
 
 function chunksFor(doc: DocLike): Chunk[] {
   const raw = typeof doc.extractedText === "string" ? doc.extractedText : "";
   if (!raw.trim()) return [];
   const cacheKey = `v5:${doc.id}:${raw.length}:${String(doc.updatedAt ?? "")}`;
   const hit = chunkCache.get(cacheKey);
-  if (hit) return hit;
+  if (hit) {
+    // Most recently used moves to the back of the eviction order.
+    chunkCache.delete(cacheKey);
+    chunkCache.set(cacheKey, hit);
+    return hit.chunks;
+  }
+  const head = raw.length > CHUNKED_CHARS_PER_SOURCE ? raw.slice(0, CHUNKED_CHARS_PER_SOURCE) : raw;
+  const chunks = chunkText(doc, head);
+  cacheChunks(cacheKey, chunks, head.length);
+  return chunks;
+}
+
+/**
+ * The part of a very large source past CHUNKED_CHARS_PER_SOURCE, searched for
+ * one question: passages around the first matches of its topic words (not
+ * cached — built from a bounded number of short windows).
+ */
+function tailChunksFor(doc: DocLike, words: Iterable<string>, maxWindows = 40): Chunk[] {
+  const raw = typeof doc.extractedText === "string" ? doc.extractedText : "";
+  if (raw.length <= CHUNKED_CHARS_PER_SOURCE) return [];
+  const terms = Array.from(new Set(Array.from(words).filter((w) => w.length >= 4))).slice(0, 12);
+  if (terms.length === 0) return [];
+  const re = new RegExp(terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi");
+  re.lastIndex = CHUNKED_CHARS_PER_SOURCE;
+  const windows: string[] = [];
+  let lastEnd = -1;
+  for (let m = re.exec(raw); m && windows.length < maxWindows; m = re.exec(raw)) {
+    if (m.index < lastEnd) continue;
+    const start = Math.max(CHUNKED_CHARS_PER_SOURCE, m.index - 400);
+    const end = Math.min(raw.length, m.index + 600);
+    windows.push(raw.slice(start, end));
+    lastEnd = end;
+    re.lastIndex = end;
+  }
+  return windows.flatMap((w) => chunkText(doc, w));
+}
+
+function chunkText(doc: DocLike, raw: string): Chunk[] {
   // A flattened table read row by row: each figure on its own label's line
   // (table-text.ts) — a window never pairs a figure with the next row's label.
   const text = normaliseTableText(raw);
@@ -656,8 +722,6 @@ function chunksFor(doc: DocLike): Chunk[] {
     const words = passageWords(windowText);
     chunks.push({ docId: doc.id, docName: doc.name, text: windowText, stems: new Set(words), words });
   }
-  if (chunkCache.size > 400) chunkCache.clear();
-  chunkCache.set(cacheKey, chunks);
   return chunks;
 }
 
@@ -768,10 +832,6 @@ export function searchSourcesTop(question: string, documents: DocLike[], n: numb
   // answers a question when it shares a DISTINCTIVE word with it — a name,
   // an acronym, or a word few passages use ("College", "deductible"), not
   // just "clinic" and "location" in a clinic's own files.
-  const allChunks = eligible.flatMap((d) => chunksFor(d));
-  const df = new Map<string, number>();
-  for (const c of allChunks) c.stems.forEach((st) => df.set(st, (df.get(st) ?? 0) + 1));
-  const rareLimit = Math.max(3, Math.ceil(allChunks.length * 0.015));
   const probes = clauses
     .map((c) => {
       const { words, names, phrases } = probeWords(c);
@@ -787,9 +847,16 @@ export function searchSourcesTop(question: string, documents: DocLike[], n: numb
     .filter((p) => p.stems.size > 0);
   if (probes.length === 0) return [];
   const allWords = new Set(probes.flatMap((p) => Array.from(p.stems)));
+  // Each source's passages: its (cached) head, plus — for a very large
+  // source — windows of the rest around this question's words.
+  const docChunks = new Map(eligible.map((d) => [d.id, [...chunksFor(d), ...tailChunksFor(d, allWords)]] as const));
+  const allChunks = Array.from(docChunks.values()).flat();
+  const df = new Map<string, number>();
+  for (const c of allChunks) c.stems.forEach((st) => df.set(st, (df.get(st) ?? 0) + 1));
+  const rareLimit = Math.max(3, Math.ceil(allChunks.length * 0.015));
   const bestByDoc = new Map<string, { chunk: Chunk; matched: string[]; score: number }>();
   for (const d of eligible) {
-    for (const chunk of chunksFor(d)) {
+    for (const chunk of docChunks.get(d.id) ?? []) {
       for (const { stems, names, phrases, needsFigure } of probes) {
         if (needsFigure && !FIGURE_RE.test(chunk.text)) continue;
         const matched = Array.from(stems).filter((s) => chunk.stems.has(s));

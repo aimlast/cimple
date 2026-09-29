@@ -18,7 +18,7 @@ export function useBuilderState(dealId: string, opts: { poll?: boolean } = {}) {
     refetchInterval: (q) => {
       if (!opts.poll) return false;
       const s = q.state.data as BuilderState | undefined;
-      return s && (s.blind.running || s.sections.some((x) => x.aiTask?.status === "running")) ? 4000 : false;
+      return s && (s.blind.running || !!s.dd?.running || s.sections.some((x) => x.aiTask?.status === "running")) ? 4000 : false;
     },
   });
 }

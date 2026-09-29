@@ -53,7 +53,13 @@ export interface BuilderState {
    */
   blind: { generated: boolean; codename: string | null; codenameProblem?: string | null; running: boolean; error: string | null; updating: number; held: number };
   /** outOfDate: sections whose DD version is stale or missing; running: a refresh is under way. */
-  dd: { generated: boolean; outOfDate: number; running: boolean };
+  dd: {
+    generated: boolean;
+    outOfDate: number;
+    running: boolean;
+    /** The last full DD run (server memory): why nothing changed, or what couldn't be written. */
+    lastRun?: { finishedAt: string; error?: string; written: number; notWritten: number; warnings: string[] } | null;
+  };
   buyers: { total: number; byLevel: Record<string, number> };
   deal: { isLive: boolean; cimLayoutGeneratedAt: string | null };
   review?: CimReview;

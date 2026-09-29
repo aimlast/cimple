@@ -177,6 +177,8 @@ app.use("/api/deals/:dealId/generate-content", aiLimiter);
 app.use("/api/deals/:dealId/generate-blind", aiLimiter);
 app.use("/api/deals/:dealId/generate-dd", aiLimiter);
 app.use("/api/deals/:dealId/generate-layout", aiLimiter);
+// One request drafts an email per selected buyer.
+app.use("/api/deals/:dealId/draft-outreach", aiLimiter);
 
 // Session type augmentation
 declare module "express-session" {

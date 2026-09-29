@@ -149,7 +149,7 @@ import {
 import { agentConfig } from "./config/load-config";
 import { ensureSectionImportance } from "./section-importance";
 import { ensureInterviewPlan } from "./interview-plan";
-import { generateSellerProfile } from "./eq-profiler";
+import { generateSellerProfile, sellerProfileRetryDue, noteSellerProfileFailure, clearSellerProfileFailure } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
 import { isInterviewHiddenFact } from "../information/deal-mirror";
 import { sellerInterviewView, withHeldFacts } from "./seller-view";
@@ -635,15 +635,19 @@ async function startOrResumeSessionOnce(
   // listed price; until the rebuild lands the interview only sees its style
   // fields). Runs in the background — we don't block the opening message on
   // it; the profile is available from the second turn onward.
-  if (!deal.sellerProfile || sellerProfileNeedsRebuild(deal.sellerProfile as never, documents)) {
+  // When the AI service fails, the deal keeps what it had (a stand-in
+  // profile is never saved) and the build is retried at most hourly.
+  if ((!deal.sellerProfile || sellerProfileNeedsRebuild(deal.sellerProfile as never, documents)) && sellerProfileRetryDue(dealId)) {
     const prior = (deal.sellerProfile as Record<string, unknown> | null) || null;
     generateSellerProfile(dealId)
       .then(async (profile) => {
         await storage.updateDeal(dealId, { sellerProfile: carryBrokerProfileEdits(profile, prior) } as any);
+        clearSellerProfileFailure(dealId);
         console.log(`[session-manager] ${prior ? "Rebuilt" : "Auto-generated"} seller profile for deal ${dealId}`);
       })
       .catch((err) => {
-        console.error(`[session-manager] Failed to generate seller profile for deal ${dealId}:`, err);
+        noteSellerProfileFailure(dealId);
+        console.error(`[session-manager] Failed to generate seller profile for deal ${dealId} (kept the current one; retry in an hour):`, err?.message ?? err);
       });
   }
 

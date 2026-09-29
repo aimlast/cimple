@@ -6,7 +6,7 @@
  * follow the same discrepancy gate as everywhere else. The Blind card also
  * sets the project codename pre-NDA buyers know the deal by.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -77,10 +77,36 @@ export function CimTab() {
     onSuccess: (_r, mode) => {
       refetch();
       qc.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      toast({ title: mode === "blind" ? "Blind version ready" : "Due-diligence version ready" });
+      // The DD version is written in the background: its result is announced
+      // when the run finishes (below), never "ready" up front.
+      toast(mode === "blind"
+        ? { title: "Blind version ready" }
+        : { title: "Writing the due-diligence version", description: "This runs in the background — you can leave this page." });
     },
     onError: (e) => toast({ title: "Couldn't generate that version", description: errorText(e), variant: "destructive" }),
   });
+  // Announce the DD run's outcome once, when it finishes: what couldn't be
+  // written (those sections keep their DD version), or that nothing changed.
+  const ddRunning = !!data?.dd.running;
+  const ddLast = data?.dd.lastRun ?? null;
+  const ddWasRunning = useRef(false);
+  useEffect(() => {
+    if (ddRunning) { ddWasRunning.current = true; return; }
+    if (!ddWasRunning.current || !ddLast) return;
+    ddWasRunning.current = false;
+    if (ddLast.error) {
+      toast({ title: "Due-diligence version not updated", description: ddLast.error, variant: "destructive", duration: 12000 });
+    } else if (ddLast.notWritten > 0 || ddLast.warnings.length > 0) {
+      toast({
+        title: "Due-diligence version written with gaps",
+        description: `${ddLast.written} section${ddLast.written === 1 ? "" : "s"} written${ddLast.notWritten > 0 ? ` · ${ddLast.notWritten} couldn't be written and kept their previous version — refresh them later` : ""}. See the notes on the Due diligence card.`,
+        variant: ddLast.notWritten > 0 ? "destructive" : undefined,
+        duration: 12000,
+      });
+    } else {
+      toast({ title: "Due-diligence version ready" });
+    }
+  }, [ddRunning, ddLast, toast]);
   // Held-back blind sections: clear their back-off and redo them now.
   const retryBlind = useMutation({
     mutationFn: () => builderRequest("POST", `/api/deals/${dealId}/cim-blind/refresh`),
@@ -216,16 +242,28 @@ export function CimTab() {
                 icon={<ShieldCheck className="h-4 w-4" />}
                 title="Due diligence"
                 who="Due-diligence buyers"
-                status={!data.dd.generated
-                  ? <span className="text-muted-foreground">Not generated</span>
-                  : (data.dd.outOfDate ?? 0) > 0
-                    ? <span className="text-blue-400">{data.dd.outOfDate} section{data.dd.outOfDate === 1 ? "" : "s"} out of date</span>
-                    : <span className="text-success">Ready</span>}
+                status={data.dd.running
+                  ? <span className="text-amber-500 inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Writing</span>
+                  : !data.dd.generated
+                    ? <span className="text-muted-foreground">Not generated</span>
+                    : (data.dd.outOfDate ?? 0) > 0
+                      ? <span className="text-blue-400">{data.dd.outOfDate} section{data.dd.outOfDate === 1 ? "" : "s"} out of date</span>
+                      : <span className="text-success">Ready</span>}
                 detail="The named CIM plus customer names and verification notes."
+                extra={!data.dd.running && data.dd.lastRun && (data.dd.lastRun.error || data.dd.lastRun.warnings.length > 0) ? (
+                  <div className="text-[11px] text-amber-500 leading-snug space-y-1" role="status" data-testid="dd-last-run">
+                    {data.dd.lastRun.error
+                      ? <p className="flex items-start gap-1"><AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" /><span>{data.dd.lastRun.error}</span></p>
+                      : data.dd.lastRun.warnings.slice(0, 4).map((w, i) => (
+                        <p key={i} className="flex items-start gap-1"><AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" /><span>{w}</span></p>
+                      ))}
+                    {!data.dd.lastRun.error && data.dd.lastRun.warnings.length > 4 && <p>…and {data.dd.lastRun.warnings.length - 4} more.</p>}
+                  </div>
+                ) : undefined}
                 onPreview={() => openBuilder("due_diligence")}
                 action={{
                   label: data.dd.generated ? "Refresh" : "Generate",
-                  busy: version.isPending && version.variables === "dd",
+                  busy: data.dd.running || (version.isPending && version.variables === "dd"),
                   onClick: () => version.mutate("dd"),
                 }}
               />

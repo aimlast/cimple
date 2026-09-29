@@ -93,8 +93,25 @@ export function reminderActionFor(
   return "none";
 }
 
+/**
+ * Thrown when a reminder or warning email wasn't delivered: the row's stage
+ * is NOT advanced, so the next 6-hourly run tries again. (The stage used to
+ * advance regardless — a Resend outage or rate limit on the day-6 run meant
+ * the buyer was lapsed two days later without ever being warned, and the
+ * broker was told they had been.)
+ */
+export class ReminderEmailNotSentError extends Error {
+  constructor(stage: "reminder" | "warning", accessId: string) {
+    super(`The ${stage} email for buyer access ${accessId} was not delivered — will retry on the next run`);
+    this.name = "ReminderEmailNotSentError";
+  }
+}
+
+const EMAIL_TIMEOUT_MS = 15_000;
+
 // Direct email to the buyer (bypasses broker notification routing).
 // Uses the same Resend/Twilio fallback as the broker notification service.
+// True only when Resend accepted it.
 async function emailBuyer(to: string, subject: string, html: string): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
@@ -114,7 +131,10 @@ async function emailBuyer(to: string, subject: string, html: string): Promise<bo
         subject,
         html,
       }),
+      // A hung connection must not stall the whole run.
+      signal: AbortSignal.timeout(EMAIL_TIMEOUT_MS),
     });
+    if (!res.ok) console.error(`[reminders] Resend refused the email to ${to}: HTTP ${res.status}`);
     return res.ok;
   } catch (err) {
     console.error(`[reminders] Email error to ${to}:`, err);
@@ -286,7 +306,7 @@ export async function processReminderForAccess(access: BuyerAccess, now: number,
   // ── Stage 1: Day 3 reminder ─────────────────────────────────
   if (action === "reminder") {
     const email = buildReminderEmail("reminder", deal, access, viewUrl);
-    await emailBuyer(access.buyerEmail, email.subject, email.html);
+    if (!(await emailBuyer(access.buyerEmail, email.subject, email.html))) throw new ReminderEmailNotSentError("reminder", access.id);
     await storage.updateBuyerAccess(access.id, {
       decision: "under_review",
       reminderStage: "reminder_sent",
@@ -298,7 +318,9 @@ export async function processReminderForAccess(access: BuyerAccess, now: number,
   // ── Stage 2: Day 6 warning (or the first email for a late arrival) ──
   if (action === "warning") {
     const email = buildReminderEmail("warning", deal, access, viewUrl);
-    await emailBuyer(access.buyerEmail, email.subject, email.html);
+    // Only a delivered warning moves the buyer to "warning_sent" — the one
+    // stage a buyer can be lapsed from — and starts its 48 hours.
+    if (!(await emailBuyer(access.buyerEmail, email.subject, email.html))) throw new ReminderEmailNotSentError("warning", access.id);
     await storage.updateBuyerAccess(access.id, {
       decision: "under_review",
       reminderStage: "warning_sent",
@@ -399,7 +421,8 @@ export async function runDecisionReminders(): Promise<RunStats> {
         else if (action === "warning") stats.warningSent++;
         else if (action === "lapse") stats.lapsed++;
       } catch (err: any) {
-        console.error(`[reminders] Error processing buyer ${access.id}:`, err);
+        if (err instanceof ReminderEmailNotSentError) console.warn(`[reminders] ${err.message}`);
+        else console.error(`[reminders] Error processing buyer ${access.id}:`, err);
         stats.errors++;
       }
     }
