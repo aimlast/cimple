@@ -322,6 +322,14 @@ export function isTransientModelError(err: unknown): boolean {
  */
 export const TRANSIENT_RETRY: { delaysMs: number[] } = { delaysMs: [1500, 4000] };
 
+/**
+ * The fault notice of a turn the model couldn't answer (the API down or out
+ * of credits). The seller's message was saved; Continue (the client's
+ * button, CONTINUE_AFTER_FAULT) picks it up once the model is back.
+ */
+export const DEGRADED_TURN_MESSAGE =
+  "Your answer is saved — I hit a technical problem on my end before I could reply to it. Give it a minute, then press Continue and I'll pick up from your answer.";
+
 export async function callInterviewWithRecovery(
   anthropic: Anthropic,
   params: InterviewCallParams,
@@ -548,13 +556,15 @@ export async function callInterviewWithRecovery(
   }
 
   // Degraded fallback — keep the conversation alive rather than 500ing. The
-  // message is honest about the fault (the seller's answer was NOT processed;
-  // asking them to re-send with no explanation trained them to retype into a
-  // dead pipeline). No "?" — the chip backfill must not decorate this turn.
+  // message is honest about the fault: the seller's answer IS saved (the
+  // turn persists it, and the next turn's RECOVERY NOTE reads it) but not
+  // yet processed — so it never asks for a retype (the box is empty by then;
+  // review F2-INT-4: sellers retyped 150-word answers from memory, and every
+  // retry was saved as another turn). The client offers Continue on it. No
+  // "?" — the chip backfill must not decorate this turn.
   console.error("[turn-guard] Falling back to degraded turn");
   const { response } = normalizeInterviewResponse({
-    message:
-      "I'm having a brief technical issue on my end, and your last message may not have been recorded. Give it a moment, then please send it again — everything before this point is saved.",
+    message: DEGRADED_TURN_MESSAGE,
     suggestedAnswers: [],
     extractedFields: {},
     reasoning: {
@@ -908,6 +918,49 @@ export function containsValuationFigures(text: string): boolean {
   );
 }
 
+/** Every leaf value of a fact, as text — nested maps (revenueByYear, ebitdaByYear) included. */
+function leafText(v: unknown, depth = 0): string[] {
+  if (v === null || v === undefined || depth > 6) return [];
+  if (typeof v === "string") return [v];
+  if (typeof v === "number" || typeof v === "boolean") return [String(v)];
+  if (Array.isArray(v)) return v.flatMap((x) => leafText(x, depth + 1));
+  if (typeof v === "object") return Object.values(v as Record<string, unknown>).flatMap((x) => leafText(x, depth + 1));
+  return [];
+}
+
+/**
+ * The text whose figures a reply on a "what's it worth" turn may quote:
+ * what the seller just said and every fact on the seller's file, by-year
+ * maps included (review F2-INT-9: only string facts counted, so "the $3.42M
+ * you did in 2024" from revenueByYear was treated as a leaked valuation —
+ * the reply was held, re-called, and could end as a canned deflection).
+ * `_`-keys (provenance, private notes) never count.
+ */
+export function sanctionedFigureText(sellerMessage: string, view: Record<string, unknown>): string {
+  return [sellerMessage, ...Object.entries(view).filter(([k]) => !k.startsWith("_")).flatMap(([, v]) => leafText(v))].join(" ");
+}
+
+/**
+ * The last resort on a "what's it worth" turn whose rewrite still quoted
+ * figures: the value drivers and the broker, then a real next question —
+ * the draft's own when it carries no figure, else `fallback`. (It used to
+ * end on "Let's make sure we capture everything that works in your
+ * favour." — no question, no chips — after grading the seller's question.)
+ */
+export function valuationDeflection(drafts: string[], fallback: string): string {
+  const lead =
+    "What a buyer pays turns on your financials, how transferable the operation is, and the strength of your customer relationships — your broker will give you a number grounded in real comparable sales.";
+  const clean = (q: string) => !containsValuationFigures(q) && !/\$\s?\d|\d\s*(?:%|x\b|×)/i.test(q) && !VALUATION_FISHING_RE.test(q);
+  for (const d of drafts) {
+    // (Sentences — a "." inside "$2.5M" doesn't end one.)
+    const qs = d.split(/(?<=[.!?])\s+|\n+/).map((q) => q.trim()).filter((q) => q.endsWith("?") && q.length >= 12);
+    const q = [...qs].reverse().find(clean);
+    if (q) return `${lead} ${q.charAt(0).toUpperCase()}${q.slice(1)}`;
+  }
+  const f = clean(fallback) ? fallback : "What would you like a buyer to understand next about the business?";
+  return `${lead} ${f}`;
+}
+
 /** Chips carrying dollar amounts or multiples — banned on fishing turns
  *  unless the seller themselves used the number. */
 export const CHIP_FIGURE_RE = /\$\s?\d|\d+(?:\.\d+)?\s*[x×]\b/;
@@ -1035,6 +1088,18 @@ export function buildClosingAnswerNudge(): string {
   return (
     `# CLOSING\n` +
     `The seller asked to stop on their last turn and you gave your one closing turn. Record anything they just told you, then say a short, warm goodbye — ask NOTHING — and set shouldEnd to true. ${GOODBYE_RULES}`
+  );
+}
+
+/**
+ * The seller is stepping away for a moment ("be right back", "hang on, let
+ * me grab the lease"). The reply the seller sees is fixed (PAUSE_REPLY) —
+ * this only keeps the model's own turn short and its record honest.
+ */
+export function buildPauseNudge(): string {
+  return (
+    `# SHORT BREAK\n` +
+    `The seller is stepping away for a moment and coming back to this conversation — it is not a request to stop. Record anything they told you in this message; ask nothing new and don't repeat your last question (it is still on their screen). Reply in one short sentence, set shouldEnd to false, and return suggestedAnswers empty.`
   );
 }
 
@@ -1184,6 +1249,165 @@ export function sellerDeclinedWrapUp(_prevAiMessage: string | undefined, sellerM
   if (matchesStopRequest(text) || COMPLETION_RE.test(text)) return false;
   return CONTINUE_RE.test(text);
 }
+
+// ── Short breaks and returns ────────────────────────────────────────────
+// A seller stepping away for a moment ("be right back", "give me five
+// minutes", "hang on, let me grab the lease", "yes, a short break would
+// help" after the interviewer offered one) is not asking to stop: they get
+// no closing turn and no stop count — only "take your time". And a seller
+// coming back ("OK I'm back. The lease runs to 2031…") is carrying on, never
+// answering a closing turn: a short break read as a stop used to force the
+// goodbye on the first message back (review F2-INT-2).
+// These patterns are the instant reading and the fallback only: once the
+// classifier's reading is in, IT decides (seller-intent.ts combineIntent) —
+// a pattern false positive swapped the seller's question, objection or
+// deferral for a canned "take your time" (review F2-INT-2, round 2).
+
+const SHORT_SPAN = String.raw`(?:a (?:sec(?:ond)?|moment|min(?:ute)?|jiffy|tick|bit)|one (?:sec(?:ond)?|moment|min(?:ute)?)|(?:a )?(?:few|couple(?: of)?) (?:min(?:ute)?s?|sec(?:ond)?s|moments)|(?:\d{1,2}|two|three|five|ten|fifteen|twenty)(?!\d)(?:(?:-| )?(?:min(?:ute)?s?|sec(?:ond)?s)|(?=\s*(?:[.!?,;:—–-]|$)))|half an hour)`;
+// The end of a clause: a pause said on its own ("brb.", "I have to take this call —").
+const ALONE_END = String.raw`(?=\s*(?:[.!?,;:—–-]|$))`;
+const PAUSE_SENTENCE_RE = new RegExp(
+  [
+    // (On its own — "brb is what my staff text me all day" is not one.)
+    String.raw`\bbrb\b${ALONE_END}`,
+    String.raw`\b(?:be|i'?ll be|i will be) (?:right|straight) back\b`,
+    String.raw`\b(?:(?:i'?ll |i will )?be )?back in ${SHORT_SPAN}`,
+    String.raw`\b(?:give|gimme|allow) me ${SHORT_SPAN}`,
+    // (Not "hold on to your hat".)
+    String.raw`\b(?:hold on|hang on|hold that thought|bear with me|one (?:sec(?:ond)?|moment|min(?:ute)?)|just a (?:sec(?:ond)?|moment|min(?:ute)?)|wait a (?:sec(?:ond)?|moment|min(?:ute)?))\b(?! to\b)`,
+    // Going to fetch something ("let me grab the lease") — not "let me get
+    // back to you", "let me find out", "let me check with my accountant",
+    // "let me get this straight" (DEFER_RE below catches the rest of a
+    // question set aside: "…and send it over", "…after the call").
+    String.raw`\blet me (?:go |quickly |just |run and )?(?:grab|get|find|fetch|pull (?:up|out)|dig (?:out|up)|look (?:it |that |this )?up|check)\b(?! (?:back|out|to you|you|with|in with|on (?:that|this|it) (?:later|tomorrow)|(?:this|that|it) straight))`,
+    // A break asked for or accepted — "a short break would help", "can we
+    // take a quick break?", "I need a breather" — never the business's own
+    // ("we give the crew a short break at noon").
+    String.raw`\b(?:short|quick|brief|little|(?:\d{1,2}|five|ten|fifteen)[- ]min(?:ute)?) (?:break|breather|pause)(?=\s*(?:[.!?,;:—–-]|$|(?:would|could|might|will) (?:help|be (?:good|nice|great))|please|first|now|sounds good))`,
+    String.raw`\b(?:(?:can|could|shall|may) (?:we|i)|let'?s|i(?:'d| would)? (?:need|like|could use|want)) (?:take |have |grab )?(?:a )?(?:quick |short |little |brief )?(?:break|breather|pause|five|minute|moment)\b`,
+    String.raw`\b(?:take|taking) five\b(?=\s*(?:[.!?,;:—–-]|$|please))`,
+    // An incoming call, said of the seller themself and on its own ("I have
+    // to take this call", "Sorry, let me answer the phone —") — not "we have
+    // to take the call from dispatch at any hour", "I need to take this call
+    // seriously", or "I need to jump on another call" (leaving: a stop).
+    String.raw`(?:^|\bi |\bi'?ve |\bsorry,? (?:i |i'?ve )?)(?:(?:need|have|got|gotta) to|must) (?:take|answer|grab|get) (?:this|the) (?:call|phone call|phone)${ALONE_END}`,
+    String.raw`\blet me (?:take|answer|grab|get) (?:this|the) (?:call|phone call|phone)${ALONE_END}`,
+  ].join("|"),
+  "i",
+);
+// A break "until tomorrow" is the seller leaving: a stop, not a pause.
+const LATER_DAY_RE =
+  /\b(?:tomorrow|tonight|another (?:day|time)|some ?other (?:day|time)|next (?:week|time|session)|(?:on |this |next )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend)s?|after the weekend|for (?:the day|today))\b/i;
+// Setting ONE question aside (the interview goes on), never a break: "let
+// me check and get back to you", "…and circle back", "…and send it to you",
+// "let me look that up after the call".
+const DEFER_RE =
+  /\b(?:get back to|come back to|circle back|follow up|send (?:it|that|this|them|those|you)\b|email (?:it|that|you)\b|forward (?:it|that)\b|later\b|afterwards?\b|after (?:the|this|our) (?:call|chat|interview|meeting)\b)/i;
+// Objecting to what the interviewer said ("Hold on, that's not what I said.",
+// "Wait a minute, I never said that.", "Hold on. I already answered that.").
+const OBJECTION_RE =
+  /\b(?:that'?s not (?:what i (?:said|meant)|right|true|correct)|that is not (?:what i said|right|true|correct)|not what i (?:said|meant)|i (?:never|didn'?t|did not) (?:say|said|tell|told|mean|meant)|i(?:'ve| have)? already (?:answered|told|said|gave|given|covered|sent|explained)|you(?:'ve| have)? (?:got|get) (?:that|it|this) wrong|that'?s wrong|you already (?:have|asked))\b/i;
+// A sentence asking for a break ("Can we take a quick break?") is the only
+// kind of question a pause may carry — "Hang on, why do you need that?" and
+// "Just a sec, what do you mean by recurring revenue?" are the seller's own
+// questions, which the interviewer answers.
+const BREAK_WORD_RE = /\b(?:break|breather|pause|take five)\b/i;
+const WH_QUESTION_RE = /\b(?:why|what|who|whom|whose|how|which|where|when|isn'?t|didn'?t|is (?:this|that|it)|are (?:you|they|these)|does|did)\b/i;
+// The interviewer's own offer of a short break to the seller (prompts:
+// "Want to take a few minutes? Everything so far is saved, and we'll carry
+// on from here when you're back.") — not a question about the business's
+// breaks ("Do your therapists take a break between patient blocks?").
+const BREAK_OFFER_RE =
+  /\b(?:take|want|like|need) (?:a )?(?:short |quick |little |brief |few |couple of )(?:break|breather|pause|minutes?|moments?)\b|\b(?:want|like|need) (?:a )?(?:breather|pause|moment)\b/i;
+const OFFER_MARKER_RE = /\b(?:saved|when you'?re (?:back|ready)|stop here for today|carry on from here)\b/i;
+const ACCEPT_RE = /^\W*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|please|that would|that'?d|a (?:short |quick )?break|(?:a )?(?:few |couple (?:of )?)?(?:minutes?|moment)|good idea|thanks|thank you)\b/i;
+const DECLINE_RE = /\b(?:no|nope|not (?:now|yet|necessary|needed)|i'?m (?:fine|ok(?:ay)?|good)|keep going|carry on|let'?s continue|push on)\b/i;
+
+/** The interviewer offered the seller a short break ("Want to take a few minutes? Everything so far is saved…"). */
+export function interviewerOfferedBreak(aiMessage: string | undefined): boolean {
+  if (!aiMessage) return false;
+  const text = aiMessage.replace(/[’‘]/g, "'");
+  return BREAK_OFFER_RE.test(text) && OFFER_MARKER_RE.test(text);
+}
+
+/**
+ * The seller is stepping away for a moment, not asking to stop: the pause
+ * is the closing sentence (or all that follows it is a few words — "Hang
+ * on, let me grab the lease. It's in the office."), or they accept the
+ * interviewer's offer of a short break. Never with a firm stop, and never
+ * "until tomorrow" (that is leaving — a stop). An answer after the pause
+ * ("One sec. The lease runs to 2031.") is an answer; so is a question or an
+ * objection that opens with a pause word ("Hang on, why do you need
+ * that?", "Hold on, that's not what I said."), and so is setting one
+ * question aside ("Let me check and get back to you.").
+ */
+export function detectPause(sellerMessage: string, prevAiMessage?: string): boolean {
+  const text = sellerMessage.replace(/[’‘]/g, "'").trim();
+  if (!text || firmStopTier(text) !== null || LATER_DAY_RE.test(text)) return false;
+  if (OBJECTION_RE.test(text) || DEFER_RE.test(text)) return false;
+  const sentences = sentencesOf(text);
+  if (sentences.some((s) => s.includes("?") && (!BREAK_WORD_RE.test(s) || WH_QUESTION_RE.test(s)))) return false;
+  // ("Stop. Hang on." — a stop said on its own is never a break.)
+  if (sentences.some((s) => /^\W*(?:please\W+)?stop\W*$/i.test(s))) return false;
+  // Accepting the interviewer's own offer — a few words, no figure ("Yes,
+  // every 4 hours" answers a question about the business's breaks).
+  if (interviewerOfferedBreak(prevAiMessage) && wordCount(text) <= 10 && !/\d/.test(text) && ACCEPT_RE.test(text) && !DECLINE_RE.test(text)) {
+    return true;
+  }
+  const at = sentences.findIndex((s) => PAUSE_SENTENCE_RE.test(s) && !HABIT_RE.test(s));
+  if (at < 0) return false;
+  // What follows the pause — in its own sentence ("Hold on, let me think —
+  // about 40.") and after it — is a few words at most, with no figure: an
+  // answer after the pause is an answer.
+  const m = PAUSE_SENTENCE_RE.exec(sentences[at])!;
+  const rest = sentences[at].slice(m.index + m[0].length).replace(/\bback in [^,.;!?]*/i, "");
+  const after = sentences.slice(at + 1).join(" ");
+  if (/\d/.test(rest) || wordCount(rest) > 8) return false;
+  if (wordCount(after) > 5 || /\d/.test(after)) return false;
+  // A long answer that only ends by stepping away: the pause is its closing sentence.
+  return wordCount(text) <= 40 || at === sentences.length - 1;
+}
+
+// Words that OPEN a message from someone coming back ("OK I'm back.",
+// "Back now.", "Ok, ready.", "Where were we?") — at the start only:
+// "Revenue is back now to where it was", "since my knee surgery I'm back
+// full-time" are answers (review F2-INT-2, round 2: after a stop's closing
+// turn they carried the interview on).
+const RESUME_LEAD =
+  String.raw`^(?:(?:ok(?:ay)?|alright|all right|right|so|hi|hey|hello|yes|yep|thanks|thank you)[,.!\s—–-]*)*` +
+  // ("Sorry about that — where were we?": an apology, then the return itself.)
+  String.raw`(?:(?:sorry|apologies)(?: about| for) (?:that|the (?:wait|delay|interruption|break))[,.!\s—–-]+)?` +
+  String.raw`(?:i'?m back|i am back|back (?:now|again)|(?:i'?m |i am )?ready(?: now| to (?:go|continue|keep going|carry on|pick (?:this|it) (?:back )?up))?|that took (?:longer|a (?:while|bit|minute))(?: than i thought)?|where were we)` +
+  String.raw`(?=\s*(?:[.!?,;:—–-]|$))`;
+const RESUME_LEAD_RE = new RegExp(RESUME_LEAD, "i");
+// An apology for the wait opens a return only right after a "take your
+// time" reply: after a stop's closing turn, "Sorry about that. It dipped in
+// 2020…" is the closing turn's answer.
+const APOLOGY_LEAD_RE =
+  /^(?:(?:ok(?:ay)?|alright|all right|right|so|hi|hey|hello|oh)[,.!\s—–-]*)*(?:sorry|apologies)(?: about| for) (?:that|the (?:wait|delay|interruption|break))(?=\s*(?:[.!?,;:—–-]|$))/i;
+
+/**
+ * The seller is back from a break and carrying on ("OK I'm back. The lease
+ * runs to 2031…", "Back now.", "Ok, ready.") — opening the message with it.
+ * Right after a short break's "take your time" (`afterPause`), an apology
+ * for the wait counts too ("Sorry about that — asking price is around
+ * $2.5M."). Counts as wanting to continue: never read as the answer to a
+ * stop's closing turn. The patterns' reading only — the classifier's
+ * continueRequest decides once it is in (seller-intent.ts combineIntent).
+ */
+export function sellerResumed(sellerMessage: string, opts: { afterPause?: boolean } = {}): boolean {
+  const text = sellerMessage.replace(/[’‘]/g, "'").trim();
+  if (!text || matchesStopRequest(text)) return false;
+  return RESUME_LEAD_RE.test(text) || (!!opts.afterPause && APOLOGY_LEAD_RE.test(text));
+}
+
+/**
+ * The reply to a short break — no question (the one on screen is still the
+ * one to answer), nothing to record. Written for both "back in five" and
+ * "hang on, let me grab it".
+ */
+export const PAUSE_REPLY =
+  "Take your time — everything so far is saved. When you're ready, just answer the question above and we'll carry on from there.";
 
 
 // Praise of the seller's question itself ("Great question.", "Good
@@ -1974,19 +2198,47 @@ export function asksQuestion(message: string): boolean {
 export function fallbackQuestion(nextIntent: string, currentTopic: string): string {
   const q = (nextIntent.match(/[^.!?]*\?/) ?? [])[0]?.trim();
   const INSTRUCTION_RE = /^(?:ask|probe|explore|find out|understand|clarify|confirm|learn|get|cover)\b/i;
-  if (q && q.length >= 12 && !INSTRUCTION_RE.test(q)) return q.charAt(0).toUpperCase() + q.slice(1);
+  const safe = (text: string) => !leaksInternalMachinery(text) && !PLAN_JARGON_RE.test(text);
+  if (q && q.length >= 12 && !INSTRUCTION_RE.test(q) && safe(q)) return q.charAt(0).toUpperCase() + q.slice(1);
   const intent = (q && INSTRUCTION_RE.test(q) ? q.replace(/\?$/, "") : nextIntent)
     .replace(/\s*\(.*$/, "")
     .replace(/\b(?:because|since|so that|to (?:confirm|understand|see))\b.*$/i, "")
     .trim();
   const m = intent.match(/^(?:ask|probe|explore|find out|understand|clarify|confirm|learn|get|cover)(?: the seller| them)?(?: about| on| whether| if| how| what| why| when| who)?\s+(.{6,140})$/i);
   if (m) {
-    const topic = m[1].replace(/[.;:,]+$/, "");
-    if (/^(?:whether|if)\b/i.test(intent.split(/\s+/).slice(1).join(" "))) return `Can you tell me whether ${topic}?`;
-    return `Could you walk me through ${topic}?`;
+    const topic = planTopic(m[1]);
+    const out = /^(?:whether|if)\b/i.test(intent.split(/\s+/).slice(1).join(" "))
+      ? `Can you tell me whether ${topic}?`
+      : /^\S+(?:\s\S+)?$/.test(topic) && !/^(?:the|your|a|an|any|how|what|who|when|where|why)\b/i.test(topic)
+        ? `Could you tell me more about ${topic}?`
+        : `Could you walk me through ${topic}?`;
+    if (topic.length >= 3 && safe(out)) return out;
   }
-  const topic = currentTopic.replace(/^industry_specific:/, "").replace(/[_-]+/g, " ").trim();
-  return topic ? `What else should I understand about ${topic}?` : "What would you like a buyer to understand next about the business?";
+  const topic = planTopic(currentTopic.replace(/^industry_specific:/, "").replace(/[_-]+/g, " "));
+  const byTopic = topic ? `What else should I understand about ${topic}?` : "";
+  return byTopic && safe(byTopic) ? byTopic : "What would you like a buyer to understand next about the business?";
+}
+
+/**
+ * The agent's planning words — never the seller's (review F2-INT-10: "Could
+ * you walk me through the deferred lease topic from the ledger before
+ * wrap-up?"). A fallback question naming any of them is not used.
+ */
+const PLAN_JARGON_RE = /\b(?:probes?|ledger|wrap-?up|deferr(?:al|als|ed|ing)|coverage|checklists?|sections?|playbook|prior ?check|knowledge base|CIM|topics?|next ?intent|agenda)\b/i;
+
+/** A topic out of the agent's own plan, without its planning words ("the deferred lease topic from the ledger" → "the lease"). */
+function planTopic(raw: string): string {
+  return raw
+    .replace(/\b(?:the |an? )?(?:mandatory )?probes? (?:items? |checklist |list )?(?:on|about|for|re)\s+/gi, "")
+    .replace(/\s*\b(?:from|in|on|off) (?:the |my |our )?(?:deferral |open )?(?:ledger|checklist|agenda|plan)\b/gi, "")
+    .replace(/\s*\b(?:before|at|during|for) (?:the )?wrap-?up\b/gi, "")
+    .replace(/\b(?:the )?coverage gaps? (?:in|on|for|around) (?:the )?/gi, "")
+    .replace(/\b(?:deferred|open|pending|outstanding|remaining|planned) ((?:\w+ ){0,2}?\w+) (?:topic|item|deferral|question)s?\b/gi, "$1")
+    .replace(/\b(?:topic|item)s? (?:on|about|of|re)\s+/gi, "")
+    .replace(/\b(\w+(?: \w+)?) sections?\b/gi, "$1")
+    .replace(/\s{2,}/g, " ")
+    .replace(/[.;:,]+$/, "")
+    .trim();
 }
 
 // Generic deal words that say nothing about WHICH question a rationale

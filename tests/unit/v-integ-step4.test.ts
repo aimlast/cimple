@@ -180,8 +180,8 @@ const disc = (o: Record<string, unknown>): any => ({
     "That's a question for Morgan — he goes through what's added back with you against the actual statements.",
     "We covered that earlier — your broker will confirm the full add-back treatment when they normalize against your statements.",
   ]) assert.deepEqual(findNormalisationAssertions(s + Q), [], s);
-  // The one safe general statement the rules allow — but a call tacked onto it is still a call.
-  assert.deepEqual(findNormalisationAssertions("A market-rate owner salary on the P&L is the classic add-back; anything beyond that your broker confirms." + Q), []);
+  // There is no "safe" treatment statement any more (F2-INT-7): the salary carve-out is a call — and so is a call tacked onto it.
+  assert.equal(findNormalisationAssertions("A market-rate owner salary on the P&L is the classic add-back; anything beyond that your broker confirms." + Q).length, 1);
   assert.equal(findNormalisationAssertions("A market-rate owner salary on the P&L is the classic add-back, and your dividends get added back too." + Q).length, 1);
   // A hand-off followed by the call anyway is a call.
   assert.equal(findNormalisationAssertions("Your broker will confirm what gets added back, but the short answer is your truck gets added back too." + Q).length, 1);

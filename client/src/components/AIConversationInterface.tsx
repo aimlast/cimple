@@ -30,6 +30,7 @@ import {
 import { ChatMessage } from "./ChatMessage";
 import { useToast } from "@/hooks/use-toast";
 import type { ConversationMessage } from "@shared/schema";
+import { CONTINUE_AFTER_FAULT } from "@shared/interview-fault";
 
 interface TurnResult {
   message: string;
@@ -285,6 +286,12 @@ export function AIConversationInterface({
   const [togetherLive, setTogetherLive] = useState(false);
   const resumeRef = useRef(resume);
   const [isFinished, setIsFinished] = useState(false);
+  // The last reply is the fault notice of a turn the model couldn't answer
+  // (the seller's message was saved): offer Continue, never a retype.
+  const faultPending = useMemo(() => {
+    const last = messages[messages.length - 1];
+    return last?.role === "ai" && last.degraded === true;
+  }, [messages]);
   const [isEnding, setIsEnding] = useState(false);
   const [confirmEndOpen, setConfirmEndOpen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -1202,6 +1209,22 @@ export function AIConversationInterface({
     setCallAttempt((n) => n + 1);
   }, []);
 
+  // Leaving the "Interview together" page (closing the tab included) tells
+  // the server the sitting is over for now, so the seller's own link opens
+  // at once instead of "your broker is going through this with you now".
+  // Coming back resumes the sitting.
+  useEffect(() => {
+    if (!together) return;
+    const leave = () => {
+      void fetch(`/api/interview/${dealId}/together/leave`, { method: "POST", credentials: "include", keepalive: true }).catch(() => {});
+    };
+    window.addEventListener("pagehide", leave);
+    return () => {
+      window.removeEventListener("pagehide", leave);
+      leave();
+    };
+  }, [dealId, together]);
+
   // Leaving the page ends the call for everyone and clears the room.
   // Also covers leaving before actually joining (e.g. still on the camera
   // check): the room exists from call/start, so end it and remove the frame.
@@ -1562,9 +1585,11 @@ export function AIConversationInterface({
         <div className="max-w-md w-full rounded-lg border border-border bg-card p-6 text-center space-y-4">
           <CheckCircle className="h-8 w-8 mx-auto text-success" />
           <div className="space-y-1.5">
-            <p className="text-sm font-medium">This interview is complete</p>
+            <p className="text-sm font-medium">
+              {conductedBy === "broker" ? "Your AI interview session is complete" : "This interview is complete"}
+            </p>
             <p className="text-xs text-muted-foreground">
-              Everything the seller said is saved. Continuing starts a new session that picks up from what's
+              {conductedBy === "broker" ? "Everything you entered is saved." : "Everything the seller said is saved."} Continuing starts a new session that picks up from what's
               already covered — nothing that was answered is asked again.
             </p>
           </div>
@@ -1716,6 +1741,24 @@ export function AIConversationInterface({
                   <X className="h-3 w-3" />
                   Cancel
                 </button>
+              </div>
+            )}
+
+            {/* A technical fault on the last turn: the answer is saved, so the
+                seller presses Continue rather than retyping it. */}
+            {faultPending && !isLoading && !isFinished && !editing && (
+              <div className="max-w-3xl mx-auto mb-2.5 flex items-center gap-2" data-testid="status-fault-continue">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void handleSend(CONTINUE_AFTER_FAULT)}
+                  className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
+                  data-testid="button-continue-after-fault"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Continue
+                </Button>
+                <span className="text-xs text-muted-foreground">Your answer is saved — no need to type it again.</span>
               </div>
             )}
 

@@ -95,11 +95,12 @@ const ok = (name: string) => { n++; process.stdout.write(`✓ ${name}\n`); };
   for (const prior of [0, 1, 2]) for (const quick of ["none", "soft", "firm"] as const) for (const stop of ["none", "soft", "firm"] as const) for (const cont of [false, true]) {
     const start = { stopNow: quick !== "none", stopSignalCount: quick !== "none" ? prior + 1 : 0, stopLevel: quick, closingAnswerTurn: quick === "none" && prior > 0 && !cont };
     const got = resolveStopState(start, prior, { stop, continueRequest: cont });
-    const { change, ...rest } = got;
+    const { change, paused, ...rest } = got;
+    assert.equal(paused, false); // (no pause in these cases — see tests/unit/f2-interview.test.ts)
     assert.deepEqual(rest, reference(start, prior, { stop, continueRequest: cont }));
     // Idempotent: resolving an already-resolved state changes nothing.
     const again = resolveStopState(rest, prior, { stop, continueRequest: cont });
-    assert.deepEqual({ ...again, change: null }, { ...rest, change: null });
+    assert.deepEqual({ ...again, change: null }, { ...rest, paused: false, change: null });
     cases++;
   }
   ok(`resolveStopState matches the previous rule and is idempotent (${cases} cases)`);

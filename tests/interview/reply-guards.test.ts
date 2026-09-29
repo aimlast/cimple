@@ -360,10 +360,12 @@ const ok = (name: string) => { n++; console.log("✓", name); };
   const other = await ensureQuestionRationale({ ...base, message: "What does a typical week look like for you at the clinic?", targetSection: "operations" }, counting, pre);
   assert.equal(calls, 2, "a different final text is labelled afresh");
   assert.equal(other.targetSection, "employees");
-  // A slow labeller is not waited on past the timeout.
+  // A slow labeller is not waited on past the timeout. (It answers after 2s;
+  // the margin keeps the check sound on a loaded machine — a 400ms labeller
+  // against a 300ms bound failed under a load average of ~56.)
   const t0 = Date.now();
-  const slow = await ensureQuestionRationale({ ...base, message: "How many physiotherapists are on staff today?", targetSection: "employees", timeoutMs: 50 }, () => new Promise((r) => setTimeout(() => r({ targetSection: "operations" }), 400)));
-  assert.ok(Date.now() - t0 < 300);
+  const slow = await ensureQuestionRationale({ ...base, message: "How many physiotherapists are on staff today?", targetSection: "employees", timeoutMs: 50 }, () => new Promise((r) => setTimeout(() => r({ targetSection: "operations" }), 2_000)));
+  assert.ok(Date.now() - t0 < 1_500, `waited ${Date.now() - t0}ms`);
   assert.equal(slow.targetSection, "employees");
   assert.equal((await ensureQuestionRationale({ ...base, message: "Thanks for your time today — everything is saved." }, failing)).how, "none");
   assert.match(fallbackRationale(undefined, "Before we wrap, is there anything a buyer should know that we haven't touched on?"), /on your terms/);

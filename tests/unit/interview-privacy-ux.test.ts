@@ -429,6 +429,8 @@ const lakeshoreDocs = () => [
       "Switching gears to add-backs — the broker's working from items like your salary, Maria's salary, and vehicle expenses.",
       "Your truck gets added back too.",
       "What I can tell you is that owner comp, Maria's salary, and personal use of company vehicles are typical addback items, but your broker will confirm the exact treatment against your actual statements.",
+      // F2-INT-7: the old "safe" carve-out is a treatment call too (a yes to "my salary gets added back, right?").
+      "A market-rate owner salary on the P&L is the classic add-back; anything beyond that your broker confirms.",
     ];
     for (const s of asserting) assert.ok(assertsNormalisation(`${s} What's your current general liability coverage?`), s);
     const fine = [
@@ -436,7 +438,6 @@ const lakeshoreDocs = () => [
       "Your broker will go through what's added back with you against your statements. Are there any personal expenses run through the company?",
       "Are there any one-time costs in 2024 — legal, a big repair — that a buyer wouldn't carry going forward?",
       "Is Maria's salary something you'd expect a buyer to replace, or would the role go away?",
-      "A market-rate owner salary on the P&L is the classic add-back; anything beyond that your broker confirms. What does Maria do day to day?",
       "What does your fleet cost you in a typical year, roughly — fuel, insurance and payments?",
     ];
     for (const s of fine) assert.ok(!assertsNormalisation(s), s);

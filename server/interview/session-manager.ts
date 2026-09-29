@@ -11,7 +11,8 @@ import {
   type Discrepancy,
   type Document as DealDocument,
 } from "@shared/schema";
-import { eq, desc } from "drizzle-orm";
+import { countedSellerTurns, isContinueAfterFault, CONTINUE_AFTER_FAULT as CONTINUE_AFTER_FAULT_TEXT } from "@shared/interview-fault";
+import { eq, desc, sql } from "drizzle-orm";
 import { assembleKnowledgeBase, sellerAnswered, type KnowledgeBase, type IndustryContext, type SectionCoverage } from "./knowledge-base";
 import { questionnaireFacts } from "./questionnaire-facts";
 import {
@@ -19,12 +20,14 @@ import {
   sessionModeOf,
   contextSessions,
   togetherSessionLive,
+  type TogetherCallState,
   sellerSideTasks,
   endingCompletesInterview,
   BROKER_SESSION_TASK_CREATOR,
   sellerMayRead,
   turnAdmission,
   turnInFlight,
+  writeIfTranscriptUnchanged,
   TurnConflictError,
   withSessionTurnLock,
 } from "./session-mode";
@@ -49,6 +52,11 @@ import {
   type GovernanceResult,
   buildStopSignalNudge,
   buildClosingAnswerNudge,
+  buildPauseNudge,
+  PAUSE_REPLY,
+  sanctionedFigureText,
+  valuationDeflection,
+  DEGRADED_TURN_MESSAGE,
   scrubClosingPromises,
   CRITICAL_SECTIONS,
   VALUATION_FISHING_RE,
@@ -245,6 +253,8 @@ export interface TurnResult {
   turnMessages?: { user?: ConversationMessage; ai: ConversationMessage };
   /** Session ID (for subsequent turns) */
   sessionId: string;
+  /** The model couldn't answer this turn: the reply is the fault notice (the seller's message is saved; Continue picks it up). */
+  degraded?: boolean;
   /** Summary of what was captured this turn */
   captured: {
     /** Every populated substantive business field (canonical + legitimate
@@ -534,7 +544,7 @@ async function startOrResumeSessionOnce(
   // started, closed or asked. (A sitting gone quiet for longer is closed
   // below, as before.)
   if (mode === "seller") {
-    const live = inLine.find((s) => togetherSessionLive(s));
+    const live = inLine.find((s) => togetherSessionLive(s, Date.now(), deal as TogetherCallState));
     if (live) {
       const kb = assembleKnowledgeBase(deal, documents, tasks, live, resolvedDiscrepancies, {
         sessions: inView,
@@ -586,19 +596,29 @@ async function startOrResumeSessionOnce(
   // run the questionnaire's privacy split first: 10–12s on first load).
   const lastCompleted = inView.find((s) => s.status === "completed");
   const liveWithAnswers = session && (session.messages as ConversationMessage[]).some((m) => m.role === "user");
-  if (!opts.resume && deal.interviewCompleted && lastCompleted && !liveWithAnswers) {
+  // The broker's own session ("Start AI Interview") the same way: once it
+  // has ended, loading the page again shows it finished — it used to start
+  // a new broker session, with a paid opening, on every visit. Continuing
+  // (resume) starts one.
+  const finished =
+    deal.interviewCompleted && lastCompleted
+      ? lastCompleted
+      : mode === "broker" && !session && inLine[0]?.status === "completed"
+        ? inLine[0]
+        : undefined;
+  if (!opts.resume && finished && !liveWithAnswers) {
     if (session) {
       await db
         .update(interviewSessions)
         .set({ status: "completed", completedAt: new Date() })
         .where(eq(interviewSessions.id, session.id));
     }
-    const kb = assembleKnowledgeBase(deal, documents, tasks, lastCompleted, resolvedDiscrepancies);
-    const meta = (lastCompleted.extractedInfo as Record<string, unknown>) || {};
+    const kb = assembleKnowledgeBase(deal, documents, tasks, finished, resolvedDiscrepancies);
+    const meta = (finished.extractedInfo as Record<string, unknown>) || {};
     return {
       message: "",
       suggestedAnswers: [],
-      sessionId: lastCompleted.id,
+      sessionId: finished.id,
       captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
       sectionCoverage: (kb.recordedCoverage ?? kb.sectionCoverage).map(coverageForClient),
       industryContext: extractIndustryContextForFrontend((meta._industryContext as IndustryContext | undefined) ?? null),
@@ -706,7 +726,10 @@ async function startOrResumeSessionOnce(
     // An unanswered opening written for the other mode (the seller alone vs
     // "Interview together") is rewritten in place for the mode asked for.
     const modeChanged = sessionModeOf(session) !== mode;
-    if (messages.length === 0 || (userMessageCount === 0 && modeChanged && !hasCompletedSession)) {
+    // (…and an opening written during an outage — the fault notice, never
+    // a real question — is rewritten in place on the next start.)
+    const degradedOpening = userMessageCount === 0 && (session.extractedInfo as Record<string, unknown> | null)?._openingDegraded === true;
+    if (messages.length === 0 || degradedOpening || (userMessageCount === 0 && modeChanged && !hasCompletedSession)) {
       reuseSessionId = session.id;
     } else if (userMessageCount === 0 && hasCompletedSession && !reusableOpening(session)) {
       await db
@@ -728,6 +751,16 @@ async function startOrResumeSessionOnce(
         kb.industryContext = sessionMeta._industryContext as IndustryContext;
       }
 
+      // The broker is back on the "Interview together" page: the sitting is
+      // live again (parkTogetherSessions marked it left).
+      if (mode === "broker_with_seller" && sessionMeta._leftAt) {
+        const resumedId = session.id;
+        await db
+          .update(interviewSessions)
+          .set({ extractedInfo: sql`${interviewSessions.extractedInfo} - '_leftAt'`, lastActivityAt: new Date() })
+          .where(eq(interviewSessions.id, resumedId));
+      }
+
       const lastAiMessage = [...messages].reverse().find((m) => m.role === "ai");
       // The question is still pending when the transcript ends on the AI's
       // turn — restore its chips (and rationale) instead of dropping them.
@@ -744,7 +777,11 @@ async function startOrResumeSessionOnce(
       // pre-fix "That's helpful — having Dana confirm…" came back verbatim on
       // resume). The cleaned question replaces the stored one, so the
       // transcript, the resume reply and the model's history agree.
-      if (pendingQuestion) {
+      // (Not while a turn is running on the session — a reload mid-turn —
+      // and never a short break's "take your time" or a fault notice, which
+      // are fixed texts, not questions. The write itself lands only if no
+      // turn has written since: writeIfTranscriptUnchanged.)
+      if (pendingQuestion && !pendingQuestion.pause && !pendingQuestion.degraded && !turnInFlight(session.id)) {
         const idx = messages.length - 1;
         const prevSeller = [...messages.slice(0, idx)].reverse().find((m) => m.role === "user")?.content ?? null;
         const ctx = buildPolishContext({
@@ -785,10 +822,27 @@ async function startOrResumeSessionOnce(
             suggestedAnswers: chips,
           };
           if (!why) delete (cleaned as Partial<ConversationMessage>).whyItMatters;
-          messages[idx] = cleaned;
-          await db.update(interviewSessions).set({ messages }).where(eq(interviewSessions.id, session.id));
-          console.log(`[session-manager] Resume: the stored question on session ${session.id} was re-polished (${describeReport(polished.report) || "rationale/labels"})`);
-          pendingChips = chips;
+          const sessionIdNow = session.id;
+          const next = [...messages];
+          next[idx] = cleaned;
+          const outcome = await writeIfTranscriptUnchanged({
+            sessionId: sessionIdNow,
+            expected: messages,
+            read: async () => {
+              const [row] = await db.select({ messages: interviewSessions.messages }).from(interviewSessions).where(eq(interviewSessions.id, sessionIdNow));
+              return row ? (row.messages as ConversationMessage[]) : null;
+            },
+            write: async () => {
+              await db.update(interviewSessions).set({ messages: next }).where(eq(interviewSessions.id, sessionIdNow));
+            },
+          });
+          if (outcome === "written") {
+            messages[idx] = cleaned;
+            console.log(`[session-manager] Resume: the stored question on session ${sessionIdNow} was re-polished (${describeReport(polished.report) || "rationale/labels"})`);
+            pendingChips = chips;
+          } else {
+            console.log(`[session-manager] Resume: re-polish of session ${sessionIdNow} skipped — ${outcome === "turn_in_flight" ? "a turn is running" : "a turn saved meanwhile"}`);
+          }
         }
       }
       const shownQuestion = pendingQuestion ? messages[messages.length - 1] : undefined;
@@ -1004,8 +1058,13 @@ async function startOrResumeSessionOnce(
       // fresh map would demote confirmed fields to "inferred" and make
       // the agent re-verify answers the seller already gave.
       _confidenceLevels: priorConfidenceLevels,
-      // What this opening was written from (reused while unchanged — see reusableOpening).
-      _openingBasis: basisNow({ by: openingMode, via: opts.conductedVia }),
+      // What this opening was written from (reused while unchanged — see
+      // reusableOpening). A fault notice written while the model was down
+      // has no basis: it is never reused, and the next start rewrites it
+      // (_openingDegraded).
+      ...(openingResult.degraded
+        ? { _openingDegraded: true }
+        : { _openingBasis: basisNow({ by: openingMode, via: opts.conductedVia }) }),
     },
   };
   if (reuseSessionId) {
@@ -1179,7 +1238,7 @@ async function processTurnLocked(
   const priorLedger: DeferralEntry[] = mintSourceItems(
     screenLedgerForSeller(parseLedger(sessionMeta._deferralLedger), documents),
     kb,
-    (session.messages as ConversationMessage[]).filter((m) => m.role === "user").length,
+    countedSellerTurns(session.messages as ConversationMessage[]),
   );
   applyLedgerToKb(kb, priorLedger);
   kb.droppedDocRequests = Array.isArray(sessionMeta._droppedDocRequests) ? (sessionMeta._droppedDocRequests as string[]).slice(-8) : [];
@@ -1280,9 +1339,9 @@ async function processTurnLocked(
   timer.mark("prompt");
 
   // Seller turns so far, including this one — drives completion governance
-  // and the wrap-up pacing nudge.
-  const userTurnCount =
-    existingMessages.filter((m) => m.role === "user").length + 1;
+  // and the wrap-up pacing nudge. (A Continue press after a fault notice, or
+  // a retry sent during the fault, is not a turn: shared/interview-fault.ts.)
+  const userTurnCount = Math.max(1, countedSellerTurns([...existingMessages, { role: "user", content: sellerMessage }]));
 
   // Topics the seller explicitly declined — hard-blocked from re-asking and
   // from closing-question triage (observed: asking price re-asked 17 times
@@ -1306,7 +1365,9 @@ async function processTurnLocked(
   // goodbye (forcedEnd below). The previous agent message unlocks
   // completion-acceptance detection ("anything else?" → "that covers it"),
   // which chips-only sellers rely on.
-  const prevAiMessage = [...existingMessages].reverse().find((m) => m.role === "ai")?.content;
+  // (Not a "take your time" reply to a short break: the question before it
+  // is still the one being answered.)
+  const prevAiMessage = [...existingMessages].reverse().find((m) => m.role === "ai" && !m.pause)?.content;
 
   // SELLER INTENT (seller-intent.ts): stop / wrap up, withdraw, correct, keep
   // private. The supporting-model classifier starts NOW and runs alongside
@@ -1322,7 +1383,13 @@ async function processTurnLocked(
   // seller asked), and the classifier is told which lines are the broker's.
   const intentMessage = conductedBy === "broker_with_seller" ? (sellerSideOf(sellerMessage) ?? "") : sellerMessage;
   const labelledExchange = conductedBy === "broker_with_seller" && intentMessage !== sellerMessage;
-  const quick = quickIntent(intentMessage, prevAiMessage);
+  // (Right after a "take your time" reply, "Sorry about that — …" is a return.)
+  const afterPause = [...existingMessages].reverse().find((m) => m.role === "ai")?.pause === true;
+  const quickRaw = quickIntent(intentMessage, prevAiMessage, { afterPause });
+  // (A short break is the seller alone at their screen: broker-led, the
+  // room simply waits — the exchange pipeline never sends "hang on".)
+  const pauseAllowed = conductedBy !== "broker_with_seller";
+  const quick: SellerIntent = pauseAllowed || !quickRaw.pause ? quickRaw : { ...quickRaw, pause: false };
   let modelIntent: SellerIntent | null | undefined; // undefined = not back yet
   const intentPromise = classifySellerIntent({
     sellerMessage,
@@ -1336,8 +1403,10 @@ async function processTurnLocked(
     if (modelIntent === undefined && waitMs > 0) {
       await Promise.race([intentPromise, new Promise((r) => setTimeout(r, waitMs))]);
     }
-    return combineIntent(quick, modelIntent ?? null);
+    return pauseGate(combineIntent(quick, modelIntent ?? null));
   };
+  /** A short break is never read broker-led (pauseAllowed). */
+  const pauseGate = (i: SellerIntent): SellerIntent => (pauseAllowed || !i.pause ? i : { ...i, pause: false });
 
   let stopNow = quick.stop !== "none";
   let stopLevel: StopLevel = quick.stop;
@@ -1345,10 +1414,15 @@ async function processTurnLocked(
   // counter, so two isolated false positives twenty turns apart can never
   // combine into a forced end. Genuine repeat stops ("I really have to go")
   // escalate back-to-back.
-  let stopSignalCount = stopNow ? priorStopCount + 1 : 0;
+  // (A short break keeps the count: the answer after it is still the one
+  // closing turn's answer.)
+  let stopSignalCount = stopNow ? priorStopCount + 1 : quick.pause ? priorStopCount : 0;
   // The turn after the one closing turn a stop allowed: unless the seller
-  // says they want to keep going, this turn ends the interview.
-  let closingAnswerTurn = !stopNow && priorStopCount > 0 && !quick.continueRequest;
+  // says they want to keep going (or is back from a break), this turn ends
+  // the interview. A short break never does.
+  let closingAnswerTurn = !stopNow && priorStopCount > 0 && !quick.continueRequest && !quick.pause;
+  /** The seller is stepping away for a moment (seller-intent.ts pause): "take your time", nothing ends. */
+  let pauseNow = quick.pause;
   // The closing turn is aimed at the single most important item still open:
   // a missing critical section, else the open wrap-up items (critical
   // checklist items in partly covered sections, seller-only topics…) —
@@ -1374,7 +1448,11 @@ async function processTurnLocked(
     // (A goodbye that asks nothing — it already fits a second stop too.)
     systemBlocks.push({ type: "text", text: buildClosingAnswerNudge() });
     stopNudgeLevel = "firm";
+  } else if (pauseNow) {
+    systemBlocks.push({ type: "text", text: buildPauseNudge() });
   }
+  /** The prompt was written for a short break. */
+  const pauseInPrompt = pauseNow;
   // What the first prompt was written for — closingAnswerTurn itself changes
   // once the classifier's reading is in (review RV-INT-5: the "seller chose
   // to continue" re-call read the already-cleared flag and never fired).
@@ -1444,7 +1522,10 @@ async function processTurnLocked(
       type: "text",
       text:
         `# RECOVERY NOTE\n` +
-        `The seller's previous ${priorDegradedTurns} message(s) arrived during a technical fault and were never processed. Re-read the recent seller messages in the conversation and extract EVERY fact from them now (extractedFields), acknowledging naturally — do not dwell on the glitch or ask the seller to repeat anything they already re-sent.`,
+        `The seller's previous ${priorDegradedTurns} message(s) arrived during a technical fault and were never processed. Re-read the recent seller messages in the conversation and extract EVERY fact from them now (extractedFields), acknowledging naturally — do not dwell on the glitch or ask the seller to repeat anything they already re-sent.` +
+        (isContinueAfterFault([...existingMessages, { role: "user", content: sellerMessage, timestamp: receivedAt }], existingMessages.length)
+          ? ` Their new message ("${CONTINUE_AFTER_FAULT_TEXT}") is the Continue button they pressed after the fault notice — not an answer. Reply to their last real answer above as if it had just arrived: the reply is your next question.`
+          : ""),
     });
   }
 
@@ -1521,7 +1602,7 @@ async function processTurnLocked(
   // the re-ask gate below raises what the draft doesn't. Never on a stop —
   // and never a figure the seller corrected or withdrew this turn (the
   // seller-intent classifier's reading; see intentSettlesConflict).
-  const liveClaimsRun: Promise<ReaskFinding[]> = (stopNow
+  const liveClaimsRun: Promise<ReaskFinding[]> = (stopNow || pauseNow /* (a short break raises nothing) */
     ? Promise.resolve([] as ReaskFinding[])
     : checkLiveClaims(
         {
@@ -1553,13 +1634,8 @@ async function processTurnLocked(
   // the file as the interview sees it: the broker's listed price from the
   // deal row and figures from broker-only sources are not on the seller's
   // file, so quoting one to the seller counts as a leak too.)
-  const sanctionedText =
-    sellerMessage +
-    " " +
-    Object.entries(sellerView)
-      .filter(([k, v]) => !k.startsWith("_") && typeof v === "string")
-      .map(([, v]) => v)
-      .join(" ");
+  // (Every fact on the seller's file, by-year maps included — turn-guard.ts sanctionedFigureText.)
+  const sanctionedText = sanctionedFigureText(sellerMessage, sellerView as Record<string, unknown>);
   const sanctionedNumbers = typedNumericValues(sanctionedText).map((t) => t.value);
   const unsanctionedFigure = (text: string): boolean =>
     typedNumericValues(text)
@@ -1620,7 +1696,16 @@ async function processTurnLocked(
   // …or the patterns' firm stop went into the prompt (a goodbye, nothing
   // asked) and the classifier reads a soft one: the seller gets their one
   // closing question (a second stop in a row ends anyway).
+  // …or the prompt was written for a short break (or a return) the
+  // patterns saw and the classifier doesn't: "Hang on, why do you need
+  // that?" is the seller's question, and after a stop's closing turn
+  // "Revenue is back now to where it was…" is its answer (review F2-INT-2,
+  // round 2).
   const promptMisfits = (i: SellerIntent): boolean =>
+    // (A short break the patterns missed.)
+    (i.pause && !pauseInPrompt) ||
+    (pauseInPrompt && !i.pause) ||
+    (!closingInPrompt && !patternStopInPrompt && priorStopCount > 0 && i.stop === "none" && !i.pause && !i.continueRequest) ||
     (i.stop !== "none" && (stopNudgeLevel === "none" || (i.stop === "firm" && stopNudgeLevel === "soft"))) ||
     (patternStopInPrompt && stopNudgeLevel === "firm" && i.stop === "soft" && priorStopCount === 0) ||
     (closingInPrompt && i.stop === "none" && i.continueRequest) ||
@@ -1712,6 +1797,10 @@ async function processTurnLocked(
     // a draft written for the wrong intent is stopped here, unseen.
     timer.mark("message");
     const intentNow = await intentWithin(STREAM_INTENT_WAIT_MS);
+    // A short break: the reply is the fixed "take your time" (PAUSE_REPLY),
+    // shown when the turn is final — never the model's draft, which only
+    // records what the seller said (so it is never stopped or redone).
+    if (intentNow.pause) return true;
     if (!intentSettled && promptMisfits(intentNow)) {
       intentRecallPending = true;
       return false;
@@ -1961,7 +2050,7 @@ async function processTurnLocked(
       // who then says they'd rather keep going ("let's continue", "I've got
       // a few more minutes") has withdrawn it; an older stop never counts
       // (QA harvest: Clearwater ended at 6 of 10 turns on a stale one).
-      sellerStopDetected: p.stopNow || (priorStopCount > 0 && !sellerDeclinedWrapUp(prevAiMessage, sellerMessage) && !p.intent.continueRequest),
+      sellerStopDetected: p.stopNow || (priorStopCount > 0 && !sellerDeclinedWrapUp(prevAiMessage, sellerMessage) && !p.intent.continueRequest && !p.intent.pause),
       // The model's own "seller asked to stop" corroborates only when the
       // classifier gave no verdict — and never when the seller just said
       // they want to keep going.
@@ -2017,8 +2106,8 @@ async function processTurnLocked(
     timer.mark("end");
     const held = heldEnd;
     if (!held || held.call !== call || shown.released || modelIntent === undefined) return;
-    const i = combineIntent(quick, modelIntent ?? null);
-    if (!intentSettled && promptMisfits(i)) return;
+    const i = pauseGate(combineIntent(quick, modelIntent ?? null));
+    if (i.pause || (!intentSettled && promptMisfits(i))) return;
     if (retractionRecallPossible(i) || (valuationFishing && valuationLeak(held.text))) return;
     if (asksQuestion(held.text)) return;
     const st = resolveStopState({ stopNow, stopSignalCount, stopLevel, closingAnswerTurn }, priorStopCount, i);
@@ -2161,7 +2250,18 @@ async function processTurnLocked(
   {
     const st = resolveStopState({ stopNow, stopSignalCount, stopLevel, closingAnswerTurn }, priorStopCount, intent);
     ({ stopNow, stopSignalCount, stopLevel, closingAnswerTurn } = st);
-    if (st.change === "classifier_stop") {
+    pauseNow = st.paused;
+    if (pauseNow && shown.released) {
+      // The classifier's break came in after the stream gate had already
+      // shown the model's reply (it waits STREAM_INTENT_WAIT_MS): a reply on
+      // the seller's screen is never swapped — it stays, and is saved as an
+      // ordinary turn. Nothing ends and no stop is counted (the break's
+      // stop state stands).
+      console.log(`[session-manager] Seller break read after the reply was shown on session ${sessionId} — the shown reply stays`);
+      pauseNow = false;
+    } else if (pauseNow) {
+      console.log(`[session-manager] Seller is taking a short break on session ${sessionId} (${intent.via}) — no stop, nothing ends`);
+    } else if (st.change === "classifier_stop") {
       console.log(`[session-manager] Seller stop signal #${stopSignalCount} (${intent.stop}, classifier) detected on session ${sessionId}`);
     } else if (st.change === "classifier_cleared") {
       console.log(`[session-manager] Pattern stop not confirmed by the classifier on session ${sessionId} — the interview carries on${closingAnswerTurn ? " (answer to the closing turn)" : ""}`);
@@ -2175,16 +2275,25 @@ async function processTurnLocked(
   // once with the right instruction before anything is shown — streamed
   // through the same gate (the intent is settled now), so its question or
   // goodbye shows as soon as it is approved instead of after the whole turn.
-  if ((intentRecallPending || promptMisfits(intent)) && !shown.released) {
+  // (Never for a short break: its reply is fixed, and the draft's record of
+  // the turn stands.)
+  if ((intentRecallPending || promptMisfits(intent)) && !shown.released && !pauseNow) {
     const blocks = systemBlocks.filter(
-      (b) => !/^# (?:THE SELLER WANTS TO STOP|SELLER STOP|CLOSING|FINANCIAL-CORE CHECKPOINT|PACING|RECONCILE NOW)\b/.test(b.text),
+      (b) => !/^# (?:THE SELLER WANTS TO STOP|SELLER STOP|CLOSING|SHORT BREAK|FINANCIAL-CORE CHECKPOINT|PACING|RECONCILE NOW)\b/.test(b.text),
     );
     if (stopNow) {
       blocks.push(stopNudge(stopLevel, stopSignalCount, intent.sellerQuestion));
       stopNudgeLevel = stopLevel;
+    } else if (closingAnswerTurn) {
+      // (The patterns read a return or a break the classifier doesn't: this
+      // is the answer to the stop's closing turn — the goodbye.)
+      blocks.push({ type: "text", text: buildClosingAnswerNudge() });
+      stopNudgeLevel = "firm";
     }
     callParams.system = blocks;
-    console.warn(`[session-manager] Intent re-call on session ${sessionId}: ${stopNow ? `seller stop (${stopLevel})` : "seller chose to continue"}`);
+    console.warn(
+      `[session-manager] Intent re-call on session ${sessionId}: ${stopNow ? `seller stop (${stopLevel})` : closingAnswerTurn ? "answer to the closing turn" : pauseInPrompt ? "not a short break" : "seller chose to continue"}`,
+    );
     intentSettled = true;
     intentRecallPending = false;
     reaskAttempt = 0;
@@ -2230,7 +2339,7 @@ async function processTurnLocked(
 
   // VALUATION-FIGURE GUARD (helpers defined before the model call, where the
   // stream gate uses them): force ONE corrective re-call on a leak.
-  if (!degraded && valuationFishing && valuationLeak(aiResponse.message)) {
+  if (!degraded && !pauseNow && valuationFishing && valuationLeak(aiResponse.message)) {
     console.warn(
       `[session-manager] Valuation-figure guard: outgoing reply contains figures — corrective re-call`,
     );
@@ -2251,8 +2360,12 @@ async function processTurnLocked(
     } else {
       // Second leak: strip to a safe deflection rather than ship figures.
       console.error(`[session-manager] Valuation-figure guard: re-call still leaked — using safe deflection`);
-      aiResponse.message =
-        "That's exactly the right question for your broker once the full picture is together — what a buyer pays turns on your financials, how transferable the operation is, and the strength of your customer relationships, and your broker can give you a defensible answer grounded in real comparable sales. Let's make sure we capture everything that works in your favour.";
+      // (…ending on a real next question — the draft's own when it names no
+      // figure — never on a line that asks nothing.)
+      aiResponse.message = valuationDeflection(
+        [corrected.message, aiResponse.message],
+        fallbackQuestion(aiResponse.reasoning.nextIntent, aiResponse.reasoning.currentTopic),
+      );
       aiResponse.suggestedAnswers = [];
     }
   }
@@ -2300,6 +2413,22 @@ async function processTurnLocked(
     }
   }
 
+  // SHORT BREAK (seller-intent.ts pause): the seller is stepping away for a
+  // moment and coming back. The reply is a fixed "take your time" — no new
+  // question (the one on screen is still the one to answer; its chips stay
+  // offered), nothing ends, and no stop is counted. What the model recorded
+  // from the message stands. (Honoured without the model too — an outage
+  // must not turn "be right back" into a fault notice.)
+  if (pauseNow) {
+    aiResponse.message = PAUSE_REPLY;
+    aiResponse.suggestedAnswers = [...([...existingMessages].reverse().find((m) => m.role === "ai" && !m.pause)?.suggestedAnswers ?? [])];
+    aiResponse.whyItMatters = undefined;
+    aiResponse.targetSection = undefined;
+    aiResponse.importance = undefined;
+    aiResponse.shouldEnd = false;
+    aiResponse.endReason = undefined;
+  }
+
   // RE-ASK GUARD (after the fact): when nothing was shown yet — the plain
   // /message endpoint, a non-streamed retry, a message with no question, a
   // draft the stream gate held — the whole draft is checked here, including
@@ -2319,7 +2448,7 @@ async function processTurnLocked(
   // asked to stop twice in a row, asked for the questions to stop now (a
   // firm stop), or has just answered the one closing turn a stop allowed.
   const forcedEnd = (stopNow && (stopSignalCount >= 2 || stopLevel === "firm")) || closingAnswerTurn;
-  if (!degraded && !forcedEnd && (!stopNow || asksQuestion(aiResponse.message)) && !aiResponse.shouldEnd && !shown.released) {
+  if (!degraded && !pauseNow && !forcedEnd && (!stopNow || asksQuestion(aiResponse.message)) && !aiResponse.shouldEnd && !shown.released) {
     reaskCtx.liveConflicts = stopNow ? [] : await liveClaimsRun;
     const guarded = await applyReaskGuard(anthropic, { ...callParams, messages: conversation }, aiResponse, reaskCtx);
     if (guarded.recalled) {
@@ -2472,7 +2601,7 @@ async function processTurnLocked(
 
   // ── OUTPUT GUARDS — run after governance, so a continuation reply is held
   // to the same rules as the first one. ──
-  if (!degraded) {
+  if (!degraded && !pauseNow) {
     // FILLER GUARD: sellers read dozens of replies in a sitting — a recap or
     // grade of their last answer ("That's a realistic read —", "Good — a
     // clean Phase I removes a major due diligence risk for buyers.") in front
@@ -2567,6 +2696,9 @@ async function processTurnLocked(
         const q = fallbackQuestion(aiResponse.reasoning.nextIntent, aiResponse.reasoning.currentTopic);
         aiResponse.message = applyFiller(`${aiResponse.message.trim()}\n\n${q}`.trim());
         console.warn(`[session-manager] Output guard: appended the planned question — "${q}"`);
+        // (Built from the agent's own plan after the machinery scrub —
+        // checked again, so no planning word reaches the seller.)
+        if (leaksInternalMachinery(aiResponse.message)) aiResponse.message = scrubInternalMachinery(aiResponse.message);
       }
     }
     // The chips and the rationale follow the polished question: chips for a
@@ -3280,6 +3412,10 @@ async function processTurnLocked(
     ...(aiResponse.whyItMatters ? { whyItMatters: aiResponse.whyItMatters } : {}),
     ...questionLabels(kb, aiResponse.importance, aiResponse.targetSection),
     suggestedAnswers: aiResponse.suggestedAnswers || [],
+    // (A short break's "take your time": the question before it is still pending.)
+    ...(pauseNow ? { pause: true } : {}),
+    // (The fault notice: the client offers Continue instead of a retype.)
+    ...(degraded && aiResponse.message === DEGRADED_TURN_MESSAGE ? { degraded: true } : {}),
   };
   const updatedMessages: ConversationMessage[] = [
     ...existingMessages,
@@ -3406,6 +3542,7 @@ async function processTurnLocked(
     deferredTopics: deferralTopicStrings(ledger),
     shouldEnd: aiResponse.shouldEnd,
     endReason: aiResponse.endReason,
+    ...(storedAiMessage.degraded ? { degraded: true } : {}),
   };
 }
 
@@ -3556,7 +3693,7 @@ async function generateOpeningMessage(
     /** The opening's text, as soon as it is final (before its label and the save). */
     onText?: (text: string) => void;
   } = {},
-): Promise<{ message: string; whyItMatters?: string; importance?: InterviewResponse["importance"]; targetSection?: string; suggestedAnswers: string[]; industryContext: IndustryContext | null }> {
+): Promise<{ message: string; whyItMatters?: string; importance?: InterviewResponse["importance"]; targetSection?: string; suggestedAnswers: string[]; industryContext: IndustryContext | null; degraded?: boolean }> {
   const tailNeeded = opts.tailNeeded ?? true;
   const systemBlocks = await buildInterviewSystemBlocks(kb);
 
@@ -3738,13 +3875,18 @@ async function generateOpeningMessage(
 
   if (degraded || !aiResponse.message) {
     // The turn-guard's generic recovery copy is wrong for a first contact —
-    // use a business-specific opening instead.
-    const message = `Hi! I'm here to learn about ${businessName} so we can put together a great CIM for your buyers. Let's start — can you tell me a bit about the business?`;
+    // and so is a generic first question (it re-asked the basics already on
+    // file, greeted a returning seller as a stranger, and was reused for a
+    // week after the API recovered — review F2-INT-8). An honest notice
+    // instead; it is flagged degraded, never reused, and the next visit
+    // writes a real opening.
+    const message = degradedOpeningMessage(hasPriorSession);
     opts.onText?.(message);
     return {
       message,
       suggestedAnswers: [],
       industryContext: null,
+      degraded: true,
     };
   }
 
@@ -3797,6 +3939,45 @@ async function generateOpeningMessage(
     suggestedAnswers: backfillSuggestedAnswers({ ...aiResponse, message, suggestedAnswers: polishChips(aiResponse.suggestedAnswers || [], message, polished.report, polishCtx) }).suggestedAnswers,
     industryContext,
   };
+}
+
+/**
+ * The opening shown when the model can't be reached (an outage, no
+ * credits): honest, no question, no exclamation mark, no jargon — and a
+ * welcome-back for a returning seller. Refreshing the page writes the real
+ * opening once the model is back.
+ */
+export function degradedOpeningMessage(returning: boolean): string {
+  return returning
+    ? "Welcome back. I'm having a brief technical problem on my end — give it a minute, then refresh this page and we'll pick up where we left off."
+    : "Welcome, and thanks for making time for this. I'm having a brief technical problem on my end — give it a minute, then refresh this page and we'll get started.";
+}
+
+/**
+ * The broker left the "Interview together" page (or ended its call): the
+ * deal's open broker-led sittings are marked `_leftAt`, so the seller's own
+ * link opens straight away instead of waiting out TOGETHER_LIVE_MS
+ * (session-mode.ts togetherSessionLive). Nothing is closed — the broker
+ * coming back resumes the sitting, and their next exchange makes it live
+ * again. Returns how many sittings were marked.
+ */
+export async function parkTogetherSessions(dealId: string, at: Date = new Date()): Promise<number> {
+  const rows = await db.select().from(interviewSessions).where(eq(interviewSessions.dealId, dealId));
+  let n = 0;
+  for (const s of rows) {
+    if (sessionModeOf(s) !== "broker_with_seller" || (s.status !== "active" && s.status !== "paused")) continue;
+    // (Not under a turn that is saving right now — its exchange is the latest activity anyway.)
+    if (turnInFlight(s.id)) continue;
+    // Merged in the database, so a turn's own save of the session's
+    // metadata is never overwritten with an older copy.
+    const patch = JSON.stringify({ _leftAt: at.toISOString() });
+    await db
+      .update(interviewSessions)
+      .set({ extractedInfo: sql`coalesce(${interviewSessions.extractedInfo}, '{}'::jsonb) || ${patch}::jsonb` })
+      .where(eq(interviewSessions.id, s.id));
+    n++;
+  }
+  return n;
 }
 
 /**
@@ -4365,11 +4546,21 @@ function criticalSectionSet(kb: Pick<KnowledgeBase, "sectionCoverage">): Set<str
 }
 
 /** Question → answer pairs in one transcript (the AI's question, the seller's next message). */
-export function exchangesOf(messages: Pick<ConversationMessage, "role" | "content">[]): Exchange[] {
+export function exchangesOf(messages: Array<Pick<ConversationMessage, "role" | "content"> & { pause?: boolean }>): Exchange[] {
   const out: Exchange[] = [];
-  for (let i = 0; i < messages.length - 1; i++) {
-    if (messages[i].role !== "ai" || messages[i + 1].role !== "user") continue;
-    out.push({ question: questionPart(messages[i].content), answer: messages[i + 1].content });
+  // A short break's "take your time" is not a question: the seller's
+  // "be right back" and their answer after it both answer the question
+  // before it (one exchange).
+  const turns: Array<{ role: string; content: string }> = [];
+  for (const m of messages) {
+    if (m.role === "ai" && m.pause) continue;
+    const last = turns[turns.length - 1];
+    if (m.role === "user" && last?.role === "user") last.content = `${last.content}\n${m.content}`;
+    else turns.push({ role: m.role, content: m.content });
+  }
+  for (let i = 0; i < turns.length - 1; i++) {
+    if (turns[i].role !== "ai" || turns[i + 1].role !== "user") continue;
+    out.push({ question: questionPart(turns[i].content), answer: turns[i + 1].content });
   }
   return out;
 }

@@ -1552,6 +1552,21 @@ Return JSON only.`,
     }
   });
 
+  // The broker left the "Interview together" page (any way of running it —
+  // in person, a Cimple call, a Zoom/Meet/Teams notetaker): the sitting is
+  // marked left, so the seller's own link opens straight away instead of
+  // "your broker is going through this with you now" for half an hour.
+  // Nothing is closed; coming back resumes it.
+  app.post("/api/interview/:dealId/together/leave", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const { parkTogetherSessions } = await import("./interview/session-manager");
+      const parked = await parkTogetherSessions(req.params.dealId);
+      res.json({ parked });
+    } catch (error: any) {
+      res.status(500).json({ error: "Couldn't update the sitting" });
+    }
+  });
+
   // Seller side: is the broker waiting in a call? If so, a participant token.
   app.get("/api/seller/:token/call", async (req, res) => {
     try {

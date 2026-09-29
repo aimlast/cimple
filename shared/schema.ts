@@ -1229,6 +1229,13 @@ export const conversationMessageSchema = z.object({
   /** AI turns: the answer chips offered with the question. Persisted so a
    *  resumed session shows them again for the still-pending question. */
   suggestedAnswers: z.array(z.string()).optional(),
+  /** AI turns: the reply to a short break ("take your time") — the question
+   *  before it is still the one the seller is answering. */
+  pause: z.boolean().optional(),
+  /** AI turns: the technical-fault notice of a turn the model couldn't
+   *  answer — the seller's message before it was saved but not yet
+   *  processed; the client offers Continue instead of a retype. */
+  degraded: z.boolean().optional(),
   /** Seller turns: set when this message corrects an earlier answer (the
    *  "Edit" flow). Carries the earlier message's timestamp + text so the
    *  transcript can link the two and the agent knows it is an update. */

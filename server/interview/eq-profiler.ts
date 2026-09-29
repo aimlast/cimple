@@ -821,7 +821,7 @@ export function renderProfileForPrompt(profile: SellerCommunicationProfile): str
     formal:
       "This seller communicates formally and professionally. Use polished language, structured questions, and respectful tone. Avoid casual language or overly familiar phrasing.",
     guarded:
-      "This seller is cautious and may give short answers initially. Build trust gradually. Do not push too hard on sensitive topics early. Acknowledge their concerns and explain why information is needed before asking for it.",
+      "This seller is cautious and may give short answers initially. Build trust gradually. Do not push too hard on sensitive topics early. When they hesitate or ask why, give the reason in one plain sentence before the question; otherwise it goes in whyItMatters.",
     enthusiastic:
       "This seller is energetic and proud of their business. Channel their enthusiasm — let them share what they are proud of. Then guide the conversation to areas they may be less eager to discuss.",
   };
