@@ -30,7 +30,7 @@ import {
 import { dropReason, differentYears } from "./discrepancy-filter";
 import { applyHeadCountAuthority, settleMergeRowsQuietly } from "../documents/merge-conflicts";
 import { updateDiscrepancyIfStill } from "./discrepancy-cas";
-import { BLOCKING_DISCREPANCY_STATUSES, discrepancyBlocksCim } from "@shared/discrepancy-gate";
+import { BLOCKING_DISCREPANCY_STATUSES, discrepancyBlocksCim, keepRoutedStamp } from "@shared/discrepancy-gate";
 
 export { recordsSameDispute };
 
@@ -194,6 +194,8 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
         if (isCheckRow(openMatch)) {
           const wrote = await updateDiscrepancyIfStill(storage, openMatch.id, [openMatch.status], {
             ...values,
+            // (A routed row keeps its routing stamp — shared/discrepancy-gate.ts.)
+            sideSources: keepRoutedStamp(openMatch.sideSources, values.sideSources) as any,
             // Keep a fact key the broker already linked.
             factKey: openMatch.factKey || values.factKey,
             factYear: openMatch.factKey ? openMatch.factYear ?? values.factYear : values.factYear,

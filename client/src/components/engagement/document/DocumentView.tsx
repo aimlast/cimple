@@ -170,6 +170,13 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
           New visits show which parts buyers read, drawn on the page.
         </p>
       )}
+      {doc.legacyUnmatched && doc.legacyUnmatched.attentionMs >= 1000 && (
+        <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground" data-testid="engagement-legacy-unmatched">
+          {formatReadingTime(doc.legacyUnmatched.attentionMs)} of earlier reading was on {doc.legacyUnmatched.pages.length === 1 ? "a page" : "pages"} this version of the CIM doesn't show
+          ({doc.legacyUnmatched.pages.slice(0, 4).map((p) => p.label).join(", ")}{doc.legacyUnmatched.pages.length > 4 ? ", …" : ""}).
+          It still counts in each buyer's visits.
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Segmented<"pages" | "table">

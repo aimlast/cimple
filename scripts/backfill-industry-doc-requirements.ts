@@ -6,6 +6,11 @@
  * existing rows (and anything the seller uploaded against them) are never
  * touched — only missing rows are added.
  *
+ * A request for a document the deal already holds (a shared, readable
+ * document whose name the request matches — the upload rule) is added as
+ * received and credited to that document, never as "missing"
+ * (planDocumentRequirements; release review DEP-3). The dry run lists each.
+ *
  * Dry run (default) prints what would be added:
  *   DATABASE_URL=… ANTHROPIC_API_KEY=disabled npx tsx scripts/backfill-industry-doc-requirements.ts [dealId …]
  * Apply:
@@ -16,7 +21,7 @@ import { storage } from "../server/storage";
 import { db } from "../server/db";
 import { deals } from "@shared/schema";
 import { isNull } from "drizzle-orm";
-import { industryDocsKey, populateDocumentRequirements, requirementsForIndustry } from "../server/documents/requirements";
+import { industryDocsKey, planDocumentRequirements, populateDocumentRequirements } from "../server/documents/requirements";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -27,20 +32,28 @@ async function main() {
     : await db.select().from(deals).where(isNull(deals.archivedAt));
 
   let total = 0;
+  let onFile = 0;
   for (const deal of rows) {
     const key = industryDocsKey(deal.industry, deal.subIndustry);
     if (!key) continue;
-    const existing = new Set((await storage.getDocumentRequirementsByDeal(deal.id)).map((r) => r.documentName));
-    const missing = requirementsForIndustry(deal.industry, deal.subIndustry).filter((r) => !existing.has(r.documentName));
-    if (missing.length === 0) continue;
-    total += missing.length;
-    console.log(`${deal.id}  ${deal.businessName} (${deal.industry} → ${key}): ${missing.length} to add — ${missing.map((m) => m.documentName).join("; ")}`);
+    const plan = planDocumentRequirements(
+      await storage.getDocumentRequirementsByDeal(deal.id),
+      await storage.getDocumentsByDeal(deal.id),
+      deal.industry,
+      deal.subIndustry,
+    );
+    if (plan.length === 0) continue;
+    total += plan.length;
+    const held = plan.filter((p) => p.heldBy);
+    onFile += held.length;
+    console.log(`${deal.id}  ${deal.businessName} (${deal.industry} → ${key}): ${plan.length} to add — ${plan.map((p) => p.doc.documentName).join("; ")}`);
+    for (const p of held) console.log(`    already on file → "${p.doc.documentName}" credited to "${p.heldBy!.name}"`);
     if (apply) {
       const added = await populateDocumentRequirements(deal.id, deal.industry, deal.subIndustry);
       console.log(`  added ${added}`);
     }
   }
-  console.log(`${apply ? "Added" : "Would add"} ${total} row(s) across ${rows.length} deal(s) checked.${apply ? "" : " Re-run with --apply to write."}`);
+  console.log(`${apply ? "Added" : "Would add"} ${total} row(s) across ${rows.length} deal(s) checked — ${onFile} of them already on file (added as received).${apply ? "" : " Re-run with --apply to write."}`);
   process.exit(0);
 }
 

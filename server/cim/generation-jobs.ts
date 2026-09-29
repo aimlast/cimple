@@ -13,6 +13,7 @@
  * persisted status is the durable record.
  */
 import { assignLineage } from "../analytics/lineage";
+import { storeLegacyReading } from "../engagement/legacy-store";
 import { storage } from "../storage";
 import { generateCimLayout, type CimLayoutParams, type LayoutProgress } from "./layout-engine";
 import type { CimDocument } from "./layout-types";
@@ -308,6 +309,16 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
   // The CIM buyers read now is kept before anything is replaced (throws —
   // the run then fails and nothing changes).
   if (hold && keepServing && !previousHold?.servingPublished) await takePublishedSnapshot(current);
+  // Reading from the old tracker names pages by the keys about to go: it is
+  // stored now, against the sections it was read on, so the Engagement tab
+  // still places it after the regeneration (legacy-store.ts; idempotent, no
+  // old reading = one read). Best-effort — the on-the-fly view still places
+  // most of it by the keys' words if this fails.
+  try {
+    await storeLegacyReading(deal.id);
+  } catch (err) {
+    console.warn(`[cim-generation] couldn't store the old reading before regenerating deal ${deal.id}:`, (err as Error)?.message ?? err);
+  }
   const cimContent: Record<string, string> = {};
   const rows = document.sections.map((section, i) => {
     if (section.aiDraftContent) cimContent[section.sectionKey] = section.aiDraftContent;

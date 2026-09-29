@@ -5,6 +5,7 @@
  */
 import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, CheckCircle2, XCircle, MessageCircleQuestion, Lock } from "lucide-react";
+import { routedButNeverAsked } from "@shared/discrepancy-gate";
 import {
   discrepancyFieldLabel,
   discrepancyHasPrivateSide,
@@ -67,7 +68,7 @@ export function DiscrepancyHeaderLine({ disc, showSource = true, interviewFinish
       <div className="flex shrink-0 items-center gap-1.5">
         {routed && (
           <Badge className="bg-blue-500/10 text-blue-400 border-0 text-2xs gap-1">
-            <MessageCircleQuestion className="h-2.5 w-2.5" /> {interviewFinished ? "Sent to the seller" : "Asked in interview"}
+            <MessageCircleQuestion className="h-2.5 w-2.5" /> {routedButNeverAsked(disc, interviewFinished) ? "Never asked" : interviewFinished ? "Sent to the seller" : "Asked in interview"}
           </Badge>
         )}
         {settled && (

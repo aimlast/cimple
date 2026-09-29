@@ -531,6 +531,17 @@ export interface DealReadingFacts {
   /** Only legacy (page-level) reading exists for this filter. */
   legacyOnly: boolean;
   lastWriteAt: string | null;
+  /**
+   * Old-tracker reading on pages the current CIM no longer has (a
+   * regeneration dropped or merged them): how much, and on which pages.
+   * Counted in the buyers' visits; not drawn on any page.
+   */
+  legacyUnmatched?: LegacyUnmatchedReading;
+}
+
+export interface LegacyUnmatchedReading {
+  attentionMs: number;
+  pages: Array<{ label: string; attentionMs: number }>;
 }
 
 // ── Broker API responses ─────────────────────────────────────────────────
@@ -697,6 +708,8 @@ export interface EngagementDocumentResponse {
   byKind: KindAttention[];
   totals: { attentionMs: number; skimMs: number; readers: number; visits: number };
   legacyOnly: boolean;
+  /** Old-tracker reading on pages this CIM no longer has (DealReadingFacts.legacyUnmatched). */
+  legacyUnmatched?: LegacyUnmatchedReading | null;
 }
 
 /** GET /api/deals/:dealId/engagement/renditions/:renditionId — what the viewer renders. */

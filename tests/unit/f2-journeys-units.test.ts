@@ -21,7 +21,7 @@ import {
   withSellerUnavailableNote,
   withoutSellerUnavailableNote,
 } from "../../shared/seller-portal";
-import { discrepancyBlocksCim, waitingOnSellerAfterInterview } from "../../shared/discrepancy-gate";
+import { discrepancyBlocksCim, waitingOnSellerAfterInterview, withRoutedStamp } from "../../shared/discrepancy-gate";
 import { computeNextStep, phaseChecklist, nextStepText } from "../../shared/deal-progress";
 import { industryDocsKey, requirementsForIndustry, getSupportedIndustries, untouchedOtherIndustryRows } from "../../server/documents/requirements";
 import { shouldEmailFollowUp, awaitingSellerAfterInterview, turnFloorFor, followUpsAnsweredNotice } from "../../server/interview/seller-followups";
@@ -218,7 +218,9 @@ check("J1 the interview-complete email lists the open items, escaped", () => {
 
 // ── J2: a routed conflict after the interview keeps blocking ─────────────
 check("J2 a critical row routed to a seller who had finished the interview blocks until they answer", () => {
-  const routed = { severity: "critical", status: "ask_seller" };
+  // (Routed under the follow-up rules — stamped. A routing from before them
+  // was never put to the seller and doesn't block: DEP-4, followups-routed-before-release.test.ts.)
+  const routed = { severity: "critical", status: "ask_seller", sideSources: withRoutedStamp(null) };
   assert.equal(discrepancyBlocksCim(routed, false), false, "interview running: it raises it (unchanged)");
   assert.equal(discrepancyBlocksCim(routed, true), true, "interview finished: nothing raises it — it blocks");
   assert.equal(discrepancyBlocksCim({ severity: "significant", status: "ask_seller" }, true), false, "only criticals block");

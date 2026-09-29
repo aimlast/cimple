@@ -6,32 +6,26 @@
  * into page-level reading on synthetic legacy visits, so a deal's older
  * buyers still show in the Engagement tab ("Page-level only — recorded
  * before detailed reading tracking"). Offline, no AI, idempotent (visit and
- * rollup ids are derived from the events, re-runs change nothing).
+ * row ids are derived from the events; re-runs change nothing).
  *
- *   - only events whose section key still resolves to a current section
- *     (real keys, or the blind view's neutral s_<id> keys) are used;
- *   - one legacy visit per buyer link per 30-minute session;
- *   - the old tracker double counted overlapping sections, so a session's
- *     section seconds are scaled down to fit its wall-clock span;
- *   - cursor heat-map samples are never read (they carry no page).
+ * What is stored (server/engagement/legacy-store.ts): every exit (a visit's
+ * time is the buyer's), each page row under its OLD section key with the
+ * lineage of the section it is on now — so the reading survives any later
+ * regeneration (release review DEP-1). A regeneration stores it by itself
+ * just before it replaces the sections; running this first is the same
+ * thing, earlier. After it, the Document view draws the reading on the CIM
+ * as it is served now, as before (DEP-2: it used to show no pages at all).
  *
- * DRY RUN by default. --apply writes. Deals outside the qa_cimgen account
- * also need --allow-real (the founder's go-ahead: never on broker_demo
- * without it).
+ * DRY RUN by default: prints each old key and the page it lands on.
+ * --apply writes. Deals outside the qa_cimgen account also need --allow-real
+ * (the founder's go-ahead: never on broker_demo without it).
  *
  *   ANTHROPIC_API_KEY=disabled DATABASE_URL=… npx tsx scripts/backfill-legacy-reading.ts --deal <id> [--apply] [--allow-real]
  */
-import { sql } from "drizzle-orm";
-import { db } from "../server/db";
 import { storage } from "../server/storage";
-import { asDate } from "../server/analytics/reading-ingest";
-import { cimModeForAccessLevel } from "../shared/cim-layouts";
-import { blindSectionKey } from "../shared/cim-buyer-view";
-import { legacySessions, type LegacyExit } from "../server/engagement/legacy";
-
+import { planLegacyReading, storeLegacyReading } from "../server/engagement/legacy-store";
 
 export { legacySessions, stableUuid, type LegacySession } from "../server/engagement/legacy";
-type Exit = LegacyExit;
 
 async function main() {
   const args = process.argv.slice(2);
@@ -45,47 +39,18 @@ async function main() {
   if (apply && broker?.username !== "qa_cimgen" && !allowReal) {
     throw new Error(`refusing to write to "${deal.businessName}" (not a qa_cimgen deal) without --allow-real`);
   }
-  const sections = await storage.getCimSectionsByDeal(deal.id);
-  const byKey = new Map(sections.map((s) => [s.sectionKey, s]));
-  const resolve = (key: string): string | null => {
-    const s = byKey.get(key) ?? sections.find((x) => blindSectionKey(x.id) === key);
-    return s ? s.id : null;
-  };
-  const lineage = new Map(sections.map((s) => [s.id, s.analyticsLineage || s.id]));
-  const accesses = new Map((await storage.getBuyerAccessByDeal(deal.id)).map((a) => [a.id, a]));
-  const rows = (await db.execute(sql`
-    SELECT buyer_access_id, section_key, time_spent_seconds, created_at FROM analytics_events
-    WHERE deal_id = ${deal.id} AND event_type = 'section_exit' AND buyer_access_id IS NOT NULL AND section_key IS NOT NULL
-    ORDER BY buyer_access_id, created_at`)) as unknown as Array<Record<string, unknown>>;
-  const exits: Exit[] = rows
-    .filter((r) => accesses.has(String(r.buyer_access_id)))
-    .map((r) => ({ accessId: String(r.buyer_access_id), key: String(r.section_key), seconds: Number(r.time_spent_seconds ?? 0) || 0, at: asDate(r.created_at) }));
-  const sessions = legacySessions(exits, resolve);
-  const unresolved = new Set(exits.filter((e) => !resolve(e.key)).map((e) => e.key));
+  const plan = apply ? await storeLegacyReading(deal.id) : await planLegacyReading(deal.id);
+  const unplaced = plan.keys.filter((k) => !k.placedOn);
   console.log(JSON.stringify({
-    deal: deal.businessName, apply, exits: exits.length, sessions: sessions.length,
-    buyers: new Set(sessions.map((s) => s.accessId)).size,
-    unresolvedKeys: unresolved.size, pageRows: sessions.reduce((s, x) => s + x.pages.size, 0),
+    deal: deal.businessName, apply, exits: plan.exits, sessions: plan.sessions, buyers: plan.buyers,
+    pageRows: plan.rollups.length,
+    placedExits: plan.keys.reduce((s, k) => s + (k.placedOn ? k.exits : 0), 0),
+    // Pages the current CIM no longer has: stored all the same (they count in
+    // the visits; a later version may have the page again).
+    unplacedKeys: unplaced.map((k) => `${k.key} (${k.exits})`),
+    keys: plan.keys.map((k) => `${k.key} (${k.exits}) → ${k.placedOn ? k.placedOn.title ?? k.placedOn.id : "—"}`),
   }, null, 2));
-  if (!apply) return;
-  for (const s of sessions) {
-    const a = accesses.get(s.accessId)!;
-    await db.execute(sql`
-      INSERT INTO buyer_visits (id, deal_id, buyer_access_id, rendition_id, mode, access_level, device_class, started_at, last_seen_at,
-        wall_ms, active_ms, idle_ms, hidden_ms, away_ms, outside_ms, max_page_index, path, self_view, clamped, legacy)
-      VALUES (${s.visitId}, ${deal.id}, ${s.accessId}, NULL, ${cimModeForAccessLevel(a.accessLevel)}, ${a.accessLevel}, NULL,
-        ${s.startedAt.toISOString()}::timestamp, ${s.lastSeenAt.toISOString()}::timestamp, ${s.wallMs}, ${s.activeMs}, ${Math.max(0, s.wallMs - s.activeMs)}, 0, 0, 0,
-        NULL, ${JSON.stringify(s.path)}::jsonb, false, false, true)
-      ON CONFLICT (id) DO NOTHING`);
-    for (const [pageId, ms] of s.pages) {
-      await db.execute(sql`
-        INSERT INTO reading_rollups (visit_id, page_id, block_key, deal_id, buyer_access_id, rendition_id, lineage_id, attention_ms, skim_ms, visible_ms, pointer_ms, first_at, last_at)
-        VALUES (${s.visitId}, ${pageId}, '', ${deal.id}, ${s.accessId}, NULL, ${lineage.get(pageId) ?? pageId}, ${ms}, 0, ${ms}, 0,
-          ${s.startedAt.toISOString()}::timestamp, ${s.lastSeenAt.toISOString()}::timestamp)
-        ON CONFLICT (visit_id, page_id, block_key) DO NOTHING`);
-    }
-  }
-  console.log(`wrote ${sessions.length} legacy visits`);
+  if (apply) console.log(`stored ${plan.visits.length} legacy visits (rows already there were kept)`);
 }
 
 if (process.argv[1] && /backfill-legacy-reading/.test(process.argv[1])) {

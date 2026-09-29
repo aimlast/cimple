@@ -31,6 +31,7 @@ import { correctBalanceSheetFigures } from "./note-figures";
 import { analysisSourceRole, isFinancialStatementDoc, isTaxDocument, type AnalysisSourceRef } from "./source-status";
 import { scrubPrivateText } from "../cim/discrepancy-privacy";
 import { updateDiscrepancyIfStill } from "../cim/discrepancy-cas";
+import { keepRoutedStamp } from "@shared/discrepancy-gate";
 import { mentionsPrivateSource, type DiscrepancySideSources, type DiscrepancySideSource } from "@shared/discrepancy-sides";
 import {
   applyAddbackRules,
@@ -1566,6 +1567,8 @@ async function persistFinancialDiscrepancies(
       // or routed during the run keeps the sides they decided on.
       await updateDiscrepancyIfStill(storage, openMatch.id, [openMatch.status], {
         ...values,
+        // (A routed row keeps its routing stamp — shared/discrepancy-gate.ts.)
+        sideSources: keepRoutedStamp(openMatch.sideSources, values.sideSources) as any,
         factKey: openMatch.factKey || values.factKey,
         factYear: openMatch.factKey ? openMatch.factYear ?? values.factYear : values.factYear,
       });

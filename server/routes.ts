@@ -99,7 +99,7 @@ import { isBuyerInBrokerList, filterBuyersInBrokerList } from "./buyers/profile-
 import { unsupportedFormatReason } from "./documents/parser.js";
 import { viewLinkProblem, viewLinkError, viewStampFor, isLinkableBuyerAccount } from "./buyers/view-access.js";
 import { ndaProfileAccount } from "./buyers/nda-profile.js";
-import { discrepancyBlocksCim } from "@shared/discrepancy-gate";
+import { discrepancyBlocksCim, routedToSellerAt, withRoutedStamp } from "@shared/discrepancy-gate";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -3757,7 +3757,8 @@ Return JSON only.`,
         const hadPrivate = privateContext || publicQuestion !== String(question.question).trim();
         discrepancy = await storage.createDiscrepancy({
           dealId: req.params.dealId,
-          ...(hadPrivate ? { sideSources: { interview: { kind: "crm", brokerOnly: true } } as any } : {}),
+          // (Stamped as routed under the follow-up rules — shared/discrepancy-gate.ts.)
+          sideSources: withRoutedStamp(hadPrivate ? { interview: { kind: "crm", brokerOnly: true } } : null) as any,
           field: publicQuestion.slice(0, 200),
           interviewValue: context,
           documentValue: null,
@@ -3773,7 +3774,7 @@ Return JSON only.`,
           status: "ask_seller",
         });
       } else if (discrepancy.status !== "ask_seller") {
-        discrepancy = (await storage.updateDiscrepancy(discrepancy.id, { status: "ask_seller" })) || discrepancy;
+        discrepancy = (await storage.updateDiscrepancy(discrepancy.id, { status: "ask_seller", sideSources: withRoutedStamp(discrepancy.sideSources) as any })) || discrepancy;
       }
 
       const updatedQuestions = questions.map((q) =>
@@ -4602,7 +4603,7 @@ Return JSON only.`,
       // Questions the broker routed back to the seller after the interview
       // (a conflict to clear up). Only the count — the rows are the broker's.
       const followUpQuestions = interviewCompleted
-        ? (await storage.getDiscrepanciesByDeal(deal.id)).filter((d) => d.status === "ask_seller").length
+        ? (await storage.getDiscrepanciesByDeal(deal.id)).filter((d) => d.status === "ask_seller" && !!routedToSellerAt(d)).length
         : 0;
 
       // Step status. Intake is complete when the last intake page (Key

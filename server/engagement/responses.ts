@@ -258,6 +258,7 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
       visits: facts.buyers.reduce((s, b) => s + b.visits.length, 0),
     },
     legacyOnly: facts.legacyOnly,
+    legacyUnmatched: facts.legacyUnmatched ?? null,
   };
 }
 

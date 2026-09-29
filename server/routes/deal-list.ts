@@ -312,7 +312,8 @@ export async function loadDealSideFacts(
         open: sql<number>`count(*) filter (where ${discrepancies.status} <> 'ask_seller')::int`,
         critical: sql<number>`count(*) filter (where ${discrepancies.severity} = 'critical' and ${discrepancies.status} <> 'ask_seller')::int`,
         // Routed to the seller — blocking once the interview has ended (shared/discrepancy-gate.ts).
-        routedCritical: sql<number>`count(*) filter (where ${discrepancies.severity} = 'critical' and ${discrepancies.status} = 'ask_seller')::int`,
+        // (Only routings stamped under the follow-up rules — one from before them was never put to the seller.)
+        routedCritical: sql<number>`count(*) filter (where ${discrepancies.severity} = 'critical' and ${discrepancies.status} = 'ask_seller' and (${discrepancies.sideSources} ->> 'routedAt') is not null)::int`,
       })
       .from(discrepancies)
       // Same statuses that gate generation/approvals/publish in routes.ts.

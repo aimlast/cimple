@@ -25,7 +25,7 @@ import { shouldEmailFollowUp } from "../../server/interview/seller-followups";
 import { sellerPortalRecipients } from "../../server/notifications/service";
 import { sellerReviewTurn } from "../../shared/seller-portal";
 import { computeNextStep, nextStepText } from "../../shared/deal-progress";
-import { discrepancyBlocksCim } from "../../shared/discrepancy-gate";
+import { discrepancyBlocksCim, withRoutedStamp } from "../../shared/discrepancy-gate";
 import { discrepancyBlockMessage } from "../../server/routes/cim-builder";
 
 let passed = 0;
@@ -160,7 +160,7 @@ check("J3 the seller asked for changes → the broker's move until it's sent bac
 // ── The CIM builder's AI gate = the shared rule ─────────────────────────
 check("the CIM builder's AI gate blocks a critical routed after the interview (server = useAiGate)", () => {
   const rows = [
-    { severity: "critical", status: "ask_seller" },
+    { severity: "critical", status: "ask_seller", sideSources: withRoutedStamp(null) },
     { severity: "significant", status: "open" },
     { severity: "critical", status: "resolved" },
   ];

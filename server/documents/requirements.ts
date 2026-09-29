@@ -393,29 +393,71 @@ export async function populateDocumentRequirements(
 ): Promise<number> {
   // Get existing requirements to avoid duplicates
   const existing = await storage.getDocumentRequirementsByDeal(dealId);
-  const existingNames = new Set(existing.map((r) => r.documentName));
-
-  // Combine universal + industry-specific docs
-  const allDocs = requirementsForIndustry(industryCategory, subIndustry);
+  // A request added to a deal that already holds the document starts as
+  // received — the seller is never asked for a file they already gave.
+  const documents = await storage.getDocumentsByDeal(dealId).catch(() => []);
+  const plan = planDocumentRequirements(existing, documents, industryCategory, subIndustry);
 
   let created = 0;
-  for (let i = 0; i < allDocs.length; i++) {
-    const doc = allDocs[i];
-    if (existingNames.has(doc.documentName)) continue;
-
+  for (const { doc, sortOrder, heldBy } of plan) {
     await storage.createDocumentRequirement({
       dealId,
       documentName: doc.documentName,
       category: doc.category,
       isRequired: doc.isRequired,
       source: "auto",
-      status: "missing",
-      sortOrder: i,
+      status: heldBy ? "uploaded" : "missing",
+      sortOrder,
+      ...(heldBy
+        ? {
+            uploadedFileId: heldBy.id,
+            uploadedBy: heldBy.uploadedBy === "seller" ? "seller" : "broker",
+            uploadedAt: heldBy.createdAt ? new Date(heldBy.createdAt) : new Date(),
+          }
+        : {}),
     });
     created++;
   }
 
   return created;
+}
+
+/** A deal's source as the request planner sees it. */
+export interface HeldDocument extends ChecklistSource {
+  /** "broker_only" material is the broker's own — it never answers a request the seller sees. */
+  visibility?: string | null;
+}
+
+/**
+ * The rows populateDocumentRequirements adds (the universal and industry
+ * rows the deal doesn't have yet, by name), each with the document already
+ * on the deal that IS it, if any: a shared, readable document — categorised
+ * or not — whose name the row's own name matches, the same rule as on upload
+ * (replacementDocumentFor). A document already credited to an older row
+ * still answers a new one (Pacific's fleet list is its "Asset and Equipment
+ * List" AND the industry's "Fleet List with Age and Condition"; deleting it
+ * releases both — releaseRequirementsFor). Without this, the ship-time
+ * backfill and every interview opening added industry requests as "missing"
+ * on deals holding the file, and the seller was asked for documents they had
+ * given. Pure.
+ */
+export function planDocumentRequirements(
+  existing: ReadonlyArray<{ documentName: string }>,
+  documents: ReadonlyArray<HeldDocument>,
+  industryCategory: string | null | undefined,
+  subIndustry?: string | null,
+): Array<{ doc: DocRequirement; sortOrder: number; heldBy?: HeldDocument }> {
+  const existingNames = new Set(existing.map((r) => r.documentName));
+  const shared = documents.filter((d) => (d.visibility ?? "shared") !== "broker_only");
+  const allDocs = requirementsForIndustry(industryCategory, subIndustry);
+  const out: Array<{ doc: DocRequirement; sortOrder: number; heldBy?: HeldDocument }> = [];
+  allDocs.forEach((doc, i) => {
+    if (existingNames.has(doc.documentName)) return;
+    existingNames.add(doc.documentName);
+    const heldBy = replacementDocumentFor({ id: `new:${i}`, documentName: doc.documentName, category: doc.category }, shared);
+    out.push({ doc, sortOrder: i, ...(heldBy ? { heldBy } : {}) });
+  });
+  return out;
 }
 
 /**
@@ -509,6 +551,9 @@ export function categoryAfterLink(category: string, linked: { category: string }
 const NAME_STOPWORDS = new Set([
   "the", "and", "for", "years", "year", "months", "month", "current", "key",
   "list", "summary", "report", "copy", "copies", "pdf", "final", "draft",
+  // Joining words ("Equipment List with Ownership Status" and "Staff roster
+  // with technician licences" share nothing but "with").
+  "with", "from", "into", "per", "all", "our", "its",
 ]);
 
 /**
@@ -563,6 +608,8 @@ const GENERIC_NAME_WORDS = new Set([
   "contracts", "details", "detail", "information", "info", "business", "company", "file", "files", "data",
   "tax", "taxes", "return", "returns", "form", "forms", "letter", "letters", "notes", "policy", "policies",
   "plan", "plans", "email", "thread", "call", "transcript", "renewal", "annual", "monthly", "quarterly", "bank",
+  // The kind of business, not a document ("Ashworth Practice Overview" is not "Practice Management Software Records").
+  "practice", "clinic", "pharmacy", "overview", "profile",
 ].map(normWord));
 
 /** Only a document upload is matched to a checklist row by name (no kind = an older caller: a document). */
@@ -593,7 +640,8 @@ export function findMatchingRequirement<T extends LinkableRequirement>(
   if (docCategory === "transcripts" || docCategory === "marketing") return undefined;
   // Correspondence about a document is not the document ("Email thread -
   // yard lease renewal", "RE: lease", a printed e-mail uploaded as a file).
-  if (/\b(?:e-?mails?|thread|correspondence)\b|^\s*(?:re|fwd?)\s*:/i.test(fileName)) return undefined;
+  // A printed Gmail/Outlook message is named "… Mail - Re_ …".
+  if (/\b(?:e-?mails?|mail|thread|correspondence)\b|^\s*(?:re|fwd?)\s*:|\b(?:re|fwd?)_\s/i.test(fileName)) return undefined;
   const fileWords = fileKeywords(fileName);
   if (fileWords.size === 0) return undefined;
 

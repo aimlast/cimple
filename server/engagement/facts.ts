@@ -48,7 +48,7 @@ import { cimModeForAccessLevel } from "@shared/cim-layouts";
 import { chartOfPoint, headingKey } from "@shared/cim-blocks";
 import { pageRole } from "@shared/cim-page-role";
 import { blindSectionKey } from "@shared/cim-buyer-view";
-import { legacyKeyResolver, legacyRows, legacySessions, liveRendition, mainAccessLevel, type LegacyExit } from "./legacy";
+import { legacyPageRemap, legacyRows, legacySessions, liveRendition, mainAccessLevel, remapLegacyReading, type LegacyExit, type LegacyUnmatched } from "./legacy";
 import { storage } from "../storage";
 import {
   dbReadingSource,
@@ -72,12 +72,20 @@ export function readingSource(): ReadingSource {
   return source;
 }
 
+let liveRenditionOf: typeof liveRendition = liveRendition;
+/** Tests: the CIM "as served now" without the view room's inputs (null restores it). */
+export function _setLiveRenditionForTests(fn: typeof liveRendition | null): void {
+  liveRenditionOf = fn ?? liveRendition;
+}
+
 /** DealReadingFacts plus what only the aggregation needs (still a DealReadingFacts). */
 export interface CaptureFacts extends DealReadingFacts {
   /** pageId → buyers who read that page on another block structure ("Changed since N buyers read it"). */
   changedReaders: Record<string, string[]>;
   /** pageIds with part-level reading (else only page totals: legacy data or another structure). */
   blockLevelPages: string[];
+  /** Old-tracker reading on pages the current CIM no longer has (after a regeneration). */
+  legacyUnmatched?: LegacyUnmatched;
 }
 
 export async function loadDealReadingFacts(
@@ -107,23 +115,30 @@ export async function loadDealReadingFacts(
     source.legacyExits(deal.id).catch((): LegacyExit[] => []),
   ]);
   // Reading from the old tracker (before part-by-part tracking), read on the
-  // fly and never stored: page totals, marked legacy.
+  // fly (or stored by the legacy backfill): page totals, marked legacy. Every
+  // exit counts toward its visit; its page is placed on the CIM as it is now
+  // (remapLegacyReading) — reading on a page the CIM no longer has is
+  // reported (legacyUnmatched), never silently dropped.
   const known = new Set(accesses.map((a) => a.id));
-  const sessions = legacySessions(exits.filter((e) => known.has(e.accessId)), legacyKeyResolver(live, blindSectionKey));
-  const lineageOf = new Map(live.map((s) => [s.id, s.analyticsLineage || s.id]));
-  const legacy = legacyRows(sessions, q, (pageId) => lineageOf.get(pageId) ?? pageId);
-  const visits = [...visitsStored, ...legacy.visits];
-  const sums = [...sumsStored, ...legacy.sums];
-  const visitPages = [...visitPagesStored, ...legacy.visitPages];
+  const sessions = legacySessions(exits.filter((e) => known.has(e.accessId)), (key) => key);
+  const legacy = legacyRows(sessions, q, () => null);
+  const unplaced = {
+    visits: [...visitsStored, ...legacy.visits],
+    sums: [...sumsStored, ...legacy.sums],
+    visitPages: [...visitPagesStored, ...legacy.visitPages],
+  };
   let renditions = renditionsStored;
-  let chosen = chooseRendition(renditions, visits, filters.rendition);
+  let chosen = chooseRendition(renditions, unplaced.visits, filters.rendition);
   const liveIndexes = new Map<string, RenditionPage[]>();
-  if (!chosen && legacy.visits.length > 0) {
+  const legacyVisits = unplaced.visits.filter((v) => v.legacy);
+  if (!chosen && legacyVisits.length > 0) {
     // Nothing was served since part-by-part tracking began: draw the old
-    // reading on the CIM as it would be served now (not stored).
-    const levels = accesses.filter((a) => legacy.visits.some((v) => v.accessId === a.id)).map((a) => a.accessLevel);
-    const since = new Date(Math.min(...legacy.visits.map((v) => v.startedAt.getTime())));
-    const lr = (await liveRendition(deal, mainAccessLevel(levels), since)) ?? (await liveRendition(deal, "loi", since));
+    // reading on the CIM as it would be served now (not stored). Stored
+    // legacy visits (the backfill) count too — DEP-2: with only those, the
+    // Document view had no version to draw on and showed no pages at all.
+    const levels = accesses.filter((a) => legacyVisits.some((v) => v.accessId === a.id)).map((a) => a.accessLevel);
+    const since = new Date(Math.min(...legacyVisits.map((v) => v.startedAt.getTime())));
+    const lr = (await liveRenditionOf(deal, mainAccessLevel(levels), since)) ?? (await liveRenditionOf(deal, "loi", since));
     if (lr) {
       renditions = [...renditions, lr.raw];
       chosen = lr.raw;
@@ -132,12 +147,18 @@ export async function loadDealReadingFacts(
   }
   const needed = new Set<string>();
   if (chosen) needed.add(chosen.id);
-  for (const v of visits) if (v.renditionId) needed.add(v.renditionId);
+  for (const v of unplaced.visits) if (v.renditionId) needed.add(v.renditionId);
   const indexes = await source.pageIndexes(Array.from(needed).filter((id) => !liveIndexes.has(id)));
   liveIndexes.forEach((v, k) => indexes.set(k, v));
-  return assembleFacts({
+  // Old-tracker pages placed on the version drawn (by page, lineage, or what
+  // the old key resolves to among the current sections).
+  const placed = remapLegacyReading(unplaced, legacyPageRemap(live, blindSectionKey, chosen ? indexes.get(chosen.id) ?? [] : null));
+  const { visits, sums, visitPages } = placed;
+  const facts = assembleFacts({
     deal, filters, now, accesses: listed, live, renditions, chosen, indexes, visits, sums, visitPages, events, questions, decisions,
   });
+  if (placed.unmatched && chosen) facts.legacyUnmatched = placed.unmatched;
+  return facts;
 }
 
 function segmentMatches(a: BuyerAccess, f: EngagementFilters): boolean {

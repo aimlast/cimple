@@ -102,11 +102,15 @@ export interface FollowUpNotice {
  * Called after a row is routed to the seller. When the interview is still
  * running, the interview raises it — nothing to do. Never throws.
  */
-export async function notifySellerOfFollowUps(dealId: string): Promise<FollowUpNotice> {
+export async function notifySellerOfFollowUps(dealId: string, alsoSending: readonly string[] = []): Promise<FollowUpNotice> {
   const { storage } = await import("../storage");
+  const { routedToSellerAt } = await import("@shared/discrepancy-gate");
   const deal = await storage.getDeal(dealId);
   if (!deal?.interviewCompleted) return { interviewFinished: false, waiting: 0, emailed: 0, addressed: 0 };
-  const waiting = (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => d.status === "ask_seller").length;
+  // What the seller's page lists: routings under the follow-up rules, plus the
+  // never-asked ones the broker is sending now (emailNeverAskedFollowUps).
+  const waiting = (await storage.getDiscrepanciesByDeal(dealId))
+    .filter((d) => d.status === "ask_seller" && (!!routedToSellerAt(d) || alsoSending.includes(d.id))).length;
   try {
     const recent = await storage.getNotificationsByDeal(dealId);
     const lastActive = await lastInterviewActivity(dealId).catch(() => null);
@@ -127,6 +131,36 @@ export async function notifySellerOfFollowUps(dealId: string): Promise<FollowUpN
     console.warn(`[followups] couldn't tell the seller about follow-up questions on deal ${dealId}:`, err);
     return { interviewFinished: true, waiting, emailed: 0, addressed: 0 };
   }
+}
+
+/**
+ * The broker's "Email the seller" for questions routed before follow-up
+ * emails existed (release review DEP-4): they were never put to the seller,
+ * so they don't lock the CIM (discrepancy-gate.ts routedButNeverAsked).
+ * Sends the follow-up link like a routing does now, and — once a seller was
+ * addressed (or emailed in the last hour already) — stamps each row as routed,
+ * so from then on a critical one locks the CIM until the seller answers.
+ * With nobody to send to, nothing is stamped (the broker is told). Only ever
+ * called from the broker's click. Never throws.
+ */
+export async function emailNeverAskedFollowUps(dealId: string): Promise<FollowUpNotice & { neverAsked: number; stamped: number }> {
+  const { storage } = await import("../storage");
+  const { routedButNeverAsked, withRoutedStamp } = await import("@shared/discrepancy-gate");
+  const deal = await storage.getDeal(dealId);
+  const rows = (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => routedButNeverAsked(d, deal?.interviewCompleted));
+  if (!deal || rows.length === 0) return { interviewFinished: !!deal?.interviewCompleted, waiting: 0, emailed: 0, addressed: 0, neverAsked: 0, stamped: 0 };
+  const notice = await notifySellerOfFollowUps(dealId, rows.map((d) => d.id));
+  if (notice.addressed === 0 && !notice.recentlyEmailed) return { ...notice, neverAsked: rows.length, stamped: 0 };
+  const { updateDiscrepancyIfStill } = await import("../cim/discrepancy-cas");
+  let stamped = 0;
+  for (const d of rows) {
+    try {
+      if (await updateDiscrepancyIfStill(storage, d.id, ["ask_seller"], { sideSources: withRoutedStamp(d.sideSources) as any })) stamped++;
+    } catch (err) {
+      console.warn(`[followups] couldn't mark question ${d.id} as sent on deal ${dealId}:`, err);
+    }
+  }
+  return { ...notice, neverAsked: rows.length, stamped };
 }
 
 /**

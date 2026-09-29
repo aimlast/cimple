@@ -11,16 +11,25 @@
  * served right now (liveRendition: the view room's own inputs, so its id is
  * the one the next real serving records).
  *
- *   - only events whose section key still resolves to a current section
- *     (real keys, or the blind view's neutral s_<id> keys) are used;
+ *   - every event counts (a visit's time is the buyer's, whatever became of
+ *     the page); its page is found at read time — the same key, the blind
+ *     view's neutral s_<id> key, the section continuing it after a
+ *     regeneration, or a renamed key's words (legacyKeyResolver) — and
+ *     reading on a page the current CIM no longer has is reported, never
+ *     silently dropped (release review DEP-1);
+ *   - stored (scripts/backfill-legacy-reading.ts, and automatically just
+ *     before a regeneration replaces the sections — legacy-store.ts), it
+ *     keeps the old key as its page id and the old section's lineage, so a
+ *     later regeneration still finds its page;
  *   - one legacy visit per buyer link per 30-minute session;
  *   - the old tracker double counted overlapping sections, so a session's
  *     section seconds are scaled down to fit its wall-clock span;
  *   - cursor heat-map samples are never read (they carry no page).
  */
 import { createHash } from "crypto";
-import { READING_RULES, type CimMode, type CimVariant, type RenditionPage } from "@shared/analytics-v2";
+import { READING_RULES, type CimMode, type CimVariant, type LegacyUnmatchedReading, type RenditionPage } from "@shared/analytics-v2";
 import type { Deal } from "@shared/schema";
+import { pageRole } from "@shared/cim-page-role";
 import type { RawBlockSum, RawRendition, RawVisit, RawVisitPage, ReadingQuery, RenditionRow } from "./queries";
 
 /** A uuid-shaped id derived from a string (stable across runs). */
@@ -82,14 +91,143 @@ export function legacySessions(exits: LegacyExit[], resolve: (key: string) => st
   return out;
 }
 
-/** An old section key → the current section id (real keys, or the blind view's neutral s_<id> keys). */
+/** A current section as the legacy resolver sees it (title, layout and lineage are optional — tests pass keys only). */
+export interface LegacySection {
+  id: string;
+  sectionKey: string;
+  sectionTitle?: string | null;
+  layoutType?: string | null;
+  analyticsLineage?: string | null;
+  order?: number | null;
+}
+
+/**
+ * An old section key → the current section id. In order: the same key; the
+ * blind view's neutral s_<id> key of the section, or of the old section it
+ * continues (its lineage is that section's id — a regenerated CIM); the old
+ * section's id itself (reading stored before a regeneration); then, for a
+ * key a regeneration renamed (Beacon, 2026-09-29: services_revenue_streams →
+ * revenue_streams, normalized_earnings → sde_normalization), the section
+ * whose key and title share the old key's words (matchLegacyKey). Null when
+ * no page of the current CIM is that page.
+ */
 export function legacyKeyResolver(
-  sections: ReadonlyArray<{ id: string; sectionKey: string }>,
+  sections: ReadonlyArray<LegacySection>,
   blindKey: (id: string) => string,
 ): (key: string) => string | null {
   const byKey = new Map(sections.map((s) => [s.sectionKey, s.id]));
   const byBlind = new Map(sections.map((s) => [blindKey(s.id), s.id]));
-  return (key) => byKey.get(key) ?? byBlind.get(key) ?? null;
+  const byLineage = new Map<string, string>();
+  for (const s of sections) if (s.analyticsLineage) byLineage.set(s.analyticsLineage, s.id);
+  const byLineageBlind = new Map(Array.from(byLineage.entries()).map(([lin, id]) => [blindKey(lin), id]));
+  const ids = new Set(sections.map((s) => s.id));
+  const fuzzy = new Map<string, string | null>();
+  return (key) => {
+    const hit = byKey.get(key) ?? byBlind.get(key) ?? byLineageBlind.get(key) ?? (ids.has(key) ? key : byLineage.get(key));
+    if (hit) return hit;
+    if (!fuzzy.has(key)) fuzzy.set(key, matchLegacyKey(key, sections)?.id ?? null);
+    return fuzzy.get(key) ?? null;
+  };
+}
+
+/**
+ * A page of the reading on file (a legacy row: page id + lineage) → the
+ * page it is on the version drawn (`drawn`, its page index; null = no
+ * version — then the current sections): a page of that version already
+ * (same id or lineage — a live CIM under review draws the kept copy, whose
+ * old pages stored reading still names), else the current section it is —
+ * the same section, the section continuing its lineage, or what its key
+ * resolves to (legacyKeyResolver) — when the drawn version has that page.
+ * Null when there is no such page.
+ */
+export function legacyPageRemap(
+  sections: ReadonlyArray<LegacySection>,
+  blindKey: (id: string) => string,
+  drawn: ReadonlyArray<{ pageId: string; lineageId: string }> | null = null,
+): (pageId: string, lineageId: string | null) => { pageId: string; lineageId: string } | null {
+  const byId = new Map(sections.map((s) => [s.id, s]));
+  const byLineage = new Map<string, LegacySection>();
+  for (const s of sections) byLineage.set(s.analyticsLineage || s.id, s);
+  const resolve = legacyKeyResolver(sections, blindKey);
+  const drawnIds = drawn ? new Set(drawn.map((p) => p.pageId)) : null;
+  const drawnLineages = drawn ? new Set(drawn.map((p) => p.lineageId)) : null;
+  const onDrawn = (p: { pageId: string; lineageId: string | null }) =>
+    !drawnIds || drawnIds.has(p.pageId) || (!!p.lineageId && drawnLineages!.has(p.lineageId));
+  const out = (s: LegacySection | undefined) => (s ? { pageId: s.id, lineageId: s.analyticsLineage || s.id } : null);
+  return (pageId, lineageId) => {
+    if (drawnIds && onDrawn({ pageId, lineageId })) return { pageId, lineageId: lineageId ?? pageId };
+    const to = out(byId.get(pageId)) ?? (lineageId ? out(byLineage.get(lineageId)) : null) ?? out(byId.get(resolve(pageId) ?? ""));
+    return to && onDrawn(to) ? to : null;
+  };
+}
+
+// ── Renamed keys ─────────────────────────────────────────────────────────
+
+const KEY_STOPWORDS = new Set(["the", "and", "of", "a", "an", "to", "for", "in", "on", "our", "we", "where", "with", "by", "at", "s", "vs"]);
+/** One spelling per word: plurals folded, long words cut to their first six letters ("normalized"/"normalization" → "normal"). */
+function keyStem(word: string): string {
+  let w = word.toLowerCase();
+  if (w.length > 4 && w.endsWith("ies")) w = `${w.slice(0, -3)}y`;
+  else if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss")) w = w.slice(0, -1);
+  return w.length > 6 ? w.slice(0, 6) : w;
+}
+function keyWordsOf(text: string | null | undefined): Set<string> {
+  return new Set(
+    String(text ?? "")
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .split(/[^A-Za-z0-9]+/)
+      .map((w) => w.toLowerCase())
+      .filter((w) => w.length >= 2 && !KEY_STOPWORDS.has(w))
+      .map(keyStem),
+  );
+}
+/** Words too broad to place a page on their own ("services", "overview", "where we operate"). */
+const WEAK_KEY_WORDS = new Set(["service", "overview", "detail", "summary", "section", "page", "info", "information", "general", "key", "business", "company", "operate", "operations", "other", "notes"].map(keyStem));
+
+/**
+ * The current section an old, since-renamed key was: the one sharing the
+ * most of its words — a word in the section's key counts 2 (a broad word 1),
+ * in its title 1, the same page role 1, a plainly different role (both
+ * known) −2 — needing at least 2 and one telling
+ * word in common; a tie goes to the earlier page. Null for neutral blind
+ * keys and for a key no page shares a telling word with (Beacon's
+ * business_overview, history_milestones, where_we_operate: pages the rebuilt
+ * CIM no longer has). Pure.
+ */
+export function matchLegacyKey(key: string, sections: ReadonlyArray<LegacySection>): LegacySection | null {
+  if (/^s_[a-z0-9]{4,}$/i.test(key)) return null;
+  const words = keyWordsOf(key);
+  if (words.size === 0) return null;
+  const oldRole = pageRole({ layoutType: "", title: key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " "), sectionKey: key });
+  let best: { s: LegacySection; score: number } | null = null;
+  const ordered = [...sections].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  for (const s of ordered) {
+    const inKey = keyWordsOf(s.sectionKey);
+    const inTitle = keyWordsOf(s.sectionTitle);
+    let score = 0;
+    let telling = false;
+    words.forEach((w) => {
+      const weak = WEAK_KEY_WORDS.has(w);
+      if (inKey.has(w)) { score += weak ? 1 : 2; telling ||= !weak; }
+      else if (inTitle.has(w)) { score += 1; telling ||= !weak; }
+    });
+    if (!telling) continue;
+    const role = pageRole({ layoutType: s.layoutType ?? "", title: s.sectionTitle ?? "", sectionKey: s.sectionKey });
+    if (role === oldRole && role !== "other" && role !== "front_matter") score += 1;
+    // Plainly different pages sharing a word ("history_milestones" is not
+    // "Incident & Compliance History").
+    else if (role !== oldRole && role !== "other" && oldRole !== "other") score -= 2;
+    if (score >= 2 && (!best || score > best.score)) best = { s, score };
+  }
+  return best?.s ?? null;
+}
+
+/** "services_revenue_streams" → "Services revenue streams" (broker side: a page the current CIM no longer has). */
+export function legacyKeyLabel(key: string): string {
+  if (/^s_[a-z0-9]{4,}$/i.test(key)) return "A page of an earlier version";
+  const words = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[^A-Za-z0-9]+/).filter(Boolean).map((w) => w.toLowerCase());
+  const s = words.join(" ");
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : key;
 }
 
 /**
@@ -101,7 +239,7 @@ export function legacyKeyResolver(
 export function legacyRows(
   sessions: LegacySession[],
   q: Pick<ReadingQuery, "since" | "device" | "accessIds">,
-  lineageOf: (pageId: string) => string,
+  lineageOf: (pageId: string) => string | null,
 ): { visits: RawVisit[]; sums: RawBlockSum[]; visitPages: RawVisitPage[] } {
   const kept = sessions.filter((s) =>
     (!q.since || s.lastSeenAt >= q.since) && q.device !== "phone" && (!q.accessIds || q.accessIds.includes(s.accessId)));
@@ -127,6 +265,50 @@ export function legacyRows(
     });
   }
   return { visits, sums: Array.from(sumBy.values()), visitPages };
+}
+
+/** Legacy reading on pages the current CIM no longer has (broker side). */
+export type LegacyUnmatched = LegacyUnmatchedReading;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Legacy reading (on the fly or stored — rows with no rendition) placed on
+ * the current sections: each page id / lineage goes through `remap`
+ * (legacyPageRemap), visit paths too. Rows no current page is are left as
+ * they are (the aggregation then skips them) and summed in `unmatched`, so
+ * the Engagement tab can say what the current CIM no longer shows. Part-by-part
+ * reading (a rendition id) is never touched. Pure.
+ */
+export function remapLegacyReading(
+  rows: { visits: RawVisit[]; sums: RawBlockSum[]; visitPages: RawVisitPage[] },
+  remap: (pageId: string, lineageId: string | null) => { pageId: string; lineageId: string } | null,
+): { visits: RawVisit[]; sums: RawBlockSum[]; visitPages: RawVisitPage[]; unmatched: LegacyUnmatched | null } {
+  const legacyVisitIds = new Set(rows.visits.filter((v) => v.legacy).map((v) => v.id));
+  const lost = new Map<string, number>();
+  const sums = rows.sums.map((s) => {
+    if (s.renditionId !== null || s.blockKey !== "") return s;
+    const to = remap(s.pageId, s.lineageId);
+    if (to) return { ...s, pageId: to.pageId, lineageId: to.lineageId };
+    if (s.attentionMs > 0) lost.set(s.pageId, (lost.get(s.pageId) ?? 0) + s.attentionMs);
+    return s;
+  });
+  const visitPages = rows.visitPages.map((p) => {
+    if (p.renditionId !== null || !legacyVisitIds.has(p.visitId)) return p;
+    const to = remap(p.pageId, p.lineageId);
+    return to ? { ...p, pageId: to.pageId, lineageId: to.lineageId } : p;
+  });
+  const visits = rows.visits.map((v) =>
+    v.legacy ? { ...v, path: v.path.map(([t, pageId]) => [t, remap(pageId, null)?.pageId ?? pageId] as [number, string]) } : v);
+  if (lost.size === 0) return { visits, sums, visitPages, unmatched: null };
+  // One line per page the CIM no longer has (an old section id says only that).
+  const byLabel = new Map<string, number>();
+  lost.forEach((ms, pageId) => {
+    const label = UUID_RE.test(pageId) ? "A page of an earlier version" : legacyKeyLabel(pageId);
+    byLabel.set(label, (byLabel.get(label) ?? 0) + ms);
+  });
+  const pages = Array.from(byLabel.entries()).map(([label, attentionMs]) => ({ label, attentionMs })).sort((a, b) => b.attentionMs - a.attentionMs);
+  return { visits, sums, visitPages, unmatched: { attentionMs: pages.reduce((s, p) => s + p.attentionMs, 0), pages } };
 }
 
 /** The access level most of these buyer links have (the version to draw legacy reading on). */

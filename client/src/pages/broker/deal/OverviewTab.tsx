@@ -22,7 +22,9 @@ import { OpenInterviewItemsCard } from "@/components/deal/OpenInterviewItemsCard
 import { SellerChecklistCard } from "@/components/deal/SellerChecklistCard";
 import { SellerReviewControls } from "@/components/deal/SellerReviewControls";
 import { sellerIntakeState } from "@shared/seller-portal";
-import { discrepancyBlocksCim } from "@shared/discrepancy-gate";
+import { discrepancyBlocksCim, routedButNeverAsked } from "@shared/discrepancy-gate";
+import { discrepancyFieldLabel } from "@shared/discrepancy-sides";
+import { NeverAskedFollowUpsNotice } from "@/components/deal/NeverAskedFollowUps";
 import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
 import { ChecklistStepTitle } from "@/components/deal/ChecklistStepTitle";
 import { AddSourceDialog, type AddSourcePreset } from "@/components/information/AddSourceDialog";
@@ -1533,6 +1535,12 @@ function useDiscrepancyGate(dealId: string) {
   const blocking = discrepancyList.filter((d) => discrepancyBlocksCim(d, deal.interviewCompleted));
   const waitingOnSeller = blocking.filter((d) => d.status === "ask_seller");
   const criticalUnresolved = blocking.filter((d) => d.status !== "ask_seller");
+  // Routed before follow-up emails existed and never put to the seller: not
+  // blocking, but the broker is asked to email the seller or resolve them.
+  const neverAsked = discrepancyList.filter((d) => routedButNeverAsked(d, deal.interviewCompleted));
+  // "“2024 Revenue”", "“A” and “B”", or a count.
+  const named = (rows: Discrepancy[]) =>
+    rows.length <= 2 ? rows.map((d) => `“${discrepancyFieldLabel(d)}”`).join(" and ") : `${rows.length} critical questions`;
   // If the gate itself couldn't load we can't prove it's clear — block, and
   // say so, rather than letting a failed fetch unlock the step.
   const blocked = blocking.length > 0 || !!discrepanciesError;
@@ -1542,9 +1550,9 @@ function useDiscrepancyGate(dealId: string) {
       : criticalUnresolved.length > 0
         ? `Resolve ${criticalUnresolved.length} critical discrepanc${criticalUnresolved.length === 1 ? "y" : "ies"} before ${verb}.`
         : waitingOnSeller.length > 0
-          ? `Waiting on the seller to answer ${waitingOnSeller.length} critical question${waitingOnSeller.length === 1 ? "" : "s"} you sent them — or resolve ${waitingOnSeller.length === 1 ? "it" : "them"} yourself — before ${verb}.`
+          ? `Waiting on the seller to answer ${named(waitingOnSeller)} you sent them — or resolve ${waitingOnSeller.length === 1 ? "it" : "them"} yourself below — before ${verb}.`
           : null;
-  return { discrepancyList, criticalUnresolved, waitingOnSeller, discrepanciesError, refetchDiscrepancies, blocked, reasonFor };
+  return { discrepancyList, criticalUnresolved, waitingOnSeller, neverAsked, discrepanciesError, refetchDiscrepancies, blocked, reasonFor };
 }
 
 /* ═══════════════════════════════════════════
@@ -1586,8 +1594,11 @@ function Phase3Center() {
     refetchDiscrepancies,
     blocked: generationBlocked,
     reasonFor,
+    neverAsked,
   } = useDiscrepancyGate(dealId);
   const blockReason = reasonFor("generating");
+  // "Resolve it yourself" on a never-asked question: open it in the panel.
+  const [focusDiscrepancy, setFocusDiscrepancy] = useState<string | null>(null);
 
   const extractedCount = Object.keys(
     (deal.extractedInfo as object) || {},
@@ -1737,10 +1748,12 @@ function Phase3Center() {
           </div>
         )}
 
+        <NeverAskedFollowUpsNotice dealId={dealId} rows={neverAsked} onResolve={setFocusDiscrepancy} />
+
         {discrepanciesError ? (
           <PanelError what="discrepancies" onRetry={() => refetchDiscrepancies()} />
         ) : (
-          <DiscrepancyPanel dealId={dealId} />
+          <DiscrepancyPanel dealId={dealId} focusId={focusDiscrepancy} />
         )}
 
         <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-5 text-center">
@@ -1934,11 +1947,13 @@ function Phase3Center() {
           broker the panel to resolve them (or take one back from the seller)
           right here instead of sending them hunting for it. */}
       {/* Also after a run stopped to show new conflicts — the broker reviews them right here. */}
-      {(generationBlocked || (!generation.isRunning && generation.job?.stoppedBy === "discrepancies")) && (
+      {/* Questions routed before follow-up emails existed: the broker emails the seller or resolves them. */}
+      <NeverAskedFollowUpsNotice dealId={dealId} rows={neverAsked} onResolve={setFocusDiscrepancy} />
+      {(generationBlocked || focusDiscrepancy || (!generation.isRunning && generation.job?.stoppedBy === "discrepancies")) && (
         discrepanciesError ? (
           <PanelError what="discrepancies" onRetry={() => refetchDiscrepancies()} />
         ) : (
-          <DiscrepancyPanel dealId={dealId} />
+          <DiscrepancyPanel dealId={dealId} focusId={focusDiscrepancy} />
         )
       )}
 
@@ -1994,7 +2009,9 @@ function Phase4Center() {
     refetchDiscrepancies,
     blocked: publishBlocked,
     reasonFor,
+    neverAsked,
   } = useDiscrepancyGate(dealId);
+  const [focusDiscrepancy, setFocusDiscrepancy] = useState<string | null>(null);
 
   // Approvals cover the CIM as it stands: a section regenerated, rewritten
   // or edited since needs approving again (shared/cim-approvals.ts — the
@@ -2072,15 +2089,18 @@ function Phase4Center() {
           Open CIM builder
         </Button>
       </div>
-      {publishBlocked && (
+      <NeverAskedFollowUpsNotice dealId={dealId} rows={neverAsked} onResolve={setFocusDiscrepancy} />
+      {(publishBlocked || focusDiscrepancy) && (
         <div className="space-y-3">
-          <p className="text-xs text-red-400" data-testid="text-publish-blocked">
-            {reasonFor("approving or publishing")}
-          </p>
+          {publishBlocked && (
+            <p className="text-xs text-red-400" data-testid="text-publish-blocked">
+              {reasonFor("approving or publishing")}
+            </p>
+          )}
           {discrepanciesError ? (
             <PanelError what="discrepancies" onRetry={() => refetchDiscrepancies()} />
           ) : (
-            <DiscrepancyPanel dealId={dealId} />
+            <DiscrepancyPanel dealId={dealId} focusId={focusDiscrepancy} />
           )}
         </div>
       )}
