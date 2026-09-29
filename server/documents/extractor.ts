@@ -461,13 +461,15 @@ export const SCANNED_REASON = "most of its pages have no readable text — it lo
 /**
  * A read that found nothing, of a text with little of its own: under 300
  * characters a page (or 300 in all). With hasNoBusinessFacts, the source is
- * not counted as the checklist document it was uploaded for.
+ * not counted as the checklist document it was uploaded for. Only a PDF can
+ * be a scan: a short Word, Excel, PowerPoint or text file is what it says.
  */
 export function readFoundNothing(data: ExtractedDocumentData, text: string, layout?: number | TextLayout): boolean {
   if (!hasNoBusinessFacts(data)) return false;
   const { pages, pdf } = asLayout(layout);
+  if (pdf === false) return false;
   const { chars, repeatedPages } = usefulText(text);
-  const pageCount = Math.max(1, pages && pages > 0 ? pages : pdf === false ? 1 : repeatedPages);
+  const pageCount = Math.max(1, pages && pages > 0 ? pages : repeatedPages);
   return chars < 300 || chars / pageCount < 300;
 }
 

@@ -448,7 +448,7 @@ export function isUnreviewedFigure(value: string): boolean {
  * statements", "FY2024 only", "full year only", "12 months only".
  */
 const WHOLE_YEAR_ONLY = new RegExp(
-  String.raw`\b(?:the\s+)?only\s+(?:(?:the|a|one)\s+)?(?:full|complete|audited|reviewed|compiled|fiscal|financial|reported|annual|year|years|period|statements?|return|t2|figures?)\b` +
+  String.raw`\b(?:the\s+)?only\s+(?:(?:the|a|one)\s+)?(?:full|complete|audited|reviewed|compiled|fiscal|financial|reported|annual|year|years|period|statements?|return|t2|figures?|numbers?|values?|amounts?|sources?|documents?|data|one)\b` +
   String.raw`|\b(?:fy\s?'?\d{2,4}|(?:19|20)\d{2}|(?:full|fiscal|calendar|whole)\s+year|annual|audited|reviewed|12[\s-]months?|twelve months)\s+only\b`,
   "gi");
 
@@ -466,6 +466,8 @@ export function isSubsetFigure(value: string): boolean {
   // file", "the only audited year", "FY2024 only").
   const partWords = value.replace(WHOLE_YEAR_ONLY, " ");
   if (/\b(?:only|alone)\b/i.test(partWords)) return true;
+  // Revenue from one place: "from the Hamilton branch", "at our Barrie location".
+  if (/\b(?:from|at|of)\s+(?:the|our|its|one|a)\s+(?:[A-Z][\w&'’.-]*\s+){0,3}(?:location|site|store|branch|clinic|shop|plant|facility|office|region|division|segment|department)\b/.test(value)) return true;
   // Revenue from / for one customer or client.
   return /\b(?:from|for|to|with|by)\s+(?:(?:a|one|the|single|largest|biggest|top|key|main|major|anchor|our|its)\s+)+(?:customer|client|account)\b/i.test(value) ||
     /\b(?:largest|biggest|top|single|one|key|anchor)\s+(?:customer|client)\b/i.test(value);

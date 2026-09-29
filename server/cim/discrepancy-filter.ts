@@ -131,7 +131,10 @@ function isMissingContext(clause: string): boolean {
   if (/^(?:the |a |an |our |its )?(?:p\s?&\s?l|profit and loss|income statements?|financial statements?|statements?|financials|balance sheets?|t2s?|tax returns?|ledgers?|general ledger|gl|bank statements?|records?|documents?|documentation|knowledge base|kb|accounts?)\b/i.test(c) &&
       /\b(?:only|not|no|doesn'?t|don'?t|never|nor|without)\b/i.test(c)) return true;
   // What another source said or was asked (the other side restated, not this side's claim).
-  if (/^(?:the |a |an )?(?:seller|owner|vendor|broker|interview(?:er)?|call|transcript|questionnaire)\b[^.;]{0,40}\b(?:said|says|stated|states|mentioned|mentions|told|claims?|claimed|reported|was asked|were asked|asked)\b/i.test(c)) return true;
+  if (/^(?:the |a |an )?(?:seller|owner|vendor|broker|interview(?:er)?|call|transcript|questionnaire)\b[^.;]{0,40}\b(?:said|says|stated|states|mentioned|mentions|told|claims?|claimed|reported|was asked|were asked|asked|discussed|discusses|talked|talks|spoke|speaks|covered|covers|described|describes|focused|focuses|went over|referred|refers)\b/i.test(c)) return true;
+  // How the figures are grouped, not a value ("wages are lumped together",
+  // "included in cost of sales", "combined with the other locations").
+  if (!/\d/.test(c) && /\b(?:lumped|combined|grouped|aggregated|bundled|rolled (?:up|into)|included (?:in|with|under)|folded into|netted (?:in|against|off)|not (?:broken|split) out|(?:shown|reported|recorded) (?:together|as one|in total|in aggregate))\b/i.test(c)) return true;
   // A bare negative ("not about the manager's contract", "no breakdown by segment").
   return /^(?:not|no|nor|never|none)\b/i.test(c) && !/\d/.test(c);
 }
