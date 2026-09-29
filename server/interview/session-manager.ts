@@ -179,7 +179,7 @@ import { ensureSourceReview } from "./source-review";
 import { screenLedgerForSeller } from "./source-privacy";
 import { questionPart, valuesMateriallyDiffer, sourceLabel } from "./source-context";
 import { getFieldAlternates } from "./info-merger";
-import { routeStaffPrivate, staffContextFrom, STAFF_PRIVATE_NOTE_REASON } from "../cim/staff-private";
+import { routeStaffPrivate, routeStaffPrivateChanges, staffContextFrom, STAFF_PRIVATE_NOTE_REASON } from "../cim/staff-private";
 import { buildPolishContext, polishMessage, polishChips, polishRationale, describeReport, normalisationCallIn, type PolishContext, type PolishReport } from "./reply-polish";
 import { earningsNudge, sellerSideOf } from "./money-talk";
 import { ensureQuestionRationale, prefetchQuestionLabel, sectionsForLabel, type PrefetchedLabel, type RationaleResult } from "./question-rationale";
@@ -2918,25 +2918,16 @@ async function processTurnLocked(
   // of the answer stays the fact ("Daniel Okafor — LTC lead, 11 years, holds
   // the home relationships"); the private part becomes the note.
   {
-    const staffCtx = staffContextFrom({ ...existingExtracted, ...Object.fromEntries(changes.map((c) => [c.fieldName, c.newValue])) });
-    const staffNotes: Array<{ note: string; reason: string }> = [];
-    const routed: string[] = [];
-    const next: FieldChange[] = [];
-    for (const c of changes) {
-      if (typeof c.newValue !== "string") { next.push(c); continue; }
-      const r = routeStaffPrivate(c.fieldName, c.newValue, staffCtx);
-      if (r.notes.length === 0) { next.push(c); continue; }
-      routed.push(c.fieldName);
-      for (const note of r.notes) staffNotes.push({ note, reason: STAFF_PRIVATE_NOTE_REASON });
-      if (r.kept) next.push({ ...c, newValue: r.kept });
-      else if (confidenceLevels[c.fieldName] !== undefined) updatedConfidence[c.fieldName] = confidenceLevels[c.fieldName];
-      else delete updatedConfidence[c.fieldName];
-    }
-    if (routed.length > 0) {
+    const staff = routeStaffPrivateChanges(changes, existingExtracted);
+    if (staff.routedKeys.length > 0) {
+      for (const key of staff.droppedKeys) {
+        if (confidenceLevels[key] !== undefined) updatedConfidence[key] = confidenceLevels[key];
+        else delete updatedConfidence[key];
+      }
       // (Keys only — never what the seller said.)
-      console.log(`[session-manager] Staff-private guard: ${staffNotes.length} private staff matter(s) moved to the broker's notes from ${routed.join(", ")}`);
-      changes = next;
-      aiResponse.privateNotes = [...(aiResponse.privateNotes ?? []), ...staffNotes];
+      console.log(`[session-manager] Staff-private guard: ${staff.notes.length} private staff matter(s) moved to the broker's notes from ${staff.routedKeys.join(", ")}`);
+      changes = staff.changes;
+      aiResponse.privateNotes = [...(aiResponse.privateNotes ?? []), ...staff.notes];
     }
   }
   const newPrivateTerms = intentPlan.keptPrivateTerms;
@@ -4001,6 +3992,21 @@ export function seedExtractedInfoFromQuestionnaire(
       if (split.publicValue !== answer.trim() && scrubUnscreenedAnswer(seeded, key, answer)) added = true;
       if (!split.publicValue) continue;
       value = split.publicValue;
+    }
+    // An employee's private matter the seller typed (their ask for a stake, a
+    // raise request, talk of leaving…) is the broker's private note; the
+    // business part stays the fact (server/cim/staff-private.ts).
+    {
+      const staff = routeStaffPrivate(key, value, staffContextFrom({ ...seeded, ...Object.fromEntries(facts) }));
+      if (staff.notes.length > 0) {
+        for (const note of staff.notes) {
+          if (addPrivateNote(seeded, note, { questionnaire: true, reason: `From the intake questionnaire — ${STAFF_PRIVATE_NOTE_REASON}` })) added = true;
+        }
+        // A value seeded before this screen (the whole answer) goes.
+        if (scrubUnscreenedAnswer(seeded, key, value)) added = true;
+        if (!staff.kept) continue;
+        value = staff.kept;
+      }
     }
     const current = seeded[key];
     const empty = current === null || current === undefined || current === "";

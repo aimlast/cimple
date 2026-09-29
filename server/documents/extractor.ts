@@ -21,6 +21,7 @@ import {
   getFieldSources,
   setFieldSource,
   recordAlternate,
+  addPrivateNote,
   typedNumericValues,
   SOURCE_META_KEYS,
   type FieldSource,
@@ -56,7 +57,7 @@ import { agentConfig } from "../interview/config/load-config";
 import { coverageAdjustmentsForDeal } from "../interview/interview-plan";
 import type { Deal } from "@shared/schema";
 import { guardExtraction, statedMetricKeys, STATED_METRIC_NOTE, STATED_METRICS_KEY, SPOKEN_KINDS } from "./extraction-guard";
-import { routeStaffPrivate, staffContextFrom } from "../cim/staff-private";
+import { routeStaffPrivate, staffContextFrom, STAFF_PRIVATE_NOTE_REASON, type StaffContext } from "../cim/staff-private";
 
 /** The slice of the SDK the extractor uses (a stand-in in tests). */
 export interface ExtractionClient {
@@ -506,10 +507,17 @@ export function normaliseExtraction(raw: Record<string, unknown>, sourceText?: s
  * An employee's private matter the source mentions (their ask for a stake, a
  * raise request, talk of leaving, a warning, their health or family) goes to
  * _privateNotes — the broker's, never a CIM fact — and the business part of
- * the value stays the fact (server/cim/staff-private.ts). Mutates.
+ * the value stays the fact (server/cim/staff-private.ts). Mutates; returns
+ * the notes it added.
+ *
+ * Precision first (routeStaffPrivate is strict): only a clause about someone
+ * the source (or, at merge time, the deal) shows is staff — a staff word, a
+ * job title, a name recorded as staff — is moved; a first name alone on the
+ * owner's topics ("Helen is thinking about retiring" as the reason for sale)
+ * stays the fact. `ctx` defaults to the people this extraction names;
+ * mergeExtractedData passes the deal's own.
  */
-export function routeStaffPrivateToNotes(data: Record<string, unknown>): void {
-  const ctx = staffContextFrom(data);
+export function routeStaffPrivateToNotes(data: Record<string, unknown>, ctx: StaffContext = staffContextFrom(data)): string[] {
   const notes: string[] = [];
   for (const [key, value] of Object.entries(data)) {
     // (The source's own summary / key facts / red flags are notes about the source, never CIM facts.)
@@ -520,11 +528,12 @@ export function routeStaffPrivateToNotes(data: Record<string, unknown>): void {
     if (r.kept) data[key] = r.kept;
     else delete data[key];
   }
-  if (notes.length === 0) return;
+  if (notes.length === 0) return notes;
   const raw = data._privateNotes;
   if (Array.isArray(raw)) data._privateNotes = [...raw, ...notes];
   else if (typeof raw === "string" && raw.trim()) data._privateNotes = `${raw}\n${notes.join("\n")}`;
   else data._privateNotes = notes;
+  return notes;
 }
 
 /** A statement's own expense listing ("operatingExpenseBreakdown", "operatingExpensesDetail"): its lines as printed. */
@@ -1428,7 +1437,11 @@ export function mergeExtractedData(
   const o: MergeSource = typeof origin === "string" ? { documentId: origin } : origin ?? {};
   const kind: SourceKind = o.source ?? "document";
   const documentId = o.documentId;
-  const data = normaliseExtraction(incoming as Record<string, unknown>);
+  const data = { ...normaliseExtraction(incoming as Record<string, unknown>) };
+  // Staff-private matters again, now that the deal's people are known (the
+  // owner, staff another source named): the private part becomes the
+  // broker's note on the deal, never a fact (server/cim/staff-private.ts).
+  const staffNotes = routeStaffPrivateToNotes(data, staffContextFrom({ ...existing, ...data }));
   // A document that states no period end (older extractions) is for the
   // latest fiscal year its figures cover — FY2023 statements with FY2022
   // comparatives are a 2023 source, not an undated one.
@@ -1540,5 +1553,12 @@ export function mergeExtractedData(
 
   // Headline figures follow the most authoritative, latest by-year figure.
   reconcileHeadlines(merged, ctx);
+  for (const note of staffNotes) {
+    addPrivateNote(merged, note, {
+      reason: o.title ? `From ${o.title} — ${STAFF_PRIVATE_NOTE_REASON}` : STAFF_PRIVATE_NOTE_REASON,
+      ...(documentId ? { documentId } : {}),
+      ...(o.brokerOnly ? { brokerOnly: true } : {}),
+    });
+  }
   return merged;
 }

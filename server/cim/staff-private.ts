@@ -45,7 +45,7 @@ export { STAFF_PRIVATE_INCLUDED_KEY };
 
 /** Equity words — a stake, buying in, a roll-over or earn-in offered to someone. */
 const EQUITY_WORD = new RegExp(
-  String.raw`\b(?:equity(?!\s+(?:line|loan|financing|investors?|firms?|funds?|groups?|sponsors?|method|accounting|section|statement))|stakes?\b|shareholding|ownership(?!\s+(?:change|transfer|structure|notification|approval|restrictions?|rules?|requirements?|of the (?:building|property|premises)))|buy(?:ing)?[- ]in\b|buy(?:ing)? (?:into|in)\b|piece of the (?:business|company|pharmacy|practice|clinic|shop|firm|action)|(?:become|becoming|make (?:him|her|them)|made (?:him|her|them))\s+(?:a\s+)?(?:partner|shareholder|co-?owner)|partnership (?:stake|interest|track)|roll-?over|earn-?ins?\b|phantom (?:equity|shares?)|(?:share|stock) options?|(?:some|a few) shares)`,
+  String.raw`\b(?:equity(?!\s+(?:line|loan|financing|investors?|firms?|funds?|groups?|sponsors?|method|accounting|section|statement))|stakes?\b|shareholding|ownership(?!\s+(?:change|transfer|structure|notification|approval|restrictions?|rules?|requirements?|of the (?:building|property|premises)))|buy(?:ing)?[- ]in\b|buy(?:ing)? (?:into|in)\b|piece of the (?:business|company|pharmacy|practice|clinic|shop|firm|action)|(?:become|becoming|make (?:him|her|them)|made (?:him|her|them))\s+(?:a\s+)?(?:partner|shareholder|co-?owner)|partnership (?:stake|interest|track)|roll-?over|earn-?ins?\b|phantom (?:equity|shares?)|(?:share|stock) options?|(?:some|a few) shares|(?:buy|own|get|have|take|purchase|acquire|hold)(?:s|ing)?\s+(?:a\s+|some\s+|an?\s+\w+\s+)?(?:share|part|piece|slice|portion|percentage|cut|bit)\s+(?:of|in)\s+(?:the\s+|his\s+|her\s+)?(?:business|company|pharmacy|practice|clinic|shop|firm|store|operation|firm)|\b(?:a|some)\s+(?:share|part|piece|slice|portion|cut)\s+of\s+(?:the\s+)?(?:business|company|pharmacy|practice|clinic|shop|firm|store|ownership))`,
   "i",
 );
 
@@ -60,7 +60,7 @@ const OWNER_EQUITY = /\b(?:seller|owner|vendor|founder)(?:'s|s')?\s+(?:(?:is|was
 
 const PAY_RE = new RegExp(
   [
-    String.raw`\b(?:ask(?:ed|s|ing)?|push(?:ed|ing)?|press(?:ed|ing)?|want(?:s|ed)?|request(?:ed|s|ing)?|demand(?:ed|s|ing)?|hint(?:ed|ing)?|lobb(?:y|ied|ying)|negotiat\w*|angling)\s+(?:for\s+|about\s+)?(?:\w+\s+){0,3}(?:raise|pay (?:rise|increase|bump)|salary (?:increase|bump|review)|more money|higher (?:pay|salary|wages?)|bigger bonus|a bonus|more pay|wage increase)\b`,
+    String.raw`\b(?:ask(?:ed|s|ing)?|push(?:ed|ing)?|press(?:ed|ing)?|want(?:s|ed)?|request(?:ed|s|ing)?|demand(?:ed|s|ing)?|hint(?:ed|ing)?|lobb(?:y|ied|ying)|negotiat\w*|angling)\s+(?:for\s+|about\s+)?(?:[\w%$.,]+\s+){0,3}(?:raise|pay (?:rise|increase|bump)|salary (?:increase|bump|review)|more money|higher (?:pay|salary|wages?)|bigger bonus|a bonus|more pay|wage increase)\b`,
     String.raw`\b(?:pay|wage|salary|compensation|bonus|overtime|commission) (?:disputes?|grievances?|complaints?|disagreements?|arguments?|fights?)\b`,
     String.raw`\b(?:unhappy|upset|frustrated|disgruntled|complain(?:s|ed|ing)?|grumbl\w*|resent\w*|bitter)\b[^.;]{0,30}\b(?:pay|salary|wages?|compensation|bonus|raise)\b`,
     String.raw`\b(?:feels?|thinks?) (?:\w+ )?underpaid\b|\bunderpaid\b`,
@@ -75,31 +75,43 @@ const LEAVE_JOB = String.raw`(?:leav(?:e|es|ing)|quit(?:s|ting)?|resign(?:s|ed|i
 const MAYBE = String.raw`(?:may|might|could|likely to|probably|thinking (?:about|of)|considering|contemplating|talk(?:ed|ing|s)? (?:about|of)|talk of|rumou?r(?:s|ed)?|hint(?:ed|ing|s)?|threaten(?:s|ed|ing)?|at risk of|risk (?:of|that)|worried|concern(?:ed)?|fears?|feared|afraid)`;
 /** A private plan to leave the job (a stated retirement date is succession, not held). */
 const PLANS = String.raw`(?:plans? to|planning (?:to|on)|wants? to|intends? to|hopes? to|is expected to|expects to)`;
-const DEPARTURE_RE = new RegExp(
+/** A possible, planned-in-private or rumoured departure. */
+const DEPARTURE_MAYBE_RE = new RegExp(
   [
     String.raw`\b${MAYBE}\b[^.;]{0,40}?\b${LEAVE}\b`,
     String.raw`\b${PLANS}\b[^.;]{0,20}?\b${LEAVE_JOB}\b`,
     String.raw`\b(?:may|might|would|could) not stay\b|\bwon'?t stay\b|\bnot going to stay\b|\bunlikely to stay\b`,
-    String.raw`\bflight risk\b|\bpoach(?:ed|ing)?\b|\bbeing recruited\b|\brecruited by\b|\bapproached by (?:a |another )?(?:competitor|recruiter|headhunter|rival)`,
-    String.raw`\blooking (?:for|at) (?:another|other|a new) (?:job|role|position|opportunit\w+)\b|\binterview(?:ing|ed) (?:elsewhere|with (?:a |another )?(?:competitor|rival))`,
-    String.raw`\b(?:gave|given|giving|handed in|tendered|submitted) (?:his |her |their )?(?:notice|resignation)\b|\bhas resigned\b|\bis leaving\b|\bwill be leaving\b|\blast day\b`,
+    // Someone being recruited away — not the industry's hiring ("technicians are recruited by larger firms").
+    String.raw`\bflight risk\b|\b(?:was|has been|had been|is being|been|got|getting) (?:poached|headhunted|recruited|courted|approached)\b|\bbeing (?:poached|headhunted|recruited|courted)\b|\b(?:trying|tried|tries|attempting|attempted|wants?|wanted) to (?:poach|recruit|hire away|lure)\s+(?:him|her|them|[A-Z]\w+)|\bapproached by (?:a |another )?(?:competitor|recruiter|headhunter|rival)`,
+    String.raw`\blooking (?:for|at|around for) (?:another|other|a new|new) (?:jobs?|roles?|positions?|opportunit\w+|employers?)\b|\b(?:job[- ]hunting|applying (?:for|to) (?:other )?jobs)\b|\binterview(?:ing|ed) (?:elsewhere|with (?:a |another |other )?(?:competitors?|rivals?|employers?))`,
   ].join("|"),
   "i",
 );
+/** A departure that has happened or is fixed — held only while it isn't announced or agreed (DEPARTURE_ANNOUNCED). */
+const DEPARTURE_DEFINITE_RE = /\b(?:gave|given|giving|handed in|tendered|submitted) (?:his |her |their )?(?:notice|resignation)\b|\bhas (?:just )?resigned\b|\bis leaving\b|\bwill be leaving\b|\blast day\b/i;
+/**
+ * The departure is official: a buyer should know it (a resignation with its
+ * effective date, a replacement already hired, an agreed transition,
+ * customers told).
+ */
+const DEPARTURE_ANNOUNCED = /\beffective (?:on |as of )?(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\.? \d{1,2}|\d{1,2} (?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*|\d{4}|the end of)|\b(?:replacement|successor)\b[^.;]{0,50}?\b(?:hired|in place|trained|named|appointed|identified|already|started|recruited)\b|\b(?:agreed|planned|orderly|announced|formal) (?:transition|departure|exit|handover|hand-?off)\b|\b(?:customers|clients|staff|the team|employees|suppliers) (?:have been|were|has been|are|all) (?:told|informed|notified|aware)\b|\bannounced\b|\bpublicly\b/i;
+const DEPARTURE_UNANNOUNCED = /\b(?:not (?:yet )?(?:announced|public|told)|hasn'?t (?:yet )?(?:told|announced)|(?:doesn'?t|don'?t) know yet|no one (?:else )?knows|nobody (?:else )?knows|keeping (?:it|this) quiet)\b/i;
 /** A departure statement that is really about staying ("unlikely to leave", "no departure signals"). */
 const STAYING = /\b(?:no|not|never|neither|unlikely|nor|none|without|n't)\b[^.;]{0,40}\b(?:leav|quit|resign|depart|retir|move on|go elsewhere|signals?|signs?|risk|plans?)|\b(?:committed to|will|wants? to|plans? to|intends? to|expected to|expects to|agreed to) (?:stay|remain|continue)\b/i;
 
 const CONDUCT_RE = new RegExp(
-  String.raw`\b(?:performance (?:issues?|problems?|concerns?|improvement plan|warnings?|management|reviews? (?:flagged|noted))|under-?perform\w*|poor(?:ly)? perform\w*|\bPIP\b|(?:written|verbal|final|formal) warning|disciplin(?:ed|ary (?:action|matter|issue|hearing|meeting|record|process|letter|note))|reprimand\w*|(?:was |been |got |is )suspended|(?:put )?on probation|(?:was |got |been )?(?:fired|terminated|let go|dismissed) (?:for|over|because)|(?:drinking|alcohol|drug|substance) (?:problem|issue|abuse)|attendance (?:issues?|problems?)|(?:chronically|always|often|habitually) late|no-?shows?|harass(?:ed|ing|ment)|misconduct|insubordinat\w*|complaints? (?:about|against) (?:him|her|them)|attitude (?:problem|issues?)|clash(?:es|ed)? with|(?:doesn'?t|does not|don'?t) get along)\b`,
+  String.raw`\b(?:performance (?:issues?|problems?|concerns?|improvement plan|warnings?|management|reviews? (?:flagged|noted))|under-?perform\w*|poor(?:ly)? perform\w*|\bPIP\b|(?:written|verbal|final|formal) warning|disciplin(?:ed|ary (?:action|matter|issue|hearing|meeting|record|process|letter|note))|reprimand\w*|(?:was |been |got |is )suspended|(?:put|placed) on probation|on (?:disciplinary|final) probation|on probation (?:for|after|because|over|following)|(?:was |got |been )?(?:fired|terminated|let go|dismissed) (?:for|over|because)|(?:drinking|alcohol|drug|substance) (?:problem|issue|abuse)|attendance (?:issues?|problems?)|(?:chronically|always|often|habitually) late|no-?shows?|harass(?:ed|ing|ment)|misconduct|insubordinat\w*|complaints? (?:about|against) (?:him|her|them)|attitude (?:problem|issues?)|clash(?:es|ed)? with|(?:doesn'?t|does not|don'?t) get along)\b`,
   "i",
 );
 
 const PERSONAL_RE = new RegExp(
-  String.raw`\b(?:(?:maternity|paternity|parental) leave(?!\s+(?:top-?up|polic(?:y|ies)|benefits?|coverage|program|plan))|pregnan(?:t|cy)|on (?:medical|sick|stress|disability|compassionate|bereavement|personal) leave|(?:medical|sick|stress|disability|compassionate|bereavement) leave (?:since|until|for)|family (?:emergency|issues|problems|matters|situation|circumstances|reasons|troubles)|caring for (?:his|her|their) (?:sick|ill|elderly|ageing|aging|dying|disabled) \w+|(?:his|her|their) (?:kids?|children|son|daughter|wife|husband|spouse|partner|mother|father|mom|mum|dad|parents?) (?:is |are |was |were |has been |have been )?(?:sick|ill|in hospital|unwell|dying|struggling)|mental health|burn(?:ed|t)?[- ]?out|(?:in|into|to|entered|out of|left|checked into) rehab\b|(?:going|went|is going) through a (?:divorce|separation|tough time|rough patch|hard time))\b`,
+  String.raw`\b(?:(?:maternity|paternity|parental) leave(?!\s+(?:top-?up|polic(?:y|ies)|benefits?|coverage|program|plan))|pregnan(?:t|cy)|on (?:medical|sick|stress|disability|compassionate|bereavement|personal) leave|(?:medical|sick|stress|disability|compassionate|bereavement) leave (?:since|until|for)|family (?:emergency|issues|problems|matters|situation|circumstances|reasons|troubles)|caring for (?:his|her|their) (?:sick|ill|elderly|ageing|aging|dying|disabled) \w+|(?:his|her|their|[a-z]+'s) (?:kids?|children|son|daughter|wife|husband|spouse|partner|mother|father|mom|mum|dad|parents?) (?:is |are |was |were |has been |have been )?(?:sick|ill|in (?:the )?hospital|unwell|dying|struggling|in palliative care|having (?:surgery|treatment))|(?:has|had|was|been) (?:recently )?diagnosed with|undergoing (?:chemo\w*|treatment|surgery)|mental health|burn(?:ed|t)?[- ]?out|(?:in|into|to|entered|out of|left|checked into) rehab\b|(?:going|went|is going) through a (?:divorce|separation|tough time|rough patch|hard time))\b`,
   "i",
 );
 
-const CONVERSATION_RE = /\b(?:privately|in private|confided|in confidence|off the record|behind closed doors|informally (?:asked|told|mentioned|raised|said|approached|floated|inquired|enquired)|half[- ]?jok\w*|jokingly|over (?:a )?(?:beers?|drinks|coffee|lunch)|quietly (?:asked|told|mentioned|raised)|(?:one-on-one|personal|private) conversation)\b/i;
+const TOLD = String.raw`(?:told|asked|mentioned|raised|said|admitted|expressed|indicated|shared|hinted|confessed|let (?:slip|on)|floated)`;
+/** "Privately" about a conversation — not "30 percent paying privately" or a privately held company. */
+const CONVERSATION_RE = new RegExp(String.raw`\b(?:(?:privately|in private)\s+${TOLD}|${TOLD}\b[^.;]{0,40}\b(?:privately|in private)\b)|\b(?:confided|in confidence|off the record|behind closed doors|informally (?:asked|told|mentioned|raised|said|approached|floated|inquired|enquired)|half[- ]?jok\w*|jokingly|over (?:a )?(?:beers?|drinks|coffee|lunch)|quietly (?:asked|told|mentioned|raised)|(?:one-on-one|personal|private) conversation)\b`, "i");
 
 /** Official, agreed or announced — a buyer should know it; never held. */
 const SETTLED = new RegExp(
@@ -140,12 +152,19 @@ function matchNotNegated(re: RegExp, text: string): boolean {
  * The staff-private topic a clause states, if any — before asking who it is
  * about. Exemptions (settled, the owner's equity, staying) are applied here.
  */
-export function staffPrivateTopic(clause: string): StaffPrivateKind | null {
+export function staffPrivateTopic(clause: string, around?: string): StaffPrivateKind | null {
   const t = clause.replace(/[’‘]/g, "'");
   if (!t.trim() || SETTLED.test(t)) return null;
   if (EQUITY_WORD.test(t) && matchNotNegated(WANTS, t) && !OWNER_EQUITY.test(t)) return "equity";
   if (matchNotNegated(PAY_RE, t)) return "pay";
-  if (DEPARTURE_RE.test(t) && !STAYING.test(t)) return "departure";
+  if (DEPARTURE_MAYBE_RE.test(t) && !STAYING.test(t)) return "departure";
+  // A resignation or a fixed last day is held only while it is still quiet:
+  // announced, dated with a replacement in place, or agreed, it is a fact a
+  // buyer must read (the fact it sits in — `around` — may say so).
+  if (DEPARTURE_DEFINITE_RE.test(t) && !STAYING.test(t)) {
+    const ctx = (around ?? t).replace(/[’‘]/g, "'");
+    if (DEPARTURE_UNANNOUNCED.test(ctx) || !DEPARTURE_ANNOUNCED.test(ctx)) return "departure";
+  }
   if (matchNotNegated(CONDUCT_RE, t)) return "conduct";
   if (matchNotNegated(PERSONAL_RE, t)) return "personal";
   if (CONVERSATION_RE.test(t)) return "conversation";
@@ -293,14 +312,89 @@ interface Scope {
   staffKey: boolean;
   /** The surrounding text (the whole fact / paragraph) names a staff member. */
   staffAround: boolean;
+  /**
+   * The fact's key is the owner's own topic (reason for sale, the seller's
+   * motivation, the transition, the deal): only an explicitly named staff
+   * member makes a clause there a staff matter.
+   */
+  ownerKey?: boolean;
+  /**
+   * Precision first (routing a new fact to the private notes, where the
+   * broker's Include switch can't reach it): the clause must name a known
+   * staff member, a staff word or a job title, or go on from a clause that did.
+   */
+  strict?: boolean;
+  /** The staff member the clause before this one (same fact) was about. */
+  prevPerson?: string | null;
+}
+
+/** The owner's own topics — a first name there is the owner's until the facts say it is staff. */
+const OWNER_TOPIC_KEY = /^(?:reasonForSale|reasonsForSale|saleReason|sellerMotivation|motivation|motivationForSale|sellerGoals|personalGoals|timeline|saleTimeline|exitTimeline|exitPlan|owner\w*|seller\w*|vendor\w*|founder\w*|proprietor\w*|transition\w*|retirement\w*|dealStructure|transactionStructure|financing\w*|askingPrice|ownership\w*|shareholder\w*|nonCompete\w*)$/i;
+
+/**
+ * A clause with no subject of its own — it goes on from the clause before
+ * ("Daniel Okafor: LTC lead pharmacist since 2014; asked Helen about buying a
+ * stake last year").
+ */
+const SUBJECTLESS = /^(?:(?:and|but|also|then|since|recently|once|later|last (?:year|month|week|spring|summer|fall|autumn|winter)|this (?:year|spring|summer|fall|autumn|winter)|(?:about |approximately |roughly |nearly |almost |over )?(?:a|an|one|two|three|\d+) (?:years?|months?|weeks?) ago|in (?:19|20)\d{2}),?\s+)*(?:has |had |have |was |is |also |once |recently |informally |privately |quietly |repeatedly |reportedly |even )*(?:asked|asks|asking|wants|wanted|would|raised|inquired|enquired|expressed|floated|mentioned|approached|told|hinted|may|might|could|plans|planned|planning|hopes|hoped|requested|pushed|complained|gave|handed|received|got|interested|keen|thinking|considering|looking|interviewing|seeking|sounding|angling|eyeing|confided|said|feels|thinks|believes|resents|is|was|has|had)\b/i;
+
+const OUTSIDER = /\b(?:buyer|investor|lender|landlord|customer|client|competitor|acquirer|purchaser|supplier|vendor|bank)s?\b/i;
+
+/** A staff member the clause names, as the scope allows (strict / the owner's topics: only people known as staff). */
+function namedStaff(clause: string, ctx: StaffContext, scope: Scope): string | null {
+  const person = staffPersonIn(clause, ctx);
+  if (!person) return null;
+  if (!scope.strict && !scope.ownerKey) return person;
+  const first = fold(person.split(/[\s-]+/)[0]);
+  if (ctx.staffNames.some((n) => fold(n.split(/[\s-]+/)[0]) === first)) return person;
+  // A name in a staff fact when the owner is known (so it isn't the owner's).
+  return !scope.ownerKey && scope.staffKey && ctx.ownerNames.length > 0 ? person : null;
+}
+
+/** "Two technicians", "one of our estimators", "both hygienists" — particular people, not the trade in general. */
+const COUNTED = /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|several|a couple of|a few of|both|\d+)\s+(?:of\s+(?:our|the|his|her|their)\s+)?(?:[a-z-]+\s+)?[a-z-]+s\b/i;
+
+/**
+ * The clause's staff words only speak of staff in general ("technicians are
+ * recruited by larger firms", "key employees may leave after a sale") — an
+ * industry or deal risk, not one person's private matter.
+ */
+function onlyGenericStaff(clause: string, withRoles: boolean): boolean {
+  const words: string[] = [];
+  const all = (re: RegExp) => Array.from(clause.matchAll(new RegExp(re.source, "gi"))).map((m) => ({ w: m[0], at: m.index ?? 0 }));
+  for (const { w, at } of [...all(STAFF_STRONG), ...(withRoles ? all(STAFF_ROLE) : [])]) {
+    // "a staff member" is one person.
+    if (/^staff$/i.test(w) && /^\s+member\b/i.test(clause.slice(at + w.length))) return false;
+    words.push(w);
+  }
+  if (words.length === 0) return false;
+  const plural = (w: string) => /(?:s|foremen|staff|people|personnel|workforce)$/i.test(w) && !/^(?:gm|sales ?reps?)$/i.test(w);
+  if (!words.every(plural)) return false;
+  return !COUNTED.test(clause) && !/\b(?:he|she|him|her|his|hers)\b/i.test(clause);
 }
 
 /** Is the clause about a staff member (not the owner, not a buyer)? */
 function aboutStaff(clause: string, ctx: StaffContext, scope: Scope): boolean {
-  if (STAFF_STRONG.test(clause)) return true;
-  if (staffPersonIn(clause, ctx)) return true;
+  if (namedStaff(clause, ctx, scope)) return true;
   const ownerNamed = OWNER_WORD.test(clause) || personNamesIn(clause).some((n) => isOwnerName(n, ctx));
+  if (onlyGenericStaff(clause, !ownerNamed)) return false;
+  if (STAFF_STRONG.test(clause)) return true;
   if (STAFF_ROLE.test(clause) && !ownerNamed) return true;
+  if (scope.ownerKey) return false;
+  // No subject: it goes on from a staff member named just before — the owner
+  // may be the one asked ("…; asked the owner about an equity stake").
+  const trimmed = clause.trim();
+  if (scope.prevPerson && SUBJECTLESS.test(trimmed) && !OUTSIDER.test(trimmed.split(/\s+/).slice(0, 3).join(" "))) return true;
+  if (scope.strict) {
+    // A pronoun right after a staff member ("Daniel …. He asked about buying in.").
+    if (!scope.prevPerson) return false;
+    for (const m of Array.from(clause.matchAll(PRONOUN))) {
+      const g = /^(?:he|him|his)$/i.test(m[1]) ? "m" : "f";
+      if (ownerNamed && ctx.ownerGender === g) continue;
+      return true;
+    }
+    return false;
+  }
   if (!(scope.staffKey || scope.staffAround)) return false;
   // A pronoun in a staff context — unless it is the owner's own ("she" for Helen).
   for (const m of Array.from(clause.matchAll(PRONOUN))) {
@@ -310,7 +404,7 @@ function aboutStaff(clause: string, ctx: StaffContext, scope: Scope): boolean {
     return true;
   }
   // No subject at all ("Asked about equity stake …") in a staff fact or next to a staff member's name.
-  return personNamesIn(clause).length === 0 && !ownerNamed && !/\b(?:buyer|investor|lender|landlord|customer|client|competitor|acquirer|purchaser)s?\b/i.test(clause);
+  return personNamesIn(clause).length === 0 && !ownerNamed && !OUTSIDER.test(clause);
 }
 
 /** A fact whose key itself names the private matter ("danielEquityInterest"). */
@@ -347,26 +441,40 @@ function clausesOf(text: string): string[] {
   return text.split(/(?<=[.!?])\s+(?=[A-Z0-9])|\s*;\s*|\n+/).map((s) => s.trim()).filter(Boolean);
 }
 
-/** Comma parts outside parentheses. */
-function commaParts(sentence: string): string[] {
-  const out: string[] = [];
+/**
+ * Comma (and spaced-dash) parts outside parentheses, each with where it
+ * starts in the sentence — a cut keeps the sentence's own words and
+ * separators ("Daniel Okafor - LTC lead pharmacist - 11 years - …").
+ */
+function commaParts(sentence: string): Array<{ text: string; start: number }> {
+  const out: Array<{ text: string; start: number }> = [];
   let depth = 0;
-  let cur = "";
+  let start = 0;
+  const push = (end: number) => {
+    const raw = sentence.slice(start, end);
+    const lead = raw.length - raw.trimStart().length;
+    if (raw.trim()) out.push({ text: raw.trim(), start: start + lead });
+  };
   for (let i = 0; i < sentence.length; i++) {
     const ch = sentence[i];
     if (ch === "(") depth++;
     if (ch === ")") depth = Math.max(0, depth - 1);
-    if (depth === 0 && ((ch === "," && sentence[i + 1] === " ") || (ch === " " && /^ [—–] /.test(sentence.slice(i, i + 3))))) {
-      out.push(cur);
-      cur = "";
-      i += ch === "," ? 1 : 2;
-      continue;
+    if (depth !== 0) continue;
+    const comma = ch === "," && sentence[i + 1] === " ";
+    // " — ", " – ", and " - " between words (not "2014 - 2020").
+    const dash = ch === " " && (/^ [—–] /.test(sentence.slice(i, i + 3)) || (/^ - \D/.test(sentence.slice(i, i + 4)) && !/\d$/.test(sentence.slice(0, i))));
+    if (comma || dash) {
+      push(i);
+      i += comma ? 1 : 2;
+      start = i + 1;
     }
-    cur += ch;
   }
-  out.push(cur);
-  return out.map((p) => p.trim()).filter(Boolean);
+  push(sentence.length);
+  return out;
 }
+
+/** A private-looking part of a sentence the AI review flagged as a whole (where to cut it). */
+const STAFF_HINT = /\b(?:equity|stakes?|buy(?:ing)?[- ]?in|share of|part of the|piece of|partner|roll-?over|earn-?in|raise|pay|salary|underpaid|bonus|leav(?:e|ing)|quit|resign|notice|recruit|poach|headhunt|elsewhere|other (?:jobs?|roles?)|warning|probation|perform\w*|disciplin\w*|late|sick|ill\b|illness|health|hospital|surgery|family|divorce|pregnan\w*|maternity|paternity|burn(?:ed|t)?[- ]?out|privately|confided|informally|in confidence|jok\w*)\b/i;
 
 /**
  * A clause with the private comma-parts of its parentheses removed (an
@@ -388,7 +496,11 @@ function cutInParentheses(clause: string, isPrivate: (part: string) => boolean):
 export interface HeldPiece {
   text: string;
   kind: StaffPrivateKind;
+  /** "ai" = held only because the AI review flagged it; "rules" = the deterministic screen. */
+  by?: "rules" | "ai";
 }
+
+const normText = (t: string) => t.toLowerCase().replace(/[’‘]/g, "'").replace(/\s+/g, " ").trim().replace(/[.;,]+$/, "");
 
 /**
  * One fact value (or free-text paragraph) screened: the kept text (null
@@ -401,66 +513,97 @@ export interface HeldPiece {
 export function splitStaffPrivate(
   text: string,
   ctx: StaffContext,
-  opts: { key?: string; included?: ReadonlySet<string>; extraHeld?: ReadonlyArray<{ text: string; kind?: StaffPrivateKind }> } = {},
+  opts: {
+    key?: string;
+    included?: ReadonlySet<string>;
+    extraHeld?: ReadonlyArray<{ text: string; kind?: StaffPrivateKind }>;
+    /** Precision first (upstream routing): see Scope.strict. */
+    strict?: boolean;
+  } = {},
 ): { kept: string | null; held: HeldPiece[]; changed: boolean } {
   const included = opts.included ?? new Set<string>();
-  const staffKey = !!opts.key && STAFF_KEY.test(opts.key.replace(/^[cl]:/, ""));
+  const bareKey = (opts.key ?? "").replace(/^[cl]:/, "");
+  const staffKey = !!bareKey && STAFF_KEY.test(bareKey);
+  const ownerKey = !!bareKey && OWNER_TOPIC_KEY.test(bareKey);
   const staffAround = STAFF_STRONG.test(text) || !!staffPersonIn(text, ctx) || ctx.staffNames.some((n) => text.includes(n));
-  const scope: Scope = { staffKey, staffAround };
   const clauses = clausesOf(text);
   const held: HeldPiece[] = [];
   const kept: string[] = [];
-  let prevHeld: StaffPrivateKind | null = null;
-  const extra = (c: string): StaffPrivateKind | null => {
-    const l = c.toLowerCase().replace(/\s+/g, " ").trim();
-    for (const x of opts.extraHeld ?? []) {
-      const t = x.text.toLowerCase().replace(/\s+/g, " ").trim().replace(/[.;]+$/, "");
-      if (t.length >= 8 && (l.includes(t) || t.includes(l.replace(/[.;]+$/, "")))) return x.kind ?? staffPrivateTopic(c) ?? "conversation";
+  let prevHeld: { kind: StaffPrivateKind; by: "rules" | "ai" } | null = null;
+  let prevPerson: string | null = null;
+  const ai = (opts.extraHeld ?? []).map((x) => ({ t: normText(x.text), kind: x.kind })).filter((x) => x.t.length >= 8);
+  /** The AI review flagged this clause (the clause is what it flagged, or holds it). */
+  const aiClause = (c: string): StaffPrivateKind | null => {
+    const l = normText(c);
+    for (const x of ai) {
+      if (l.includes(x.t) || (x.t.includes(l) && l.length * 2 >= x.t.length)) return x.kind ?? staffPrivateTopic(c) ?? "conversation";
     }
     return null;
   };
+  /** The AI review flagged exactly this part, or something inside it (never a wider sentence). */
+  const aiPart = (p: string): boolean => {
+    const l = normText(p);
+    return ai.some((x) => l.includes(x.t));
+  };
+  // The held words, unless the broker included them; the id is always of the words listed.
+  const hold = (words: string, kind: StaffPrivateKind, by: "rules" | "ai"): boolean => {
+    const text = words.replace(/[.;,]+$/, "").trim().replace(/^(?:and|but|or|also|while|though|although)\s+/i, "");
+    if (included.has(staffPrivateId(text))) return false;
+    held.push({ text, kind, by });
+    return true;
+  };
   for (const clause of clauses) {
-    const topic = staffPrivateTopic(clause);
+    const scope: Scope = { staffKey, staffAround, ownerKey, strict: !!opts.strict, prevPerson };
+    // Whom this clause is about, for the next one ("…; asked Helen about a stake").
+    const subject = staffPersonIn(clause, ctx);
+    const ownerSubject = !subject && (OWNER_WORD.test(clause.split(/\s+/).slice(0, 2).join(" ")) || personNamesIn(clause.split(/\s+/).slice(0, 2).join(" ")).some((n) => isOwnerName(n, ctx)));
+    const nextPerson: string | null = subject ?? (ownerSubject ? null : prevPerson);
+
+    const topic = staffPrivateTopic(clause, text);
     let kind: StaffPrivateKind | null = topic && aboutStaff(clause, ctx, scope) ? topic : null;
-    kind ??= extra(clause);
-    if (!kind && prevHeld && (BACKREF.test(clause) || (prevHeld === "equity" && EQUITY_WORD.test(clause) && !OWNER_EQUITY.test(clause) && !SETTLED.test(clause)))) kind = prevHeld;
+    let by: "rules" | "ai" = "rules";
+    if (!kind) {
+      const k = aiClause(clause);
+      if (k) { kind = k; by = "ai"; }
+    }
+    if (!kind && prevHeld && (BACKREF.test(clause) || (prevHeld.kind === "equity" && EQUITY_WORD.test(clause) && !OWNER_EQUITY.test(clause) && !SETTLED.test(clause)))) {
+      kind = prevHeld.kind;
+      by = prevHeld.by;
+    }
+    prevPerson = nextPerson;
     if (!kind) {
       kept.push(clause);
       prevHeld = null;
       continue;
     }
-    prevHeld = kind;
+    prevHeld = { kind, by };
+    const privatePart = (p: string) => !!staffPrivateTopic(p, text) || aiPart(p);
     // The private part inside a parenthesis ("Admin: Dana (since 2012, age 58,
     // may leave next year, knows all insurer reps)"): only that part goes.
-    const inParen = cutInParentheses(clause, (p) => !!(staffPrivateTopic(p) || extra(p)) && !included.has(staffPrivateId(p.trim())));
-    if (inParen && !staffPrivateTopic(inParen.kept)) {
-      for (const c of inParen.cut) held.push({ text: c, kind });
+    const inParen = cutInParentheses(clause, (p) => privatePart(p) && !included.has(staffPrivateId(p.trim().replace(/[.;,]+$/, ""))));
+    if (inParen && !staffPrivateTopic(inParen.kept, text)) {
+      for (const c of inParen.cut) hold(c, kind, by);
       kept.push(inParen.kept);
       continue;
     }
-    // Cut only a trailing private part: the sentence's head stays when it is clean.
+    // Cut only a trailing private part: the sentence's head stays when it is
+    // clean. The rules (or a part the AI flagged exactly) say where; for a
+    // sentence only the AI flagged as a whole, the first part that reads as
+    // the private matter.
     const parts = commaParts(clause);
     let cut = -1;
-    if (parts.length > 1) {
-      for (let i = 1; i < parts.length; i++) {
-        if (staffPrivateTopic(parts[i]) || extra(parts[i])) { cut = i; break; }
-      }
-    }
+    for (let i = 1; i < parts.length && cut < 0; i++) if (privatePart(parts[i].text)) cut = i;
+    if (cut < 0 && by === "ai") for (let i = 1; i < parts.length && cut < 0; i++) if (STAFF_HINT.test(parts[i].text)) cut = i;
     if (cut > 0) {
-      const head = parts.slice(0, cut).join(", ").replace(/[,:–—-]+$/, "").trim();
-      const tail = parts.slice(cut).join(", ").replace(/[.;]+$/, "").trim();
-      if (head.split(/\s+/).length >= 3 && !staffPrivateTopic(head)) {
-        if (included.has(staffPrivateId(tail))) kept.push(clause);
-        else {
-          held.push({ text: tail.replace(/^(?:and|but|or|also)\s+/i, ""), kind });
-          kept.push(/[.!?]$/.test(clause) ? `${head}.` : head);
-        }
+      const head = clause.slice(0, parts[cut].start).replace(/[\s,:;–—-]+$/, "").trim();
+      const tail = clause.slice(parts[cut].start);
+      if (head.split(/\s+/).length >= 3 && !staffPrivateTopic(head, text) && !(by === "ai" && aiPart(head))) {
+        if (hold(tail, kind, by)) kept.push(/[.!?]$/.test(clause) ? `${head}.` : head);
+        else kept.push(clause);
         continue;
       }
     }
-    const whole = clause.replace(/[.;]+$/, "").trim();
-    if (included.has(staffPrivateId(whole))) kept.push(clause);
-    else held.push({ text: whole, kind });
+    if (!hold(clause, kind, by)) kept.push(clause);
   }
   if (held.length === 0) return { kept: text, held, changed: false };
   // Sentences stay sentences; "; " parts stay parts.
@@ -476,12 +619,14 @@ export interface StaffScreenOptions {
   included?: ReadonlySet<string>;
   /** Clauses the AI review found (keep-out.ts), held the same way. */
   aiClauses?: ReadonlyArray<{ text: string; kind?: StaffPrivateKind }>;
+  /** Precision first — upstream routing, where no Include switch can reach a wrong hold (Scope.strict). */
+  strict?: boolean;
 }
 
 /** Walk a fact value (string, list or map). */
 function screenValue(value: unknown, key: string, opts: StaffScreenOptions, held: HeldPiece[]): { value: unknown; dropped: boolean; changed: boolean } {
   if (typeof value === "string") {
-    const r = splitStaffPrivate(value, opts.ctx, { key, included: opts.included, extraHeld: opts.aiClauses });
+    const r = splitStaffPrivate(value, opts.ctx, { key, included: opts.included, extraHeld: opts.aiClauses, strict: opts.strict });
     held.push(...r.held);
     return r.kept === null ? { value: null, dropped: true, changed: true } : { value: r.kept, dropped: false, changed: r.changed };
   }
@@ -519,22 +664,24 @@ export function screenStaffPrivatePairs(
 ): { safe: Array<[string, unknown]>; items: StaffPrivateItem[] } {
   const safe: Array<[string, unknown]> = [];
   const items: StaffPrivateItem[] = [];
-  const norm = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim().replace(/[.;]+$/, "");
-  const aiTexts = new Set((opts.aiClauses ?? []).map((c) => norm(c.text)));
   const push = (key: string, piece: HeldPiece, whole?: string) => {
     const bareKey = key.replace(/^[cl]:/, "");
     const text = piece.text;
     // Whom it is about: the held words, else the sentence they came from, else the fact's label.
     const host = whole ? clausesOf(whole).find((c) => c.includes(text.slice(0, 40))) : undefined;
-    const person =
-      staffPersonIn(text, opts.ctx) ??
-      (host ? staffPersonIn(host, opts.ctx) : null) ??
-      staffPersonInKey(bareKey, opts.ctx) ??
-      (whole ? lastStaffPersonBefore(whole, whole.indexOf(text.slice(0, 40)), opts.ctx) : null);
+    const at = whole ? whole.indexOf(text.slice(0, 40)) : -1;
+    const before = whole && at > 0 ? lastStaffPersonBefore(whole, at, opts.ctx) : null;
+    // Held words with no subject of their own ("has asked Tom about buying
+    // in") are about whoever the fact named before them, not the person asked.
+    const person = SUBJECTLESS.test(text.trim())
+      ? before ?? staffPersonInKey(bareKey, opts.ctx) ?? staffPersonIn(text, opts.ctx)
+      : staffPersonIn(text, opts.ctx) ??
+        (host ? staffPersonIn(host, opts.ctx) : null) ??
+        staffPersonInKey(bareKey, opts.ctx) ??
+        before;
     const id = staffPrivateId(text);
     if (items.some((i) => i.id === id && i.key === bareKey)) return;
-    const byAi = aiTexts.has(norm(text)) && !staffPrivateTopic(text);
-    items.push({ id, key: bareKey, kind: piece.kind, text, description: describeStaffPrivate(piece.kind, person), person, by: byAi ? "ai" : "rules" });
+    items.push({ id, key: bareKey, kind: piece.kind, text, description: describeStaffPrivate(piece.kind, person), person, by: piece.by ?? "rules" });
   };
   for (const [key, value] of pairs) {
     const held: HeldPiece[] = [];
@@ -543,7 +690,7 @@ export function screenStaffPrivatePairs(
     // reach the writer under that label — the whole fact is the item.
     if (held.length > 0 && PRIVATE_KEY.test(keyWords(key))) {
       const whole = textOf(value).replace(/\s+/g, " ").trim();
-      const piece = { text: whole, kind: held[0].kind };
+      const piece: HeldPiece = { text: whole, kind: held[0].kind, by: held.every((h) => h.by === "ai") ? "ai" : "rules" };
       if (opts.included?.has(staffPrivateId(whole))) {
         safe.push([key, value]);
         continue;
@@ -601,7 +748,10 @@ export const STAFF_PRIVATE_NOTE_REASON = "a private staff matter — for the bro
  * equity stake"). `kept` is null when nothing business-like is left.
  */
 export function routeStaffPrivate(key: string, value: string, ctx: StaffContext): { kept: string | null; notes: string[] } {
-  const { safe, items } = screenStaffPrivatePairs([[key, value]], { ctx });
+  // Strict: a wrong hold here moves a business fact out of the facts, where
+  // the broker's Include switch can't reach it (the CIM screen, which the
+  // broker can overrule, still reads everything that stays).
+  const { safe, items } = screenStaffPrivatePairs([[key, value]], { ctx, strict: true });
   if (items.length === 0) return { kept: value, notes: [] };
   const kept = safe.length > 0 && typeof safe[0][1] === "string" ? (safe[0][1] as string) : null;
   const notes = items.map((i) => {
@@ -609,4 +759,38 @@ export function routeStaffPrivate(key: string, value: string, ctx: StaffContext)
     return i.person && first && !i.text.includes(first) ? `${i.person} — ${i.text}` : i.text;
   });
   return { kept, notes };
+}
+
+/**
+ * The interview turn's guard (session-manager): each string fact the turn
+ * would record is routed — the business part stays the change, each
+ * staff-private part becomes a broker-private note. The deal's people come
+ * from the facts on file plus this turn's. `droppedKeys` = changes with
+ * nothing business-like left (not recorded at all). Pure.
+ */
+export function routeStaffPrivateChanges<C extends { fieldName: string; newValue: unknown }>(
+  changes: ReadonlyArray<C>,
+  existing: Record<string, unknown> | null | undefined,
+): { changes: C[]; notes: Array<{ note: string; reason: string }>; routedKeys: string[]; droppedKeys: string[] } {
+  const ctx = staffContextFrom({ ...(existing ?? {}), ...Object.fromEntries(changes.map((c) => [c.fieldName, c.newValue])) });
+  const out: C[] = [];
+  const notes: Array<{ note: string; reason: string }> = [];
+  const routedKeys: string[] = [];
+  const droppedKeys: string[] = [];
+  for (const c of changes) {
+    if (typeof c.newValue !== "string" || c.fieldName.startsWith("_")) {
+      out.push(c);
+      continue;
+    }
+    const r = routeStaffPrivate(c.fieldName, c.newValue, ctx);
+    if (r.notes.length === 0) {
+      out.push(c);
+      continue;
+    }
+    routedKeys.push(c.fieldName);
+    for (const note of r.notes) notes.push({ note, reason: STAFF_PRIVATE_NOTE_REASON });
+    if (r.kept) out.push({ ...c, newValue: r.kept });
+    else droppedKeys.push(c.fieldName);
+  }
+  return { changes: out, notes, routedKeys, droppedKeys };
 }

@@ -28,14 +28,16 @@ export function heldPrivateItems(info: Info, lastRun: ReadonlyArray<StaffPrivate
   // included item stays listed, switched on.
   const { items } = screenStaffPrivatePairs(pairs, { ctx: staffContextFrom(info) });
   const out: StaffPrivateItem[] = [...items];
-  // What only the AI review held, while the words are still in that fact.
+  // What the last generation held on top (the AI review's finds, or words
+  // it cut differently), while those words are still in that fact — every
+  // passage a generation held is shown, with the id its switch works on.
   const factText = (key: string) => {
     const pair = pairs.find(([k]) => k === key);
-    return pair ? JSON.stringify(pair[1]).toLowerCase() : "";
+    return pair ? JSON.stringify(pair[1]).toLowerCase().replace(/\s+/g, " ") : "";
   };
   for (const item of lastRun) {
-    if (item.by !== "ai" || out.some((o) => o.id === item.id)) continue;
-    if (factText(item.key).includes(item.text.toLowerCase().slice(0, 60))) out.push(item);
+    if (out.some((o) => o.id === item.id)) continue;
+    if (factText(item.key).includes(item.text.toLowerCase().replace(/\s+/g, " ").slice(0, 60))) out.push(item);
   }
   return out.map((i) => ({ ...i, included: included.has(i.id), label: factDisplayLabel(info, i.key) }));
 }
@@ -55,4 +57,99 @@ export async function setHeldPrivateIncluded(dealId: string, id: string, include
     if (next.length > 0) info[STAFF_PRIVATE_INCLUDED_KEY] = next;
     else delete info[STAFF_PRIVATE_INCLUDED_KEY];
   });
+}
+
+/** A written CIM section, as far as the scan needs it. */
+export interface HeldScanSection {
+  id: string;
+  sectionTitle: string;
+  layoutData?: unknown;
+  aiDraftContent?: string | null;
+  brokerEditedContent?: string | null;
+  isVisible?: boolean | null;
+}
+
+export interface SectionShowingPrivate {
+  id: string;
+  title: string;
+  /** What it still states, in the broker's words ("Daniel Okafor's interest in an ownership stake"). */
+  descriptions: string[];
+}
+
+/**
+ * The texts of a section's layout: an object's own strings read as one
+ * passage ({ name: "Daniel Okafor", note: "Asked about equity…" } — the note
+ * is about the name), nested values on their own.
+ */
+function stringsOf(v: unknown, out: string[]): string[] {
+  if (typeof v === "string") {
+    if (v.trim()) out.push(v);
+  } else if (Array.isArray(v)) for (const x of v) stringsOf(x, out);
+  else if (v && typeof v === "object") {
+    const own: string[] = [];
+    for (const x of Object.values(v as Record<string, unknown>)) {
+      if (typeof x === "string") {
+        if (x.trim()) own.push(x.trim().replace(/[.;,:]+$/, ""));
+      } else stringsOf(x, out);
+    }
+    if (own.length > 0) out.push(own.join(". ") + ".");
+  }
+  return out;
+}
+
+/**
+ * Sections of the CIM as written that still state a staff-private matter
+ * the broker hasn't included — a CIM written before the screen (the live
+ * Beacon CIM printed the pharmacist's equity ask in Key Personnel and the
+ * Ideal Buyer Profile), or words typed into a section. The broker is told
+ * to regenerate or edit them; nothing is changed here. Pure.
+ */
+export function sectionsShowingStaffPrivate(
+  sections: ReadonlyArray<HeldScanSection>,
+  info: Info,
+  items: ReadonlyArray<Pick<StaffPrivateListItem, "kind" | "person" | "included"> & { text?: string }>,
+): SectionShowingPrivate[] {
+  const ctx = staffContextFrom(info);
+  const firstName = (p: string | null | undefined) => (p ? p.split(/\s+/)[0].toLowerCase() : null);
+  const words = (t: string) => new Set(t.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []);
+  // A matter the broker included is meant to be there: every held item of
+  // that kind about that person is switched on, or the passage is (mostly)
+  // the words of one the broker included.
+  const meant = (kind: string, person: string | null, text: string) => {
+    const same = items.filter((i) => i.kind === kind && (!person || !i.person || firstName(i.person) === firstName(person)));
+    if (same.length > 0 && same.every((i) => i.included)) return true;
+    const w = words(text);
+    return same.some((i) => {
+      if (!i.included) return false;
+      const iw = words(i.text ?? "");
+      if (iw.size === 0) return false;
+      let hit = 0;
+      iw.forEach((x) => { if (w.has(x)) hit++; });
+      return hit / iw.size >= 0.6;
+    });
+  };
+  const out: SectionShowingPrivate[] = [];
+  for (const s of sections) {
+    if (s.isVisible === false) continue;
+    const texts = stringsOf(s.layoutData ?? null, []);
+    const prose = s.brokerEditedContent?.trim() || s.aiDraftContent?.trim();
+    if (prose) texts.push(prose);
+    const descriptions = new Set<string>();
+    for (const t of texts) {
+      // A section title is not a fact key: a staff section reads as a staff fact, anything else as neutral text
+      // (a "Transition" section is not the owner's own topic the way the transitionPlan fact is).
+      const key = /personnel|team|employee|staff|management|people|succession|retention|org(?:ani[sz]ation)?\b/i.test(s.sectionTitle) ? "keyPersonnel" : "cimSection";
+      const r = screenStaffPrivatePairs([[key, t]], { ctx });
+      for (const item of r.items) if (!meant(item.kind, item.person ?? null, item.text)) descriptions.add(item.description);
+    }
+    if (descriptions.size > 0) out.push({ id: s.id, title: s.sectionTitle, descriptions: Array.from(descriptions) });
+  }
+  return out;
+}
+
+/** The deal's held items and the written sections that still state one (the CIM tab and the builder). */
+export function heldPrivateStateForDeal(deal: Deal, sections: ReadonlyArray<HeldScanSection>): { items: StaffPrivateListItem[]; showing: SectionShowingPrivate[] } {
+  const info = (brokerFactsView(deal).extractedInfo as Info | null) || {};
+  const items = heldPrivateForDeal(deal);
+  return { items, showing: sections.length > 0 ? sectionsShowingStaffPrivate(sections, info, items) : [] };
 }

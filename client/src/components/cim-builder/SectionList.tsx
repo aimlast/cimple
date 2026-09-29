@@ -240,6 +240,15 @@ function Row({
                 <RefreshCw className="h-2.5 w-2.5" /> Facts changed
               </span>
             )}
+            {(s.privateStaff?.length ?? 0) > 0 && !running && (
+              <span
+                className="inline-flex items-center gap-0.5 text-amber-500 shrink-0"
+                title={`Still mentions a private staff matter that is now held back from the CIM: ${s.privateStaff!.join("; ")}. Regenerate or edit this section.`}
+                data-testid={`chip-private-staff-${s.id}`}
+              >
+                <Lock className="h-2.5 w-2.5" /> Private staff matter
+              </span>
+            )}
             {s.figureWarnings?.length > 0 && !running && (
               <span
                 className="inline-flex items-center gap-0.5 text-amber-500 shrink-0"

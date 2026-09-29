@@ -10,7 +10,7 @@
  */
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Lock } from "lucide-react";
+import { AlertTriangle, Lock } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -19,16 +19,22 @@ import { builderRequest, errorText } from "./api";
 
 export const heldPrivateKey = (dealId: string) => ["/api/deals", dealId, "cim-held-private"] as const;
 
+/** GET/POST …/cim-held-private: the held items, and the written sections that still state one. */
+interface HeldPrivateState {
+  items: StaffPrivateListItem[];
+  showing?: Array<{ id: string; title: string; descriptions: string[] }>;
+}
+
 export function HeldPrivateCard({ dealId, className }: { dealId: string; className?: string }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data } = useQuery({
     queryKey: heldPrivateKey(dealId),
-    queryFn: () => builderRequest<{ items: StaffPrivateListItem[] }>("GET", `/api/deals/${dealId}/cim-held-private`),
+    queryFn: () => builderRequest<HeldPrivateState>("GET", `/api/deals/${dealId}/cim-held-private`),
   });
   const toggle = useMutation({
     mutationFn: ({ id, include }: { id: string; include: boolean }) =>
-      builderRequest<{ items: StaffPrivateListItem[] }>("POST", `/api/deals/${dealId}/cim-held-private/${id}`, { include }),
+      builderRequest<HeldPrivateState>("POST", `/api/deals/${dealId}/cim-held-private/${id}`, { include }),
     onSuccess: (r, v) => {
       qc.setQueryData(heldPrivateKey(dealId), r);
       qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-builder"] });
@@ -47,7 +53,8 @@ export function HeldPrivateCard({ dealId, className }: { dealId: string; classNa
     return Array.from(map.entries());
   }, [data?.items]);
 
-  if (!data || data.items.length === 0) return null;
+  const showing = data?.showing ?? [];
+  if (!data || (data.items.length === 0 && showing.length === 0)) return null;
   const heldCount = data.items.filter((i) => !i.included).length;
 
   return (
@@ -58,11 +65,20 @@ export function HeldPrivateCard({ dealId, className }: { dealId: string; classNa
           <h3 className="text-sm font-semibold">Held back from the CIM</h3>
           <p className="text-xs text-muted-foreground leading-relaxed">
             Private matters about the staff stay out of every version — Normal, Blind and Due diligence — unless you include them.
-            {heldCount > 0 ? ` ${heldCount} passage${heldCount === 1 ? " is" : "s are"} held back.` : " You've included everything listed."}
+            {heldCount > 0 ? ` ${heldCount} passage${heldCount === 1 ? " is" : "s are"} held back.` : data.items.length > 0 ? " You've included everything listed." : ""}
             {" "}An included passage goes in the next time you generate the CIM.
           </p>
         </div>
       </div>
+      {showing.length > 0 && (
+        <div className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs" data-testid="held-private-showing">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-500" />
+          <p className="min-w-0 break-words leading-relaxed">
+            <span className="font-medium">The CIM as written still mentions {showing.length === 1 ? "one of these" : "some of these"}</span>
+            {" "}— in {showing.map((s) => `“${s.title}”`).join(", ")}. Regenerate {showing.length === 1 ? "that section" : "those sections"} (or the CIM) to take it out.
+          </p>
+        </div>
+      )}
       <ul className="space-y-3">
         {groups.map(([description, items]) => (
           <li key={description} className="rounded-md border border-border/70">

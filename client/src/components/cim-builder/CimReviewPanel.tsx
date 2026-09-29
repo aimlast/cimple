@@ -11,7 +11,7 @@
  * a placeholder" — and a broker who wasn't watching saw nothing.
  */
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronUp, EyeOff, History, Info, ShieldAlert, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronUp, EyeOff, History, Info, Lock, ShieldAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { classifyGenerationWarnings, heldReplacedText, type CimWarningKind } from "@shared/cim-generation-warnings";
@@ -54,12 +54,13 @@ export function CimReviewPanel({ dealId, review, sections, onOpenSection, compac
   const [open, setOpen] = useState(!compact);
   const byTitle = useMemo(() => new Map(sections.map((s) => [s.sectionTitle.trim().toLowerCase(), s])), [sections]);
   const stale = sections.filter((s) => (s.factsChanged?.length ?? 0) > 0);
+  const privateStaff = sections.filter((s) => (s.privateStaff?.length ?? 0) > 0);
 
   if (!review) return null;
   const hold = review.heldFromBuyers;
   const facts = review.facts;
   const showNotes = warnings.length > 0 && !dismissed;
-  if (!hold && !showNotes && !facts && review.placeholders === 0) return null;
+  if (!hold && !showNotes && !facts && review.placeholders === 0 && privateStaff.length === 0) return null;
 
   const dismiss = () => {
     setDismissed(true);
@@ -70,6 +71,7 @@ export function CimReviewPanel({ dealId, review, sections, onOpenSection, compac
     hold ? "held from buyers until you publish" : null,
     review.placeholders > 0 ? `${review.placeholders} section${review.placeholders === 1 ? "" : "s"} couldn't be written` : null,
     showNotes ? `${warnings.length} note${warnings.length === 1 ? "" : "s"} from the last generation` : null,
+    privateStaff.length > 0 ? `${privateStaff.length} section${privateStaff.length === 1 ? "" : "s"} still mention${privateStaff.length === 1 ? "s" : ""} a private staff matter` : null,
     facts ? `facts changed since it was written${facts.sections ? ` (${facts.sections} section${facts.sections === 1 ? "" : "s"})` : ""}` : null,
   ].filter(Boolean) as string[];
 
@@ -108,6 +110,25 @@ export function CimReviewPanel({ dealId, review, sections, onOpenSection, compac
                 <div className="flex flex-wrap gap-1.5">
                   {sections.filter((s) => s.placeholder).map((s) => (
                     <SectionChip key={s.id} title={s.sectionTitle} onClick={onOpenSection ? () => onOpenSection(s.id) : undefined} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {privateStaff.length > 0 && (
+            <div className="flex gap-2.5" data-testid="cim-review-private-staff">
+              <Lock className="h-4 w-4 shrink-0 mt-0.5 text-amber-500" />
+              <div className="min-w-0 space-y-1">
+                <p className="font-medium">
+                  {privateStaff.length === 1 ? "A section still mentions" : `${privateStaff.length} sections still mention`} a private staff matter
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  It is now held back from every version of the CIM, but the CIM as written still states it. Regenerate or edit these sections before buyers see them:
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {privateStaff.map((s) => (
+                    <SectionChip key={s.id} title={s.sectionTitle} hint={s.privateStaff!.join("; ")} onClick={onOpenSection ? () => onOpenSection(s.id) : undefined} />
                   ))}
                 </div>
               </div>
@@ -187,15 +208,15 @@ export function CimReviewPanel({ dealId, review, sections, onOpenSection, compac
 function SectionChip({ title, hint, onClick }: { title: string; hint?: string; onClick?: () => void }) {
   const body = (
     <>
-      <span className="truncate max-w-[220px]">{title}</span>
-      {hint && <span className="text-muted-foreground truncate max-w-[160px]">· {hint}</span>}
+      <span className="truncate min-w-0 max-w-[220px]">{title}</span>
+      {hint && <span className="text-muted-foreground truncate min-w-0 max-w-[160px]">· {hint}</span>}
     </>
   );
   return onClick ? (
-    <button type="button" onClick={onClick} className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-[11px] hover:border-teal/50 hover:text-teal">
+    <button type="button" onClick={onClick} className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-[11px] hover:border-teal/50 hover:text-teal">
       {body}
     </button>
   ) : (
-    <span className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-[11px]">{body}</span>
+    <span className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-md border border-border bg-background px-2 py-0.5 text-[11px]">{body}</span>
   );
 }
