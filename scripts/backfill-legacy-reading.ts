@@ -6,7 +6,8 @@
  * into page-level reading on synthetic legacy visits, so a deal's older
  * buyers still show in the Engagement tab ("Page-level only — recorded
  * before detailed reading tracking"). Offline, no AI, idempotent (visit and
- * row ids are derived from the events; re-runs change nothing).
+ * row ids are derived from the events; a visit already stored is never
+ * written again, so re-runs change nothing — even after a regeneration).
  *
  * What is stored (server/engagement/legacy-store.ts): every exit (a visit's
  * time is the buyer's), each page row under its OLD section key with the
@@ -50,7 +51,10 @@ async function main() {
     unplacedKeys: unplaced.map((k) => `${k.key} (${k.exits})`),
     keys: plan.keys.map((k) => `${k.key} (${k.exits}) → ${k.placedOn ? k.placedOn.title ?? k.placedOn.id : "—"}`),
   }, null, 2));
-  if (apply) console.log(`stored ${plan.visits.length} legacy visits (rows already there were kept)`);
+  if (apply) {
+    const kept = "alreadyStored" in plan ? Number(plan.alreadyStored) : 0;
+    console.log(`stored ${plan.visits.length - kept} legacy visits (${kept} already stored were kept as they are)`);
+  }
 }
 
 if (process.argv[1] && /backfill-legacy-reading/.test(process.argv[1])) {

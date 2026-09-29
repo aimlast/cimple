@@ -15,8 +15,13 @@
  * draws legacy reading on the CIM as it is served now (facts.ts, DEP-2).
  *
  * Idempotent: visit ids come from the buyer link and the session's first
- * exit (stableUuid), rows from (visit, page), all ON CONFLICT DO NOTHING.
- * No AI.
+ * exit (stableUuid), and a visit already stored is left whole — its page rows
+ * are never planned again (unstoredRows). A blind view's s_<id> key is stored
+ * under the key of the section it resolves to AT THAT TIME, so a later store
+ * (the next regeneration, or a backfill run) would otherwise name the same
+ * reading under the renamed section's key and ON CONFLICT (visit, page)
+ * wouldn't catch it — the page's time doubled (release review, DEP-1/DEP-2
+ * follow-up). Rows are still inserted ON CONFLICT DO NOTHING. No AI.
  */
 import { sql } from "drizzle-orm";
 import { cimModeForAccessLevel } from "@shared/cim-layouts";
@@ -115,6 +120,18 @@ export function planLegacyRows(
   return { exits: known.length, sessions: sessions.length, buyers: new Set(sessions.map((s) => s.accessId)).size, visits, rollups, keys };
 }
 
+/**
+ * The part of a plan not stored yet: visits whose id is already stored are
+ * dropped with every page row of theirs (a stored visit is kept exactly as
+ * it was stored). Pure.
+ */
+export function unstoredRows(plan: LegacyStorePlan, storedVisitIds: ReadonlySet<string>): { visits: LegacyVisitRow[]; rollups: LegacyRollupRow[] } {
+  return {
+    visits: plan.visits.filter((v) => !storedVisitIds.has(v.id)),
+    rollups: plan.rollups.filter((r) => !storedVisitIds.has(r.visitId)),
+  };
+}
+
 async function db() {
   return (await import("../db")).db;
 }
@@ -143,18 +160,26 @@ export async function planLegacyReading(dealId: string): Promise<LegacyStorePlan
 }
 
 /**
- * Stores the deal's old-tracker reading (idempotent — rows already there are
- * kept as they are). Resolves to what was planned; nothing is written when
- * there is no old reading. One transaction.
+ * Stores the deal's old-tracker reading (idempotent — visits already stored
+ * are kept as they are, page rows and all). Resolves to what was planned,
+ * with how many visits were already stored; nothing is written when there is
+ * no old reading. One transaction, one store per deal at a time.
  */
-export async function storeLegacyReading(dealId: string): Promise<LegacyStorePlan> {
+export async function storeLegacyReading(dealId: string): Promise<LegacyStorePlan & { alreadyStored: number }> {
   const plan = await planLegacyReading(dealId);
-  if (plan.visits.length === 0) return plan;
+  if (plan.visits.length === 0) return { ...plan, alreadyStored: 0 };
   const d = await db();
   const ts = (x: Date) => sql`${x.toISOString()}::timestamp`;
+  let alreadyStored = 0;
   await d.transaction(async (tx) => {
-    for (let i = 0; i < plan.visits.length; i += 200) {
-      const chunk = plan.visits.slice(i, i + 200);
+    // A regeneration and a backfill run at once must not both see "not stored".
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`legacy-store:${dealId}`}))`);
+    const have = (await tx.execute(sql`SELECT id FROM buyer_visits WHERE deal_id = ${dealId} AND legacy`)) as unknown as Array<{ id: unknown }>;
+    const storedIds = new Set(Array.from(have ?? [], (r) => String(r.id)));
+    const todo = unstoredRows(plan, storedIds);
+    alreadyStored = plan.visits.length - todo.visits.length;
+    for (let i = 0; i < todo.visits.length; i += 200) {
+      const chunk = todo.visits.slice(i, i + 200);
       await tx.execute(sql`
         INSERT INTO buyer_visits (id, deal_id, buyer_access_id, rendition_id, mode, access_level, device_class, started_at, last_seen_at,
           wall_ms, active_ms, idle_ms, hidden_ms, away_ms, outside_ms, max_page_index, path, self_view, clamped, legacy)
@@ -162,13 +187,13 @@ export async function storeLegacyReading(dealId: string): Promise<LegacyStorePla
           ${v.wallMs}, ${v.activeMs}, ${Math.max(0, v.wallMs - v.activeMs)}, 0, 0, 0, NULL, ${JSON.stringify(v.path)}::jsonb, false, false, true)`), sql`, `)}
         ON CONFLICT (id) DO NOTHING`);
     }
-    for (let i = 0; i < plan.rollups.length; i += 400) {
-      const chunk = plan.rollups.slice(i, i + 400);
+    for (let i = 0; i < todo.rollups.length; i += 400) {
+      const chunk = todo.rollups.slice(i, i + 400);
       await tx.execute(sql`
         INSERT INTO reading_rollups (visit_id, page_id, block_key, deal_id, buyer_access_id, rendition_id, lineage_id, attention_ms, skim_ms, visible_ms, pointer_ms, first_at, last_at)
         VALUES ${sql.join(chunk.map((r) => sql`(${r.visitId}, ${r.pageId}, '', ${dealId}, ${r.accessId}, NULL, ${r.lineageId}, ${r.attentionMs}, 0, ${r.attentionMs}, 0, ${ts(r.firstAt)}, ${ts(r.lastAt)})`), sql`, `)}
         ON CONFLICT (visit_id, page_id, block_key) DO NOTHING`);
     }
   });
-  return plan;
+  return { ...plan, alreadyStored };
 }

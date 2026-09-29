@@ -107,16 +107,64 @@ const CONDUCT_RE = new RegExp(
 /** Conduct wording that is also how a regulator's finding reads (a warning, a reprimand, a suspension). */
 const WARNING_CONDUCT_RE = /^(?:(?:written|verbal|final|formal) warning|reprimand\w*|(?:was |been |got |is )suspended|disciplin\w*)$/i;
 /**
- * Issued by an authority — a regulator, auditor, inspector, ministry,
- * college or agency ("given a written warning by the MTO auditor",
- * "a warning letter from the Ministry of Labour", "reprimanded during the
- * CVOR audit"): the company's compliance history, which a buyer's due
- * diligence needs — never a staff member's private conduct matter.
+ * Issued by an authority — a regulator, a ministry, a named external audit or
+ * inspection, a professional college ("given a written warning by the MTO
+ * auditor", "a warning letter from the Ministry of Labour", "reprimanded
+ * during the CVOR audit", "reprimanded by the College of Pharmacists"): the
+ * company's compliance history, which a buyer's due diligence needs — never
+ * a staff member's private conduct matter.
+ *
+ * Only a real authority counts. An audit, auditor, inspection or review
+ * counts only when the words before it name an authority ("the 2023 CVOR
+ * audit", "the ministry's inspection"); an internal one never does ("after
+ * the internal audit", "after the audit"). "College", "Commission" and
+ * "Agency" count only as a body's name ("the College of Pharmacists", "the
+ * Commission") — never "at college" or "the commission review" (pay).
+ * "After"/"following"/"at" an authority's audit only says when: it clears a
+ * warning only when no person is its subject ("the company was reprimanded
+ * after the MTO audit") — the business may have disciplined its own people
+ * after it ("Dave got a written warning after the CVOR audit").
  */
-const AUTHORITY_RE = new RegExp(
-  String.raw`\b(?:by|from|during|in|after|following|at|under)\s+(?:the\s+|an?\s+|our\s+|their\s+|its\s+)?(?:[\w&'-]+\s+){0,3}?(?:ministry|ministries|regulators?|regulatory|auditors?|audits?|inspectors?|inspections?|college of \w+|(?:the\s+)?college|health (?:unit|department|authority|inspector)|fire (?:marshal|department|inspector)|labou?r (?:board|ministry|inspector)|tribunal|government|municipality|licensing (?:body|board|authority)|board of health|authorit(?:y|ies)|agency|commission|mto|cra|irs|wsib|worksafe\w*|wcb|osha|ohs|dot|fmcsa|tssa|esa|cvor|nsc|ocp|cfia|fda|epa|agco|mol|transport canada)\b`,
-  "i",
-);
+const AUTHORITY_ACRONYM = /\b(?:MTO|CRA|IRS|WSIB|WCB|OSHA|OHS|DOT|FMCSA|TSSA|ESA|CVOR|NSC|OCP|CFIA|FDA|EPA|AGCO|MOL|RCDSO|CPSO|HMRC|DEA|USDA|FAA|FCC|SEC|FINRA|OSC|CRTC|NHTSA|WorkSafeBC|WorkSafe)\b/;
+/** An issuing body by its common noun. */
+const AUTHORITY_BODY = /\b(?:ministry|ministries|regulators?|regulatory (?:body|bodies|agency|authority|college)|inspectors?|tribunal|government|municipality|licensing (?:body|board|authority)|board of health|health (?:unit|department|authority|inspector)|fire (?:marshal|department|inspector)|labou?r (?:board|ministry|inspector)|transport canada|worksafe\w*|authorit(?:y|ies)|college of \w+|(?:securities|human rights|labou?r relations|transport|utilities|gaming|liquor|energy|workers'? compensation) commission|(?:government|regulatory|federal|provincial|state|revenue|environmental|food inspection) agency)\b/i;
+/** A body by its proper name ("the College", "the Commission", "the Agency") — capitalised. */
+const AUTHORITY_PROPER = /\b(?:College|Commission|Agency|Ministry|Department of [A-Z]\w+|Board of [A-Z]\w+)\b/;
+/** Words that make an audit, inspection or review an authority's. */
+const AUTHORITY_QUALIFIER = /\b(?:ministry|ministry's|regulatory|regulator's|government|provincial|federal|state|municipal|city|county|health|fire|labou?r|external)\b/i;
+/** The business's own process — never an authority's. */
+const INTERNAL_PROCESS = /\b(?:internal|in-house|own|company|annual|performance|commission|pay|salary|payroll)\b/i;
+const AUTHORITY_PHRASE = /\b(by|from|during|in|under|after|following|at)\s+((?:the|an?|our|their|its)\s+)?((?:[\w&'-]+\s+){0,4}?)(ministry|ministries|regulators?|regulatory|inspectors?|tribunal|government|municipality|authorit(?:y|ies)|board|college|commission|agency|department|audits?|auditors?|inspections?|reviews?|investigations?|[A-Z]{2,6}|WorkSafe\w*)\b((?:\s+of\s+[A-Z][\w-]*)?)/gi;
+const AUDIT_HEAD = /^(?:audits?|auditors?|inspections?|reviews?|investigations?)$/i;
+/** Prepositions that name the issuer (or its process): "by", "from", "during", "in", "under". */
+const ISSUER_PREP = /^(?:by|from|during|in|under)$/i;
+
+/** The phrase (qualifying words, head, "of X") names a real authority. */
+function authorityPhrase(qualifiers: string, head: string, ofPart: string): boolean {
+  if (INTERNAL_PROCESS.test(qualifiers)) return false;
+  const named = (x: string) => AUTHORITY_ACRONYM.test(x) || AUTHORITY_BODY.test(x) || AUTHORITY_PROPER.test(x);
+  if (AUDIT_HEAD.test(head)) return named(qualifiers) || AUTHORITY_QUALIFIER.test(qualifiers);
+  // A bare acronym head must be a known one ("the MTO"), not any capitals.
+  if (/^[A-Z]{2,6}$/.test(head) && !AUTHORITY_ACRONYM.test(head)) return named(qualifiers);
+  return named(`${qualifiers}${head}${ofPart}`);
+}
+
+/** A person (a name, he/she, a staff word) is in the clause — not only the company. */
+function personInClause(t: string): boolean {
+  const s = t.replace(/\b(?:inspectors?|auditors?)\b/gi, "");
+  return personNamesIn(s).length > 0 || /\b(?:he|she|him|her|his)\b/i.test(s) || STAFF_STRONG.test(s) || STAFF_ROLE.test(s);
+}
+
+/** The warning, reprimand or suspension in this clause was issued by an authority. */
+function issuedByAuthority(t: string): boolean {
+  for (const m of Array.from(t.matchAll(AUTHORITY_PHRASE))) {
+    if (!authorityPhrase(m[3] ?? "", m[4], m[5] ?? "")) continue;
+    if (ISSUER_PREP.test(m[1]) || !personInClause(t)) return true;
+  }
+  // The authority as the subject: "the Ministry of Labour inspector issued a written warning".
+  const subj = /^(.{0,80}?)\b(?:issued|gave|handed|imposed|sent|served)\b/i.exec(t);
+  return !!subj && !INTERNAL_PROCESS.test(subj[1]) && (AUTHORITY_ACRONYM.test(subj[1]) || AUTHORITY_BODY.test(subj[1]) || AUTHORITY_PROPER.test(subj[1]));
+}
 
 /**
  * The clause states a staff member's conduct matter: a CONDUCT_RE match that
@@ -125,7 +173,7 @@ const AUTHORITY_RE = new RegExp(
  */
 function conductMatter(t: string): boolean {
   const g = new RegExp(CONDUCT_RE.source, "gi");
-  const byAuthority = AUTHORITY_RE.test(t);
+  const byAuthority = issuedByAuthority(t);
   for (const m of Array.from(t.matchAll(g))) {
     if (negatedBefore(t, m.index ?? 0)) continue;
     if (byAuthority && WARNING_CONDUCT_RE.test(m[0].trim())) continue;
@@ -290,18 +338,22 @@ export function staffContextFrom(info: Record<string, unknown> | null | undefine
       }
     }
   }
-  const staffNames = new Set<string>();
-  for (const [key, value] of entries) {
-    if (key.startsWith("_") || !STAFF_KEY.test(key)) continue;
-    for (const name of personNamesIn(textOf(value))) if (!ownerNames.has(fold(name.split(/\s+/)[0]))) staffNames.add(name);
-  }
-  // "Daniel" and "Daniel Okafor" are one person: keep the fuller name first.
-  const names = Array.from(staffNames).sort((a, b) => b.length - a.length);
   const orgNames = new Set<string>();
   for (const [key, value] of entries) {
     if (!ORG_KEY.test(key)) continue;
     for (const w of textOf(value).split(/[^A-Za-z&'-]+/)) if (/^[A-Z]/.test(w) && w.length >= 3 && !ORG_SUFFIX.test(w)) orgNames.add(fold(w));
   }
+  // A customer's or supplier's person a staff fact mentions ("Dave handles
+  // Alderbrook; their buyer, Karen Holt …") is not staff.
+  const partial: StaffContext = { ownerNames: Array.from(ownerNames), ownerGender, staffNames: [], orgNames: Array.from(orgNames) };
+  const staffNames = new Set<string>();
+  for (const [key, value] of entries) {
+    if (key.startsWith("_") || !STAFF_KEY.test(key)) continue;
+    const t = textOf(value);
+    for (const name of personNamesIn(t)) if (!ownerNames.has(fold(name.split(/\s+/)[0])) && !outsidersPerson(t, name, partial)) staffNames.add(name);
+  }
+  // "Daniel" and "Daniel Okafor" are one person: keep the fuller name first.
+  const names = Array.from(staffNames).sort((a, b) => b.length - a.length);
   return { ownerNames: Array.from(ownerNames), ownerGender, staffNames: names, orgNames: Array.from(orgNames) };
 }
 
@@ -371,6 +423,8 @@ interface Scope {
   strict?: boolean;
   /** The staff member the clause before this one (same fact) was about. */
   prevPerson?: string | null;
+  /** First names the fact itself marks as the business's own people (oursInText). */
+  ours?: ReadonlySet<string>;
 }
 
 /** The owner's own topics — a first name there is the owner's until the facts say it is staff. */
@@ -386,36 +440,103 @@ const SUBJECTLESS = /^(?:(?:and|but|also|then|since|recently|once|later|last (?:
 const OUTSIDER = /\b(?:buyer|investor|lender|landlord|customer|client|competitor|acquirer|purchaser|supplier|vendor|bank)s?\b/i;
 
 /** The outside party a person works for, written just before their name ("their buyer, ", "Alderbrook's purchasing manager "). */
-const OUTSIDER_OWNER_BEFORE = /(?:\b(?:their|(?:the\s+)?(?:customer|client|supplier|landlord|lender|bank|competitor|distributor|franchisor|payer)(?:'s|s'|s)?)|\b([A-Z][\w&-]+)(?:'s|s'))\s+(?:[a-z][\w-]*\s+){0,3}[a-z][\w-]*,?\s*$/;
+const OUTSIDER_OWNER_BEFORE = /(?:\b(their)|\b(?:the\s+)?(?:customer|client|supplier|landlord|lender|bank|competitor|distributor|franchisor|payer)(?:'s|s'|s)?|\b([A-Z][\w&-]+)(?:'s|s'))\s+((?:[a-z][\w-]*\s+){0,3}[a-z][\w-]*),?\s*$/;
+/** Roles that sit at another organisation ("their buyer", "their rep") — "their pharmacist" is the business's own. */
+const OUTSIDE_ROLE = /\b(?:buyer|buyers|purchasing|procurement|purchaser|category|rep|reps|representative|contact|agent|owner|owners|ceo|cfo|coo|president|vice president|vp|banker|loan officer|account officer|landlord|property manager|broker|lawyer|counsel|accountant|auditor)\b/i;
 
 /**
  * The name is someone at another organisation — a customer's, supplier's or
  * lender's person, not the business's staff: "their buyer, Karen Holt",
  * "Alderbrook's purchasing manager Karen" (never "Linda's right hand, Raj":
- * a person's possessive is not a company's).
+ * a person's possessive is not a company's). "Their" alone is ambiguous — a
+ * fact may speak of the business in the third person ("Working alongside
+ * Helen is their pharmacist Daniel Okafor") — so it marks an outsider only
+ * with an outside role, and a person the facts list as staff never is one.
  */
 function outsidersPerson(text: string, name: string, ctx: StaffContext): boolean {
   const at = text.indexOf(name);
   if (at <= 0) return false;
+  if (knownStaff(name, ctx)) return false;
   const m = OUTSIDER_OWNER_BEFORE.exec(text.slice(Math.max(0, at - 80), at).replace(/[’‘]/g, "'"));
   if (!m) return false;
-  if (!m[1]) return true;
-  const owner = fold(m[1]);
+  // A role noun phrase, not a sentence ("the top clients are held by Tom").
+  if (/\b(?:are|is|was|were|be|been|by|with|to|for|of|and|or|has|have|had|who|that|which|than)\b/i.test(m[3])) return false;
+  if (m[1]) return OUTSIDE_ROLE.test(m[3]) || !(STAFF_ROLE.test(m[3]) || STAFF_STRONG.test(m[3]));
+  if (!m[2]) return true;
+  const owner = fold(m[2]);
   return !GIVEN_NAMES.has(owner) && !ctx.ownerNames.includes(owner) && !(ctx.orgNames ?? []).includes(owner);
 }
 
 /**
- * The departure is from ANOTHER organisation ("she may leave Alderbrook next
- * year" — a customer's buyer moving on): a customer or supplier risk, not a
- * staff member's private matter. Leaving the business itself, "us" or "the
- * company" is a staff departure.
+ * First names the text marks as the business's own people even when no staff
+ * fact lists them — "Mike Chen, who manages the account for us", "held by
+ * Tom Reyes", "our account manager Mike", "Mike Chen, our account manager",
+ * "Dave handles the Alderbrook account" — so a customer or owner-topic fact
+ * about them is still screened (release review F2-STAFF-5). An outsider's
+ * person ("their buyer, Karen Holt") is never one.
  */
-function leavesAnotherOrg(clause: string, ctx: StaffContext): boolean {
-  const m = /\b(?:leav(?:e|es|ing)|quit(?:s|ting)?|resign(?:s|ed|ing)? from|depart(?:s|ing)? from|move on from)\s+([A-Z][\w&-]+)/.exec(clause);
+function oursInText(text: string, ctx: StaffContext): Set<string> {
+  const out = new Set<string>();
+  const t = text.replace(/[’‘]/g, "'");
+  for (const name of personNamesIn(t)) {
+    if (isOwnerName(name, ctx) || outsidersPerson(t, name, ctx)) continue;
+    const n = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const marked =
+      new RegExp(String.raw`\b${n}\b,?\s+who\b[^.;]{0,60}?\b(?:for us|with us|works here|worked here)\b`, "i").test(t) ||
+      new RegExp(String.raw`\b(?:held|managed|handled|run|serviced|owned|covered|looked after|led|overseen)\s+by\s+(?:our\s+(?:[a-z-]+\s+){0,3})?${n}\b`, "i").test(t) ||
+      // "Mike Chen, our account manager" — not "Karen, our main contact at Alderbrook".
+      Array.from(t.matchAll(new RegExp(String.raw`\b${n}\b,?\s+(?:is\s+)?(?:our|one of our)\s+((?:[\w-]+\s*){1,4})`, "gi"))).some((m) => !OUTSIDE_ROLE.test(m[1]) && !/\b(?:at|with|from|customers?|clients?|suppliers?|contacts?|friends?|neighbou?rs?|landlord|lawyer|accountant)\b/i.test(m[1])) ||
+      new RegExp(String.raw`\b${n}\b\s+(?:handles|manages|runs|holds|owns|services|looks after|covers)\s+(?:the|this|that|our|all|both|these|those|its)?\s*(?:[\w&'-]+\s+){0,2}(?:account|accounts|relationship|relationships)\b(?!\s+(?:at|for|with)\s+[A-Z])`, "i").test(t) ||
+      // "our account manager Mike" — not "our contact at Alderbrook, Karen".
+      Array.from(t.matchAll(new RegExp(String.raw`\b[Oo]ur\s+((?:[a-z-]+\s+){1,3})${n}\b`, "g"))).some((m) => !OUTSIDE_ROLE.test(m[1]) && !/\b(?:at|with|from|customer|client|supplier)\b/.test(m[1]));
+    if (marked) out.add(fold(name.split(/[\s-]+/)[0]));
+  }
+  return out;
+}
+
+/** Words that end a company's name ("Alderbrook Foods", "Volvo Trucks", "Maple Leaf Inc."). */
+const ORG_NAME_WORD = String.raw`(?:Foods?|Inc|Ltd|LLC|LLP|Corp|Corporation|Co|Company|Group|Holdings|Logistics|Industries|Farms?|Bank|Partners|Systems|Services|Solutions|Manufacturing|Distribution|Distributors?|Suppl(?:y|ies)|Trucks?|Trucking|Transport|Motors|Construction|Pharmacy|Pharma|Healthcare|Dental|Clinics?|Labs?|Laboratories|Technologies|Tech|Media|Capital|Energy|Markets?|Stores?|Brands|Enterprises|Associates|Consulting|Freight|Lines|Mills?|Packaging|Plastics|Steel|Metals?|Electric|Homes|Hotels?|Restaurants?|Insurance|Credit Union|Canada|USA)`;
+/** Places a person may leave (moving away is their own matter, not a customer's news). */
+const PLACE_WORD = new Set(
+  "ontario quebec alberta manitoba saskatchewan nova scotia brunswick newfoundland labrador yukon nunavut columbia bc ab on qc mb sk ns nb nl pei canada america usa us states mexico england britain uk ireland scotland europe asia india china toronto montreal vancouver calgary edmonton ottawa winnipeg halifax victoria regina saskatoon hamilton london kitchener waterloo windsor mississauga brampton markham oakville burlington guelph barrie kingston sudbury moncton fredericton kelowna kamloops nanaimo surrey burnaby richmond laval gatineau niagara gta york seattle chicago boston dallas houston denver phoenix atlanta miami detroit buffalo florida texas california arizona michigan ohio washington oregon york jersey the city town province country area region island coast north south east west".split(" "),
+);
+
+/**
+ * The words a fact marks as ANOTHER organisation: "Alderbrook's buyer",
+ * "Alderbrook Foods", "customer Alderbrook", "Alderbrook is 31% of revenue".
+ */
+function outsideOrgWords(text: string, ctx: StaffContext): Set<string> {
+  const out = new Set<string>();
+  const t = text.replace(/[’‘]/g, "'");
+  const add = (w: string | undefined) => {
+    if (!w) return;
+    const f = fold(w);
+    if (f.length < 3 || GIVEN_NAMES.has(f) || PLACE_WORD.has(f) || ctx.ownerNames.includes(f) || (ctx.orgNames ?? []).includes(f)) return;
+    out.add(f);
+  };
+  for (const m of Array.from(t.matchAll(/\b([A-Z][\w&-]+)(?:'s|s')\s+[a-z]/g))) add(m[1]);
+  for (const m of Array.from(t.matchAll(new RegExp(String.raw`\b([A-Z][\w&-]+)\s+(?:[A-Z][\w&-]*\s+){0,2}?${ORG_NAME_WORD}\b`, "g")))) add(m[1]);
+  for (const m of Array.from(t.matchAll(/\b(?:customer|client|supplier|vendor|distributor|lender|bank|landlord|competitor|franchisor|payer|account)s?\s*,?\s+([A-Z][\w&-]+)/gi))) add(m[1]);
+  for (const m of Array.from(t.matchAll(/\b([A-Z][\w&-]+)\s+(?:is|are|was|were|accounts? for|represents?|makes? up|brings? in)\s+(?:about\s+|roughly\s+|approximately\s+|nearly\s+|over\s+|~)?\d+(?:\.\d+)?\s*%/g))) add(m[1]);
+  return out;
+}
+
+/**
+ * The departure is from ANOTHER organisation ("their buyer, Karen Holt, may
+ * leave Alderbrook next year" — a customer's person moving on): a customer or
+ * supplier risk, not a staff member's private matter. Only a word the fact
+ * itself marks as another organisation counts (outsideOrgWords) — never a
+ * place ("may leave Ontario", "leaving Toronto to be near her parents"),
+ * never the business itself, and never when one of the business's own staff
+ * is the one leaving (a known staff member leaving "Alderbrook" is ambiguous,
+ * so it is held — the broker can include it); "leaving Alderbrook's account"
+ * is leaving an account, not the organisation.
+ */
+function leavesAnotherOrg(clause: string, ctx: StaffContext, around: string): boolean {
+  const m = /\b(?:leav(?:e|es|ing)|quit(?:s|ting)?|resign(?:s|ed|ing)? from|depart(?:s|ing)? from|move on from)\s+([A-Z][\w&-]+)(?!['’]s\b)/.exec(clause);
   if (!m) return false;
-  const org = fold(m[1]);
-  if (GIVEN_NAMES.has(org) || ctx.ownerNames.includes(org) || (ctx.orgNames ?? []).includes(org)) return false;
-  return !/^(?:the|us|our|his|her|their|this|that|when|after|before|if|in|at|for|next|by)$/i.test(m[1]);
+  if (personNamesIn(clause).some((n) => knownStaff(n, ctx) && !isOwnerName(n, ctx))) return false;
+  return outsideOrgWords(`${around}\n${clause}`, ctx).has(fold(m[1]));
 }
 
 /** A fact about an outside party (a customer, supplier, landlord, lender): only a person known as staff makes a clause there a staff matter. */
@@ -437,7 +558,7 @@ function namedStaff(clause: string, ctx: StaffContext, scope: Scope): string | n
   const restricted = scope.ownerKey || scope.outsiderKey;
   if (!scope.strict && !restricted) return person;
   const first = fold(person.split(/[\s-]+/)[0]);
-  if (ctx.staffNames.some((n) => fold(n.split(/[\s-]+/)[0]) === first)) return person;
+  if (ctx.staffNames.some((n) => fold(n.split(/[\s-]+/)[0]) === first) || scope.ours?.has(first)) return person;
   // A name in a staff fact when the owner is known (so it isn't the owner's).
   return !restricted && scope.staffKey && ctx.ownerNames.length > 0 ? person : null;
 }
@@ -473,7 +594,7 @@ function aboutStaff(clause: string, ctx: StaffContext, scope: Scope): boolean {
   if (STAFF_ROLE.test(clause) && !ownerNamed) return true;
   // A customer fact that goes on about a known staff member ("Dave handles
   // Alderbrook; he is thinking of leaving us").
-  if (scope.outsiderKey && scope.prevPerson && knownStaff(scope.prevPerson, ctx) && (SUBJECTLESS.test(clause.trim()) || PRONOUN_LEAD.test(clause.trim()))) return true;
+  if (scope.outsiderKey && scope.prevPerson && (knownStaff(scope.prevPerson, ctx) || !!scope.ours?.has(fold(scope.prevPerson.split(/[\s-]+/)[0]))) && (SUBJECTLESS.test(clause.trim()) || PRONOUN_LEAD.test(clause.trim()))) return true;
   if (scope.ownerKey || scope.outsiderKey) return false;
   // No subject: it goes on from a staff member named just before — the owner
   // may be the one asked ("…; asked the owner about an equity stake").
@@ -633,7 +754,8 @@ export function splitStaffPrivate(
   const kept: string[] = [];
   let prevHeld: { kind: StaffPrivateKind; by: "rules" | "ai" } | null = null;
   let prevPerson: string | null = null;
-  const ai = (opts.extraHeld ?? []).map((x) => ({ t: normText(x.text), kind: x.kind })).filter((x) => x.t.length >= 8);
+  const ours = oursInText(text, ctx);
+  const ai =(opts.extraHeld ?? []).map((x) => ({ t: normText(x.text), kind: x.kind })).filter((x) => x.t.length >= 8);
   /** The AI review flagged this clause (the clause is what it flagged, or holds it). */
   const aiClause = (c: string): StaffPrivateKind | null => {
     const l = normText(c);
@@ -655,7 +777,7 @@ export function splitStaffPrivate(
     return true;
   };
   for (const clause of clauses) {
-    const scope: Scope = { staffKey, staffAround, ownerKey, outsiderKey, strict: !!opts.strict, prevPerson };
+    const scope: Scope = { staffKey, staffAround, ownerKey, outsiderKey, strict: !!opts.strict, prevPerson, ours };
     // Whom this clause is about, for the next one ("…; asked Helen about a stake").
     const subject = staffPersonIn(clause, ctx);
     const ownerSubject = !subject && (OWNER_WORD.test(clause.split(/\s+/).slice(0, 2).join(" ")) || personNamesIn(clause.split(/\s+/).slice(0, 2).join(" ")).some((n) => isOwnerName(n, ctx)));
@@ -664,12 +786,12 @@ export function splitStaffPrivate(
     const topic = staffPrivateTopic(clause, text);
     let kind: StaffPrivateKind | null = topic && aboutStaff(clause, ctx, scope) ? topic : null;
     // Someone leaving a customer or supplier is that party's news, not staff's.
-    if (kind === "departure" && leavesAnotherOrg(clause, ctx)) kind = null;
+    if (kind === "departure" && leavesAnotherOrg(clause, ctx, text)) kind = null;
     // Upstream routing moves a conduct matter out of the facts for good: only
     // when a named member of the business's staff is its subject ("our safety
     // manager was given a written warning" stays a fact — the CIM screen,
     // which the broker can overrule, still holds it by default).
-    if (kind === "conduct" && opts.strict && !namedStaff(clause, ctx, scope) && !(prevPerson && knownStaff(prevPerson, ctx) && (SUBJECTLESS.test(clause.trim()) || PRONOUN_LEAD.test(clause.trim())))) kind = null;
+    if (kind === "conduct" && opts.strict && !namedStaff(clause, ctx, scope) && !(prevPerson && (knownStaff(prevPerson, ctx) || ours.has(fold(prevPerson.split(/[\s-]+/)[0]))) && (SUBJECTLESS.test(clause.trim()) || PRONOUN_LEAD.test(clause.trim())))) kind = null;
     let by: "rules" | "ai" = "rules";
     if (!kind) {
       const k = aiClause(clause);
