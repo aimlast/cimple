@@ -2,25 +2,43 @@
  * "What holds attention" — reading time by kind of content (tables, text,
  * charts, highlight cards, key figures, lists, media), for one page or the
  * whole CIM, as direct-labelled horizontal bars with a one-sentence
- * headline ("Buyers spend twice as long on tables as on text in this CIM").
- * Used by the Document view's side panel and the global Analytics page.
+ * headline ("Buyers read tables most closely — twice as long as text, for
+ * the same amount of content"). Each bar also says how closely that kind
+ * was read against the time its content needs (Studied / Read / Glanced /
+ * Skipped — the same words as the page labels). Used by the Document view's
+ * side panel and the global Analytics page.
  *
- * Owned by the INTELLIGENCE stream. Base stub: a plain list.
+ * Owned by the INTELLIGENCE stream.
  */
-import { formatReadingTime, type KindAttention } from "@shared/analytics-v2";
+import { formatReadingTime, READ_LABEL_TEXT, type KindAttention } from "@shared/analytics-v2";
+import { kindMixHeadline, readLabel } from "@shared/cim-reading-model";
+import { cn } from "@/lib/utils";
 
-export function AttentionByKind({ kinds, title }: { kinds: KindAttention[]; title?: string }) {
-  if (kinds.length === 0) return null;
+export function AttentionByKind({ kinds, title, className, compact }: { kinds: KindAttention[]; title?: string; className?: string; compact?: boolean }) {
+  const rows = kinds.filter((k) => k.group !== "other" && (k.attentionMs > 0 || k.expectedMs > 0)).sort((a, b) => b.attentionMs - a.attentionMs);
+  if (rows.length === 0) return null;
+  const max = Math.max(...rows.map((k) => k.attentionMs), 1);
+  const headline = kindMixHeadline(rows);
   return (
-    <div data-testid="attention-by-kind">
-      {title && <p className="text-xs font-medium text-muted-foreground mb-2">{title}</p>}
-      <ul className="space-y-1 text-sm">
-        {kinds.map((k) => (
-          <li key={k.group} className="flex justify-between">
-            <span>{k.label}</span>
-            <span className="text-muted-foreground">{formatReadingTime(k.attentionMs)}</span>
-          </li>
-        ))}
+    <div className={cn("min-w-0", className)} data-testid="attention-by-kind">
+      {title && <p className="mb-1 text-xs font-medium text-muted-foreground">{title}</p>}
+      {headline && <p className={cn("mb-3 text-foreground/90", compact ? "text-xs" : "text-sm")}>{headline}</p>}
+      <ul className="space-y-2">
+        {rows.map((k) => {
+          const label = readLabel(k.attentionMs, k.expectedMs);
+          return (
+            <li key={k.group} className="grid grid-cols-[minmax(84px,120px)_1fr_auto] items-center gap-3 text-xs">
+              <span className="truncate text-foreground/90">{k.label}</span>
+              <span className="h-2.5 overflow-hidden rounded-full bg-muted">
+                <span className="block h-full rounded-full bg-teal/75" style={{ width: `${Math.max(2, (k.attentionMs / max) * 100)}%` }} />
+              </span>
+              <span className="whitespace-nowrap text-right tabular-nums text-muted-foreground">
+                <span className="text-foreground">{formatReadingTime(k.attentionMs)}</span>
+                {label && k.expectedMs > 0 && <span className="ml-1.5 hidden sm:inline">· {READ_LABEL_TEXT[label]}</span>}
+              </span>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

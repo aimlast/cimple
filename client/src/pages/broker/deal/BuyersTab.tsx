@@ -5,7 +5,11 @@
  * directly (no email is sent — they share the link themselves), copy a
  * buyer's /view link, extend the link's expiry, or revoke access.
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useLocation } from "wouter";
+import { formatReadingTime } from "@shared/analytics-v2";
+import { useEngagementBuyers } from "@/hooks/useEngagement";
+import { PageStrip, StatusChip, stripScale } from "@/components/engagement/buyers/parts";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PanelError } from "@/components/deal/PanelError";
 import { useDeal } from "@/contexts/DealContext";
@@ -116,17 +120,13 @@ export function BuyersTab() {
     },
   });
 
-  const { data: buyerScores = [] } = useQuery<any[]>({
-    queryKey: ["/api/deals", dealId, "analytics/buyer-scores"],
-    queryFn: async () => {
-      const r = await fetch(
-        `/api/deals/${dealId}/analytics/buyer-scores`,
-        { credentials: "include" },
-      );
-      // Scores enrich the table but aren't essential — degrade quietly
-      return r.ok ? r.json() : [];
-    },
-  });
+  // How each buyer read the CIM (status in words + a strip of the pages they
+  // read) — the same judgement as the Engagement tab. Enriches the table but
+  // isn't essential: degrades quietly.
+  const { data: engagement } = useEngagementBuyers(dealId);
+  const [, setLocation] = useLocation();
+  const cardByAccess = useMemo(() => new Map((engagement?.buyers ?? []).map((c) => [c.accessId, c])), [engagement]);
+  const stripMax = useMemo(() => stripScale((engagement?.buyers ?? []).map((c) => c.pageStrip)), [engagement]);
 
   const invalidateBuyers = () => {
     queryClient.invalidateQueries({ queryKey: buyersKey });
@@ -210,7 +210,6 @@ export function BuyersTab() {
   };
 
   const activeBuyers = buyerAccessList.filter((b: any) => !b.revokedAt);
-  const scoreMap = new Map(buyerScores.map((s: any) => [s.buyerId, s]));
 
   const openGrant = () => {
     setGrantForm({ email: "", name: "", company: "" });
@@ -285,7 +284,7 @@ export function BuyersTab() {
                     Status
                   </th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
-                    Engagement
+                    Reading
                   </th>
                   <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
                     NDA
@@ -337,42 +336,9 @@ export function BuyersTab() {
                     statusConfig[decision] || statusConfig.under_review;
                   const StatusIcon = status.icon;
 
-                  const score = scoreMap.get(buyer.id);
-                  const engagementScore = score?.engagementScore ?? 0;
-                  const intent = score?.intent ?? "minimal";
-                  const intentConfig: Record<
-                    string,
-                    { label: string; className: string }
-                  > = {
-                    high: {
-                      label: "High",
-                      className: "text-success-muted-foreground",
-                    },
-                    medium: {
-                      label: "Medium",
-                      className: "text-amber-600",
-                    },
-                    low: {
-                      label: "Low",
-                      className: "text-muted-foreground",
-                    },
-                    minimal: {
-                      label: "Minimal",
-                      className: "text-muted-foreground/50",
-                    },
-                  };
-                  const intentCfg =
-                    intentConfig[intent] || intentConfig.minimal;
-
-                  const views =
-                    score?.viewCount ?? buyer.viewCount ?? 0;
-                  const totalMin = Math.round(
-                    (score?.totalTimeSeconds ??
-                      buyer.totalTimeSeconds ??
-                      0) / 60,
-                  );
-                  const timeLabel =
-                    totalMin < 1 ? "<1m" : `${totalMin}m`;
+                  const card = cardByAccess.get(buyer.id);
+                  const views = card?.visits ?? buyer.viewCount ?? 0;
+                  const timeLabel = card ? formatReadingTime(card.activeMs) : "no reading yet";
                   const lastActive = buyer.lastAccessedAt
                     ? shortDate(buyer.lastAccessedAt)
                     : "—";
@@ -427,25 +393,26 @@ export function BuyersTab() {
                             </p>
                           )}
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
-                            <div
-                              className="h-full rounded-full bg-teal transition-all"
-                              style={{
-                                width: `${Math.min(engagementScore, 100)}%`,
-                              }}
-                            />
+                      <td className="px-4 py-3 min-w-[170px]">
+                        {card ? (
+                          <div
+                            role="link"
+                            tabIndex={0}
+                            className="block w-full cursor-pointer text-left"
+                            onClick={() => setLocation(`/deal/${dealId}/engagement?view=document&buyers=${buyer.id}`)}
+                            onKeyDown={(e) => { if (e.key === "Enter") setLocation(`/deal/${dealId}/engagement?view=document&buyers=${buyer.id}`); }}
+                            title="See where they read"
+                            data-testid={`reading-${buyer.id}`}
+                          >
+                            {/* The decision already shows under Status: here, how they read. */}
+                            {["interested", "not_interested", "lapsed"].includes(card.status)
+                              ? <span className="text-xs text-muted-foreground">Read {card.pagesReached} of {card.totalPages} pages</span>
+                              : <StatusChip status={card.status} label={card.statusLabel} />}
+                            <PageStrip cells={card.pageStrip} maxMs={stripMax} size="sm" caption={false} className="mt-1.5 w-36" />
                           </div>
-                          <span className="text-xs tabular-nums text-muted-foreground">
-                            {engagementScore}
-                          </span>
-                        </div>
-                        <p
-                          className={`text-xs mt-0.5 ${intentCfg.className}`}
-                        >
-                          {intentCfg.label} intent
-                        </p>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">{buyer.firstViewedAt ? "Opened" : "Not opened yet"}</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         {buyer.ndaSigned ? (
@@ -460,7 +427,7 @@ export function BuyersTab() {
                       </td>
                       <td className="px-4 py-3">
                         <p className="text-xs text-muted-foreground">
-                          {views} views · {timeLabel}
+                          {views} visit{views === 1 ? "" : "s"} · {timeLabel}
                         </p>
                         <p className="text-xs text-muted-foreground/60">
                           {lastActive}
