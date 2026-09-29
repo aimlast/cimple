@@ -608,7 +608,12 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
-  /** Look up a document by its stored fileUrl (used by the /uploads/docs access gate). */
+  /** Every document row pointing at this stored fileUrl (a copied row may share a file). */
+  async getDocumentsByFileUrl(fileUrl: string): Promise<Document[]> {
+    return db.select().from(documents).where(eq(documents.fileUrl, fileUrl));
+  }
+
+  /** Look up a document by its stored fileUrl. */
   async getDocumentByFileUrl(fileUrl: string): Promise<Document | undefined> {
     const result = await db.select().from(documents).where(eq(documents.fileUrl, fileUrl));
     return result[0];
