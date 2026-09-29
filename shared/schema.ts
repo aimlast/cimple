@@ -1606,6 +1606,8 @@ export const NOTIFICATION_ROUTING: Record<string, { teams: string[]; roles?: str
   // New events only (free round 2) — no existing event's recipients change.
   // The broker routed questions to a seller who had finished the interview.
   seller_followup_questions: { teams: ["seller"], roles: ["owner", "representative"] },
+  // The seller answered those follow-up questions (a session on the finished interview ended).
+  seller_followups_answered: { teams: ["broker"], roles: ["lead", "associate"] },
   // The seller's answer on the CIM review page (/seller/:token/review).
   cim_seller_approved: { teams: ["broker"], roles: ["lead", "associate"] },
   cim_changes_requested: { teams: ["broker"], roles: ["lead", "associate"] },

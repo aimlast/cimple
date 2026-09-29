@@ -1121,7 +1121,7 @@ function Phase2Center() {
   const [reviewingDiscrepancies, setReviewingDiscrepancies] = useState(false);
   // The "next step" card must not say "Ready to build" while a critical
   // discrepancy blocks generation (same rule as the server and Phase 3).
-  const { criticalUnresolved, discrepanciesError } = useDiscrepancyGate(dealId);
+  const { criticalUnresolved, waitingOnSeller, discrepanciesError } = useDiscrepancyGate(dealId);
 
   const { data: invites = [], error: invitesError } = useInvites(dealId);
   const activeInvite = pickPrimaryInvite(invites);
@@ -1486,12 +1486,13 @@ function Phase2Center() {
           <ReadyToBuildCta
             criticalCount={criticalUnresolved.length}
             gateError={!!discrepanciesError}
+            waitingOnSeller={waitingOnSeller.length}
             pending={advanceToContent.isPending}
             onContinue={() => advanceToContent.mutate()}
             onReview={() => setReviewingDiscrepancies((v) => !v)}
             reviewing={reviewingDiscrepancies}
           />
-          {reviewingDiscrepancies && (criticalUnresolved.length > 0 || !!discrepanciesError) && (
+          {reviewingDiscrepancies && (criticalUnresolved.length > 0 || waitingOnSeller.length > 0 || !!discrepanciesError) && (
             <DiscrepancyPanel dealId={dealId} />
           )}
         </div>
@@ -1506,10 +1507,11 @@ function Phase2Center() {
  * a 409 on the deal PATCH and the generate endpoints; this mirrors it so the
  * buttons explain themselves instead of failing.
  *
- * Mirrors the server's status list exactly: only "open" and "seller_responded"
- * block. "ask_seller" is routed to the interview and counts as handled (the
- * interview hands it back as seller_responded when it ends, which re-blocks
- * until the broker resolves it).
+ * Mirrors the server's rule exactly (shared/discrepancy-gate.ts): "open" and
+ * "seller_responded" block. "ask_seller" counts as handled while the
+ * interview is running (the interview hands it back as seller_responded when
+ * it ends, which re-blocks until the broker resolves it) — but once the
+ * interview is finished it blocks until the seller answers the follow-up.
  */
 function useDiscrepancyGate(dealId: string) {
   const { deal } = useDeal();

@@ -69,7 +69,7 @@ export function OpenInterviewItemsCard({ dealId, hideWhenEmpty = true }: { dealI
   return (
     <div className="rounded-lg border border-border bg-card p-4" data-testid="card-open-interview-items">
       <div className="flex items-start gap-3">
-        <ListTodo className="h-[1.125rem] w-[1.125rem] text-teal mt-0.5 shrink-0" />
+        <ListTodo className="hidden sm:block h-[1.125rem] w-[1.125rem] text-teal mt-0.5 shrink-0" />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium">
             Open items from the interview <span className="text-muted-foreground font-normal tabular-nums">{items.length}</span>

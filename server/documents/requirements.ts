@@ -342,6 +342,55 @@ export async function populateDocumentRequirements(
 }
 
 /**
+ * Rows another industry's list added that nobody has touched: auto-added,
+ * still missing, no file, no note, and not on the deal's list now. When the
+ * broker corrects the industry (a construction deal that is really a
+ * restaurant), these stop being asked for; anything the seller uploaded to,
+ * marked, or the broker annotated stays. Pure.
+ */
+export function untouchedOtherIndustryRows<
+  T extends { id: string; documentName: string; source?: string | null; status?: string | null; uploadedFileId?: string | null; notes?: string | null },
+>(rows: T[], industry: string | null | undefined, subIndustry?: string | null): T[] {
+  const keep = new Set(requirementsForIndustry(industry, subIndustry).map((r) => r.documentName));
+  const industryNames = new Set(Object.values(INDUSTRY_DOCS).flat().map((r) => r.documentName));
+  return rows.filter(
+    (r) =>
+      r.source === "auto" &&
+      r.status === "missing" &&
+      !r.uploadedFileId &&
+      !(r.notes ?? "").trim() &&
+      industryNames.has(r.documentName) &&
+      !keep.has(r.documentName),
+  );
+}
+
+/**
+ * The broker changed the deal's industry: the old industry's untouched
+ * requests go, the new one's are added. (Only on the broker's own edit —
+ * the interview's identification only ever adds.) Never throws.
+ */
+export async function switchIndustryDocumentRequirements(
+  dealId: string,
+  industry: string | null | undefined,
+  subIndustry?: string | null,
+): Promise<{ removed: number; added: number }> {
+  let removed = 0;
+  try {
+    const stale = untouchedOtherIndustryRows(await storage.getDocumentRequirementsByDeal(dealId), industry, subIndustry);
+    for (const r of stale) {
+      await storage.deleteDocumentRequirement(r.id);
+      removed++;
+    }
+  } catch (err) {
+    console.warn(`[requirements] couldn't clear the old industry's document requests on deal ${dealId}:`, err);
+  }
+  // (Switching back later must add the rows again — forget what was added.)
+  for (const memo of Array.from(populated)) if (memo.startsWith(`${dealId}|`)) populated.delete(memo);
+  const added = await ensureIndustryDocumentRequirements(dealId, industry, subIndustry);
+  return { removed, added };
+}
+
+/**
  * Get the list of supported industry categories for document requirements.
  */
 export function getSupportedIndustries(): string[] {

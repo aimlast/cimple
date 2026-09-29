@@ -284,13 +284,14 @@ export default function SellerProgress() {
           <div className="flex items-start gap-3">
             <Check className="h-5 w-5 text-teal mt-0.5" />
             <div>
-              <h3 className="font-medium">Everything looks good</h3>
+              <h3 className="font-medium">{(data.todo?.length ?? 0) > 0 || (data.pendingApprovalItems?.length ?? 0) > 0 ? "Nearly there" : "Everything looks good"}</h3>
               <p className="text-sm text-muted-foreground mt-1">
                 {data.cimReview?.stage === "approved"
                   ? "You've signed off your CIM. Your broker takes it from here."
                   : data.cimReview?.stage === "waiting"
                     ? "You approved the CIM content. Your broker is finishing the design and will send it back for your sign-off."
                     : "Your broker is reviewing your information and drafting your CIM. You'll be notified when it's ready for you to read."}
+                {((data.todo?.length ?? 0) > 0 || (data.pendingApprovalItems?.length ?? 0) > 0) && " Meanwhile, a few things below still need you."}
                 {pendingApprovals > 0 && !(data.pendingApprovalItems?.length) && (
                   <span className="block mt-2 text-teal">
                     You have {pendingApprovals} pending {pendingApprovals === 1 ? "approval" : "approvals"} — use the link in your email to review.
@@ -513,7 +514,7 @@ function CTACard({
   testId?: string;
 }) {
   return (
-    <Link href={href}>
+    <Link href={href} className="block">
       <div className="rounded-lg border border-teal/30 bg-teal/5 p-5 hover:bg-teal/8 transition-colors cursor-pointer group" data-testid={testId} aria-label={buttonLabel}>
         <div className="flex items-start gap-4">
           <div className="h-10 w-10 rounded-lg bg-teal/15 flex items-center justify-center shrink-0">

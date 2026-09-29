@@ -2619,10 +2619,13 @@ Return JSON only.`,
       const { insertDealSchema } = await import("@shared/schema");
 
       let allowedBody: Record<string, unknown> | null = null;
+      // The industry before this edit (a real change re-scopes the seller's document checklist).
+      let industryBefore: { industry: string | null; subIndustry: string | null } | null = null;
 
       if (req.session.brokerId) {
         const owned = await getOwnedDeal(req.params.id, req.session.brokerId);
         if (!owned) return res.status(404).json({ error: "Deal not found" });
+        industryBefore = { industry: owned.industry ?? null, subIndustry: owned.subIndustry ?? null };
         const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
         const { allowBackward, ...fields } = body;
         if ("brokerId" in fields || "id" in fields) {
@@ -2786,10 +2789,17 @@ Return JSON only.`,
         await setMirroredDealFacts(req.params.id, identityPatch, MIRROR_NOTES.edited);
         deal = (await storage.getDeal(req.params.id)) ?? deal;
       }
-      // A new or changed industry brings its own document requests.
-      if ("industry" in identityPatch || "subIndustry" in identityPatch) {
-        const { ensureIndustryDocumentRequirements } = await import("./documents/requirements");
-        await ensureIndustryDocumentRequirements(deal.id, deal.industry, deal.subIndustry);
+      // A changed industry brings its own document requests, and the old
+      // industry's untouched ones go (the broker corrected it). An edit that
+      // re-sends the same industry changes nothing.
+      if (
+        industryBefore &&
+        ("industry" in identityPatch || "subIndustry" in identityPatch) &&
+        ((deal.industry ?? null) !== industryBefore.industry || (deal.subIndustry ?? null) !== industryBefore.subIndustry)
+      ) {
+        const { switchIndustryDocumentRequirements } = await import("./documents/requirements");
+        const { removed, added } = await switchIndustryDocumentRequirements(deal.id, deal.industry, deal.subIndustry);
+        if (removed || added) console.log(`[requirements] industry changed on deal ${deal.id}: ${added} request(s) added, ${removed} untouched one(s) removed`);
       }
       // A website added later is read in the background too.
       if (req.session.brokerId && "websiteUrl" in (validatedData as Record<string, unknown>)) {
@@ -3107,11 +3117,20 @@ Return JSON only.`,
       let satisfiedTask: { id: string; title: string } | null = null;
       if (targetTask) {
         const note = `${uploadedBy === "seller" ? "The seller" : "You"} uploaded "${displayName}" for this request.`;
-        await storage.updateTask(targetTask.id, {
-          status: "completed",
-          completedAt: new Date(),
-          brokerNotes: targetTask.brokerNotes ? `${targetTask.brokerNotes}\n${note}` : note,
-        } as any);
+        // Copies of the same request an earlier turn re-created close with it
+        // (the seller's list shows them as one row — one would pop back up).
+        const { openItemTaskIds } = await import("@shared/seller-portal");
+        const dealTasks = await storage.getTasksByDeal(req.params.dealId);
+        const now = new Date();
+        for (const tid of openItemTaskIds(dealTasks, targetTask)) {
+          const t = tid === targetTask.id ? targetTask : dealTasks.find((x) => x.id === tid);
+          if (!t) continue;
+          await storage.updateTask(tid, {
+            status: "completed",
+            completedAt: now,
+            brokerNotes: t.brokerNotes ? `${t.brokerNotes}\n${note}` : note,
+          } as any);
+        }
         satisfiedTask = { id: targetTask.id, title: targetTask.title };
       }
 
@@ -5784,12 +5803,13 @@ Return JSON only.`,
 
       // Product rule: critical discrepancies block CIM generation until handled.
       // The client disabled the first "Generate" button but not "Regenerate";
-      // the server is now the authority. Only "open" and "seller_responded"
-      // block. "ask_seller" means the broker routed it to the seller interview,
-      // which counts as handled — otherwise a routed critical locked generation
-      // forever. When the interview ends, session-manager flips ask_seller →
-      // seller_responded so the broker reviews the transcript before generating.
-      // OverviewTab's generationBlocked mirrors this exact status list.
+      // the server is now the authority. "open" and "seller_responded" block.
+      // "ask_seller" means the broker routed it to the seller interview, which
+      // counts as handled while the interview runs; when it ends, session-
+      // manager flips ask_seller → seller_responded so the broker reviews the
+      // transcript before generating. Routed after the interview had finished,
+      // it blocks until the seller answers the follow-up (shared/discrepancy-gate.ts;
+      // OverviewTab's gate mirrors this rule).
       const openCritical = await blockingCriticalDiscrepancies(dealId);
       if (openCritical.length > 0) return discrepancyBlockResponse(res, openCritical, "generating the CIM");
 

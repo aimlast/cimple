@@ -26,6 +26,21 @@ export function awaitingSellerAfterInterview(
   return d.status === "ask_seller" && !!interviewCompleted;
 }
 
+/**
+ * The turn floor for a session. The first interview may not end on its own
+ * before `configured` seller turns (completion governance). A session on a
+ * deal whose interview is ALREADY complete — the seller answering the
+ * broker's follow-up questions, or adding detail — is short by design: the
+ * email promised "a short conversation", and a two-question follow-up held
+ * open for ten turns would push the seller through new questions to leave.
+ * The other end rules (critical coverage, open conflicts, the seller's stop)
+ * still apply. Reopening the interview (interviewCompleted → false) restores
+ * the floor.
+ */
+export function turnFloorFor(interviewAlreadyCompleted: boolean | null | undefined, configured: number): number {
+  return interviewAlreadyCompleted ? 0 : configured;
+}
+
 /** Don't email the seller again for routings within this window. */
 export const FOLLOWUP_EMAIL_WINDOW_MS = 60 * 60 * 1000;
 
@@ -77,5 +92,56 @@ export async function notifySellerOfFollowUps(dealId: string): Promise<FollowUpN
   } catch (err) {
     console.warn(`[followups] couldn't tell the seller about follow-up questions on deal ${dealId}:`, err);
     return { interviewFinished: true, waiting, emailed: 0, addressed: 0 };
+  }
+}
+
+/**
+ * The broker's email when a follow-up session on a finished interview ends
+ * and hands their routed questions back (seller_responded). Worded by what
+ * the transcript shows: discussed, or ended before the question came up —
+ * never "answered" for a question nobody raised. Pure.
+ */
+export function followUpsAnsweredNotice(r: { handedBack: number; discussed: number }, businessName: string): { title: string; body: string } {
+  const n = r.handedBack;
+  const all = r.discussed >= n;
+  const noun = (k: number) => (k === 1 ? "follow-up question" : "follow-up questions");
+  const title = r.discussed === 0
+    ? `The seller ended the follow-up before your ${noun(n)} came up — ${businessName}`
+    : all
+      ? `The seller answered your ${noun(n)} — ${businessName}`
+      : `The seller answered ${r.discussed} of your ${n} follow-up questions — ${businessName}`;
+  const body =
+    (r.discussed === 0
+      ? `The seller came back but ended the conversation before ${n === 1 ? "it was" : "they were"} raised. `
+      : all
+        ? `The seller came back and went through ${n === 1 ? "the follow-up question" : `the ${n} follow-up questions`} you sent them. `
+        : `The seller came back and went through ${r.discussed} of the ${n} follow-up questions you sent them. `) +
+    "What they said is on the deal's Interview Review tab — resolve each conflict on the Overview to unlock the CIM.";
+  return { title, body };
+}
+
+/**
+ * A session on a finished interview ended and handed routed questions back
+ * (seller_responded): the broker is told, since no "interview finished"
+ * email goes out for a follow-up. Never throws.
+ */
+export async function notifyBrokerFollowUpsAnswered(dealId: string, r: { handedBack: number; discussed: number }): Promise<void> {
+  if (r.handedBack <= 0) return;
+  try {
+    const { storage } = await import("../storage");
+    const deal = await storage.getDeal(dealId);
+    if (!deal) return;
+    const { notify } = await import("../notifications/service");
+    const { escapeHtml } = await import("../notifications/email-escape");
+    const n = followUpsAnsweredNotice(r, deal.businessName);
+    await notify(dealId, "seller_followups_answered", {
+      title: n.title,
+      body: escapeHtml(n.body),
+      actionUrl: `/deal/${dealId}/overview`,
+      businessName: deal.businessName,
+      metadata: { handedBack: r.handedBack, discussed: r.discussed },
+    });
+  } catch (err) {
+    console.warn(`[followups] couldn't tell the broker about the follow-up on deal ${dealId}:`, err);
   }
 }

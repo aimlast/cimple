@@ -150,6 +150,7 @@ import { agentConfig } from "./config/load-config";
 import { ensureSectionImportance } from "./section-importance";
 import { ensureInterviewPlan } from "./interview-plan";
 import { ensureIndustryDocumentRequirements } from "../documents/requirements";
+import { turnFloorFor, notifyBrokerFollowUpsAnswered } from "./seller-followups";
 import { generateSellerProfile } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
 import { isInterviewHiddenFact } from "../information/deal-mirror";
@@ -1284,6 +1285,10 @@ async function processTurnLocked(
   // and the wrap-up pacing nudge.
   const userTurnCount =
     existingMessages.filter((m) => m.role === "user").length + 1;
+  // The completion floor: the first interview only. A session on a finished
+  // interview (the broker's follow-up questions, "Add more detail") may end
+  // once its questions are covered (seller-followups.ts turnFloorFor).
+  const turnFloor = turnFloorFor(deal.interviewCompleted, agentConfig.interview.minTurnsBeforeEnd);
 
   // Topics the seller explicitly declined — hard-blocked from re-asking and
   // from closing-question triage (observed: asking price re-asked 17 times
@@ -1956,7 +1961,8 @@ async function processTurnLocked(
           s.status === "missing" && ledgerAddressed(s.key) ? ("partial" as const) : s.status,
       })),
       deferredTopics: deferralTopicStrings(p.ledger),
-      minTurnsBeforeEnd: agentConfig.interview.minTurnsBeforeEnd,
+      // (No floor for a follow-up on a finished interview — seller-followups.ts.)
+      minTurnsBeforeEnd: turnFloor,
       // Only a stop THIS turn — or the answer to the one closing question a
       // stop on the previous turn allowed — permits an early end. A seller
       // who then says they'd rather keep going ("let's continue", "I've got
@@ -2028,7 +2034,7 @@ async function processTurnLocked(
     if (end.shouldEnd && !st.stopNow) {
       const verdict = endVerdict({ info: existingExtracted, ledger: priorLedger, endReason: end.endReason, stopNow: false, intent: i });
       if (!verdict.allowEnd) {
-        const certain = i.via === "model" && userTurnCount < agentConfig.interview.minTurnsBeforeEnd;
+        const certain = i.via === "model" && userTurnCount < turnFloor;
         if (certain && !earlyContinuation && shown.streaming) {
           console.warn(`[session-manager] Blocked premature interview end: ${verdict.blockReason} (decided at the stream gate — the turn floor; the continuation starts now)`);
           timer.mark("continuation_start");
@@ -3356,9 +3362,13 @@ async function processTurnLocked(
     // ignores ask_seller but blocks on seller_responded, so a routed critical
     // re-locks the CIM until the broker reviews the transcript and resolves —
     // nothing is silently accepted, and nothing stays "with the seller" forever.
-    await markRoutedDiscrepanciesRaised(dealId, updatedMessages).catch((err) => {
+    const handedBack = await markRoutedDiscrepanciesRaised(dealId, updatedMessages).catch((err) => {
       console.error(`[session-manager] Could not hand routed discrepancies back for deal ${dealId}:`, err);
+      return { handedBack: 0, discussed: 0 };
     });
+    // A follow-up on a finished interview sends no "interview finished"
+    // email — the broker is told what came of their questions instead.
+    if (deal.interviewCompleted && handedBack.handedBack > 0) void notifyBrokerFollowUpsAnswered(dealId, handedBack);
 
     // What this session answered counts as on file for the next one — built
     // now, in the background, so a returning seller's opening already has it.
@@ -3455,18 +3465,24 @@ export function routedDiscrepancyNote(discussed: boolean, date: string): string 
  * interview actually brought it up). Called when an interview ends — by
  * the AI or with the seller's "End Overview". Returns the number of rows updated.
  */
-async function markRoutedDiscrepanciesRaised(dealId: string, transcript: Pick<ConversationMessage, "role" | "content">[] = []): Promise<number> {
+async function markRoutedDiscrepanciesRaised(
+  dealId: string,
+  transcript: Pick<ConversationMessage, "role" | "content">[] = [],
+): Promise<{ handedBack: number; discussed: number }> {
   const routed = (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => d.status === "ask_seller");
-  if (routed.length === 0) return 0;
+  if (routed.length === 0) return { handedBack: 0, discussed: 0 };
   const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  let discussed = 0;
   for (const d of routed) {
+    const wasDiscussed = routedDiscrepancyDiscussed(d, transcript);
+    if (wasDiscussed) discussed++;
     await storage.updateDiscrepancy(d.id, {
       status: "seller_responded",
-      sellerResponse: routedDiscrepancyNote(routedDiscrepancyDiscussed(d, transcript), date),
+      sellerResponse: routedDiscrepancyNote(wasDiscussed, date),
     });
   }
   console.log(`[session-manager] Handed ${routed.length} routed discrepanc${routed.length === 1 ? "y" : "ies"} back to the broker for deal ${dealId}`);
-  return routed.length;
+  return { handedBack: routed.length, discussed };
 }
 
 /**
@@ -3855,9 +3871,11 @@ export async function endSessionManually(
     // as when the AI ends the interview — before this, "End Overview" left a
     // routed critical conflict "with the seller" forever, and the CIM could be
     // generated without the broker ever reviewing it.
-    await markRoutedDiscrepanciesRaised(dealId, (session.messages as ConversationMessage[]) ?? []).catch((err) => {
+    const handedBack = await markRoutedDiscrepanciesRaised(dealId, (session.messages as ConversationMessage[]) ?? []).catch((err) => {
       console.error(`[session-manager] Could not hand routed discrepancies back for deal ${dealId}:`, err);
+      return { handedBack: 0, discussed: 0 };
     });
+    if (dealRow?.interviewCompleted && handedBack.handedBack > 0) void notifyBrokerFollowUpsAnswered(dealId, handedBack);
   }
 
   // The next session reads what this one answered as on file (background).

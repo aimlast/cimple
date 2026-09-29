@@ -39,6 +39,7 @@ export const BROKER_EVENT_PREFERENCE: Record<string, string> = {
   buyer_approval_seller_approved: "buyerApprovals",
   buyer_approval_rejected: "buyerApprovals",
   interview_complete: "interviewUpdates",
+  seller_followups_answered: "interviewUpdates",
 };
 
 /**

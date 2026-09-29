@@ -128,7 +128,7 @@ export function SellerChecklistCard({ dealId }: { dealId: string }) {
     .filter((g) => g.items.length > 0);
 
   const summary = [
-    `${counts.requiredUploaded} of ${counts.requiredTotal} required in`,
+    `${counts.requiredUploaded} of ${counts.requiredTotal} required uploaded`,
     toReview.length > 0 ? `${toReview.length} to review` : null,
     unavailable.length > 0 ? `${unavailable.length} the seller doesn't have` : null,
   ].filter(Boolean).join(" · ");

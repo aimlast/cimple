@@ -165,7 +165,10 @@ const COUNSEL_PREFIX = "Verify with counsel: ";
 export const SELLER_REVIEW_TASK_CREATOR = "seller_review";
 
 const OPEN_ITEM_CREATORS = new Set([SELLER_INTERVIEW_CREATOR, "ai_interview_broker", SELLER_REVIEW_TASK_CREATOR]);
-const openItemKey = (t: TaskLike) => `${t.createdBy}|${t.type}|${t.title.trim().toLowerCase()}`;
+// (A document request is keyed by the document it names — "Get the lease" and
+// "Upload the lease" are one item, as on the seller's list.)
+const openItemKey = (t: TaskLike) =>
+  `${t.createdBy}|${t.type}|${(t.type === "document_request" ? documentRequestLabel(t.title) : t.title).trim().toLowerCase()}`;
 const isOpenItem = (t: TaskLike) => isOpenTask(t) && OPEN_ITEM_CREATORS.has(String(t.createdBy ?? ""));
 
 /** Everything the interview (seller's or broker's session) and the seller's review left open — the broker's list. */

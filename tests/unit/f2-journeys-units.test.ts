@@ -23,14 +23,17 @@ import {
 } from "../../shared/seller-portal";
 import { discrepancyBlocksCim, waitingOnSellerAfterInterview } from "../../shared/discrepancy-gate";
 import { computeNextStep, phaseChecklist, nextStepText } from "../../shared/deal-progress";
-import { industryDocsKey, requirementsForIndustry, getSupportedIndustries } from "../../server/documents/requirements";
-import { shouldEmailFollowUp, awaitingSellerAfterInterview } from "../../server/interview/seller-followups";
+import { industryDocsKey, requirementsForIndustry, getSupportedIndustries, untouchedOtherIndustryRows } from "../../server/documents/requirements";
+import { shouldEmailFollowUp, awaitingSellerAfterInterview, turnFloorFor, followUpsAnsweredNotice } from "../../server/interview/seller-followups";
+import { governCompletion } from "../../server/interview/turn-guard";
+import { NOTIFICATION_ROUTING } from "../../shared/schema";
+import { ctaCopy } from "../../client/src/components/deal/ReadyToBuildCta";
 import { openItemsHtml } from "../../server/notifications/interview-complete";
-import { sellerPortalRecipients } from "../../server/notifications/service";
+import { sellerPortalRecipients, BROKER_EVENT_PREFERENCE, ownerGetsEvent } from "../../server/notifications/service";
 import { faqKnowledgeRows } from "../../server/qa/cim-context";
 import { readerMaySeeRow, rowScope } from "../../shared/buyer-qa-scope";
 import { blindLeakTerms } from "../../shared/blind-guard";
-import { shouldAutoScrape, scrapeInBackground, autoScrapeRunning } from "../../server/scraper/auto-scrape";
+import { shouldAutoScrape, scrapeInBackground, autoScrapeRunning, setAutoScrapeClock, AUTO_SCRAPE_RETRY_MS } from "../../server/scraper/auto-scrape";
 
 let passed = 0;
 const check = (name: string, fn: () => void) => {
@@ -74,6 +77,20 @@ check("J5 a construction deal is asked for the WIP schedule, bonding letter, hol
   for (const want of ["Work-in-Progress (WIP) Schedule", "Surety Bonding Capacity Letter", "Holdbacks Receivable Report", "WSIB/WCB Clearance Certificate"]) {
     assert.ok(names.includes(want), want);
   }
+});
+check("J5 correcting the industry drops the old list's untouched requests — never an upload, a note or a manual one", () => {
+  const construction = requirementsForIndustry("Construction").filter((r) => !requirementsForIndustry(null).some((u) => u.documentName === r.documentName));
+  let n = 0;
+  const row = (documentName: string, o: any = {}) => ({ id: `r${++n}`, documentName, source: "auto", status: "missing", uploadedFileId: null, notes: null, ...o });
+  const rows = [
+    row(requirementsForIndustry(null)[0].documentName), // universal: stays
+    row(construction[0].documentName), // untouched construction row: goes
+    row(construction[1].documentName, { status: "uploaded", uploadedFileId: "doc1" }), // uploaded: stays
+    row(construction[2].documentName, { notes: "Seller: I don't have this — no bonding" }), // annotated: stays
+    row("Equipment lease for the forklift", { source: "manual" }), // the broker's own: stays
+  ];
+  assert.deepEqual(untouchedOtherIndustryRows(rows, "Restaurant / Food Service").map((r) => r.id), ["r2"]);
+  assert.deepEqual(untouchedOtherIndustryRows(rows, "Construction"), [], "the deal's own list is never pruned");
 });
 check("J5 the sub-industry decides when the label doesn't (\"Other\" + physiotherapy clinic)", () => {
   assert.equal(industryDocsKey("Other", "Physiotherapy clinic"), "healthcare");
@@ -166,6 +183,17 @@ check("J1 the broker sees every open interview item (and the seller's change req
   // Closing "Confirm WCB billing audit history" closes its re-created copy too (no copy pops up in its place).
   assert.deepEqual(openItemTaskIds(tasks, tasks[1]), ["2", "3"]);
   assert.deepEqual(openItemTaskIds(tasks, tasks[0]), ["1"]);
+  // A document request re-created in other words ("Upload…" vs "Get…") is the same document —
+  // one row for the seller, and an upload against either closes both (the Clearwater clone had
+  // the IPAC request twice; closing one left the other on the seller's list).
+  const docs = [
+    t({ id: "d1", type: "document_request", title: "Get IPAC inspection reports with exact dates" }),
+    t({ id: "d2", type: "document_request", title: "Upload the IPAC inspection reports with exact dates", createdAt: new Date("2026-09-21") }),
+    t({ id: "d3", type: "document_request", title: "Get IPAC inspection reports with exact dates", status: "completed" }),
+  ];
+  assert.deepEqual(openItemTaskIds(docs, docs[1]), ["d1", "d2"]);
+  assert.deepEqual(openInterviewItems(docs).map((x) => x.id), ["d1"]);
+  assert.equal(sellerTodoItems(docs).length, 1);
 });
 check("J1 request titles read as document names", () => {
   assert.equal(documentRequestLabel("Get template employment agreement"), "Template employment agreement");
@@ -205,6 +233,50 @@ check("J2 the deal list says it's the seller's move", () => {
   const deal = { id: "D", phase: "phase3_content_creation", interviewCompleted: true, cimLayoutGeneratedAt: new Date(), contentApprovedByBroker: true, contentApprovedBySeller: true } as any;
   assert.equal(nextStepText(computeNextStep(deal, { sellerFollowUpsBlocking: 2 })), "Waiting on the seller: answer 2 follow-up questions");
   assert.equal(nextStepText(computeNextStep(deal, {})), "Your move: move the deal to Design");
+  // Still in Seller Intake (the Ridgeline clone: interview done, both criticals sent back).
+  const intake = { ...deal, phase: "phase2_platform_intake", contentApprovedByBroker: false, contentApprovedBySeller: false };
+  assert.equal(nextStepText(computeNextStep(intake, { sellerFollowUpsBlocking: 2 })), "Waiting on the seller: answer 2 follow-up questions");
+  assert.equal(nextStepText(computeNextStep(intake, {})), "Your move: start content creation");
+});
+check("J2 a follow-up session on a finished interview may end once its questions are covered (no 10-turn floor)", () => {
+  assert.equal(turnFloorFor(false, 10), 10, "the first interview keeps the floor");
+  assert.equal(turnFloorFor(null, 10), 10);
+  assert.equal(turnFloorFor(true, 10), 0, "the seller answering follow-ups isn't held for ten turns");
+  // Governance with the floor lifted: the model's end stands when nothing else blocks…
+  const base = {
+    shouldEnd: true,
+    sellerMessage: "Yes, the 2023 revenue in the P&L is right — the $2.3M included the equipment sale.",
+    userTurnCount: 2,
+    sectionCoverage: [{ key: "companyOverview", status: "well_covered" as const }],
+    deferredTopics: [],
+    intentStop: "none" as const,
+  };
+  assert.equal(governCompletion({ ...base, minTurnsBeforeEnd: turnFloorFor(true, 10) }).allowEnd, true);
+  assert.equal(governCompletion({ ...base, minTurnsBeforeEnd: turnFloorFor(false, 10) }).allowEnd, false);
+  // …and every other end rule still applies (an undiscussed critical conflict holds it open).
+  assert.equal(governCompletion({ ...base, minTurnsBeforeEnd: 0, blockingItems: ["the 2023 revenue conflict"] }).allowEnd, false);
+});
+check("J2 the broker is told when the seller answered the follow-ups", () => {
+  const one = followUpsAnsweredNotice({ handedBack: 1, discussed: 1 }, "Clearwater Physio");
+  assert.equal(one.title, "The seller answered your follow-up question — Clearwater Physio");
+  assert.match(one.body, /the follow-up question you sent them/);
+  assert.match(followUpsAnsweredNotice({ handedBack: 3, discussed: 3 }, "X").body, /the 3 follow-up questions/);
+  // Never "answered" for a question nobody raised (the seller pressed End first).
+  const none = followUpsAnsweredNotice({ handedBack: 2, discussed: 0 }, "X");
+  assert.equal(none.title, "The seller ended the follow-up before your follow-up questions came up — X");
+  assert.doesNotMatch(none.body, /answered|went through/);
+  assert.match(followUpsAnsweredNotice({ handedBack: 3, discussed: 1 }, "X").title, /answered 1 of your 3 follow-up questions/);
+  // A new broker event with a preference switch; no existing event's recipients change.
+  assert.deepEqual(NOTIFICATION_ROUTING.seller_followups_answered, { teams: ["broker"], roles: ["lead", "associate"] });
+  assert.equal(BROKER_EVENT_PREFERENCE.seller_followups_answered, "interviewUpdates");
+  assert.equal(ownerGetsEvent("seller_followups_answered", "owner@brokerage.invalid", []), true);
+});
+check("J2 the Overview's next-step card says the CIM waits on the seller's follow-up answers", () => {
+  const c = ctaCopy(0, false, 2);
+  assert.equal(c.blocked, true);
+  assert.match(c.title, /waiting on the seller to answer 2 follow-up questions/);
+  assert.equal(ctaCopy(1, false, 2).title.includes("resolve 1 critical discrepancy"), true, "the broker's own conflicts come first");
+  assert.equal(ctaCopy(0, false, 0).blocked, false);
 });
 check("J2 a burst of routings emails the seller once an hour", () => {
   const now = Date.parse("2026-09-28T12:00:00Z");
@@ -299,6 +371,16 @@ async function asyncChecks() {
   assert.equal(scrapeInBackground(deal, "retry", async () => { throw new Error("no site"); }), true);
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(autoScrapeRunning("D-scrape"), false);
+  // …and a failed read isn't retried on every interview opening — only after the back-off.
+  let t = Date.now();
+  setAutoScrapeClock(() => t);
+  let retried = 0;
+  assert.equal(scrapeInBackground(deal, "interview started", async () => { retried++; }), false, "failed a moment ago");
+  t += AUTO_SCRAPE_RETRY_MS + 1;
+  assert.equal(scrapeInBackground(deal, "interview started", async () => { retried++; }), true, "tried again after 6 hours");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(retried, 1);
+  setAutoScrapeClock();
   passed++;
   console.log("  ok  J11 background read is deduplicated and never throws");
 }

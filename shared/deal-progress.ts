@@ -334,6 +334,9 @@ export function computeNextStep(deal: DealProgressInput, extras: DealProgressExt
         if (!hasQuestionnaire(deal) && !extras.interviewStarted) return seller("questionnaire");
         return interviewStep();
       }
+      // Questions sent back to the seller after the interview: the CIM can't
+      // be generated until they answer (or the broker resolves them).
+      if (followUps > 0) return followUpStep();
       return you("start content creation");
     }
     case "phase3_content_creation": {

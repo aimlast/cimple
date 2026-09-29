@@ -71,9 +71,9 @@ const NOTIFICATION_PREFERENCES: Array<{
   {
     key: "interviewUpdates",
     title: "Seller interview finished",
-    description: "The seller finishes (or ends) their AI interview, so what they told it is ready for your review.",
+    description: "The seller finishes (or ends) their AI interview, or answers follow-up questions you sent them, so what they said is ready for your review.",
     icon: ClipboardCheck,
-    events: ["interview_complete"],
+    events: ["interview_complete", "seller_followups_answered"],
   },
 ];
 const DEFAULT_NOTIFICATION_PREFS: Record<NotificationPrefKey, boolean> = {
