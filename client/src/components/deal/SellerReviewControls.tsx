@@ -69,7 +69,7 @@ export function SellerReviewControls({
   });
   const send = useMutation({
     mutationFn: async () =>
-      (await apiRequest("POST", `/api/deals/${dealId}/seller-review/send`)).json() as Promise<{ recipients: number; emailsSent: number }>,
+      (await apiRequest("POST", `/api/deals/${dealId}/seller-review/send`)).json() as Promise<{ recipients: number; emailsSent: number; optedOut?: number }>,
     onSuccess: (r) => {
       queryClient.invalidateQueries({ queryKey: sellerReviewKey(dealId) });
       toast(
@@ -83,7 +83,9 @@ export function SellerReviewControls({
               title: "Sent to the seller",
               description: r.emailsSent > 0
                 ? `Emailed ${r.emailsSent === 1 ? "the seller" : `${r.emailsSent} people`} a link to read and approve the CIM.`
-                : "Their review link is ready (email isn't set up here, so nothing was emailed).",
+                : r.optedOut && r.optedOut >= r.recipients
+                  ? "The seller turned off email notifications, so nothing was emailed — the CIM is waiting for them on their progress page. Let them know it's there."
+                  : "Their review link is ready on their progress page (nothing was emailed from here).",
             },
       );
     },
@@ -92,14 +94,18 @@ export function SellerReviewControls({
 
   const sentForThisStage = !!data?.lastSentAt && data.lastSentStage === stage;
   const requests = data?.changeRequests.length ?? 0;
+  // The seller's changes are the broker's move until the CIM is sent back
+  // after them (the deal list's rule — shared/seller-portal.ts sellerReviewTurn).
+  const latestRequest = Math.max(0, ...(data?.changeRequests ?? []).map((r) => new Date(r.at).getTime() || 0));
+  const changesPending = requests > 0 && (!sentForThisStage || latestRequest > new Date(data!.lastSentAt!).getTime());
   return (
     <>
-      {requests > 0 && (
+      {changesPending && (
         <span className="text-[11px] text-amber-500" data-testid="text-seller-change-requests">
-          Seller asked for changes ({requests}) — see Open items
+          Seller asked for changes ({requests}) — see Open items, then send it back
         </span>
       )}
-      {sentForThisStage && requests === 0 && (
+      {sentForThisStage && !changesPending && (
         <span className="text-[11px] text-muted-foreground flex items-center gap-1" data-testid="text-seller-review-sent">
           <MailCheck className="h-3 w-3" /> Sent {new Date(data!.lastSentAt!).toLocaleDateString()} · waiting on the seller
         </span>

@@ -44,13 +44,44 @@ export function turnFloorFor(interviewAlreadyCompleted: boolean | null | undefin
 /** Don't email the seller again for routings within this window. */
 export const FOLLOWUP_EMAIL_WINDOW_MS = 60 * 60 * 1000;
 
+/**
+ * One email for a burst of routings: a follow-up email in the last hour
+ * covers the new question — but only while the seller hasn't been back
+ * since it. Once they came back (interview activity after that email, which
+ * handed its questions back), a new routing is a new request and emails
+ * again; otherwise it would reach nobody and the broker would be told it
+ * was "added" to an email already acted on.
+ */
 export function shouldEmailFollowUp(
   recent: Array<{ type: string; createdAt: Date | string | null }>,
   now = Date.now(),
+  sellerLastActiveAt?: Date | string | null,
 ): boolean {
-  return !recent.some(
-    (n) => n.type === "seller_followup_questions" && n.createdAt && now - new Date(n.createdAt).getTime() < FOLLOWUP_EMAIL_WINDOW_MS,
-  );
+  const back = sellerLastActiveAt ? new Date(sellerLastActiveAt).getTime() : null;
+  return !recent.some((n) => {
+    if (n.type !== "seller_followup_questions" || !n.createdAt) return false;
+    const sent = new Date(n.createdAt).getTime();
+    if (now - sent >= FOLLOWUP_EMAIL_WINDOW_MS) return false;
+    return !(back != null && Number.isFinite(back) && back > sent);
+  });
+}
+
+/** When the deal's interview last saw activity (any session), or null. */
+async function lastInterviewActivity(dealId: string): Promise<Date | null> {
+  const { db } = await import("../db");
+  const { interviewSessions } = await import("@shared/schema");
+  const { eq } = await import("drizzle-orm");
+  const rows = await db
+    .select({ dealId: interviewSessions.dealId, lastActivityAt: interviewSessions.lastActivityAt })
+    .from(interviewSessions)
+    .where(eq(interviewSessions.dealId, dealId));
+  let latest: Date | null = null;
+  for (const r of rows) {
+    if (r.dealId !== dealId || !r.lastActivityAt) continue;
+    const at = new Date(r.lastActivityAt);
+    if (!latest || at > latest) latest = at;
+  }
+  return latest;
 }
 
 export interface FollowUpNotice {
@@ -63,6 +94,8 @@ export interface FollowUpNotice {
   addressed: number;
   /** Emailed within the last hour already — not sent again. */
   recentlyEmailed?: boolean;
+  /** Addressed seller-team members who turned email notifications off (recorded, not emailed). */
+  optedOut?: number;
 }
 
 /**
@@ -76,7 +109,8 @@ export async function notifySellerOfFollowUps(dealId: string): Promise<FollowUpN
   const waiting = (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => d.status === "ask_seller").length;
   try {
     const recent = await storage.getNotificationsByDeal(dealId);
-    if (!shouldEmailFollowUp(recent)) return { interviewFinished: true, waiting, emailed: 0, addressed: 0, recentlyEmailed: true };
+    const lastActive = await lastInterviewActivity(dealId).catch(() => null);
+    if (!shouldEmailFollowUp(recent, Date.now(), lastActive)) return { interviewFinished: true, waiting, emailed: 0, addressed: 0, recentlyEmailed: true };
     const { notifySellerPortal } = await import("../notifications/service");
     const r = await notifySellerPortal(dealId, "seller_followup_questions", {
       title: `Your broker has ${waiting === 1 ? "a follow-up question" : "a few follow-up questions"} for you`,
@@ -88,7 +122,7 @@ export async function notifySellerOfFollowUps(dealId: string): Promise<FollowUpN
       businessName: deal.businessName,
       metadata: { waiting },
     });
-    return { interviewFinished: true, waiting, emailed: r.emailsSent, addressed: r.recipients };
+    return { interviewFinished: true, waiting, emailed: r.emailsSent, addressed: r.recipients, ...(r.optedOut ? { optedOut: r.optedOut } : {}) };
   } catch (err) {
     console.warn(`[followups] couldn't tell the seller about follow-up questions on deal ${dealId}:`, err);
     return { interviewFinished: true, waiting, emailed: 0, addressed: 0 };

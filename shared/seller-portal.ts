@@ -305,3 +305,31 @@ export function sellerReviewStage(d: ReviewInput): SellerReviewStage {
 export function sellerApprovalField(stage: SellerReviewStage): "contentApprovedBySeller" | "designApprovedBySeller" | null {
   return stage === "content" ? "contentApprovedBySeller" : stage === "design" ? "designApprovedBySeller" : null;
 }
+
+const timeOf = (v: Date | string | null | undefined): number | null => {
+  if (v == null) return null;
+  const t = new Date(v).getTime();
+  return Number.isFinite(t) ? t : null;
+};
+
+/**
+ * Whose move the seller's review is (the deal list's next step).
+ *  - `sent`: which stages were ever sent to the seller (cim_ready);
+ *  - `changesRequested`: the seller asked for changes (an open request on
+ *    the broker's list) after the stage was last sent — the ball is with
+ *    the broker until they send it back, never "Waiting on the seller".
+ * A send AFTER the request (the broker made the changes and re-sent) hands
+ * it back to the seller. Pure.
+ */
+export function sellerReviewTurn(
+  d: ReviewInput,
+  lastSent: { content?: Date | string | null; design?: Date | string | null },
+  openChangeRequestAt?: Date | string | null,
+): { sent: { content: boolean; design: boolean }; changesRequested: boolean } {
+  const sent = { content: timeOf(lastSent.content) != null, design: timeOf(lastSent.design) != null };
+  const stage = sellerReviewStage(d);
+  const requested = timeOf(openChangeRequestAt);
+  if ((stage !== "content" && stage !== "design") || requested == null) return { sent, changesRequested: false };
+  const sentAt = timeOf(lastSent[stage]);
+  return { sent, changesRequested: sentAt == null || requested > sentAt };
+}

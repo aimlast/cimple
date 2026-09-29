@@ -22,8 +22,10 @@ import {
   interviewSessions,
   sellerInvites,
   notifications,
+  tasks,
   type Deal,
 } from "@shared/schema";
+import { OPEN_TASK_STATUSES, SELLER_REVIEW_TASK_CREATOR, sellerReviewTurn } from "@shared/seller-portal";
 import { computeCimReadiness, type CimReadiness } from "@shared/cim-readiness";
 import { CIM_FALLBACK_REASONING } from "@shared/cim-layouts";
 import {
@@ -242,14 +244,22 @@ export function regionFrom(...candidates: unknown[]): string | null {
  * query per deal. Callers must pass only ids the session broker owns.
  */
 export async function loadDealSideFacts(
-  dealRows: Array<Pick<Deal, "id" | "createdAt"> & { interviewCompleted?: boolean | null }>,
+  dealRows: Array<
+    Pick<Deal, "id" | "createdAt"> & {
+      interviewCompleted?: boolean | null;
+      contentApprovedByBroker?: boolean | null;
+      contentApprovedBySeller?: boolean | null;
+      designApprovedByBroker?: boolean | null;
+      designApprovedBySeller?: boolean | null;
+    }
+  >,
   opts: { confidence?: boolean } = {},
 ): Promise<Map<string, DealSideFacts>> {
   const out = new Map<string, DealSideFacts>();
   if (dealRows.length === 0) return out;
   const ids = dealRows.map((d) => d.id);
 
-  const [sessionRows, docRows, buyerRows, sectionRows, discRows, inviteRows, reviewRows] = await Promise.all([
+  const [sessionRows, docRows, buyerRows, sectionRows, discRows, inviteRows, reviewRows, changeRows] = await Promise.all([
     // Latest session per deal: its activity time and (optionally) the
     // interview's confidence levels, which the readiness score uses.
     db
@@ -320,17 +330,26 @@ export async function loadDealSideFacts(
       // A removed seller-team member's revoked link is not the deal's seller.
       .where(and(inArray(sellerInvites.dealId, ids), ne(sellerInvites.status, "revoked")))
       .orderBy(sellerInvites.dealId, desc(sellerInvites.createdAt)),
-    // Which CIM stages were sent to the seller for review (seller-review.ts
-    // records each send as a cim_ready notification with its stage).
+    // When each CIM stage was last sent to the seller for review
+    // (seller-review.ts records each send as a cim_ready notification with its stage).
     db
       .select({
         dealId: notifications.dealId,
-        content: sql<boolean>`bool_or(${notifications.metadata} ->> 'stage' = 'content')`,
-        design: sql<boolean>`bool_or(${notifications.metadata} ->> 'stage' = 'design')`,
+        content: sql<string | null>`max(${notifications.createdAt}) filter (where ${notifications.metadata} ->> 'stage' = 'content')`,
+        design: sql<string | null>`max(${notifications.createdAt}) filter (where ${notifications.metadata} ->> 'stage' = 'design')`,
       })
       .from(notifications)
       .where(and(inArray(notifications.dealId, ids), eq(notifications.type, "cim_ready")))
       .groupBy(notifications.dealId),
+    // The seller's latest still-open "request changes" on the CIM review.
+    db
+      .select({
+        dealId: tasks.dealId,
+        latest: sql<string | null>`max(${tasks.createdAt})`,
+      })
+      .from(tasks)
+      .where(and(inArray(tasks.dealId, ids), eq(tasks.createdBy, SELLER_REVIEW_TASK_CREATOR), inArray(tasks.status, [...OPEN_TASK_STATUSES])))
+      .groupBy(tasks.dealId),
   ]);
 
   const byDeal = <T extends { dealId: string }>(rows: T[]) => new Map(rows.map((r) => [r.dealId, r]));
@@ -341,6 +360,7 @@ export async function loadDealSideFacts(
   const discs = byDeal(discRows);
   const invites = byDeal(inviteRows);
   const reviews = byDeal(reviewRows);
+  const changeRequests = byDeal(changeRows);
 
   for (const d of dealRows) {
     const s = sessions.get(d.id);
@@ -359,6 +379,7 @@ export async function loadDealSideFacts(
       toMs(inv?.acceptedAt),
     );
     const sellerName = inv?.sellerName?.trim() || null;
+    const review = sellerReviewTurn(d, reviews.get(d.id) ?? {}, changeRequests.get(d.id)?.latest);
     out.set(d.id, {
       extras: {
         invited: !!inv,
@@ -368,7 +389,8 @@ export async function loadDealSideFacts(
         cimGenerating: getLiveCimGenerationStatus(d.id)?.status === "running",
         openCriticalDiscrepancies: toNum(disc?.critical),
         sellerFollowUpsBlocking: d.interviewCompleted ? toNum(disc?.routedCritical) : 0,
-        sellerReviewSent: { content: !!reviews.get(d.id)?.content, design: !!reviews.get(d.id)?.design },
+        sellerReviewSent: review.sent,
+        sellerChangesRequested: review.changesRequested,
         buyersWithAccess: toNum(b?.active),
         buyersViewing: toNum(b?.viewing),
       },

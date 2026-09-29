@@ -502,13 +502,18 @@ async function notifySellerInviteFallback(
  * seller-team members routed for the event (a member's link is the invite
  * minted for their address), else the deal's sent/accepted seller invites.
  * A member with no live link of their own is skipped — a seller-portal
- * link is never someone else's token. Pure.
+ * link is never someone else's token.
+ *
+ * Like notify(): once the event is routed to the seller team, the team is
+ * the audience — a member who turned email off is still that audience
+ * (recorded, `muted`, never emailed), and their opt-out never sends the
+ * email to the invite address instead. Pure.
  */
 export function sellerPortalRecipients(
   eventType: string,
   members: DealMember[],
   invites: SellerInvite[],
-): { email: string; name: string | null; token: string; recipientId: string; via: "members" | "seller_invite" }[] {
+): { email: string; name: string | null; token: string; recipientId: string; via: "members" | "seller_invite"; muted?: boolean }[] {
   const live = invites.filter((i) => i.status !== "revoked" && !!i.token);
   const byEmail = new Map<string, SellerInvite>();
   // Newest first from storage; keep the first (newest) per address.
@@ -516,11 +521,20 @@ export function sellerPortalRecipients(
     const e = inv.sellerEmail?.trim().toLowerCase();
     if (e && !byEmail.has(e)) byEmail.set(e, inv);
   }
-  const routed = routedMembers(members, eventType).filter((m) => m.teamType === "seller" && m.emailNotifications !== false && !!m.email);
+  // (Opted-out members count as routed — decided before their preference.)
+  const routed = routedMembers(members, eventType).filter((m) => m.teamType === "seller" && !!m.email);
   const fromMembers = routed
     .map((m) => {
       const inv = byEmail.get(m.email!.trim().toLowerCase());
-      return inv ? { email: m.email!.trim(), name: m.name ?? null, token: inv.token, recipientId: m.id, via: "members" as const } : null;
+      if (!inv) return null;
+      return {
+        email: m.email!.trim(),
+        name: m.name ?? null,
+        token: inv.token,
+        recipientId: m.id,
+        via: "members" as const,
+        ...(m.emailNotifications === false ? { muted: true } : {}),
+      };
     })
     .filter((r): r is NonNullable<typeof r> => !!r);
   if (routed.length > 0) return fromMembers;
@@ -543,7 +557,7 @@ export async function notifySellerPortal(
   dealId: string,
   eventType: string,
   opts: { title: string; body: string; path: string; businessName?: string; metadata?: Record<string, any> },
-): Promise<NotifyResult> {
+): Promise<NotifyResult & { optedOut?: number }> {
   try {
     const deal = await storage.getDeal(dealId);
     if (!deal) return NO_RECIPIENTS;
@@ -560,7 +574,7 @@ export async function notifySellerPortal(
     let emailsSent = 0;
     for (const t of targets) {
       const actionUrl = `/seller/${t.token}/${path}`;
-      const skip = deal.demoKey ? "demo_deal" : null;
+      const skip = deal.demoKey ? "demo_deal" : t.muted ? "opted_out" : null;
       const emailSent = skip
         ? false
         : await sendEmail(t.email, opts.title, buildEmailHtml({ title: opts.title, body: opts.body, actionUrl, businessName: opts.businessName }));
@@ -583,7 +597,8 @@ export async function notifySellerPortal(
         smsSentAt: null,
       });
     }
-    return { recipients: targets.length, emailsSent, via: targets[0].via };
+    const optedOut = targets.filter((t) => t.muted).length;
+    return { recipients: targets.length, emailsSent, via: targets[0].via, ...(optedOut ? { optedOut } : {}) };
   } catch (err) {
     console.error(`[notify] Error dispatching ${eventType}:`, err);
     return NO_RECIPIENTS;

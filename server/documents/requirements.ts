@@ -207,6 +207,32 @@ const INDUSTRY_DOCS: Record<string, DocRequirement[]> = {
     { documentName: "Domain/Trademark Registrations", category: "legal", isRequired: false },
     { documentName: "Churn and Retention Analytics", category: "financial", isRequired: false },
   ],
+
+  // ── Hospitality / lodging (New Deal "Hospitality"; no playbook section) ──
+  // Hotels, motels, inns, resorts, B&Bs, campgrounds. A restaurant or bar
+  // filed under "Hospitality" gets the restaurant list (its sub-industry decides).
+  hospitality_lodging: [
+    { documentName: "Occupancy, ADR and RevPAR Reports (3 Years)", category: "financial", isRequired: true },
+    { documentName: "Furniture, Fixtures & Equipment (FF&E) List", category: "operational", isRequired: true },
+    { documentName: "Fire, Health and Accommodation Inspection Records", category: "compliance", isRequired: true },
+    { documentName: "Booking Channel / OTA Agreements", category: "legal", isRequired: true },
+    { documentName: "Franchise / Brand (Flag) Agreement", category: "legal", isRequired: false },
+    { documentName: "Property Improvement Plan (if branded)", category: "operational", isRequired: false },
+    { documentName: "Accommodation / Occupancy Tax Filings", category: "tax", isRequired: false },
+    { documentName: "Liquor License Certificate", category: "compliance", isRequired: false },
+  ],
+
+  // ── Real estate services (New Deal "Real Estate"; no playbook section) ──
+  // Property management firms, real estate brokerages, rental portfolios.
+  real_estate: [
+    { documentName: "Property Management Agreements (All Managed Properties)", category: "legal", isRequired: true },
+    { documentName: "Rent Roll (Current)", category: "financial", isRequired: true },
+    { documentName: "Tenant Leases / Lease Abstracts", category: "legal", isRequired: true },
+    { documentName: "Brokerage / Property Management Registration", category: "compliance", isRequired: true },
+    { documentName: "Trust Account Reconciliations (12 Months)", category: "financial", isRequired: true },
+    { documentName: "Property Tax Assessments", category: "tax", isRequired: false },
+    { documentName: "Building Condition / Environmental (Phase I) Reports", category: "operational", isRequired: false },
+  ],
 };
 
 // ─── Which industry list a deal gets ──────────────────────────────────
@@ -250,8 +276,58 @@ export function industryDocsKey(industry: string | null | undefined, subIndustry
   if (/e-?commerce|online (?:store|shop|retail)|amazon|shopify|\bfba\b|direct[- ]to[- ]consumer|\bdtc\b/i.test(both) && !/\bsaas\b|software|\bapps?\b|marketplace platform/i.test(both)) {
     return "retail";
   }
-  const section = matchIndustrySection(text, null) ?? matchIndustrySection(subIndustry ?? null, null);
+  const own = docsKeyForText(text);
+  if (own) return own;
+  const sub = docsKeyForText((subIndustry ?? "").trim());
+  if (sub) return sub;
+  // "Hospitality" on its own (New Deal lists restaurants separately): lodging.
+  return /hospitality/i.test(text) ? "hospitality_lodging" : null;
+}
+
+/**
+ * One piece of industry text → its list. How the business operates decides
+ * before what it handles: "Food manufacturing" is a plant (the manufacturing
+ * list), "Food distribution" a distributor — not a restaurant, which the
+ * playbook's "food" keyword filed them under. Hotels and real estate have no
+ * playbook section but do have their own lists.
+ */
+function docsKeyForText(text: string): string | null {
+  if (!text) return null;
+  if (INDUSTRY_DOCS[text]) return text;
+  if (/manufactur|fabricat|co-?pack|processing plant/i.test(text)) return "manufacturing";
+  if (/wholesale|distribut/i.test(text)) return "wholesale_distribution";
+  if (/real estate|realty|realtor|property manage|rental propert|landlord|commercial propert/i.test(text)) return "real_estate";
+  if (/hotel|motel|\binns?\b|resort|lodg|bed (?:and|&) breakfast|\bb&b\b|campground|hostel/i.test(text)) return "hospitality_lodging";
+  const section = matchIndustrySection(text, null);
   return section != null ? SECTION_TO_INDUSTRY_KEY[section] ?? null : null;
+}
+
+/**
+ * The industry whose document list a deal gets. The deal's own industry —
+ * New Deal, the CRM, or the broker's correction — wins whenever it resolves
+ * to a list; what the interview identified only fills in when it doesn't
+ * ("Other"). The interview's stored identification is never updated by the
+ * broker's edit, so preferring it re-added the old industry's rows on the
+ * seller's next turn and undid the correction (free round 2, J5).
+ */
+export function documentRequirementsIndustry(
+  deal: { industry?: string | null; subIndustry?: string | null },
+  identified?: { industry?: string | null; subIndustry?: string | null } | null,
+): { industry: string | null; subIndustry: string | null } {
+  const own = { industry: deal.industry ?? null, subIndustry: deal.subIndustry ?? null };
+  if (industryDocsKey(own.industry, own.subIndustry)) return own;
+  if (identified?.industry) return { industry: identified.industry, subIndustry: identified.subIndustry ?? own.subIndustry };
+  return own;
+}
+
+/** ensureIndustryDocumentRequirements for the interview: the deal's own industry first (documentRequirementsIndustry). */
+export function ensureDealDocumentRequirements(
+  dealId: string,
+  deal: { industry?: string | null; subIndustry?: string | null } | null | undefined,
+  identified?: { industry?: string | null; subIndustry?: string | null } | null,
+): Promise<number> {
+  const pick = documentRequirementsIndustry(deal ?? {}, identified);
+  return ensureIndustryDocumentRequirements(dealId, pick.industry, pick.subIndustry);
 }
 
 /** The universal rows plus the industry's own. */

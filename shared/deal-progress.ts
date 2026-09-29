@@ -128,6 +128,12 @@ export interface DealProgressExtras {
    * Unknown → the old reading (waiting on the seller).
    */
   sellerReviewSent?: { content: boolean; design: boolean };
+  /**
+   * The seller asked for changes to the stage under review since it was
+   * last sent to them (shared/seller-portal.ts sellerReviewTurn): the
+   * broker's move — make the changes and send it back.
+   */
+  sellerChangesRequested?: boolean;
   /** Buyers whose link is active (not revoked, not expired). */
   buyersWithAccess?: number;
   /** Buyers who opened the CIM and haven't decided yet. */
@@ -356,6 +362,7 @@ export function computeNextStep(deal: DealProgressInput, extras: DealProgressExt
       if (extras.cimGenerating) return { label: "Cimple is rewriting the CIM", owner: "none", href: overview };
       if (!deal.contentApprovedByBroker) return you("review the CIM content");
       if (!deal.contentApprovedBySeller) {
+        if (extras.sellerChangesRequested) return you("make the changes the seller asked for, then send it back");
         return extras.sellerReviewSent && !extras.sellerReviewSent.content
           ? you("send the CIM to the seller for review")
           : seller("content approval");
@@ -375,6 +382,7 @@ export function computeNextStep(deal: DealProgressInput, extras: DealProgressExt
         return you(`approve ${awaiting} section${awaiting === 1 ? "" : "s"}`, designer);
       }
       if (!deal.designApprovedBySeller) {
+        if (extras.sellerChangesRequested) return you("make the design changes the seller asked for, then send it back");
         return extras.sellerReviewSent && !extras.sellerReviewSent.design
           ? you("send the design to the seller for sign-off")
           : seller("design sign-off");

@@ -270,7 +270,7 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
       );
       return r.json();
     },
-    onSuccess: (data: { sellerFollowUp?: { interviewFinished: boolean; emailed: number; addressed: number; recentlyEmailed?: boolean } }) => {
+    onSuccess: (data: { sellerFollowUp?: { interviewFinished: boolean; emailed: number; addressed: number; recentlyEmailed?: boolean; optedOut?: number } }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "financial-analysis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "discrepancies"] });
       const f = data?.sellerFollowUp;
@@ -287,7 +287,9 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
                 title: "Sent to the seller as a follow-up",
                 description: f.recentlyEmailed
                   ? "They were already emailed a follow-up link in the last hour — this is added to it."
-                  : "They had finished the interview, so they were sent a link to answer your follow-up questions.",
+                  : f.emailed === 0 && f.optedOut && f.optedOut >= f.addressed
+                    ? "They had finished the interview and turned off email notifications, so nothing was emailed — your follow-up questions wait on their progress page. Let them know."
+                    : "They had finished the interview, so they were sent a link to answer your follow-up questions.",
               }
           : {
               title: "Routed to seller interview",

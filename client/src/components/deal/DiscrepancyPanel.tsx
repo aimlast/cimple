@@ -89,6 +89,8 @@ interface SellerFollowUp {
   emailed: number;
   addressed: number;
   recentlyEmailed?: boolean;
+  /** Addressed seller-team members who turned email off (not emailed). */
+  optedOut?: number;
 }
 
 interface DiscrepancyPanelProps {
@@ -219,7 +221,9 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
                     ? "They were already emailed a follow-up link in the last hour — this is added to it."
                     : f.emailed > 0
                       ? "They had finished the interview, so we emailed them a link to answer your follow-up questions."
-                      : "They had finished the interview; their portal now shows your follow-up questions (email isn't set up here, so nothing was emailed).") +
+                      : f.optedOut && f.optedOut >= f.addressed
+                        ? "They had finished the interview and turned off email notifications, so nothing was emailed — their portal shows your follow-up questions. Let them know."
+                        : "They had finished the interview; their portal now shows your follow-up questions (nothing was emailed from here).") +
                   " A critical conflict keeps the CIM locked until they answer or you resolve it." + privateNote,
               },
         );

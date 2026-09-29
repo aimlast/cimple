@@ -261,6 +261,33 @@ async function main() {
   r = await call("PATCH", "/api/discrepancies/X2", { status: "ask_seller" }, broker);
   assert.equal(r.json.sellerFollowUp.recentlyEmailed, true);
   assert.equal(sent.length, 0);
+  // The CIM builder's AI writing obeys the same rule (it used to see only open/seller_responded).
+  r = await call("POST", "/api/deals/D1/cim-sections", { title: "Growth plan", layoutType: "prose_highlight", mode: "ai" }, broker);
+  assert.equal(r.status, 409, `r2: a critical routed after the interview blocks the builder's AI too (${r.status} ${r.text})`);
+  assert.match(r.json.error, /Waiting on the seller to answer 2 critical questions/);
+  assert.equal(modelCalls.length, 0, "r2: refused before any model call");
+  // The seller came back (their follow-up session handed both back): a NEW
+  // routing within the hour is a new request — emailed again, not "added" to
+  // an email they already acted on.
+  await new Promise((res) => setTimeout(res, 5));
+  const back = { id: "SESS-back", dealId: "D1", lastActivityAt: new Date(), messages: [] };
+  await new Promise((res) => setTimeout(res, 5));
+  T.sessions.push(back);
+  for (const x of T.discs) if (x.status === "ask_seller") x.status = "seller_responded";
+  T.discs.push({ ...disc, id: "X4", field: "Lease term", status: "open" });
+  sent.length = 0;
+  r = await call("PATCH", "/api/discrepancies/X4", { status: "ask_seller" }, broker);
+  assert.equal(r.json.sellerFollowUp.recentlyEmailed, undefined, "r2: not 'already emailed' once the seller came back");
+  assert.equal(r.json.sellerFollowUp.emailed, 1);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0].to, ["amrit@clearwater.invalid"]);
+  // …and a burst right after that one is still a single email.
+  T.discs.push({ ...disc, id: "X5", field: "Staff count", status: "open" });
+  sent.length = 0;
+  r = await call("PATCH", "/api/discrepancies/X5", { status: "ask_seller" }, broker);
+  assert.equal(r.json.sellerFollowUp.recentlyEmailed, true);
+  assert.equal(sent.length, 0);
+  T.sessions.splice(T.sessions.indexOf(back), 1);
   // While the interview is running, routing is unchanged: no email, not blocking.
   Object.assign(deal, { interviewCompleted: false });
   T.discs.push({ ...disc, id: "X3", field: "Staff count", status: "open" });
@@ -316,6 +343,20 @@ async function main() {
   assert.equal(r.status, 409);
   assert.equal(deal.designApprovedBySeller, false);
   T.discs.pop();
+  // The seller Owner turned email notifications off: recorded, never emailed —
+  // and never sent to the invite address instead (r2).
+  T.members.push({ id: "M-owner", dealId: "D1", teamType: "seller", role: "owner", name: "Amrit", email: "Amrit@Clearwater.invalid", inviteStatus: "accepted", emailNotifications: false });
+  sent.length = 0;
+  const before = T.notifications.length;
+  r = await call("POST", "/api/deals/D1/seller-review/send", {}, broker);
+  assert.equal(r.status, 200, r.text);
+  assert.deepEqual([r.json.recipients, r.json.emailsSent, r.json.optedOut, r.json.via], [1, 0, 1, "members"]);
+  assert.equal(sent.length, 0, "r2: an opted-out seller gets no email, not even at the invite address");
+  const muted = T.notifications.slice(before);
+  assert.equal(muted.length, 1);
+  assert.equal(muted[0].metadata.emailSkipped, "opted_out");
+  assert.equal(muted[0].emailSent, false);
+  T.members.pop();
   console.log("  ok  J3 send → review → request changes → approve, gated like every approval");
 
   // ════ J6: FAQ answers buyers ════════════════════════════════════════════

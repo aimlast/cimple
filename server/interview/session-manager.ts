@@ -149,7 +149,7 @@ import {
 import { agentConfig } from "./config/load-config";
 import { ensureSectionImportance } from "./section-importance";
 import { ensureInterviewPlan } from "./interview-plan";
-import { ensureIndustryDocumentRequirements } from "../documents/requirements";
+import { ensureDealDocumentRequirements } from "../documents/requirements";
 import { turnFloorFor, notifyBrokerFollowUpsAnswered } from "./seller-followups";
 import { generateSellerProfile } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
@@ -1037,7 +1037,8 @@ async function startOrResumeSessionOnce(
   // the deal already has a ranking for its industry).
   ensureSectionImportance(deal, importanceContext(seededIndustryContext));
   ensureInterviewPlan(deal, { subIndustry: seededIndustryContext?.subIndustry ?? null });
-  void ensureIndustryDocumentRequirements(deal.id, seededIndustryContext?.industry || deal.industry, seededIndustryContext?.subIndustry ?? deal.subIndustry);
+  // (The deal's own industry wins when it has a list — a broker's correction sticks.)
+  void ensureDealDocumentRequirements(deal.id, deal, seededIndustryContext);
   console.log(timer.line(`opening of session ${sessionId}${priorCompletedSession ? " (returning seller)" : ""}`));
 
   return {
@@ -3389,9 +3390,10 @@ async function processTurnLocked(
   const updatedKb = assembleKnowledgeBase(updatedDeal!, documents, tasks, session, resolvedDiscrepancies, kbExtras);
   ensureSectionImportance(updatedDeal!, importanceContext(updatedIndustryContext));
   ensureInterviewPlan(updatedDeal!, { subIndustry: updatedIndustryContext?.subIndustry ?? null });
-  // The industry the interview identified brings its document requests
-  // (a deal opened as "Other" still gets the clinic's licences). Background.
-  void ensureIndustryDocumentRequirements(dealId, updatedIndustryContext?.industry || updatedDeal?.industry, updatedIndustryContext?.subIndustry ?? updatedDeal?.subIndustry);
+  // The industry's document requests (background). The deal's own industry
+  // (New Deal, or the broker's correction) wins whenever it has a list; what the
+  // interview identified fills in for "Other" (the clinic's licences) — requirements.ts.
+  void ensureDealDocumentRequirements(dealId, updatedDeal, updatedIndustryContext);
 
   // (Everything is shown by now — released at the gate or once final; this
   // only waits for the typing to finish.)
