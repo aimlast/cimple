@@ -55,6 +55,8 @@ import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
 import { registerEngagementRoutes } from "./routes/engagement.js";
 import { registerEngagementInsightRoutes } from "./routes/engagement-insights.js";
 import { registerReadingRoutes } from "./routes/reading.js";
+import { recordRendition, variantForAccessLevel } from "./analytics/renditions.js";
+import { viewRoomStamp } from "./analytics/reading-ingest.js";
 import { notify, previewRecipients, sendDirectEmail } from "./notifications/service.js";
 import { escapeHtml } from "./notifications/email-escape";
 import { teamInviteCopy } from "./notifications/team-invite-copy";
@@ -4608,9 +4610,13 @@ Return JSON only.`,
       // serves CIM content counts (viewStampFor) — the NDA gate and the
       // "preparing" state only move lastAccessedAt. Every return below goes
       // through stampAndBuild so the payload and the row agree.
+      // Views (viewCount) are now counted by the reading tracker, one per
+      // visit (server/analytics/reading-ingest.ts: a new visit with none on
+      // this link in the last 30 min); the GET still stamps firstViewedAt,
+      // which the reminders need even when a blocker stops the tracker.
       const now = new Date();
       const stampAndBuild = async (served: boolean) => {
-        const viewStamp = viewStampFor(access, served, now);
+        const viewStamp = viewRoomStamp(access, served, now);
         await storage.updateBuyerAccess(access.id, viewStamp as any);
         return { ...access, ...viewStamp };
       };
@@ -4759,6 +4765,16 @@ Return JSON only.`,
       // Every section held back (blind versions still being refreshed) is
       // the same as "preparing" for the buyer: nothing to read yet.
       const served = buyerCim.sections.length > 0 || publicDeal.cimContent != null;
+      // Reading analytics: record exactly what this buyer is served (the heat
+      // map is drawn on it) and hand the tracker its opaque id + page order.
+      // Not for the owning broker previewing the room (their reading isn't a buyer's).
+      const ownerPreview = !!req.session?.brokerId && req.session.brokerId === deal.brokerId;
+      const reading = buyerCim.sections.length > 0 && !ownerPreview
+        ? await recordRendition({
+            dealId: deal.id, mode: cimMode, variant: variantForAccessLevel(access.accessLevel),
+            cimLayoutVersion: deal.cimLayoutVersion ?? null, sections: buyerCim.sections, design, live: baseSections,
+          })
+        : null;
       res.json({
         access: accessPayload(await stampAndBuild(served)),
         deal: publicDeal,
@@ -4768,6 +4784,7 @@ Return JSON only.`,
         branding,
         design,
         cimMode,
+        ...(reading ? { reading } : {}),
       });
     } catch (error: any) {
       console.error("Error fetching buyer access:", error);
@@ -7133,6 +7150,12 @@ Return JSON only.`,
       const { dealId } = req.params;
       const { question, accessToken } = req.body;
       if (typeof question !== "string" || !question.trim()) return res.status(400).json({ error: "Question required" });
+      // Reading analytics: the page the buyer was on (a section id they were
+      // served) and the version — only well-formed ids, never text.
+      const askedOn = {
+        sectionId: typeof req.body?.sectionId === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(req.body.sectionId) ? req.body.sectionId : null,
+        renditionId: typeof req.body?.renditionId === "string" && /^[0-9a-f]{32}$/.test(req.body.renditionId) ? req.body.renditionId : null,
+      };
 
       // The buyer proves access with their view-room token. Previously this
       // endpoint was unauthenticated and answered from the UNREDACTED CIM —
@@ -7161,7 +7184,7 @@ Return JSON only.`,
         scope !== "private" && findBlindLeaks([question, answer], blindTerms).length === 0;
       const reader = { id: access.id, accessLevel: access.accessLevel };
       storage.createAnalyticsEvent({
-        dealId, buyerAccessId, eventType: "question_asked", sectionKey: null,
+        dealId, buyerAccessId, eventType: "question_asked", sectionKey: null, pageId: askedOn.sectionId,
         eventData: { question: String(question).slice(0, 200) },
       } as any).catch(() => {});
 
@@ -7209,6 +7232,7 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
             addedToKnowledgeBase: share,
             answerScope: scope,
             similarQuestionIds: matchedQ ? [matchedQ.id] : [],
+            ...askedOn,
           } as any);
 
           return res.json({
@@ -7281,6 +7305,7 @@ Do not speculate or add information not in the CIM.`,
         publishedAnswer: needsEscalation ? null : aiAnswer,
         addedToKnowledgeBase: shareable,
         answerScope: scope,
+        ...askedOn,
       } as any);
 
       // Notify broker when question needs manual response
@@ -7565,16 +7590,23 @@ Do not speculate or add information not in the CIM.`,
         }>;
       };
 
-      const ip = req.ip || req.socket.remoteAddress || null;
-      const ua = req.headers["user-agent"] || null;
-
       // Authenticate with the buyer's view-room token; attribute every event
       // to THAT access row (never a caller-supplied id); validate types; cap size.
       const batchToken = (req.body as any)?.accessToken;
       const batchAccess = typeof batchToken === "string" ? await storage.getBuyerAccessByToken(batchToken) : undefined;
       if (!batchAccess || batchAccess.dealId !== dealId || viewLinkProblem(batchAccess)) return res.status(401).json({ error: "Invalid access token" });
-      if (!dealPublishedForBuyers(await storage.getDeal(dealId))) return res.status(403).json(notPublishedBody());
-      const ALLOWED_EVENTS = new Set(["view", "page_view", "section_enter", "section_exit", "scroll", "scroll_depth", "heat_map_sample", "element_hover", "download_attempt", "time_on_page", "nav_click"]);
+      const batchDeal = await storage.getDeal(dealId);
+      if (!dealPublishedForBuyers(batchDeal)) return res.status(403).json(notPublishedBody());
+      // Nothing is recorded before a required NDA is signed (the old client
+      // sampled the NDA form too).
+      if (ndaBlocksBuyer(batchDeal!, batchAccess)) return res.json({ received: 0 });
+      // The old tracker (replaced by POST /api/view/:token/reading) is still
+      // accepted from cached tabs until LEGACY_BATCH_UNTIL; after that only
+      // the few events nothing else records.
+      const LEGACY_BATCH_UNTIL = Date.parse("2026-10-13T00:00:00Z");
+      const ALLOWED_EVENTS = new Set(Date.now() < LEGACY_BATCH_UNTIL
+        ? ["view", "page_view", "section_enter", "section_exit", "scroll", "scroll_depth", "heat_map_sample", "element_hover", "download_attempt", "time_on_page", "nav_click"]
+        : ["view", "download_attempt"]);
       if (!Array.isArray(events)) return res.status(400).json({ error: "events must be an array" });
       const accepted = events.filter(e => e && ALLOWED_EVENTS.has(String(e.eventType))).slice(0, 200);
       // Blind views send neutral section keys (s_<id>); record the real key
@@ -7595,8 +7627,9 @@ Do not speculate or add information not in the CIM.`,
           viewportHeight: event.viewportHeight ?? null,
           elementId: event.elementId || null,
           eventData: event.eventData || null,
-          ipAddress: ip,
-          userAgent: ua,
+          // No raw network address or user agent on new rows.
+          ipAddress: null,
+          userAgent: null,
         } as any);
       }
 

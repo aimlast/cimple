@@ -151,7 +151,9 @@ export function StickyNav({ sections, onNavigate }: StickyNavProps) {
   return (
     <>
       {/* ── Desktop: Horizontal sticky nav bar ──────────────────────────── */}
+      {/* data-reading-chrome: reading time is measured below this bar (client/src/lib/cim-reading.ts). */}
       <div
+        data-reading-chrome=""
         className={`fixed top-[53px] left-0 right-0 z-30 transition-all duration-300 hidden lg:block ${
           visible
             ? "opacity-100 translate-y-0"

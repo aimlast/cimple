@@ -594,6 +594,10 @@ export class DbStorage implements IStorage {
   }
 
   async deleteDeal(id: string): Promise<void> {
+    // Reading analytics (no foreign keys on these tables): deleted with the deal.
+    await db.execute(sql`DELETE FROM reading_rollups WHERE deal_id = ${id}`);
+    await db.execute(sql`DELETE FROM buyer_visits WHERE deal_id = ${id}`);
+    await db.execute(sql`DELETE FROM cim_renditions WHERE deal_id = ${id}`);
     await db.delete(deals).where(eq(deals.id, id));
   }
 
@@ -898,6 +902,9 @@ export class DbStorage implements IStorage {
   }
 
   async deleteBuyerAccess(id: string): Promise<void> {
+    // Reading analytics of this link go with it.
+    await db.execute(sql`DELETE FROM reading_rollups WHERE buyer_access_id = ${id}`);
+    await db.execute(sql`DELETE FROM buyer_visits WHERE buyer_access_id = ${id}`);
     await db.delete(buyerAccess).where(eq(buyerAccess.id, id));
   }
 
