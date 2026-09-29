@@ -767,17 +767,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updates = schema.parse(req.body);
       if (!(await isBuyerInBrokerList(brokerId, req.params.buyerId))) return res.status(404).json({ error: "Buyer not found" });
 
-      let contact = await storage.getBrokerBuyerContact(brokerId, req.params.buyerId);
-      if (!contact) {
-        // Auto-upsert so tags/notes can be set on buyers first seen via deal access
-        contact = await storage.upsertBrokerBuyerContact({
-          brokerId,
-          buyerUserId: req.params.buyerId,
-          source: "deal",
-          tags: [],
-          notes: null,
-        });
-      }
+      // A row so tags/notes can be set on buyers first seen via deal access.
+      // A buyer the broker removed (still listed through access) starts fresh:
+      // the notes and edits the removal set aside don't quietly come back.
+      const { ensureContact } = await import("./buyers/profile-data.js");
+      const contact = await ensureContact(brokerId, req.params.buyerId);
 
       const updated = await storage.updateBrokerBuyerContact(contact.id, {
         ...(updates.tags !== undefined ? { tags: updates.tags as any } : {}),
@@ -2793,6 +2787,10 @@ Return JSON only.`,
       const deal = await getOwnedDeal(req.params.id, req.session.brokerId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
       await storage.deleteDeal(req.params.id);
+      // Its sources (rows, extracted text, files) and photos/videos go too —
+      // a deleted deal's uploads must not stay on the volume.
+      const { deleteDealLeftovers } = await import("./documents/cleanup");
+      await deleteDealLeftovers(req.params.id).catch((err) => console.error(`[documents] clean-up after deleting deal ${req.params.id} failed:`, err));
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error deleting deal:", error);

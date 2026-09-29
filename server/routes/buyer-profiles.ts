@@ -30,7 +30,7 @@ import { generateBuyerSummary, draftBuyerEmail, aiAvailable } from "../buyers/pr
 import { blindDealSummary } from "../buyers/blind-deal-summary";
 import { db } from "../db";
 import { brokerBuyerContacts, buyerUsers } from "@shared/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 const aiLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
@@ -205,12 +205,17 @@ export function registerBuyerProfileRoutes(app: Express): void {
       // buyer, so the CRM buyer sync never adds them back and "Add back"
       // restores the broker's own notes and edits. Off the list, matching,
       // deep check and outreach meanwhile.
-      const contact = await getContact(brokerId, buyer.id);
-      if (contact) await updateContact(contact.id, { removedAt: new Date() });
-      else if (!(await getRemovedContact(brokerId, buyer.id))) {
+      const removedAt = new Date();
+      if (!(await getContact(brokerId, buyer.id)) && !(await getRemovedContact(brokerId, buyer.id))) {
         // Listed only through an invite or deal access: remember the removal all the same.
-        await db.insert(brokerBuyerContacts).values({ brokerId, buyerUserId: buyer.id, source: "deal", tags: [] as any, notes: null, removedAt: new Date() } as any);
+        await db.insert(brokerBuyerContacts).values({ brokerId, buyerUserId: buyer.id, source: "deal", tags: [] as any, notes: null, removedAt } as any);
       }
+      // Every row that lists them comes off — including one a CRM buyer sync
+      // is creating at this very moment (it re-checks for a removal after
+      // creating, so between the two nothing puts them back).
+      await db.update(brokerBuyerContacts).set({ removedAt, updatedAt: removedAt } as any).where(and(
+        eq(brokerBuyerContacts.brokerId, brokerId), eq(brokerBuyerContacts.buyerUserId, buyer.id), isNull(brokerBuyerContacts.removedAt),
+      ));
       // "Invited by this broker" also puts a buyer on the list — that marker is
       // this broker's, so clearing it is part of removing them.
       if (buyer.invitedByBroker === brokerId) {
@@ -233,11 +238,13 @@ export function registerBuyerProfileRoutes(app: Express): void {
       // Only a buyer this broker removed: the removal row is the tenancy check.
       const removed = await getRemovedContact(brokerId, req.params.id);
       if (!removed) {
-        if (await getContact(brokerId, req.params.id)) return res.json({ restored: true });
+        // Already back on the list — edited again since the removal, which
+        // started them fresh: the set-aside notes and edits are gone.
+        if (await getContact(brokerId, req.params.id)) return res.json({ restored: true, editsRestored: false });
         return res.status(404).json({ error: "Buyer not found" });
       }
       await updateContact(removed.id, { removedAt: null });
-      res.json({ restored: true });
+      res.json({ restored: true, editsRestored: true });
     } catch (err) {
       console.error("[buyer-profile] restore failed:", err);
       res.status(500).json({ error: "Couldn't add this buyer back" });

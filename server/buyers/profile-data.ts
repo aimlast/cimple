@@ -64,16 +64,32 @@ export async function getRemovedContact(brokerId: string, buyerUserId: string): 
 }
 
 /**
+ * The broker's own edits a removal sets aside: what "Add back" returns, and
+ * what a new edit on a buyer who stayed listed (through deal access) starts
+ * without — the broker removed them to clear these.
+ */
+export const SET_ASIDE_BROKER_EDITS_CLEARED: Partial<BrokerBuyerContact> = {
+  notes: null,
+  tags: [] as any,
+  interestStatus: null,
+  brokerProfile: null,
+  brokerProfileMeta: null,
+  aiSummary: null,
+};
+
+/**
  * Contact row, created (source "deal") when the buyer is only on the list
- * through access or an invite. A buyer the broker removed earlier and is now
- * editing again gets that row back (with the broker's earlier edits) rather
- * than a second row.
+ * through access or an invite. A buyer the broker removed (and who stayed
+ * listed through deal access) and is now being edited again gets that row
+ * back rather than a second one — but WITHOUT the notes and edits the
+ * removal set aside: the broker cleared those, and a new tag or note must not
+ * quietly bring them back ("Add back" is the way to restore them).
  */
 export async function ensureContact(brokerId: string, buyerUserId: string): Promise<BrokerBuyerContact> {
   const existing = await getContact(brokerId, buyerUserId);
   if (existing) return existing;
   const removed = await getRemovedContact(brokerId, buyerUserId);
-  if (removed) return (await updateContact(removed.id, { removedAt: null })) ?? removed;
+  if (removed) return (await updateContact(removed.id, { removedAt: null, ...SET_ASIDE_BROKER_EDITS_CLEARED })) ?? removed;
   const [row] = await db.insert(brokerBuyerContacts).values({ brokerId, buyerUserId, source: "deal", tags: [] as any, notes: null } as any).returning();
   return row;
 }

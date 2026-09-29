@@ -2,6 +2,9 @@
 // 6-hourly Pipedrive buyer sync used to re-create them (with a fresh CRM
 // profile, the broker's own edits gone). Removal is now a soft delete the
 // sync respects; adding the buyer back by hand restores the broker's edits.
+// Round 2: a removal made WHILE a sync runs (runs take minutes; the removed
+// list is read at the start) holds too — checked again right before a row is
+// made, and once more after it.
 // Pipedrive is a stubbed fetch; no model call (no API key → extraction skipped).
 // Run: DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=unused node_modules/.bin/tsx tests/crm/f2-buyer-removal.test.ts
 import assert from "node:assert/strict";
@@ -17,6 +20,7 @@ const people: Record<number, any> = {
   103: { id: 103, name: "Buyer Bea", email: [{ value: "bea@buyer.invalid", primary: true }] },    // a real new buyer
 };
 const personFetches: number[] = [];
+let onPersonFetch: ((id: number) => void) | null = null;
 globalThis.fetch = (async (input: any) => {
   const url = new URL(String(input));
   const p = url.pathname;
@@ -24,7 +28,7 @@ globalThis.fetch = (async (input: any) => {
   if (p === "/v1/persons") return json({ success: true, data: Object.values(people) });
   if (p === "/v1/personFields") return json({ success: true, data: [] });
   const m = p.match(/^\/v1\/persons\/(\d+)(\/deals)?$/);
-  if (m && !m[2]) { personFetches.push(Number(m[1])); return json({ success: true, data: people[Number(m[1])] }); }
+  if (m && !m[2]) { personFetches.push(Number(m[1])); onPersonFetch?.(Number(m[1])); return json({ success: true, data: people[Number(m[1])] }); }
   if (m && m[2]) return json({ success: true, data: [] });
   if (p === "/v1/notes") return json({ success: true, data: [] });
   return new Response("not found", { status: 404 });
@@ -50,6 +54,15 @@ s.getBrokerBuyerContact = async (brokerId: string, buyerUserId: string) => conta
 s.getRemovedBrokerBuyerContact = async (brokerId: string, buyerUserId: string) => contacts.find((c) => c.brokerId === brokerId && c.buyerUserId === buyerUserId && c.removedAt);
 s.createBrokerBuyerContact = async (d: any) => { const c = { id: `c-${contacts.length + 1}`, removedAt: null, ...d }; contacts.push(c); return c; };
 s.updateBrokerBuyerContact = async (id: string, u: any) => Object.assign(contacts.find((c) => c.id === id), u);
+s.deleteBrokerBuyerContact = async (id: string) => { const i = contacts.findIndex((c) => c.id === id); if (i >= 0) contacts.splice(i, 1); };
+const runSyncToEnd = async () => {
+  const r = await startPipedriveBuyerSync(B, { mode: "all", auto: false });
+  assert.equal(r.started, true);
+  for (let i = 0; i < 200 && getLiveBuyerSyncStatus(B)?.state === "running"; i++) await new Promise((res) => setTimeout(res, 20));
+  const st = getLiveBuyerSyncStatus(B)!;
+  assert.equal(st.state, "done");
+  return st;
+};
 
 const r = await startPipedriveBuyerSync(B, { mode: "all", auto: false });
 assert.equal(r.started, true);
@@ -73,6 +86,37 @@ assert.equal(restored.removedAt, null);
 assert.equal(restored.brokerProfile.background, "Lender, not a buyer");
 assert.equal(contacts.filter((c) => c.buyerUserId === "u-lou").length, 1);
 console.log("✓ adding a removed buyer back restores their row and the broker's edits");
+
+// ── Round 2: removed while the sync runs ──
+// Dee is on the list only through deal access (an account, no contact row);
+// the broker removes her after the sync started — while it fetches her record.
+for (const k of Object.keys(people)) delete people[Number(k)];
+people[104] = { id: 104, name: "Buyer Dee", email: [{ value: "dee@buyer.invalid", primary: true }] };
+buyers.push({ id: "u-dee", email: "dee@buyer.invalid" });
+onPersonFetch = (id) => {
+  if (id === 104) contacts.push({ id: "c-dee-removed", brokerId: B, buyerUserId: "u-dee", source: "deal", removedAt: new Date() });
+};
+let st = await runSyncToEnd();
+assert.equal(contacts.filter((c) => c.buyerUserId === "u-dee" && !c.removedAt).length, 0, "a buyer removed during the run isn't put back");
+assert.equal(st.skippedRemoved, 1);
+console.log("✓ a buyer removed while the sync runs isn't put back (checked right before a row is made)");
+
+// The removal lands in the instant between that check and the new row.
+delete people[104];
+people[105] = { id: 105, name: "Buyer Eve", email: [{ value: "eve@buyer.invalid", primary: true }] };
+buyers.push({ id: "u-eve", email: "eve@buyer.invalid" });
+onPersonFetch = null;
+const create = s.createBrokerBuyerContact;
+s.createBrokerBuyerContact = async (d: any) => {
+  const row = await create(d);
+  if (d.buyerUserId === "u-eve") contacts.push({ id: "c-eve-removed", brokerId: B, buyerUserId: "u-eve", source: "deal", removedAt: new Date() });
+  return row;
+};
+st = await runSyncToEnd();
+assert.equal(contacts.filter((c) => c.buyerUserId === "u-eve" && !c.removedAt).length, 0, "the row made as the removal landed is taken back off");
+assert.equal(st.skippedRemoved, 1);
+assert.equal(st.created, 0);
+console.log("✓ a removal landing as the sync makes the row takes it back off");
 
 console.log("f2-buyer-removal: all passed");
 process.exit(0);

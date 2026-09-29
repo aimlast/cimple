@@ -2,6 +2,10 @@
 // and the CRM's retire used to leave it on the volume forever), never while
 // another row still points at the same file; a one-off sweep clears the files
 // earlier deletes left behind.
+// Round 2: deleting a DEAL takes its sources (rows + files) and its
+// photos/videos too — it used to take only the deals row, so every upload
+// stayed on the volume and the sweep counted them as in use; a one-off sweep
+// clears what earlier deal deletes left.
 // F2-DI-6: a seller-profile rebuild carries the broker's notes as they are
 // when it lands — a note saved while it generated used to be overwritten.
 // Run: DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=unused node_modules/.bin/tsx tests/unit/f2-files-and-profile.test.ts
@@ -16,7 +20,7 @@ const docsDir = path.join(uploads, "docs");
 fs.mkdirSync(docsDir);
 
 const { storage } = await import("../../server/storage");
-const { deleteDocumentAndProvenance, removeDocumentFile, sweepOrphanDocumentFilesOnce } = await import("../../server/documents/cleanup");
+const { deleteDocumentAndProvenance, removeDocumentFile, sweepOrphanDocumentFilesOnce, deleteDealLeftovers, sweepDeletedDealLeftoversOnce } = await import("../../server/documents/cleanup");
 const { saveRegeneratedSellerProfile, carryBrokerProfileEdits } = await import("../../server/interview/eq-profiler");
 
 const put = (name: string, ageMs = 0) => {
@@ -69,6 +73,50 @@ assert.ok(fs.existsSync(path.join(docsDir, "doc_just_uploaded.pdf")), "a fresh f
 put("doc_orphan2.pdf", 2 * HOUR);
 assert.equal(await sweepOrphanDocumentFilesOnce(uploads, Date.now(), async () => ["/uploads/docs/doc_kept.pdf"]), 0, "runs once per volume");
 console.log("✓ the one-off sweep removes only old files no row points at, once");
+
+// ── DI-9 round 2: a deleted deal's sources and media leave with it ──
+{
+  const mediaDir = path.join(uploads, "private-media", "GONE");
+  fs.mkdirSync(mediaDir, { recursive: true });
+  fs.writeFileSync(path.join(mediaDir, "a.jpg"), "x");
+  fs.writeFileSync(path.join(mediaDir, "stray.jpg"), "x");
+  docs = [
+    { id: "g1", dealId: "GONE", fileUrl: put("doc_gone1.pdf"), extractedText: "confidential" },
+    { id: "g2", dealId: "GONE", fileUrl: put("doc_gone_shared.pdf") },
+    { id: "live", dealId: "LIVE", fileUrl: "/uploads/docs/doc_gone_shared.pdf" }, // another deal's row still uses that file
+    { id: "l2", dealId: "LIVE", fileUrl: put("doc_live.pdf") },
+  ];
+  let media = [{ id: "m1", dealId: "GONE", fileUrl: "private-media/GONE/a.jpg" }, { id: "m2", dealId: "LIVE", fileUrl: "private-media/LIVE/b.jpg" }];
+  s.getDocumentsByDeal = async (id: string) => docs.filter((d) => d.dealId === id).map((d) => ({ ...d }));
+  s.deleteDealMediaRows = async (id: string) => { const out = media.filter((m) => m.dealId === id); media = media.filter((m) => m.dealId !== id); return out; };
+  const r = await deleteDealLeftovers("GONE");
+  assert.deepEqual(r, { documents: 2, files: 1, media: 1 });
+  assert.deepEqual(docs.map((d) => d.id), ["live", "l2"], "the deleted deal's source rows (and their extracted text) are gone");
+  assert.ok(!fs.existsSync(path.join(docsDir, "doc_gone1.pdf")), "its file leaves the volume");
+  assert.ok(fs.existsSync(path.join(docsDir, "doc_gone_shared.pdf")), "a file another row still uses stays");
+  assert.ok(!fs.existsSync(mediaDir), "its photo/video folder goes (files no row names included)");
+  assert.deepEqual(media.map((m) => m.id), ["m2"]);
+  console.log("✓ deleting a deal removes its sources (rows + files) and its photos/videos");
+
+  // What deals deleted before this left behind: swept once per volume.
+  docs.push({ id: "old1", dealId: "OLD", fileUrl: put("doc_old1.pdf") });
+  fs.mkdirSync(path.join(uploads, "private-media", "OLDM"), { recursive: true });
+  fs.writeFileSync(path.join(uploads, "private-media", "OLDM", "c.jpg"), "x");
+  media.push({ id: "m3", dealId: "OLDM", fileUrl: "private-media/OLDM/c.jpg" });
+  const live = new Set(["LIVE"]);
+  s.getDocumentsOfDeletedDeals = async () => docs.filter((d) => !live.has(d.dealId));
+  s.getDeletedDealIdsWithMedia = async () => Array.from(new Set(media.filter((m) => !live.has(m.dealId)).map((m) => m.dealId)));
+  const swept = await sweepDeletedDealLeftoversOnce(uploads);
+  assert.deepEqual(swept, { documents: 1, files: 1, media: 1 });
+  assert.ok(!fs.existsSync(path.join(docsDir, "doc_old1.pdf")));
+  assert.ok(!fs.existsSync(path.join(uploads, "private-media", "OLDM")));
+  assert.ok(fs.existsSync(path.join(docsDir, "doc_live.pdf")), "a live deal's file stays");
+  assert.deepEqual(docs.map((d) => d.id), ["live", "l2"]);
+  docs.push({ id: "old2", dealId: "OLD2", fileUrl: put("doc_old2.pdf") });
+  assert.equal(await sweepDeletedDealLeftoversOnce(uploads), null, "runs once per volume");
+  assert.ok(fs.existsSync(path.join(docsDir, "doc_old2.pdf")));
+  console.log("✓ a one-off sweep clears what earlier deal deletes left (rows, files, media), once");
+}
 
 // ── DI-6: seller profile rebuild keeps a note saved while it generated ──
 const base = { communicationStyle: "direct", emotionalState: "calm", generatedAt: "2026-09-28T00:00:00Z" } as any;

@@ -29,7 +29,7 @@ import {
   integrations, integrationEmails, financialAnalyses, addbackVerifications,
   cimSectionOverrides, discrepancies,
   dealMembers, notifications, buyerApprovalRequests, buyerUsers, brokerBuyerContacts, dealOutreach,
-  dealDocumentRequirements,
+  dealDocumentRequirements, dealMedia,
   calculateBuyerProfileCompletion
 } from "@shared/schema";
 import { randomUUID } from "crypto";
@@ -631,6 +631,27 @@ export class DbStorage implements IStorage {
   async getAllDocumentFileUrls(): Promise<Array<string | null>> {
     const rows = await db.select({ fileUrl: documents.fileUrl }).from(documents);
     return rows.map((r) => r.fileUrl);
+  }
+
+  /**
+   * Documents rows whose deal no longer exists (a deal delete used to take
+   * only the deals row). Never answers while the deals table is empty — a
+   * misread database must not look like every deal was deleted.
+   */
+  async getDocumentsOfDeletedDeals(): Promise<Document[]> {
+    return db.select().from(documents).where(sql`NOT EXISTS (SELECT 1 FROM ${deals} WHERE ${deals.id} = ${documents.dealId}) AND EXISTS (SELECT 1 FROM ${deals})`);
+  }
+
+  /** A deal's photo/video rows, deleted; returns what they were (their files are the caller's). */
+  async deleteDealMediaRows(dealId: string): Promise<Array<{ id: string; dealId: string; fileUrl: string }>> {
+    return db.delete(dealMedia).where(eq(dealMedia.dealId, dealId)).returning({ id: dealMedia.id, dealId: dealMedia.dealId, fileUrl: dealMedia.fileUrl });
+  }
+
+  /** The ids of deals that are gone but still have photo/video rows (same empty-table guard as above). */
+  async getDeletedDealIdsWithMedia(): Promise<string[]> {
+    const rows = await db.selectDistinct({ dealId: dealMedia.dealId }).from(dealMedia)
+      .where(sql`NOT EXISTS (SELECT 1 FROM ${deals} WHERE ${deals.id} = ${dealMedia.dealId}) AND EXISTS (SELECT 1 FROM ${deals})`);
+    return rows.map((r) => r.dealId);
   }
 
   async updateDocument(id: string, updates: Partial<InsertDocument>): Promise<Document | undefined> {
@@ -1501,8 +1522,11 @@ export class DbStorage implements IStorage {
 
   /** Every buyer this broker removed from their list (the CRM buyer sync skips them). */
   async getRemovedBrokerBuyerContacts(brokerId: string): Promise<BrokerBuyerContact[]> {
+    // A buyer who is back on the list (added back, re-imported) isn't
+    // "removed" because an older removal row survived a race.
     return db.select().from(brokerBuyerContacts).where(
-      sql`${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.removedAt} IS NOT NULL`
+      sql`${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.removedAt} IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM broker_buyer_contacts a WHERE a.broker_id = broker_buyer_contacts.broker_id AND a.buyer_user_id = broker_buyer_contacts.buyer_user_id AND a.removed_at IS NULL)`
     );
   }
 

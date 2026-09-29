@@ -265,7 +265,10 @@ app.use((req, res, next) => {
       import("./documents/ingest").then((m) => m.startInterruptedReadRecovery()).catch((err) => console.error("[ingest] interrupted-read recovery failed:", err));
       // Once per volume: files earlier deletes left behind (no row points at them) leave the volume.
       if (process.env.NODE_ENV === "production") {
-        import("./documents/cleanup").then((m) => m.sweepOrphanDocumentFilesOnce()).catch((err) => console.error("[documents] orphan-file sweep failed:", err));
+        // First what deleted deals left (their rows made their files look in use), then files no row points at.
+        import("./documents/cleanup")
+          .then(async (m) => { await m.sweepDeletedDealLeftoversOnce(); await m.sweepOrphanDocumentFilesOnce(); })
+          .catch((err) => console.error("[documents] orphan-file sweep failed:", err));
       }
     }
   });

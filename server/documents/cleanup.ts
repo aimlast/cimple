@@ -17,6 +17,7 @@ import { removeSourceFromFacts } from "./source-removal";
 import { releaseRequirementsFor } from "./requirements";
 import type { MergeConflict } from "./merge-policy";
 import { docsFileName, resolveDocumentPath, uploadsRoot } from "./document-path";
+import { dealMediaDir, mediaFilePath } from "../cim/media-store";
 
 /**
  * Takes a deleted source's facts off its deal (re-read under the deal's
@@ -128,6 +129,77 @@ export function orphanDocumentFiles(
     out.push(name);
   }
   return out;
+}
+
+// ── A deleted deal ──────────────────────────────────────────────────────
+
+/**
+ * Everything a deleted deal keeps on the volume goes with it: its documents
+ * rows (with their extracted text) and their files — never a file another
+ * row still points at — and its photos/videos (rows and the deal's
+ * private-media folder). DELETE /api/deals/:id used to take only the deals
+ * row, so every file the broker ever uploaded to the deal stayed on the
+ * volume, and the orphan-file sweep counted them as in use. Best effort per
+ * item; returns what it removed.
+ */
+export async function deleteDealLeftovers(
+  dealId: string,
+  docs?: Array<{ id: string; fileUrl?: string | null }>,
+): Promise<{ documents: number; files: number; media: number }> {
+  const out = { documents: 0, files: 0, media: 0 };
+  for (const doc of docs ?? (await storage.getDocumentsByDeal(dealId))) {
+    try {
+      await storage.deleteDocument(doc.id);
+      out.documents++;
+      if (await removeDocumentFile(doc)) out.files++;
+    } catch (err: any) {
+      console.warn(`[documents] couldn't remove source ${doc.id} of deleted deal ${dealId}:`, err?.message ?? err);
+    }
+  }
+  try {
+    const media = await storage.deleteDealMediaRows(dealId);
+    out.media = media.length;
+    for (const row of media) {
+      const p = mediaFilePath(row);
+      if (p) await fs.promises.unlink(p).catch(() => undefined);
+    }
+    // The deal's own media folder (anything left in it belongs to no row now).
+    await fs.promises.rm(dealMediaDir(dealId), { recursive: true, force: true });
+  } catch (err: any) {
+    console.warn(`[documents] couldn't remove the media of deleted deal ${dealId}:`, err?.message ?? err);
+  }
+  return out;
+}
+
+const DELETED_DEALS_MARKER = ".deleted-deals-sweep-v1";
+
+/**
+ * One-off clean-up of what deals deleted before deleteDealLeftovers existed
+ * left behind: documents rows whose deal is gone (with their files) and
+ * photo/video rows and folders of deals that are gone. Runs once per volume
+ * (a marker file in the uploads root records it); never runs against an
+ * empty deals table (see storage.getDocumentsOfDeletedDeals).
+ */
+export async function sweepDeletedDealLeftoversOnce(root: string = uploadsRoot()): Promise<{ documents: number; files: number; media: number } | null> {
+  const marker = path.join(root, DELETED_DEALS_MARKER);
+  if (!fs.existsSync(root) || fs.existsSync(marker)) return null;
+  const total = { documents: 0, files: 0, media: 0 };
+  const byDeal = new Map<string, Array<{ id: string; fileUrl?: string | null }>>();
+  for (const d of await storage.getDocumentsOfDeletedDeals()) {
+    const list = byDeal.get(d.dealId) ?? [];
+    list.push(d);
+    byDeal.set(d.dealId, list);
+  }
+  for (const id of await storage.getDeletedDealIdsWithMedia()) if (!byDeal.has(id)) byDeal.set(id, []);
+  for (const [dealId, docs] of Array.from(byDeal.entries())) {
+    const r = await deleteDealLeftovers(dealId, docs);
+    total.documents += r.documents;
+    total.files += r.files;
+    total.media += r.media;
+  }
+  fs.writeFileSync(marker, JSON.stringify({ at: new Date().toISOString(), deals: byDeal.size, ...total }));
+  console.log(`[documents] removed what ${byDeal.size} deleted deal(s) left behind: ${total.documents} source row(s), ${total.files} file(s), ${total.media} photo/video row(s)`);
+  return total;
 }
 
 const SWEEP_MARKER = ".orphan-sweep-v1";

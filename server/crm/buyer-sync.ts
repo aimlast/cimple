@@ -406,7 +406,17 @@ async function runSync(integration: Integration, settings: BuyerSyncSettings, st
       }
       let contact = await storage.getBrokerBuyerContact(brokerId, buyer.id);
       if (!contact) {
+        // The removed list above was read when the sync started (runs take
+        // minutes): a buyer the broker removed since then is checked again
+        // right before a row is made — and once more after, so a removal
+        // that lands in between takes the new row back off.
+        if (await storage.getRemovedBrokerBuyerContact(brokerId, buyer.id)) { skipRemoved(); return; }
         contact = await storage.createBrokerBuyerContact({ brokerId, buyerUserId: buyer.id, source: "crm", tags: [] as any, notes: null } as any);
+        if (await storage.getRemovedBrokerBuyerContact(brokerId, buyer.id)) {
+          await storage.deleteBrokerBuyerContact(contact.id);
+          skipRemoved();
+          return;
+        }
         created = true;
       }
 

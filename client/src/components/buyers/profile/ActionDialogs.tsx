@@ -230,10 +230,12 @@ export function RemoveBuyerDialog({ open, onOpenChange, buyerId, buyerName }: { 
   const [, setLocation] = useLocation();
   const addBack = async () => {
     try {
-      await requestJson("POST", `/api/broker/buyers/${buyerId}/restore`);
+      const r = await requestJson<{ restored: boolean; editsRestored?: boolean }>("POST", `/api/broker/buyers/${buyerId}/restore`);
       qc.invalidateQueries({ queryKey: ["/api/broker/buyers"] });
       qc.invalidateQueries({ queryKey: ["/api/broker/buyers", buyerId] });
-      toast({ title: `${buyerName} is back on your buyers`, description: "Your notes and edits are back too." });
+      toast(r.editsRestored === false
+        ? { title: `${buyerName} is on your buyers`, description: "You've edited them since removing them, so the earlier notes and edits stay cleared." }
+        : { title: `${buyerName} is back on your buyers`, description: "Your notes and edits are back too." });
       setLocation(`/broker/buyers/${buyerId}`);
     } catch (e) {
       toast({ title: "Couldn't add them back", description: (e as Error).message, variant: "destructive" });
@@ -246,7 +248,9 @@ export function RemoveBuyerDialog({ open, onOpenChange, buyerId, buyerName }: { 
       qc.invalidateQueries({ queryKey: ["/api/broker/buyers"] });
       onOpenChange(false);
       if (r.stillListed) {
-        toast({ title: "Notes and edits set aside", description: r.reason ?? undefined, action: undo });
+        // Still listed through deal access: their notes and edits are cleared
+        // now (a new edit starts fresh); "Add back" is the only way back.
+        toast({ title: "Notes and edits removed", description: r.reason ?? undefined, action: undo });
         qc.invalidateQueries({ queryKey: ["/api/broker/buyers", buyerId] });
       } else {
         toast({ title: `${buyerName} removed from your buyers`, description: "Syncing from your CRM won't add them back.", action: undo });
@@ -262,9 +266,9 @@ export function RemoveBuyerDialog({ open, onOpenChange, buyerId, buyerName }: { 
           <AlertDialogTitle>Remove {buyerName} from your buyers?</AlertDialogTitle>
           <AlertDialogDescription>
             They leave your list, suggested buyers and outreach, and syncing from your CRM won't add them back. Your notes, tags,
-            interest label and edits are set aside, not deleted: if you add them back later, they return. Their own Cimple account
-            and anything they told you on an NDA stay as they are. If they have access to one of your deals they'll stay listed
-            until you revoke it.
+            interest label and edits are kept aside: adding them back brings them back. Their own Cimple account and anything they
+            told you on an NDA stay as they are. If they have access to one of your deals they'll stay listed until you revoke it,
+            without your notes and edits (use Add back to undo).
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
