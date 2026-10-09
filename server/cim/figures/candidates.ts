@@ -105,8 +105,22 @@ export function movementTargets(
     }
     // A total: the lines that moved it (D7), else the total itself.
     const prev = previousOf(reg, fig);
-    if (!prev || held.has(fig.key) || held.has(prev.key) || !movedEnough(prev.value, fig.value)) continue;
+    if (!prev) continue;
     if ((fig.components ?? []).some((c) => c.sign < 0)) continue; // profit lines: a part can move more than the total
+    if (held.has(fig.key) || held.has(prev.key)) {
+      // D9a: the total itself is the broker's to fix, but the lines inside it
+      // still moved (Pacific's fuel 2022 → 2023): its three largest movers.
+      const movers = (fig.components ?? [])
+        .map((c) => reg[c.key])
+        .filter((c): c is RegistryFigure => !!c)
+        .map((c) => ({ c, p: previousOf(reg, c) }))
+        .filter((x) => !!x.p && movedEnough(x.p.value, x.c.value))
+        .sort((a, b) => Math.abs(Math.abs(b.c.value) - Math.abs(b.p!.value)) - Math.abs(Math.abs(a.c.value) - Math.abs(a.p!.value)))
+        .slice(0, 3);
+      for (const m of movers) add(m.c);
+      continue;
+    }
+    if (!movedEnough(prev.value, fig.value)) continue;
     const breakdown = movementOf(reg, fig);
     if (breakdown && breakdown.parts.length > 0) {
       for (const p of breakdown.parts) add(reg[p.id]);
@@ -191,7 +205,8 @@ export function aiCandidates(input: {
 export function askableLine(fig: Pick<RegistryFigure, "line" | "category">): boolean {
   const std = standardLineOf(fig.line);
   if (std) return std.askable;
-  if (fig.category === "Owner Compensation" || fig.category === "Non-Recurring") return false;
+  // Never pay, one-time items (add-back material) or taxes (the accountant's computation).
+  if (fig.category === "Owner Compensation" || fig.category === "Non-Recurring" || fig.category === "Taxes") return false;
   return true;
 }
 

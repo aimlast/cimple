@@ -28,7 +28,7 @@ import { fingerprintOf } from "./computed";
 import { loadFigureEvidence, type EvidenceRef, type FigureEvidence } from "./evidence";
 import { assertFigureAiAvailable, writeFigureNotes } from "./ai";
 import { guardFigureNote, screenCtxFor, type FigureGuardCtx } from "./guards";
-import { invalidateFigureRaw, loadFigureRaw } from "./serve";
+import { invalidateFigureRaw, loadFigureRaw, type FigureRaw } from "./serve";
 import { runFigureRefresh } from "./refresh";
 import { chargeFigureBudget, getFigureState, listNotes, setBuild, setKeepOut, upsertMachineNote, withFigureLock, FIGURE_AI_DAILY_CAP, type MachineNote } from "./store";
 import type { FigureNoteSource } from "@shared/schema";
@@ -173,18 +173,52 @@ async function keepOutNamesFor(dealId: string, info: Record<string, unknown>, st
   return names;
 }
 
+/** What a build reads (injectable: the tests run the whole pass on an in-process database and fixtures). */
+export interface BuildDeps {
+  refresh(dealId: string): Promise<unknown>;
+  loadDeal(dealId: string): Promise<{ deal: any; sections: Array<{ id: string; layoutType: string; layoutData: unknown }> } | null>;
+  loadRaw(dealId: string): Promise<FigureRaw>;
+  loadEvidence: typeof loadFigureEvidence;
+  plan(dealId: string): Promise<unknown>;
+}
+
+const defaultDeps: BuildDeps = {
+  refresh: (dealId) => runFigureRefresh(dealId),
+  loadDeal: async (dealId) => {
+    const { storage } = await import("../../storage");
+    const [deal, sections] = await Promise.all([storage.getDeal(dealId), storage.getCimSectionsByDeal(dealId)]);
+    return deal ? { deal, sections: sections as any[] } : null;
+  },
+  loadRaw: async (dealId) => {
+    invalidateFigureRaw(dealId);
+    return loadFigureRaw(dealId);
+  },
+  loadEvidence: loadFigureEvidence,
+  plan: async (dealId) => {
+    const { planExplainQuestions } = await import("./requests");
+    return planExplainQuestions(dealId);
+  },
+};
+let deps: BuildDeps = defaultDeps;
+/** Tests: replace what the build reads (null restores the defaults). */
+export function _setBuildDepsForTests(d: Partial<BuildDeps> | null): void {
+  deps = d ? { ...defaultDeps, ...d } : defaultDeps;
+}
+
 async function doBuild(dealId: string, opts: { reason: BuildReason; scope?: "changed" | "all" }): Promise<FigureBuildStatus> {
   const startedAt = new Date().toISOString();
   const warnings: string[] = [];
   const dropped: string[] = [];
-  await setBuild(dealId, { status: "running", startedAt, reason: opts.reason });
+  // What the last build remembered (read before "running" replaces it).
+  const before = await getFigureState(dealId).catch(() => null);
+  const carried = before?.build?.noReason ?? [];
+  await setBuild(dealId, { status: "running", startedAt, reason: opts.reason, ...(carried.length ? { noReason: carried } : {}) });
   try {
-    await runFigureRefresh(dealId);
-    const { storage } = await import("../../storage");
-    const [deal, sections, state] = await Promise.all([storage.getDeal(dealId), storage.getCimSectionsByDeal(dealId), getFigureState(dealId)]);
-    if (!deal) throw new Error("deal not found");
-    invalidateFigureRaw(dealId);
-    const raw = await loadFigureRaw(dealId);
+    await deps.refresh(dealId);
+    const [loaded, state] = await Promise.all([deps.loadDeal(dealId), getFigureState(dealId)]);
+    if (!loaded) throw new Error("deal not found");
+    const { deal, sections } = loaded;
+    const raw = await deps.loadRaw(dealId);
     const anchoredKeys = (sections as any[]).flatMap((s) => anchorFigures(s, raw.registry)).map((a) => a.figureKey);
     const previousNoReason = state?.build?.noReason ?? [];
 
@@ -202,7 +236,7 @@ async function doBuild(dealId: string, opts: { reason: BuildReason; scope?: "cha
     const keepOutNames = await keepOutNamesFor(dealId, raw.info, (state?.keepOut as any) ?? null, warnings);
     const lineLabels = Object.values(raw.registry).filter((f) => String(f.line).startsWith("line:")).map((f) => f.lineLabel);
     const ctx = guardCtxFor(deal, raw.info, [...(state?.keepOut?.names ?? []), ...keepOutNames], lineLabels);
-    const evidence: FigureEvidence = await loadFigureEvidence(dealId, pre.map((c) => ({ line: c.line, lineLabel: c.lineLabel, year: c.year, fromYear: c.fromYear })), {
+    const evidence: FigureEvidence = await deps.loadEvidence(dealId, pre.map((c) => ({ line: c.line, lineLabel: c.lineLabel, year: c.year, fromYear: c.fromYear })), {
       facts: raw.info, screen: ctx.screen, hints: raw.hintSentences,
     });
     const fingerprintFor = (c: FigureCandidate) => fingerprintOf(["ai", c.valuesFingerprint, evidence.digest]);
@@ -279,7 +313,7 @@ async function doBuild(dealId: string, opts: { reason: BuildReason; scope?: "cha
     return done;
   } catch (err) {
     const f = describeAiFailure(err);
-    const failed: FigureBuildStatus = { status: "failed", startedAt, finishedAt: new Date().toISOString(), error: `${f.reason}; ${f.advice}`, reason: opts.reason, ...(warnings.length ? { warnings } : {}) };
+    const failed: FigureBuildStatus = { status: "failed", startedAt, finishedAt: new Date().toISOString(), error: `${f.reason}; ${f.advice}`, reason: opts.reason, ...(carried.length ? { noReason: carried } : {}), ...(warnings.length ? { warnings } : {}) };
     console.warn(`[figures] build failed for deal ${dealId}:`, (err as Error)?.message);
     await setBuild(dealId, failed).catch(() => {});
     invalidateFigureRaw(dealId);
@@ -289,6 +323,5 @@ async function doBuild(dealId: string, opts: { reason: BuildReason; scope?: "cha
 
 /** After a build: candidates the AI found nothing for become questions for the seller. */
 async function afterBuild(dealId: string): Promise<void> {
-  const { planExplainQuestions } = await import("./requests");
-  await planExplainQuestions(dealId);
+  await deps.plan(dealId);
 }

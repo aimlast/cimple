@@ -29,6 +29,37 @@ export interface FigureScreenCtx {
   keepOut: SellerKeepOutEntry[];
   staff: StaffContext;
   included: Set<string>;
+  /**
+   * People the staff facts list with a role ("Maria Moretti (spouse,
+   * bookkeeper)") who aren't the owner: notes never name them, even when
+   * they share the owner's surname (staffContextFrom counts family as owners).
+   */
+  familyStaff?: string[];
+}
+
+const PERSON_WITH_ROLE = /\b([A-Z][a-z]+(?:[-'][A-Z][a-z]+)?(?:\s+[A-Z][a-z]+(?:[-'][A-Z][a-z]+)?){1,2})\s*\(/g;
+const STAFF_FACT_KEY = /employee|staff|team|management|people|personnel|manager|family/i;
+const OWNER_FACT_KEY = /^(?:ownerName|ownerNames|sellerName|owners?|principalOwner|ownerFullName)$/i;
+
+/** Named people in the staff facts who aren't the owner (see familyStaff). Pure. */
+export function familyStaffFrom(info: Record<string, unknown>): string[] {
+  // Every word of the owner facts ("Harjit and Surinder Grewal" → harjit, surinder, grewal).
+  const ownerWords = new Set<string>();
+  for (const [k, v] of Object.entries(info)) {
+    if (!OWNER_FACT_KEY.test(k) || typeof v !== "string") continue;
+    for (const w of v.toLowerCase().split(/[^a-z'-]+/)) if (w.length >= 2) ownerWords.add(w);
+  }
+  const out = new Set<string>();
+  for (const [k, v] of Object.entries(info)) {
+    if (k.startsWith("_") || !STAFF_FACT_KEY.test(k) || typeof v !== "string") continue;
+    for (const m of Array.from(v.matchAll(PERSON_WITH_ROLE))) {
+      const name = m[1].trim();
+      // The owner, however the facts spell them, may be named.
+      if (name.toLowerCase().split(/\s+/).every((w) => ownerWords.has(w))) continue;
+      out.add(name);
+    }
+  }
+  return Array.from(out);
 }
 
 /** The screen context for a deal, from its facts and the last build's stored keep-out names. No AI. */
@@ -47,6 +78,7 @@ export function screenCtxFor(info: Record<string, unknown> | null | undefined, s
     keepOut: getSellerKeepOut(facts),
     staff: staffContextFrom(facts),
     included: includedStaffPrivate(facts),
+    familyStaff: familyStaffFrom(facts),
   };
 }
 
@@ -75,6 +107,10 @@ export function holdReason(text: string, ctx: FigureScreenCtx, opts: { owners?: 
   for (const name of ctx.staff.staffNames) {
     const words = name.toLowerCase().split(/\s+/);
     if (opts.owners && words.every((w) => ownerWords.has(w))) continue;
+    if (wordRe(name).test(t)) return { kind: "staff_name", name };
+  }
+  for (const name of ctx.familyStaff ?? []) {
+    if (ctx.staff.staffNames.includes(name)) continue;
     if (wordRe(name).test(t)) return { kind: "staff_name", name };
   }
   if (hasSensitiveDetail(t)) return { kind: "sensitive" };
