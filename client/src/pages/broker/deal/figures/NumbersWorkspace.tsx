@@ -41,7 +41,8 @@ const CHECK_GROUPS: CheckGroup[] = ["difference", "regrouped", "needs_checking",
 function aiFailureText(error: string | undefined): string {
   if (error === "interrupted") return "The last check stopped before it finished. Check again.";
   if (error === "daily_limit") return "Cimple has checked this deal's numbers 4 times today. You can still write reasons yourself or use Cimple's suggestions; checking again works tomorrow.";
-  const [reason, advice] = String(error ?? "").split(/;\s*/);
+  const [reason, ...rest] = String(error ?? "").split(/;\s*/);
+  const advice = rest.join("; ");
   const a = advice ? advice.charAt(0).toUpperCase() + advice.slice(1) : "Try again in a few minutes";
   return `Cimple couldn't read for reasons (${reason || "no usable answer"}). Nothing changed. ${a}.`;
 }

@@ -77,6 +77,11 @@ export function answerFor(facts: Record<string, unknown>, captureKey: string): W
   return { text: String(v).trim(), from };
 }
 
+/** A worked-out difference (D6): buyers read it from the check itself once the checks are on. */
+function workedOutGrouping(n: Pick<CimFigureNote, "origin" | "kind">): boolean {
+  return n.origin === "computed" && n.kind === "difference";
+}
+
 function moveStatus(note: CimFigureNote | undefined, held: boolean): MoveStatus {
   if (!note) return held ? "held" : "none";
   if (note.status === "hidden") return "hidden";
@@ -182,7 +187,7 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
     const fig = reg[c.figureKey];
     if (!fig) continue;
     const diffNotes = (notesBy.get(c.figureKey) ?? []).filter((n) => n.kind === "difference" && n.compareKey === c.compareKey);
-    const note = diffNotes.find((n) => n.status !== "hidden") ?? diffNotes[0];
+    const note = diffNotes.filter((n) => !workedOutGrouping(n)).find((n) => n.status !== "hidden") ?? diffNotes.filter((n) => !workedOutGrouping(n))[0];
     const approvedReason = diffNotes.some((n) => n.status === "approved" && !n.staleReason);
     const state = checkState({ size: c.size, regrouped: c.regrouped, approvedReason });
     const mismatch = held.has(c.figureKey);
@@ -258,8 +263,9 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
   // Other notes (difference / context notes not listed as a movement row) — for the review sheet.
   const moveNoteIds = new Set(moves.map((m) => m.note?.id).filter(Boolean) as string[]);
   const checkNoteIds = new Set(wsChecks.map((c) => c.note?.id).filter(Boolean) as string[]);
+  // (A worked-out grouping's note is the check's own text — shown with the checks, never approved on its own.)
   const otherNotes = raw.notes
-    .filter((n) => !moveNoteIds.has(n.id) && reg[n.figureKey] && n.status !== "hidden" && (checkNoteIds.has(n.id) || n.kind === "context"))
+    .filter((n) => !moveNoteIds.has(n.id) && reg[n.figureKey] && n.status !== "hidden" && !workedOutGrouping(n) && (checkNoteIds.has(n.id) || n.kind === "context"))
     .map((n) => ({ figureKey: n.figureKey, label: reg[n.figureKey].lineLabel, year: reg[n.figureKey].year, note: workspaceNote(n, raw) }));
 
   // KPIs.
@@ -271,7 +277,7 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
   }
   for (const n of raw.notes) for (const s of n.sources ?? []) if (s.documentId && raw.docs.get(s.documentId)?.citable) cited.add(s.documentId);
   for (const t of raw.keyTerms) if (raw.docs.get(t.citation.documentId)?.citable) cited.add(t.citation.documentId);
-  const waiting = raw.notes.filter((n) => n.status === "suggested" && !n.staleReason && reg[n.figureKey]).length;
+  const waiting = raw.notes.filter((n) => n.status === "suggested" && !n.staleReason && reg[n.figureKey] && !workedOutGrouping(n)).length;
 
   return {
     status: {

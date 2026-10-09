@@ -45,8 +45,13 @@ function StatePill({ c }: { c: WorkspaceCheck }) {
 function shownWords(c: WorkspaceCheck): string {
   if (c.decision === "left_out") return `Left out: ${c.leftOutReason ?? "no reason given"}`;
   if (c.shownToBuyers) return "Shown to due-diligence buyers";
-  if (c.decision === "shown") return "Ready: shown once the checks are on";
+  if (c.decision === "shown" || c.state === "regrouped" || c.state === "match") return "Shown once the checks are on";
   return "Not shown yet";
+}
+
+/** Only a difference with a reason (or none yet) waits for the broker's own "Show"; matches and worked-out groupings show with the checks. */
+function needsShow(c: WorkspaceCheck): boolean {
+  return (c.state === "explained" || c.state === "ask") && !c.shownToBuyers && c.decision !== "shown" && !c.refusal;
 }
 
 function DocLink({ doc }: { doc: WorkspaceCheck["otherDocument"] }) {
@@ -89,8 +94,8 @@ function DifferenceRow({ c, a }: { c: WorkspaceCheck; a: ChecksActions }) {
             <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => a.onUndoLeaveOut(c)}>Show it again</Button>
           ) : (
             <>
-              {!c.shownToBuyers && c.decision !== "shown" && !c.refusal && (
-                <Button size="sm" className="h-7 bg-teal px-2 text-xs text-teal-foreground hover:bg-teal/90" onClick={() => a.onShow(c)}>Show to buyers</Button>
+              {needsShow(c) && (
+                <Button size="sm" className="h-7 bg-teal px-2 text-xs text-teal-foreground hover:bg-teal/90" onClick={() => a.onShow(c)}>{c.state === "ask" ? "Show anyway" : "Show to buyers"}</Button>
               )}
               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => a.onLeaveOut(c)}>Leave out…</Button>
               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => a.onReadWrong(c)}>Cimple read it wrong</Button>

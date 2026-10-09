@@ -44,14 +44,23 @@ export function previousOf(reg: FigureRegistry, fig: RegistryFigure): RegistryFi
 export function movementOf(reg: FigureRegistry, fig: RegistryFigure): ReturnType<typeof decomposeMovement> {
   const prev = previousOf(reg, fig);
   if (!prev || !fig.components || fig.components.length === 0) return null;
+  let missingEarlier = false;
   const parts = fig.components.flatMap((c) => {
     const now = reg[c.key];
     const parsed = parseFigureKey(c.key);
     const before = parsed ? reg[figureKey(parsed.line, prev.year)] : undefined;
     if (!now) return [];
+    if (!before) missingEarlier = true;
     return [{ id: c.key, label: now.lineLabel, from: c.sign * Math.abs(before?.value ?? 0), to: c.sign * Math.abs(now.value) }];
   });
   const total = fig.expense ? { from: Math.abs(prev.value), to: Math.abs(fig.value) } : { from: prev.value, to: fig.value };
+  // The lines must add up to the total in BOTH years — a line the earlier
+  // year's analysis doesn't have (Pacific's FY2021 revenue lines) would
+  // otherwise read as "mostly X (+$13,480,000)" on a $3,160,000 change.
+  const tol = (v: number) => Math.max(1, Math.abs(v) * 0.005);
+  const sumFrom = parts.reduce((t, p) => t + p.from, 0);
+  const sumTo = parts.reduce((t, p) => t + p.to, 0);
+  if (missingEarlier || Math.abs(Math.abs(sumFrom) - Math.abs(total.from)) > tol(total.from) || Math.abs(Math.abs(sumTo) - Math.abs(total.to)) > tol(total.to)) return null;
   return decomposeMovement(total, parts);
 }
 

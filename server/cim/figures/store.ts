@@ -452,7 +452,8 @@ export async function inFigureTransaction<T>(fn: (tx: FigureDb) => Promise<T>, d
 export async function figureCounts(dealId: string, d?: FigureDb): Promise<{ notesWaiting: number; notesShown: number; questionsSuggested: number; questionsWithSeller: number }> {
   const rows = await exec(d, sql`
     SELECT
-      (SELECT count(*)::int FROM cim_figure_notes WHERE deal_id = ${dealId} AND status = 'suggested') AS waiting,
+      (SELECT count(*)::int FROM cim_figure_notes WHERE deal_id = ${dealId} AND status = 'suggested' AND stale_reason IS NULL
+         AND NOT (origin = 'computed' AND kind = 'difference')) AS waiting,
       (SELECT count(*)::int FROM cim_figure_notes WHERE deal_id = ${dealId} AND status = 'approved' AND stale_reason IS NULL) AS shown,
       (SELECT count(*)::int FROM cim_figure_questions WHERE deal_id = ${dealId} AND status = 'suggested') AS suggested,
       (SELECT count(*)::int FROM cim_figure_questions WHERE deal_id = ${dealId} AND status = 'ask_seller') AS with_seller`);
