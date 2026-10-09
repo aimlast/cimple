@@ -21,6 +21,7 @@ import {
   cimSectionOverrides, discrepancies, dealMembers, notifications, buyerApprovalRequests, dealOutreach,
   dealDocumentRequirements, buyerEmails, dealMedia, buyerUsers, cimPublishedSnapshots,
   cimRenditions, buyerVisits, readingRollups, readingBenchmarks,
+  togetherSittings, togetherLines, togetherChunks, coverageMarks,
 } from "@shared/schema";
 import { resolveDocumentPath } from "../documents/document-path";
 
@@ -61,6 +62,12 @@ export const DEAL_CHILD_TABLES = {
   buyer_visits: { table: buyerVisits, column: buyerVisits.dealId, mode: "delete" },
   cim_renditions: { table: cimRenditions, column: cimRenditions.dealId, mode: "delete" },
   reading_benchmarks: { table: readingBenchmarks, column: readingBenchmarks.dealId, mode: "delete" },
+  // Interview together (server/together/*): sessions, their lines and filed
+  // parts, and the broker's marks on the coverage board.
+  together_sittings: { table: togetherSittings, column: togetherSittings.dealId, mode: "delete" },
+  together_lines: { table: togetherLines, column: togetherLines.dealId, mode: "delete" },
+  together_chunks: { table: togetherChunks, column: togetherChunks.dealId, mode: "delete" },
+  coverage_marks: { table: coverageMarks, column: coverageMarks.dealId, mode: "delete" },
   buyer_emails: { table: buyerEmails, column: buyerEmails.dealId, mode: "detach", field: "dealId" },
   buyer_users: { table: buyerUsers, column: buyerUsers.invitedByDeal, mode: "detach", field: "invitedByDeal" },
 } as const;

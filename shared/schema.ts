@@ -98,6 +98,10 @@ export interface InterviewPlanItem {
   critical: boolean;
   /** An existing extractedInfo key whose value already answers this item (set when the checklist is built). */
   answeredByKey?: string | null;
+  /** A suggested way to ask it aloud, one plain sentence (the checklist phrasing pass; never a fact or a figure). */
+  askAs?: string;
+  /** Why buyers care, ≤ 18 words (the checklist phrasing pass). */
+  whyItMatters?: string;
 }
 
 /** Industry-specific data checklist for a deal, keyed to the industry it was built for. */
@@ -113,6 +117,8 @@ export interface InterviewPlan {
   items: InterviewPlanItem[];
   /** The last time the checklist changed without a broker edit (new checklist rules) — shown on the outline. */
   revision?: { at: string; reason: "rules"; previousItemCount: number; removed: string[]; added: string[] };
+  /** When the suggested ways to ask (askAs / whyItMatters) were written. */
+  phrasedAt?: string;
 }
 
 /** The notetaker bot on an external call (Recall.ai). */
@@ -125,6 +131,18 @@ export interface InterviewBot {
   endedAt?: string;
 }
 
+/** One data point the broker asked to be raised first in the seller's next session. */
+export interface OutlineFollowUpItem {
+  itemId: string;
+  key: string;
+  sectionKey: string;
+  label: string;
+  ask: string;
+  addedAt: string;
+  sittingId?: string;
+  askedAt?: string;
+}
+
 /** Broker's plain-language adjustments to the interview plan for one deal. */
 export interface InterviewOutline {
   updatedAt: string;
@@ -132,8 +150,14 @@ export interface InterviewOutline {
   /** CIM section keys the broker removed from this interview. */
   excludedSections: string[];
   emphasis: OutlineEmphasis[];
-  /** Data points the broker added to a section ("also get the chair count"). */
-  addedItems?: { sectionKey: string; key: string; label: string }[];
+  /** Data points the broker added to a section ("also get the chair count"), or that a session together noted ("noted"). */
+  addedItems?: { sectionKey: string; key: string; label: string; origin?: "broker" | "noted" }[];
+  /**
+   * Data points the broker wants the seller to answer next (the end of an
+   * "Interview together" session). Label and a screened ask only — never a
+   * note. Cleared per item once it is on file.
+   */
+  followUpItems?: OutlineFollowUpItem[];
   /** Data point keys the broker removed from the checklist. */
   removedItems?: string[];
   /** Most recent instructions applied (newest first, capped). */
@@ -2829,3 +2853,105 @@ export const readingBenchmarks = pgTable("reading_benchmarks", {
   index("reading_benchmarks_industry_idx").on(t.industry, t.pageRole),
 ]);
 export type ReadingBenchmark = typeof readingBenchmarks.$inferSelect;
+
+// @anchor:schema-tail:oct-together
+// ── Interview together: the live coverage board (specs/together.md §6) ────
+// A sitting = one "Interview together" session (in person, Cimple call or a
+// Zoom / Meet / Teams notetaker). Its lines are the conversation as text
+// (no audio is ever stored); chunks are the parts Cimple read and filed.
+// coverage_marks are the broker's marks on board items. All deal-scoped,
+// deleted with the deal (server/deals/delete-deal.ts).
+
+export const togetherSittings = pgTable("together_sittings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  brokerId: varchar("broker_id").notNull(),
+  via: text("via").notNull(),                       // person | cimple | zoom | meet | teams
+  status: text("status").notNull().default("live"), // live | paused | ended
+  startedAt: timestamp("started_at").defaultNow().notNull(),
+  pausedAt: timestamp("paused_at"),
+  endedAt: timestamp("ended_at"),
+  lastLineAt: timestamp("last_line_at"),
+  consentAt: timestamp("consent_at"),               // the broker confirmed the seller knows Cimple is taking notes
+  lineSeq: integer("line_seq").notNull().default(0),
+  chunkNo: integer("chunk_no").notNull().default(0),
+  transcriptDocumentId: varchar("transcript_document_id"),
+  botId: text("bot_id"),                            // the Recall bot started for this sitting
+  speakers: jsonb("speakers").notNull().default(sql`'{}'::jsonb`),
+  sellerSeesScreen: boolean("seller_sees_screen").notNull().default(false),
+  captureEnv: text("capture_env").notNull(),        // production | local
+  captureOwner: text("capture_owner"),
+  captureLeaseUntil: timestamp("capture_lease_until"),
+  captureState: jsonb("capture_state").notNull().default(sql`'{}'::jsonb`),
+  summary: jsonb("summary"),
+  interviewCompleted: boolean("interview_completed").notNull().default(false),
+}, (t) => [
+  index("together_sittings_deal_status_idx").on(t.dealId, t.status),
+]);
+export type TogetherSitting = typeof togetherSittings.$inferSelect;
+export type InsertTogetherSitting = typeof togetherSittings.$inferInsert;
+
+export const togetherLines = pgTable("together_lines", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sittingId: varchar("sitting_id").notNull(),
+  dealId: varchar("deal_id").notNull(),
+  seq: integer("seq").notNull(),
+  speaker: text("speaker").notNull(),
+  text: text("text").notNull(),
+  source: text("source").notNull(),                 // deepgram | daily | recall | browser | typed
+  clientId: text("client_id"),
+  clientSeq: integer("client_seq"),
+  attestedSellerAt: timestamp("attested_seller_at"),
+  at: timestamp("at").defaultNow().notNull(),
+  chunkId: varchar("chunk_id"),
+}, (t) => [
+  uniqueIndex("together_lines_sitting_seq_uq").on(t.sittingId, t.seq),
+  uniqueIndex("together_lines_sitting_client_uq").on(t.sittingId, t.clientId, t.clientSeq),
+  index("together_lines_deal_idx").on(t.dealId),
+]);
+export type TogetherLine = typeof togetherLines.$inferSelect;
+export type InsertTogetherLine = typeof togetherLines.$inferInsert;
+
+export const togetherChunks = pgTable("together_chunks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sittingId: varchar("sitting_id").notNull(),
+  dealId: varchar("deal_id").notNull(),
+  chunkNo: integer("chunk_no").notNull(),
+  seqFrom: integer("seq_from").notNull(),
+  seqTo: integer("seq_to").notNull(),
+  reason: text("reason").notNull(),
+  focusItemId: text("focus_item_id"),
+  status: text("status").notNull(),                 // queued | running | applying | done | held | failed | waiting | skipped
+  attempts: integer("attempts").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  startedAt: timestamp("started_at"),
+  doneAt: timestamp("done_at"),
+  appliedAt: timestamp("applied_at"),
+  error: text("error"),
+  usage: jsonb("usage"),
+  delta: jsonb("delta"),
+  result: jsonb("result"),
+}, (t) => [
+  uniqueIndex("together_chunks_sitting_no_uq").on(t.sittingId, t.chunkNo),
+  index("together_chunks_sitting_status_idx").on(t.sittingId, t.status),
+]);
+export type TogetherChunk = typeof togetherChunks.$inferSelect;
+export type InsertTogetherChunk = typeof togetherChunks.$inferInsert;
+
+export const coverageMarks = pgTable("coverage_marks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  itemId: text("item_id").notNull(),                // section:key, doc:<requirementId> or routed:<discrepancyId>
+  sectionKey: text("section_key"),
+  kind: text("kind").notNull(),                     // verify_later | note | asked | not_known | confirmed | doc_promised
+  note: text("note"),
+  valueHash: text("value_hash"),                    // confirmed only: hash of the value it confirmed
+  sittingId: varchar("sitting_id"),
+  createdBy: varchar("created_by").notNull(),       // broker id, or "system"
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  clearedAt: timestamp("cleared_at"),
+}, (t) => [
+  index("coverage_marks_deal_cleared_idx").on(t.dealId, t.clearedAt),
+]);
+export type CoverageMarkRow = typeof coverageMarks.$inferSelect;
+export type InsertCoverageMark = typeof coverageMarks.$inferInsert;
