@@ -238,10 +238,14 @@ function PagesView(props: {
   }, [pages.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (scrolled.current || !props.initialPage || props.initialPage < 2) return;
+    if (scrolled.current) return;
+    // A cited figure: bring its box to the middle of the view.
+    const box = holder.current?.querySelector("[data-vdr-focus]");
+    if (box) { box.scrollIntoView({ block: "center" }); scrolled.current = true; return; }
+    if (!props.initialPage || props.initialPage < 2) return;
     const el = holder.current?.querySelector(`[data-page="${props.initialPage}"]`);
     if (el) { el.scrollIntoView({ block: "start" }); scrolled.current = true; }
-  }, [props.initialPage, holderW]);
+  }, [props.initialPage, holderW, props.focus]);
 
   return (
     <ViewerFrame className={props.className}>
