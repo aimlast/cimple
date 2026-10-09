@@ -1682,8 +1682,15 @@ Return JSON only.`,
       if (!deal) return res.status(404).json({ error: "Deal not found" });
       const call = activeCall(deal);
       if (!call || !isDailyConfigured()) return res.json({ active: false, businessName: deal.businessName });
+      // "Cimple is taking notes" (D15): an Interview together sitting on this
+      // call, after the broker confirmed the seller knows.
+      const { liveSittingFor } = await import("./together/sittings");
+      const sitting = await liveSittingFor(deal.id).catch(() => null);
+      const notetaking = !!sitting && sitting.via === "cimple" && !!sitting.consentAt;
+      // (?status=1: the in-call check of the badge — no new meeting token.)
+      if (req.query.status === "1") return res.json({ active: true, notetaking });
       const token = await createMeetingToken(call.roomName, invite.sellerName || "Seller", false);
-      res.json({ active: true, roomUrl: call.roomUrl, token, startedAt: call.startedAt, businessName: deal.businessName });
+      res.json({ active: true, roomUrl: call.roomUrl, token, startedAt: call.startedAt, businessName: deal.businessName, notetaking });
     } catch (error: any) {
       console.error("[call] seller lookup failed:", error);
       res.status(500).json({ error: "Couldn't check the call" });
@@ -1706,9 +1713,21 @@ Return JSON only.`,
       if (!isSupportedMeetingUrl(meetingUrl)) return res.status(400).json({ error: "Paste a Zoom, Google Meet or Microsoft Teams meeting link (https://…)" });
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
+      // Interview together: the notetaker joins only for a sitting whose
+      // broker confirmed the seller knows Cimple is taking notes (D15), and
+      // the bot is recorded on that sitting (its lines go only there).
+      const { sittingForDeal } = await import("./together/sittings");
+      const { togetherStore } = await import("./together/store");
+      const { watchNotetaker } = await import("./together/notetaker");
+      const sittingId = typeof req.body?.sittingId === "string" ? req.body.sittingId : "";
+      const sitting = sittingId ? await sittingForDeal(deal.id, sittingId) : null;
+      if (!sitting || sitting.status === "ended") return res.status(409).json({ error: "Start the session together first.", code: "no_sitting" });
+      if (!sitting.consentAt) return res.status(409).json({ error: "Let the seller know Cimple is taking notes first.", code: "consent_required" });
       const existing = activeBot(deal);
       if (existing && existing.meetingUrl === meetingUrl) {
         webhookTokens.set(existing.webhookToken, deal.id);
+        if (sitting.botId !== existing.botId) await togetherStore().updateSitting(sitting.id, { botId: existing.botId });
+        watchNotetaker(sitting.id, existing.botId);
         return res.json({ botId: existing.botId, startedAt: existing.startedAt, status: readBotLines(deal.id, 0).status });
       }
       if (existing) void leaveCall(existing.botId);
@@ -1720,6 +1739,8 @@ Return JSON only.`,
       webhookTokens.set(webhookToken, deal.id);
       clearBotBuffer(deal.id);
       setBotStatus(deal.id, latestStatus(bot) || "joining_call");
+      await togetherStore().updateSitting(sitting.id, { botId: bot.id });
+      watchNotetaker(sitting.id, bot.id);
       res.json({ botId: bot.id, startedAt: record.startedAt, status: latestStatus(bot) || "joining_call" });
     } catch (error: any) {
       console.error("[recall] bot start failed:", error);
@@ -1737,6 +1758,14 @@ Return JSON only.`,
         await leaveCall(bot.botId);
         await storage.updateDeal(deal.id, { interviewBot: { ...bot, endedAt: new Date().toISOString() } } as any);
         webhookTokens.delete(bot.webhookToken);
+        const { togetherStore } = await import("./together/store");
+        const { stopNotetakerWatch } = await import("./together/notetaker");
+        for (const st of await togetherStore().openSittings(deal.id)) {
+          if (st.botId !== bot.botId) continue;
+          stopNotetakerWatch(st.id);
+          const { publish } = await import("./together/hub");
+          publish(st.id, { type: "listen", state: "notetaker_ended" });
+        }
       }
       res.json({ stopped: true });
     } catch (error: any) {
@@ -1782,8 +1811,16 @@ Return JSON only.`,
         const line = lineFromWebhook(req.body);
         if (line) pushBotLine(dealId, line);
         setBotStatus(dealId, "in_call_recording");
+        // Interview together: the line joins the live sitting whose bot this is.
+        if (line) {
+          const { togetherLineFromWebhook, appendRecallLine } = await import("./together/recall-lines");
+          const tl = togetherLineFromWebhook(req.body);
+          if (tl) await appendRecallLine(dealId, token, tl).catch((err) => console.warn("[recall] together line failed:", (err as Error).message));
+        }
       } else if (event === "participant_events.join" || event === "participant_events.leave") {
         setBotStatus(dealId, "in_call_recording");
+        const { recallParticipantEvent } = await import("./together/recall-lines");
+        await recallParticipantEvent(dealId, token, req.body).catch(() => undefined);
       }
       res.status(200).json({ ok: true });
     } catch (error: any) {
@@ -4597,7 +4634,10 @@ Return JSON only.`,
 
       // Uploaded documents — broker-only sources (CRM notes, private emails)
       // never reach the seller.
-      const allDocs = kbDocuments.filter((d) => (d as any).visibility !== "broker_only");
+      // (An "Interview together" transcript is shared with the interview,
+      // but never listed among the seller's own documents — §7.5.)
+      const { isTogetherSitting } = await import("./together/transcript");
+      const allDocs = kbDocuments.filter((d) => (d as any).visibility !== "broker_only" && !isTogetherSitting(d));
 
       // Buyer questions waiting on the seller's approval — each with its own
       // review link, on every step (the approval email can land in spam).

@@ -6,6 +6,7 @@ import { startLiveTranscription, NotConfiguredError, type LiveTranscriptionHandl
 import { createDailyCall, joinDailyCall, type CallHandle } from "@/lib/daily-call";
 import DailyIframe, { type DailyCall } from "@daily-co/daily-js";
 import { CallStage } from "@/components/call/CallStage";
+import { looksLikeQuestionEcho } from "@shared/together-speakers";
 import {
   answeringAt as answeringAtOf,
   afterFailedSend,
@@ -100,23 +101,8 @@ class TurnRefused extends Error {
 
 const IMPORTANCE_TEXT = { critical: "Critical for buyers", important: "Important", helpful: "Helpful" } as const;
 
-const STOPWORDS = new Set(["the","a","an","and","or","of","to","in","on","for","with","is","are","do","does","did","you","your","it","that","this","what","how","any","have","has","be","at","as","by","we","i","so","if","about","from","there","their","they","them","can","would","could","which","who","when"]);
-function tokens(s: string): string[] {
-  return s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !STOPWORDS.has(w));
-}
-/**
- * Hands-free mode hears the broker reading the question aloud as well as the
- * seller's answer. A transcript segment whose content words mostly appear in
- * the current question is the question being read, not an answer — drop it.
- */
-export function looksLikeQuestionEcho(segment: string, question: string | undefined): boolean {
-  if (!question) return false;
-  const seg = tokens(segment);
-  if (seg.length < 3) return false;
-  const q = new Set(tokens(question));
-  const hits = seg.filter((w) => q.has(w)).length;
-  return hits / seg.length >= 0.6;
-}
+// (Moved to shared/together-speakers.ts — re-exported for existing callers.)
+export { looksLikeQuestionEcho };
 
 /** The opening AI message as persisted (authoritative timestamp + rationale),
  *  with a client-side fallback for a server that doesn't echo it back. */

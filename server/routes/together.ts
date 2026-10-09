@@ -1,16 +1,34 @@
 /**
  * Interview together + the coverage board (specs/together.md §7.2).
  *
- *   GET    /api/deals/:dealId/coverage-board?audience=broker|screen      the board (never calls a model, starts nothing)
- *   GET    /api/deals/:dealId/coverage-board/items/:itemId?audience=     popover detail
- *   POST   /api/deals/:dealId/coverage-board/items/:itemId/marks         {kind: verify_later|note|doc_promised, note?}
+ * Board:
+ *   GET    /api/deals/:dealId/coverage-board?audience=broker|screen[&sittingId=]   the board (never calls a model, starts nothing)
+ *   GET    /api/deals/:dealId/coverage-board/items/:itemId?audience=              popover detail
+ *   POST   /api/deals/:dealId/coverage-board/items/:itemId/marks                  {kind: verify_later|note|doc_promised, note?}
  *   DELETE /api/deals/:dealId/coverage-board/items/:itemId/marks/:kind
- *   POST   /api/deals/:dealId/coverage-board/items/:itemId/confirm       ✓ Confirmed (a "confirmed" mark; a lead is vouched for)
- *   GET    /api/seller/:token/coverage                                    the seller's "What we've covered" (statuses only)
+ *   POST   /api/deals/:dealId/coverage-board/items/:itemId/confirm                ✓ Confirmed (a "confirmed" mark; a lead is vouched for)
+ *   POST   /api/deals/:dealId/coverage-board/items/:itemId/answer                 ✓ Answered: {sittingId, mode: "auto"|"note", memberKey?, value?}
+ *   GET    /api/seller/:token/coverage                                             the seller's "What we've covered" (statuses only)
+ *
+ * Sittings (a session together):
+ *   POST   /api/deals/:dealId/together/sittings                         {via} start or resume (no AI call, no interview session)
+ *   GET    /api/deals/:dealId/together/sittings                         list (Interview tab, Overview)
+ *   GET    …/sittings/:sittingId[?afterSeq=]                            the sitting + its lines (broker only)
+ *   GET    …/sittings/:sittingId/events                                 SSE (hello, lines, board, listen, sitting…)
+ *   GET    …/sittings/:sittingId/state?after=<eventSeq>                 poll fallback
+ *   POST   …/sittings/:sittingId/consent                                "They know — start"
+ *   POST   …/sittings/:sittingId/lines                                  {clientId, lines[]} (idempotent)
+ *   POST   …/sittings/:sittingId/speakers                               {speaker, role}
+ *   PATCH  …/sittings/:sittingId                                        {sellerSeesScreen}
+ *   POST   …/sittings/:sittingId/pause | /resume
+ *   GET    …/sittings/:sittingId/summary                                the summary as it stands (the End dialog)
+ *   POST   …/sittings/:sittingId/end                                    {completeInterview, followUps[], documents[], addToNextSession}
+ *   POST   …/sittings/:sittingId/follow-up-email                        {itemIds, documentIds, preview?} (broker click; demo deals record only)
  *
  * Tenancy: every broker route is requireBroker + requireOwnedDeal (404 for
- * another brokerage's deal); the seller route checks the invite token.
- * Rate limits: server/together/limits.ts (mounted in server/index.ts).
+ * another brokerage's deal), and a sitting must belong to the deal (404);
+ * the seller route checks the invite token. Rate limits:
+ * server/together/limits.ts (mounted in server/index.ts).
  */
 import type { Express, Request, Response } from "express";
 import type { CoverageAudience, CoverageMarkKind } from "@shared/coverage-board";
@@ -19,7 +37,26 @@ import { requireBroker, requireOwnedDeal } from "../broker-auth/routes.js";
 import { storage } from "../storage";
 import { buildCoverageBoard, itemDetail, loadCoverageInputs } from "../interview/coverage-board";
 import { BROKER_MARK_KINDS, ITEM_ID_RE, MARK_KINDS, MARK_NOTE_MAX, clearMark, setMark } from "../together/marks";
-import { BoardActionError, confirmItem } from "../together/capture-apply";
+import { BoardActionError, confirmItem, writeBrokerCallNotes } from "../together/capture-apply";
+import { isTogetherVia, sittingDurationMin, validateLinesBody, type SittingListRow, type SpeakerRole, type TogetherVia } from "@shared/together";
+import * as hub from "../together/hub";
+import {
+  appendLines,
+  lineView,
+  pauseSitting,
+  recordConsent,
+  resumeSitting,
+  setSellerSeesScreen,
+  setSpeakerRole,
+  sittingAudience,
+  sittingForDeal,
+  sittingView,
+  startOrResumeSitting,
+} from "../together/sittings";
+import { togetherStore } from "../together/store";
+import { currentSummary, endSitting, parseEndBody, sendFollowUpEmail } from "../together/summary";
+import type { TogetherSitting } from "@shared/schema";
+
 
 function brokerAudience(req: Request): Exclude<CoverageAudience, "seller"> {
   return req.query.audience === "screen" ? "screen" : "broker";
@@ -28,6 +65,34 @@ function brokerAudience(req: Request): Exclude<CoverageAudience, "seller"> {
 function itemIdParam(req: Request): string | null {
   const id = String(req.params.itemId ?? "");
   return ITEM_ID_RE.test(id) ? id : null;
+}
+
+/** The board in the sitting's audience — the server decides, on every path (D10). */
+async function sittingBoard(deal: Deal, sitting: Pick<TogetherSitting, "sellerSeesScreen">) {
+  return buildCoverageBoard(deal, { audience: sittingAudience(sitting) });
+}
+
+/** Pushes the board to every open tab of the sitting (after a write). */
+async function publishBoard(dealId: string, sittingId: string): Promise<void> {
+  try {
+    const [deal, sitting] = await Promise.all([storage.getDeal(dealId), togetherStore().getSitting(sittingId)]);
+    if (!deal || !sitting || sitting.status === "ended") return;
+    hub.publish(sittingId, { type: "board", board: await sittingBoard(deal, sitting) });
+  } catch (err) {
+    console.warn(`[together] couldn't push the board for ${sittingId}:`, (err as Error).message);
+  }
+}
+
+/** The broker's display name (meeting participants are matched on it). */
+async function brokerDisplayName(brokerId: string): Promise<string> {
+  const u = await storage.getUser(brokerId).catch(() => undefined);
+  return String((u as { name?: string | null } | undefined)?.name ?? "").trim().toLowerCase();
+}
+
+/** The open items' suggested questions — the room's broker is whoever reads one aloud. */
+async function openAsks(deal: Deal): Promise<string[]> {
+  const board = await buildCoverageBoard(deal, { audience: "broker" });
+  return board.sections.flatMap((s) => s.items.filter((i) => i.status !== "on_file" && i.ask).map((i) => i.ask)).slice(0, 120);
 }
 
 function fail(res: Response, err: unknown, fallback: string) {
@@ -40,7 +105,11 @@ export function registerTogetherRoutes(app: Express): void {
   app.get("/api/deals/:dealId/coverage-board", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const deal = res.locals.deal as Deal;
-      res.json(await buildCoverageBoard(deal, { audience: brokerAudience(req) }));
+      // (A live sitting with "Seller can see this screen" on always gets the screen board.)
+      const sittingId = typeof req.query.sittingId === "string" ? req.query.sittingId : "";
+      const sitting = sittingId ? await sittingForDeal(deal.id, sittingId) : null;
+      const audience = sitting && sitting.status !== "ended" && sitting.sellerSeesScreen ? "screen" : brokerAudience(req);
+      res.json(await buildCoverageBoard(deal, { audience }));
     } catch (err) {
       fail(res, err, "Couldn't load the checklist");
     }
@@ -50,7 +119,10 @@ export function registerTogetherRoutes(app: Express): void {
     try {
       const itemId = itemIdParam(req);
       if (!itemId) return res.status(400).json({ error: "That isn't a checklist item" });
-      const detail = itemDetail(await loadCoverageInputs(res.locals.deal as Deal), brokerAudience(req), itemId);
+      const sittingId = typeof req.query.sittingId === "string" ? req.query.sittingId : "";
+      const sitting = sittingId ? await sittingForDeal(req.params.dealId, sittingId) : null;
+      const audience = sitting && sitting.status !== "ended" && sitting.sellerSeesScreen ? "screen" : brokerAudience(req);
+      const detail = itemDetail(await loadCoverageInputs(res.locals.deal as Deal), audience, itemId);
       if (!detail) return res.status(404).json({ error: "That data point isn't on the checklist any more." });
       res.json(detail);
     } catch (err) {
@@ -112,6 +184,278 @@ export function registerTogetherRoutes(app: Express): void {
     }
   });
 
+  // ✓ Answered: "auto" files what the seller just said with one focused
+  // capture (live capture — pass 3); "note" files what the broker typed as
+  // the broker's own call note (never the seller's words, never final).
+  app.post("/api/deals/:dealId/coverage-board/items/:itemId/answer", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const itemId = itemIdParam(req);
+      if (!itemId || /^(doc|routed):/.test(itemId)) return res.status(400).json({ error: "That isn't a data point" });
+      const deal = res.locals.deal as Deal;
+      const sittingId = typeof req.body?.sittingId === "string" ? req.body.sittingId : "";
+      const sitting = sittingId ? await sittingForDeal(deal.id, sittingId) : null;
+      if (!sitting) return res.status(404).json({ error: "That session isn't there any more." });
+      if (sitting.status === "ended") return res.status(409).json({ error: "This session has ended. Start a new session to keep going.", code: "ended" });
+      const mode = req.body?.mode === "note" ? "note" : "auto";
+      const board = await buildCoverageBoard(deal, { audience: "broker" });
+      const item = board.sections.flatMap((s) => s.items).find((i) => i.id === itemId);
+      if (!item) return res.status(404).json({ error: "That data point isn't on the checklist any more." });
+      if (mode === "auto") {
+        // (Live filing reads what the seller said; until it is running here,
+        // the broker types it — the editor opens.)
+        return res.status(409).json({ error: "Type what the seller said — it's filed as your note.", code: "no_capture" });
+      }
+      const writable = item.members.filter((m) => m.writable);
+      if (writable.length === 0) return res.status(400).json({ error: "This one is your own calculation — change it on the deal's Financials tab.", code: "not_writable" });
+      const memberKey = typeof req.body?.memberKey === "string" && writable.some((m) => m.key === req.body.memberKey) ? req.body.memberKey : writable.length === 1 ? writable[0].key : null;
+      if (!memberKey) return res.status(400).json({ error: "Pick which of these the answer is.", code: "member_required" });
+      const value = typeof req.body?.value === "string" ? req.body.value.trim() : "";
+      if (!value) return res.status(400).json({ error: "Type what the seller said first." });
+      if (value.length > 400) return res.status(400).json({ error: "Keep it under 400 characters." });
+      const result = await writeBrokerCallNotes(deal.id, [{ key: memberKey, value }], { sittingId: sitting.id });
+      hub.touch(sitting.id, String(req.session.brokerId));
+      void publishBoard(deal.id, sitting.id);
+      if (result.written.includes(memberKey)) return res.json({ ok: true, filed: true, result });
+      if (result.keptBeside.includes(memberKey)) {
+        return res.json({ ok: true, filed: false, keptBeside: true, result, message: "Kept beside what's on file — the seller's own words, a document or your edit stands." });
+      }
+      const code = result.dropped.find((d) => d.key === memberKey)?.code ?? "dropped";
+      const message =
+        code === "normalisation" ? "That's a treatment call (an add-back) — it's kept as a private note for you, not as a fact."
+          : code === "keep_out" ? "That mentions something the seller asked to keep out of the book — it's held back."
+            : code === "staff_private" ? "That's a staff member's private matter — it went to your private notes, not the CIM."
+              : "Nothing was filed.";
+      return res.status(422).json({ error: message, code, result });
+    } catch (err) {
+      fail(res, err, "Couldn't save that");
+    }
+  });
+
+  // ── Sittings ───────────────────────────────────────────────────────────
+
+  const sittingOr404 = async (req: Request, res: Response): Promise<TogetherSitting | null> => {
+    const s = await sittingForDeal(req.params.dealId, String(req.params.sittingId ?? ""));
+    if (!s) {
+      res.status(404).json({ error: "That session isn't there any more." });
+      return null;
+    }
+    return s;
+  };
+  const viewOf = (s: TogetherSitting) => sittingView(s);
+
+  app.post("/api/deals/:dealId/together/sittings", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = res.locals.deal as Deal;
+      const via: TogetherVia = isTogetherVia(req.body?.via) ? req.body.via : "person";
+      const brokerId = String(req.session.brokerId);
+      const started = await startOrResumeSitting(deal, brokerId, via, {
+        endStale: async (stale) => {
+          const summary = await currentSummary(stale, deal);
+          await togetherStore().updateSitting(stale.id, { summary });
+        },
+      });
+      kickSittingBackground(deal);
+      const [board, lines] = await Promise.all([sittingBoard(deal, started.sitting), togetherStore().lastLines(started.sitting.id, 200)]);
+      res.json({ sitting: viewOf(started.sitting), board, lines: lines.map(lineView), resumed: started.resumed, lastClientSeq: null });
+    } catch (err) {
+      fail(res, err, "Couldn't start the session");
+    }
+  });
+
+  app.get("/api/deals/:dealId/together/sittings", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const rows = await togetherStore().listSittings(req.params.dealId);
+      const out: SittingListRow[] = [];
+      for (const s of rows.slice(0, 50)) {
+        const summary = s.summary as { filed?: unknown[] } | null;
+        out.push({
+          id: s.id,
+          via: s.via as TogetherVia,
+          status: s.status as SittingListRow["status"],
+          startedAt: new Date(s.startedAt).toISOString(),
+          endedAt: s.endedAt ? new Date(s.endedAt).toISOString() : null,
+          durationMin: sittingDurationMin(s),
+          filed: Array.isArray(summary?.filed) ? summary!.filed!.length : 0,
+          lines: s.lineSeq,
+        });
+      }
+      res.json(out);
+    } catch (err) {
+      fail(res, err, "Couldn't load the sessions");
+    }
+  });
+
+  app.get("/api/deals/:dealId/together/sittings/:sittingId", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const s = await sittingOr404(req, res);
+      if (!s) return;
+      const after = Math.max(0, Number(req.query.afterSeq) || 0);
+      const lines = await togetherStore().linesAfter(s.id, after, 500);
+      res.json({ sitting: viewOf(s), lines: lines.map(lineView), more: lines.length === 500 });
+    } catch (err) {
+      fail(res, err, "Couldn't load the session");
+    }
+  });
+
+  app.get("/api/deals/:dealId/together/sittings/:sittingId/events", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const s = await sittingOr404(req, res);
+      if (!s) return;
+      hub.subscribe(s.id, req, res, {
+        brokerId: String(req.session.brokerId),
+        hello: (eventSeq) => ({ type: "hello", eventSeq, sitting: viewOf(s) }),
+      });
+    } catch (err) {
+      if (!res.headersSent) fail(res, err, "Couldn't open the live updates");
+    }
+  });
+
+  app.get("/api/deals/:dealId/together/sittings/:sittingId/state", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const s = await sittingOr404(req, res);
+      if (!s) return;
+      hub.touch(s.id, String(req.session.brokerId));
+      const after = Math.max(0, Number(req.query.after) || 0);
+      const st = hub.stateSince(s.id, after);
+      if (!st.reset) return res.json({ eventSeq: st.eventSeq, events: st.events, reset: false });
+      // Too far behind: a fresh snapshot (in the sitting's audience).
+      const deal = res.locals.deal as Deal;
+      const [board, lines] = await Promise.all([sittingBoard(deal, s), togetherStore().lastLines(s.id, 200)]);
+      res.json({ eventSeq: st.eventSeq, events: [], reset: true, sitting: viewOf(s), board, lines: lines.map(lineView) });
+    } catch (err) {
+      fail(res, err, "Couldn't load the live updates");
+    }
+  });
+
+  app.post("/api/deals/:dealId/together/sittings/:sittingId/consent", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const s = await sittingOr404(req, res);
+      if (!s) return;
+      const row = await recordConsent(s);
+      res.json({ sitting: viewOf(row) });
+    } catch (err) {
+      fail(res, err, "Couldn't save that");
+    }
+  });
+
+  app.post("/api/deals/:dealId/together/sittings/:sittingId/lines", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const s = await sittingOr404(req, res);
+      if (!s) return;
+      const check = validateLinesBody(req.body);
+      if (!check.ok) return res.status(400).json({ error: check.error });
+      const deal = res.locals.deal as Deal;
+      hub.touch(s.id, String(req.session.brokerId));
+      const r = await appendLines(s.id, check.clientId, check.lines, {
+        deal,
+        asks: () => openAsks(deal),
+        brokerName: () => brokerDisplayName(s.brokerId),
+      });
+      res.json({ accepted: r.accepted.length, skipped: r.skipped, lastSeq: r.lastSeq });
+    } catch (err) {
+      fail(res, err, "Couldn't save what was said");
+    }
+  });
+
+  app.post("/api/deals/:dealId/together/sittings/:sittingId/speakers", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const s = await sittingOr404(req, res);
+      if (!s) return;
+      const speaker = typeof req.body?.speaker === "string" ? req.body.speaker : "";
+      const role = req.body?.role as SpeakerRole;
+      if (!speaker || speaker.length > 64 || !/^[A-Za-z0-9:_\-.]+$/.test(speaker)) return res.status(400).json({ error: "That isn't a speaker on this call." });
+      if (role !== "broker" && role !== "seller" && role !== "other") return res.status(400).json({ error: "Say whether it's you, the seller or someone else." });
+      const row = await setSpeakerRole(s.id, speaker, role, { deal: res.locals.deal as Deal });
+      res.json({ sitting: viewOf(row) });
+    } catch (err) {
+      fail(res, err, "Couldn't save who that is");
+    }
+  });
+
+  app.patch("/api/deals/:dealId/together/sittings/:sittingId", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const s = await sittingOr404(req, res);
+      if (!s) return;
+      if (typeof req.body?.sellerSeesScreen !== "boolean") return res.status(400).json({ error: "Nothing to change." });
+      if (s.status === "ended") return res.status(409).json({ error: "This session has ended.", code: "ended" });
+      const row = await setSellerSeesScreen(s, req.body.sellerSeesScreen);
+      // The board, in the new audience, to every open tab (and the floating window).
+      const board = await sittingBoard(res.locals.deal as Deal, row);
+      hub.publish(row.id, { type: "board", board });
+      res.json({ sitting: viewOf(row), board });
+    } catch (err) {
+      fail(res, err, "Couldn't change that");
+    }
+  });
+
+  app.post("/api/deals/:dealId/together/sittings/:sittingId/pause", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const s = await sittingOr404(req, res);
+      if (!s) return;
+      if (s.status === "ended") return res.json({ sitting: viewOf(s) });
+      res.json({ sitting: viewOf(await pauseSitting(s)) });
+    } catch (err) {
+      fail(res, err, "Couldn't pause");
+    }
+  });
+
+  app.post("/api/deals/:dealId/together/sittings/:sittingId/resume", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const s = await sittingOr404(req, res);
+      if (!s) return;
+      hub.touch(s.id, String(req.session.brokerId));
+      res.json({ sitting: viewOf(await resumeSitting(s)) });
+    } catch (err) {
+      fail(res, err, "Couldn't resume");
+    }
+  });
+
+  app.get("/api/deals/:dealId/together/sittings/:sittingId/summary", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const s = await sittingOr404(req, res);
+      if (!s) return;
+      if (s.status === "ended" && s.summary) return res.json(s.summary);
+      res.json(await currentSummary(s, res.locals.deal as Deal));
+    } catch (err) {
+      fail(res, err, "Couldn't build the summary");
+    }
+  });
+
+  app.post("/api/deals/:dealId/together/sittings/:sittingId/end", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const s = await sittingOr404(req, res);
+      if (!s) return;
+      const body = parseEndBody(req.body);
+      if ("error" in body) return res.status(400).json({ error: body.error });
+      const out = await endSitting(s, res.locals.deal as Deal, body);
+      res.json({ sitting: viewOf(out.sitting), summary: out.summary, followUpsAdded: out.followUpsAdded });
+    } catch (err) {
+      fail(res, err, "Couldn't end the session");
+    }
+  });
+
+  app.post("/api/deals/:dealId/together/sittings/:sittingId/follow-up-email", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const s = await sittingOr404(req, res);
+      if (!s) return;
+      const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length <= 140) : []);
+      const out = await sendFollowUpEmail({
+        deal: (await storage.getDeal(req.params.dealId)) ?? (res.locals.deal as Deal),
+        sitting: s,
+        itemIds: ids(req.body?.itemIds),
+        documentIds: ids(req.body?.documentIds),
+        asks: req.body?.asks && typeof req.body.asks === "object" && !Array.isArray(req.body.asks)
+          ? Object.fromEntries(Object.entries(req.body.asks as Record<string, unknown>).filter(([k, v]) => typeof v === "string" && k.length <= 140).slice(0, 50).map(([k, v]) => [k, String(v).slice(0, 400)]))
+          : undefined,
+        preview: req.body?.preview !== false,
+        brokerId: String(req.session.brokerId),
+      });
+      res.json(out);
+    } catch (err) {
+      fail(res, err, "Couldn't prepare the email");
+    }
+  });
+
   // The seller's "What we've covered" (statuses and counts only — no values,
   // sources, reasons or notes; broker-added labels hidden).
   app.get("/api/seller/:token/coverage", async (req, res) => {
@@ -125,4 +469,16 @@ export function registerTogetherRoutes(app: Express): void {
       fail(res, err, "Couldn't load your progress");
     }
   });
+}
+
+/**
+ * A sitting starting builds what the board's asks come from (the industry
+ * checklist, section importance — and, from pass 3, the one-off phrasing
+ * pass) in the background. Never with the key off or on a local server
+ * with schedulers off; a GET never does this (§7.2).
+ */
+export function kickSittingBackground(deal: Deal): void {
+  if (process.env.ANTHROPIC_API_KEY === "disabled" || process.env.DISABLE_SCHEDULERS === "1") return;
+  void import("../interview/interview-plan").then(({ ensureInterviewPlan }) => ensureInterviewPlan(deal as never)).catch(() => undefined);
+  void import("../interview/section-importance").then(({ ensureSectionImportance }) => ensureSectionImportance(deal as never)).catch(() => undefined);
 }

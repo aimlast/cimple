@@ -21,6 +21,7 @@ import type { InterviewOutline, OutlineCustomTopic, SectionImportanceLevel } fro
 import { useCoverageBoard, invalidateCoverage } from "@/hooks/useCoverageBoard";
 import { CoverageBoardView } from "@/components/coverage/CoverageBoardView";
 import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
+import { LastSessionTogether } from "@/components/together/LastSession";
 
 interface OutlineItem {
   key: string;
@@ -255,6 +256,7 @@ export function InterviewOutlineCard({ dealId, interviewStarted }: { dealId: str
                       <Users className="h-3.5 w-3.5" /> Interview together
                     </Button>
                     {removedCount > 0 && <span className="text-[11px] text-muted-foreground">{removedCount} taken off the checklist — bring them back from the checklist's ⋯ menu.</span>}
+                    <div className="basis-full"><LastSessionTogether dealId={dealId} /></div>
                   </div>
                 }
               />

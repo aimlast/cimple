@@ -2,7 +2,10 @@
  * One data point on the coverage board: status icon, label, tags, a second
  * line by status, ONE context-aware primary button and a ⋯ menu.
  *
- *   missing / partial      → Add answer (checklist) — the broker's edit
+ *   missing / partial      → Add answer (checklist) — the broker's edit;
+ *                            ✓ Answered (live) — what the seller just said,
+ *                            or, when there's nothing to file from, the
+ *                            broker types it (filed as their call note)
  *   to verify (estimate, a guard flag, a lead, your AI-session notes,
  *              "come back later")   → ✓ Confirmed
  *   to verify (sources disagree / sent to the seller) → Resolve…
@@ -29,7 +32,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { boardRequest, fetchItemDetail, invalidateCoverage, type BrokerAudience } from "@/hooks/useCoverageBoard";
 import { StatusIcon } from "./StatusIcon";
-import { NoteEditor, ValueEditor } from "./ItemEditors";
+import { CallNoteEditor, NoteEditor, ValueEditor } from "./ItemEditors";
 import {
   CHIP,
   MASKED_VALUE,
@@ -44,7 +47,7 @@ const CONFIRMABLE = new Set(["estimate", "guard", "lead", "broker_notes", "marke
 
 export type RowMode = "checklist" | "live" | "panel";
 
-export type PrimaryAction = "add" | "confirm" | "resolve" | null;
+export type PrimaryAction = "add" | "answered" | "confirm" | "resolve" | null;
 
 /** The one primary button a row gets (pure — tested). */
 export function primaryActionFor(item: CoverageItem, mode: RowMode): PrimaryAction {
@@ -58,11 +61,13 @@ export function primaryActionFor(item: CoverageItem, mode: RowMode): PrimaryActi
     // (The screen audience drops some reasons' detail, never the code.)
     return item.moneyTalk ? "confirm" : null;
   }
-  return item.members.some((m) => m.writable) ? "add" : null;
+  if (!item.members.some((m) => m.writable)) return null;
+  return mode === "live" ? "answered" : "add";
 }
 
 export const PRIMARY_LABEL: Record<Exclude<PrimaryAction, null>, string> = {
   add: "Add answer",
+  answered: "✓ Answered",
   confirm: "✓ Confirmed",
   resolve: "Resolve…",
 };
@@ -125,10 +130,10 @@ function SecondLine({ item, audience }: { item: CoverageItem; audience: BrokerAu
 }
 
 /** The detail shown on hover (desktop) or in the bottom sheet (phone). */
-export function ItemDetailBody({ dealId, item, audience }: { dealId: string; item: CoverageItem; audience: BrokerAudience }) {
+export function ItemDetailBody({ dealId, item, audience, sittingId }: { dealId: string; item: CoverageItem; audience: BrokerAudience; sittingId?: string | null }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ["/api/deals", dealId, "coverage-board", audience, "item", item.id],
-    queryFn: () => fetchItemDetail(dealId, item.id, audience),
+    queryFn: () => fetchItemDetail(dealId, item.id, audience, sittingId),
     staleTime: 15_000,
   });
   const heading = (t: string) => <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground mb-1">{t}</p>;
@@ -207,11 +212,14 @@ export function CoverageItemRow({
   justFiled,
   onResolve,
   onMenuOpenChange,
+  sittingId,
 }: {
   dealId: string;
   item: CoverageItem;
   audience: BrokerAudience;
   mode: RowMode;
+  /** The live session (✓ Answered files into it). */
+  sittingId?: string | null;
   /** Phone: tap opens the detail sheet (no hover). */
   touch?: boolean;
   dataIndex?: number;
@@ -221,7 +229,7 @@ export function CoverageItemRow({
   onMenuOpenChange?: (key: string, open: boolean) => void;
 }) {
   const { toast } = useToast();
-  const [editor, setEditor] = useState<null | "add" | "edit" | "note">(null);
+  const [editor, setEditor] = useState<null | "add" | "edit" | "note" | "answered">(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const action = primaryActionFor(item, mode);
@@ -258,6 +266,20 @@ export function CoverageItemRow({
   };
   const confirm = () =>
     run(() => boardRequest("POST", `/api/deals/${dealId}/coverage-board/items/${encodeURIComponent(item.id)}/confirm`, {}, "Couldn't confirm it"), "Confirmed by you");
+  // ✓ Answered: Cimple files what the seller just said; when there's nothing
+  // it can file from, the broker types it (their call note).
+  const answered = async () => {
+    if (!sittingId) { openEditor("add"); return; }
+    setBusy(true);
+    try {
+      await boardRequest("POST", `/api/deals/${dealId}/coverage-board/items/${encodeURIComponent(item.id)}/answer`, { sittingId, mode: "auto" }, "Couldn't file it");
+      invalidateCoverage(dealId);
+    } catch {
+      openEditor("answered");
+    } finally {
+      setBusy(false);
+    }
+  };
   const mark = (kind: "verify_later", on: boolean) =>
     run(() =>
       on
@@ -293,12 +315,13 @@ export function CoverageItemRow({
         onClick={(e) => {
           e.stopPropagation();
           if (action === "add") openEditor(editor === "add" ? null : "add");
+          else if (action === "answered") { if (editor === "answered") openEditor(null); else void answered(); }
           else if (action === "confirm") void confirm();
           else if (action === "resolve" && item.conflictId) onResolve?.(item.conflictId);
         }}
         data-testid={`button-primary-${item.id}`}
       >
-        {busy && action === "confirm" ? <Loader2 className="h-3 w-3 animate-spin" /> : touch && action === "confirm" ? <Check className="h-3.5 w-3.5" aria-label="Confirmed" /> : touch && action === "resolve" ? "Resolve" : touch && action === "add" ? "Add" : PRIMARY_LABEL[action]}
+        {busy && (action === "confirm" || action === "answered") ? <Loader2 className="h-3 w-3 animate-spin" /> : touch && (action === "confirm" || action === "answered") ? <Check className="h-3.5 w-3.5" aria-label={action === "answered" ? "Answered" : "Confirmed"} /> : touch && action === "resolve" ? "Resolve" : touch && action === "add" ? "Add" : PRIMARY_LABEL[action]}
       </Button>
     );
 
@@ -378,7 +401,7 @@ export function CoverageItemRow({
               <button type="button" className="text-left hover:underline decoration-dotted underline-offset-4" data-testid={`label-${item.id}`}>{label}</button>
             </HoverCardTrigger>
             <HoverCardContent align="start" className="w-[22rem] max-w-[90vw]">
-              <ItemDetailBody dealId={dealId} item={item} audience={audience} />
+              <ItemDetailBody dealId={dealId} item={item} audience={audience} sittingId={sittingId} />
             </HoverCardContent>
           </HoverCard>
         ) : (
@@ -401,6 +424,7 @@ export function CoverageItemRow({
         />
       )}
       {editor === "note" && <NoteEditor dealId={dealId} item={item} initial={note} onCancel={() => openEditor(null)} onDone={() => openEditor(null)} />}
+      {editor === "answered" && sittingId && <CallNoteEditor dealId={dealId} item={item} sittingId={sittingId} onCancel={() => openEditor(null)} onDone={() => openEditor(null)} />}
     </div>
   );
 
@@ -426,9 +450,10 @@ export function CoverageItemRow({
               <SheetTitle className="text-base">{item.label}</SheetTitle>
               <SheetDescription className="text-xs">{item.ask ? `Ask: “${item.ask}”` : STATUS_LABEL[item.status]}</SheetDescription>
             </SheetHeader>
-            <div className="mt-3"><ItemDetailBody dealId={dealId} item={item} audience={audience} /></div>
+            <div className="mt-3"><ItemDetailBody dealId={dealId} item={item} audience={audience} sittingId={sittingId} /></div>
             <div className="mt-4 flex flex-wrap gap-2">
               {action === "add" && <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => { closeSheet(); openEditor("add"); }}>Add answer</Button>}
+              {action === "answered" && <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90" disabled={busy} onClick={() => { closeSheet(); void answered(); }}>✓ Answered</Button>}
               {action === "confirm" && <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90" disabled={busy} onClick={() => { void confirm(); closeSheet(); }}>✓ Confirmed</Button>}
               {action === "resolve" && item.conflictId && <Button size="sm" variant="outline" onClick={() => { closeSheet(); onResolve?.(item.conflictId!); }}>Resolve…</Button>}
               {writable && item.status === "on_file" && <Button size="sm" variant="outline" onClick={() => { closeSheet(); openEditor("edit"); }}>Edit</Button>}

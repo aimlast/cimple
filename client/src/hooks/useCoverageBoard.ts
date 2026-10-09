@@ -28,13 +28,14 @@ async function readJson<T>(r: Response, fallback: string): Promise<T> {
 const PLAN_POLL_MS = 5_000;
 const PLAN_POLL_FOR_MS = 3 * 60_000;
 
-export function useCoverageBoard(dealId: string | undefined, audience: BrokerAudience = "broker", opts: { enabled?: boolean } = {}) {
+export function useCoverageBoard(dealId: string | undefined, audience: BrokerAudience = "broker", opts: { enabled?: boolean; sittingId?: string | null } = {}) {
   const firstBuildingAt = useRef<number | null>(null);
   const query = useQuery<CoverageBoard>({
     queryKey: coverageBoardKey(dealId ?? "", audience),
     enabled: !!dealId && opts.enabled !== false,
     queryFn: async () => readJson<CoverageBoard>(
-      await fetch(`/api/deals/${dealId}/coverage-board?audience=${audience}`, { credentials: "include" }),
+      // (With a session's id the server enforces "Seller can see this screen".)
+      await fetch(`/api/deals/${dealId}/coverage-board?audience=${audience}${opts.sittingId ? `&sittingId=${encodeURIComponent(opts.sittingId)}` : ""}`, { credentials: "include" }),
       "Couldn't load the checklist",
     ),
     refetchInterval: (q) => {
@@ -77,9 +78,9 @@ export function useSellerCoverage(token: string | undefined, opts: { enabled?: b
   });
 }
 
-export async function fetchItemDetail(dealId: string, itemId: string, audience: BrokerAudience): Promise<CoverageItemDetail> {
+export async function fetchItemDetail(dealId: string, itemId: string, audience: BrokerAudience, sittingId?: string | null): Promise<CoverageItemDetail> {
   return readJson<CoverageItemDetail>(
-    await fetch(`/api/deals/${dealId}/coverage-board/items/${encodeURIComponent(itemId)}?audience=${audience}`, { credentials: "include" }),
+    await fetch(`/api/deals/${dealId}/coverage-board/items/${encodeURIComponent(itemId)}?audience=${audience}${sittingId ? `&sittingId=${encodeURIComponent(sittingId)}` : ""}`, { credentials: "include" }),
     "Couldn't load that data point",
   );
 }

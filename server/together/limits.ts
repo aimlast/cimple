@@ -60,10 +60,11 @@ export function applyTogetherRateLimits(app: Express, aiLimiter: RequestHandler)
   app.use("/api/deals/:dealId/coverage-board/items/:itemId/answer", itemActions);
   // A focused capture runs the model: the AI budget too (auto mode only —
   // a typed note or a confirm with no live session never calls a model).
-  const aiWhenAuto: RequestHandler = (req, res, next) =>
-    req.method === "POST" && (req.body?.mode === "auto" || (typeof req.body?.sittingId === "string" && req.body.sittingId)) ? aiLimiter(req, res, next) : next();
-  app.use("/api/deals/:dealId/coverage-board/items/:itemId/answer", aiWhenAuto);
-  app.use("/api/deals/:dealId/coverage-board/items/:itemId/confirm", aiWhenAuto);
+  const answerAi: RequestHandler = (req, res, next) => (req.method === "POST" && req.body?.mode !== "note" ? aiLimiter(req, res, next) : next());
+  const confirmAi: RequestHandler = (req, res, next) =>
+    req.method === "POST" && typeof req.body?.sittingId === "string" && req.body.sittingId ? aiLimiter(req, res, next) : next();
+  app.use("/api/deals/:dealId/coverage-board/items/:itemId/answer", answerAi);
+  app.use("/api/deals/:dealId/coverage-board/items/:itemId/confirm", confirmAi);
 
   // Sittings (pass 2): start 30 / 15 min + AI; lines 240 / min; SSE 30 connects / min…
   app.post("/api/deals/:dealId/together/sittings", limiter(15 * MIN, 30, "tg-start"), aiLimiter);
@@ -78,6 +79,8 @@ export function applyTogetherRateLimits(app: Express, aiLimiter: RequestHandler)
   app.use("/api/deals/:dealId/together/sittings/:sittingId/end", limiter(15 * MIN, 10, "tg-end"));
   app.use("/api/deals/:dealId/together/sittings/:sittingId/follow-up-email", limiter(15 * MIN, 10, "tg-email"));
   app.use("/api/deals/:dealId/together/sittings/:sittingId/captures/:chunkId/undo", limiter(MIN, 60, "tg-undo"));
+  app.patch("/api/deals/:dealId/together/sittings/:sittingId", limiter(MIN, 60, "tg-patch"));
+  app.use("/api/deals/:dealId/together/sittings/:sittingId/summary", limiter(MIN, 30, "tg-summary"));
   app.use("/api/deals/:dealId/together/sittings/:sittingId/refile", limiter(15 * MIN, 5, "tg-refile"), aiLimiter);
   app.use("/api/deals/:dealId/together/sittings/:sittingId/retry", limiter(15 * MIN, 10, "tg-retry"), aiLimiter);
 }

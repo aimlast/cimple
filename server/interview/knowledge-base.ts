@@ -1397,7 +1397,12 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   // Section priorities + coverage
   parts.push("");
   parts.push(renderSectionImportanceForPrompt(kb.sectionImportance));
-  const outlineBlock = renderOutlineForPrompt(kb.outline);
+  // (A follow-up the seller has answered since drops out — it's on file.)
+  const factsNow = (kb.extractedInfo ?? {}) as Record<string, unknown>;
+  const outlineBlock = renderOutlineForPrompt(kb.outline, (key) => {
+    const v = factsNow[key];
+    return v !== null && v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0);
+  });
   if (outlineBlock) {
     parts.push("");
     parts.push(outlineBlock);

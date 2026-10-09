@@ -1,6 +1,7 @@
 /**
  * InterviewTranscriptPanel — Shows all interview sessions for a deal
- * with full conversation transcripts the broker can read through.
+ * with full conversation transcripts the broker can read through, and the
+ * sessions together (the coverage board), each with its whole conversation.
  */
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -20,6 +21,10 @@ import {
   Loader2,
   FileText,
 } from "lucide-react";
+
+import { useSittings } from "@/components/together/LastSession";
+import { sittingListText, type SittingListRow, type TogetherLineView, type TogetherSittingView } from "@shared/together";
+import { lineRole, speakerDisplay } from "@shared/together-speakers";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -325,6 +330,55 @@ function SessionCard({
   );
 }
 
+// ── Sessions together (the coverage board) ───────────────────────────────────
+
+/**
+ * A session together: "Interview together — 9 Oct · 24 min · in person · 9
+ * filed"; it opens to the whole two-sided conversation (broker only — the
+ * seller's own transcript document holds only their words).
+ */
+function SittingCard({ dealId, row }: { dealId: string; row: SittingListRow }) {
+  const [expanded, setExpanded] = useState(false);
+  const { data, isLoading, error } = useQuery<{ sitting: TogetherSittingView; lines: TogetherLineView[] }>({
+    queryKey: ["/api/deals", dealId, "together-sittings", row.id],
+    enabled: expanded,
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/together/sittings/${row.id}`, { credentials: "include" });
+      if (!r.ok) throw new Error("Couldn't load the conversation");
+      return r.json();
+    },
+  });
+  const present = data ? Array.from(new Set(data.lines.map((l) => l.speaker))) : [];
+  return (
+    <div className="border border-border/50 rounded-lg overflow-hidden" data-testid={`sitting-card-${row.id}`}>
+      <button onClick={() => setExpanded(!expanded)} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors text-left">
+        <div className="flex items-center gap-3 min-w-0">
+          {row.status === "ended" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" /> : <Radio className="h-3.5 w-3.5 text-teal shrink-0" />}
+          <span className="text-sm truncate">{sittingListText(row)}</span>
+        </div>
+        {expanded ? <ChevronUp className="h-4 w-4 text-muted-foreground/50 shrink-0" /> : <ChevronDown className="h-4 w-4 text-muted-foreground/50 shrink-0" />}
+      </button>
+      {expanded && (
+        <div className="border-t border-border/30 bg-background/50 px-4 py-4 max-h-[600px] overflow-y-auto space-y-1.5">
+          {isLoading && <p className="text-xs text-muted-foreground inline-flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" /> Loading the conversation…</p>}
+          {error && <p className="text-xs text-muted-foreground">Couldn't load the conversation.</p>}
+          {data && data.lines.length === 0 && <p className="text-sm text-muted-foreground/60 text-center py-6">Nothing was said in this session.</p>}
+          {data?.lines.map((l) => {
+            const role = lineRole(data.sitting.speakers, { speaker: l.speaker, attested: l.attested });
+            const who = l.source === "typed" ? "You (typed)" : role === "seller" ? data.sitting.speakers[l.speaker]?.name || "Seller" : role === "broker" ? "You" : speakerDisplay(l.speaker, data.sitting.speakers[l.speaker], present);
+            return (
+              <p key={l.seq} className="text-sm leading-relaxed">
+                <span className="text-[10px] text-muted-foreground/50 tabular-nums mr-2">{formatTime(l.at)}</span>
+                <span className={`font-medium ${role === "seller" ? "text-teal" : "text-muted-foreground"}`}>{who}:</span> {l.text}
+              </p>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export function InterviewTranscriptPanel({
@@ -346,6 +400,8 @@ export function InterviewTranscriptPanel({
       return r.json();
     },
   });
+
+  const { data: sittingRows } = useSittings(dealId);
 
   if (isLoading) {
     return (
@@ -372,7 +428,8 @@ export function InterviewTranscriptPanel({
     );
   }
 
-  if (!sessions || sessions.length === 0) {
+  const sittings = sittingRows ?? [];
+  if ((!sessions || sessions.length === 0) && sittings.length === 0) {
     return (
       <Card>
         <CardHeader>
@@ -402,9 +459,10 @@ export function InterviewTranscriptPanel({
   }
 
   // Summary stats
-  const totalMessages = sessions.reduce((s, sess) => s + sess.messageCount, 0);
-  const completedCount = sessions.filter((s) => s.status === "completed").length;
-  const totalDuration = sessions.reduce((s, sess) => s + sess.durationMinutes, 0);
+  const sessionList = sessions ?? [];
+  const totalMessages = sessionList.reduce((s, sess) => s + sess.messageCount, 0);
+  const completedCount = sessionList.filter((s) => s.status === "completed").length;
+  const totalDuration = sessionList.reduce((s, sess) => s + sess.durationMinutes, 0) + sittings.reduce((n, r) => n + r.durationMin, 0);
 
   return (
     <Card>
@@ -416,7 +474,7 @@ export function InterviewTranscriptPanel({
           </CardTitle>
           <div className="flex items-center gap-3 text-xs text-muted-foreground/60">
             <span>
-              {sessions.length} session{sessions.length === 1 ? "" : "s"}
+              {sessionList.length + sittings.length} session{sessionList.length + sittings.length === 1 ? "" : "s"}
             </span>
             <span>{totalMessages} messages</span>
             <span>{formatDuration(totalDuration)} total</span>
@@ -433,12 +491,17 @@ export function InterviewTranscriptPanel({
       </CardHeader>
 
       <CardContent className="space-y-3">
+        {sittings.length > 0 && (
+          <div className="space-y-2" data-testid="sittings-list">
+            {sittings.map((row) => <SittingCard key={row.id} dealId={dealId} row={row} />)}
+          </div>
+        )}
         {/* Newest first; numbered in the order they happened (Session 1 = first). */}
-        {sessions.map((session, i) => (
+        {sessionList.map((session, i) => (
           <SessionCard
             key={session.id}
             session={session}
-            index={sessions.length - 1 - i}
+            index={sessionList.length - 1 - i}
             focused={focusSessionId === session.id}
             focusTurn={focusSessionId === session.id ? focusTurn : null}
           />

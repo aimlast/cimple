@@ -202,6 +202,7 @@ export function BoardList({
               justFiled={justFiled?.has(item.id)}
               onResolve={setResolving}
               onMenuOpenChange={stable.onMenuOpenChange}
+              sittingId={rowMode === "live" ? sittingId : undefined}
             />
           ))}
           {showFolded && (

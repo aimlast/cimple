@@ -55,9 +55,12 @@ export function getInterviewOutline(deal: Pick<Deal, "interviewOutline">): Inter
   };
 }
 
-/** Follow-up data points still to raise (not yet asked in a session). */
-export function openFollowUpItems(o: InterviewOutline): OutlineFollowUpItem[] {
-  return (o.followUpItems ?? []).filter((f) => f && typeof f.label === "string" && !f.askedAt);
+/**
+ * Follow-up data points still to raise (not yet asked in a session). With
+ * `onFile`, one now answered drops out too (cleared on read, §6.2).
+ */
+export function openFollowUpItems(o: InterviewOutline, onFile?: (key: string) => boolean): OutlineFollowUpItem[] {
+  return (o.followUpItems ?? []).filter((f) => f && typeof f.label === "string" && !f.askedAt && !(onFile && f.key && onFile(f.key)));
 }
 
 /** True when the broker changed anything — the prompt block is only rendered then. */
@@ -392,7 +395,7 @@ export async function patchOutline(
 }
 
 /** Prompt block for the interview agent. Rendered only when the broker changed something. */
-export function renderOutlineForPrompt(outline: InterviewOutline): string {
+export function renderOutlineForPrompt(outline: InterviewOutline, onFile?: (key: string) => boolean): string {
   if (!outlineHasContent(outline)) return "";
   const parts: string[] = ["## BROKER'S INTERVIEW OUTLINE (binding)"];
   if (outline.customTopics.length) {
@@ -410,7 +413,7 @@ export function renderOutlineForPrompt(outline: InterviewOutline): string {
       parts.push(`- ${title}: ${e.note}`);
     }
   }
-  const followUps = openFollowUpItems(outline);
+  const followUps = openFollowUpItems(outline, onFile);
   if (followUps.length) {
     // (Label and the screened ask only — a follow-up never carries a note.)
     parts.push(`Data points the broker wants the seller to answer next — raise these first, one at a time, in this order: ${followUps.map((f) => `${f.label} — ${f.ask}`).join("; ")}.`);
@@ -423,4 +426,71 @@ export function renderOutlineForPrompt(outline: InterviewOutline): string {
     parts.push(`Sections the broker removed from this interview — do NOT ask about them, even briefly: ${titles.join("; ")}.`);
   }
   return parts.join("\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Follow-ups from an "Interview together" session (specs/together.md §4.7)
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface NewFollowUpItem {
+  itemId: string;
+  key: string;
+  sectionKey: string;
+  label: string;
+  /** Already screened (summary.ts screenAsk) — label and ask only, never a note. */
+  ask: string;
+  sittingId?: string;
+}
+
+/** Pure: the outline with these follow-ups added (one per item; a newer ask replaces an older one). */
+export function outlineWithFollowUps(current: InterviewOutline, items: NewFollowUpItem[], now = new Date()): InterviewOutline {
+  const at = now.toISOString();
+  const list: OutlineFollowUpItem[] = [...(current.followUpItems ?? [])];
+  for (const it of items) {
+    const entry: OutlineFollowUpItem = {
+      itemId: it.itemId,
+      key: it.key,
+      sectionKey: it.sectionKey,
+      label: it.label.slice(0, 120),
+      ask: it.ask.slice(0, 300),
+      addedAt: at,
+      ...(it.sittingId ? { sittingId: it.sittingId } : {}),
+    };
+    const i = list.findIndex((f) => f.itemId === it.itemId);
+    if (i >= 0) list[i] = entry;
+    else list.push(entry);
+  }
+  return { ...current, followUpItems: list, updatedAt: at };
+}
+
+/** Adds follow-ups to the deal's outline — re-read and written under the facts lock. */
+export async function addFollowUpItems(dealId: string, items: NewFollowUpItem[]): Promise<InterviewOutline | null> {
+  if (items.length === 0) return null;
+  return withDealFactsLock(dealId, async () => {
+    const fresh = await storage.getDeal(dealId);
+    if (!fresh) return null;
+    const next = outlineWithFollowUps(getInterviewOutline(fresh), items);
+    await storage.updateDeal(dealId, { interviewOutline: next } as never);
+    return next;
+  });
+}
+
+const FOLLOW_UP_STOP = new Set(["with", "from", "your", "what", "which", "about", "that", "this", "have", "does", "there", "their", "they", "would", "could", "much", "many", "last", "year"]);
+
+/**
+ * The broker's follow-ups as the wrap-up check sees them: each one's label
+ * and whether this session's interviewer messages have raised it (two of
+ * its label's words, or one when the label has only one). Pure.
+ */
+export function followUpItemsRaised(
+  items: ReadonlyArray<Pick<OutlineFollowUpItem, "label" | "key">>,
+  messages: ReadonlyArray<{ role: string; content: string }>,
+): Array<{ label: string; discussed: boolean }> {
+  const ai = messages.filter((m) => m.role === "ai").map((m) => m.content).join("\n").toLowerCase();
+  return items.map((f) => {
+    const words = Array.from(new Set(`${f.label} ${f.key.replace(/([a-z])([A-Z])/g, "$1 $2")}`.toLowerCase().match(/[a-z]{4,}/g) ?? [])).filter((w) => !FOLLOW_UP_STOP.has(w));
+    if (!ai.trim() || words.length === 0) return { label: f.label, discussed: false };
+    const hits = words.filter((w) => ai.includes(w.slice(0, Math.min(w.length, Math.max(5, Math.ceil(w.length * 0.6)))))).length;
+    return { label: f.label, discussed: hits >= Math.min(2, words.length) };
+  });
 }

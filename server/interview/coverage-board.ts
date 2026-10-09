@@ -930,6 +930,7 @@ export function coverageInputsFrom(args: {
   requirements?: CoverageInputs["requirements"];
   figureItems?: ExplainBoardItem[];
   brokerFacts: Record<string, unknown>;
+  sittingFilings?: Record<string, SittingFiling>;
   now?: Date;
 }): CoverageInputs {
   const sorted = [...args.sessions].sort((a, b) => new Date(String(b.lastActivityAt ?? 0)).getTime() - new Date(String(a.lastActivityAt ?? 0)).getTime());
@@ -945,8 +946,25 @@ export function coverageInputsFrom(args: {
     marks: args.marks,
     requirements: args.requirements ?? [],
     figureItems: args.figureItems ?? [],
+    sittingFilings: args.sittingFilings ?? sittingFilingsFrom(args.brokerFacts),
     ...(args.now ? { now: args.now } : {}),
   };
+}
+
+/**
+ * Keys a session together wrote (the broker's call notes now; live capture's
+ * chunks add their ids in pass 3): the value's source carries the sitting.
+ * Drives "Filed this session", "Just filed" and the end summary. Pure.
+ */
+export function sittingFilingsFrom(facts: Record<string, unknown>): Record<string, SittingFiling> {
+  const out: Record<string, SittingFiling> = {};
+  for (const [key, src] of Object.entries(getFieldSources(facts))) {
+    const sittingId = (src as { sittingId?: unknown }).sittingId;
+    if (typeof sittingId !== "string" || !sittingId) continue;
+    const chunkId = (src as { chunkId?: unknown }).chunkId;
+    out[key] = { at: String(src.at ?? ""), sittingId, ...(typeof chunkId === "string" && chunkId ? { chunkId } : {}) };
+  }
+  return out;
 }
 
 export async function buildCoverageBoard(deal: Deal, opts: { audience: CoverageAudience }, loaders: Partial<CoverageLoaders> = {}): Promise<CoverageBoard> {
