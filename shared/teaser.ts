@@ -213,7 +213,10 @@ export interface TeaserSummary {
 
 export interface TeaserEngagementBuyer {
   accessId: string;
+  /** The name the broker sent the link to (never replaced by whoever signed). */
   name: string | null;
+  /** The person who signed / asked on this link when it isn't `name` (a colleague), else null. */
+  signedBy?: string | null;
   company: string | null;
   email: string;
   sentAt: string | null;

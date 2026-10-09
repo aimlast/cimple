@@ -6,7 +6,8 @@
  * address the broker sent the link to — never an address the requester types.
  *
  *  - The code is stored as an HMAC (key from SESSION_SECRET), never as typed;
- *    it works for 15 minutes and allows 5 tries.
+ *    it works for 15 minutes and allows 5 tries, each counted atomically
+ *    before the comparison (claimAttempt), so parallel guesses can't share one.
  *  - Sends are limited per link: 3 an hour and 10 a day.
  *  - A verified check holds 24 hours for the request steps.
  *  - Skipped (recorded as `method`): "account" — the requester is signed in
@@ -14,7 +15,7 @@
  *    "demo" — demo deals, which never email.
  */
 import { createHmac, randomInt, createHash } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 import { buyerLinkEmailChecks, type BuyerAccess, type Deal } from "@shared/schema";
 import { createPerKeyLimiter } from "../security/per-key-limit";
 import { TEASER_ACCESS_LEVEL } from "@shared/access-levels";
@@ -39,6 +40,13 @@ export interface EmailCheckStore {
   latest(accessId: string): Promise<EmailCheckRow | null>;
   insert(row: Omit<EmailCheckRow, "id">): Promise<EmailCheckRow>;
   update(id: string, patch: Partial<Pick<EmailCheckRow, "attempts" | "verifiedAt">>): Promise<void>;
+  /**
+   * Count one try, atomically: attempts + 1 only while it is under `max` and
+   * the code isn't verified yet. Returns the new count, or null when no try
+   * is left (or it was verified meanwhile). Guesses sent at the same moment
+   * each take their own try — never more than `max` in all.
+   */
+  claimAttempt(id: string, max: number): Promise<number | null>;
 }
 
 const dbChecks: EmailCheckStore = {
@@ -55,6 +63,16 @@ const dbChecks: EmailCheckStore = {
   async update(id, patch) {
     const { db } = await import("../db");
     await db.update(buyerLinkEmailChecks).set(patch).where(and(eq(buyerLinkEmailChecks.id, id)));
+  },
+  async claimAttempt(id, max) {
+    const { db } = await import("../db");
+    // One statement: UPDATE … SET attempts = attempts + 1 WHERE id = $1 AND attempts < $max AND verified_at IS NULL RETURNING attempts.
+    const [r] = await db
+      .update(buyerLinkEmailChecks)
+      .set({ attempts: sql`${buyerLinkEmailChecks.attempts} + 1` })
+      .where(and(eq(buyerLinkEmailChecks.id, id), lt(buyerLinkEmailChecks.attempts, max), isNull(buyerLinkEmailChecks.verifiedAt)))
+      .returning({ attempts: buyerLinkEmailChecks.attempts });
+    return r ? r.attempts : null;
   },
 };
 
@@ -75,6 +93,13 @@ export function memoryEmailCheckStore(): EmailCheckStore & { rows: EmailCheckRow
     async update(id, patch) {
       const r = rows.find((x) => x.id === id);
       if (r) Object.assign(r, patch);
+    },
+    async claimAttempt(id, max) {
+      // Check and increment in one step (no await between them), like the single UPDATE.
+      const r = rows.find((x) => x.id === id);
+      if (!r || r.verifiedAt || r.attempts >= max) return null;
+      r.attempts += 1;
+      return r.attempts;
     },
   };
 }
@@ -211,13 +236,17 @@ export async function verifyEmailCode(access: Pick<BuyerAccess, "id">, code: unk
   if (last.verifiedAt) return { verified: true };
   if (last.attempts >= MAX_ATTEMPTS) return { verified: false, code: "locked" };
   if (now > last.expiresAt.getTime()) return { verified: false, code: "expired" };
+  // Take a try BEFORE comparing (atomic): guesses sent together can't share one.
+  const attempts = await checks.claimAttempt(last.id, MAX_ATTEMPTS);
+  if (attempts === null) {
+    const again = await checks.latest(access.id);
+    return again?.id === last.id && again.verifiedAt ? { verified: true } : { verified: false, code: "locked" };
+  }
   const typed = String(code ?? "").replace(/\D/g, "");
   if (typed.length === 6 && codeHash(access.id, typed) === last.codeHash) {
     await checks.update(last.id, { verifiedAt: new Date(now) });
     return { verified: true };
   }
-  const attempts = last.attempts + 1;
-  await checks.update(last.id, { attempts });
   if (attempts >= MAX_ATTEMPTS) return { verified: false, code: "locked" };
   return { verified: false, code: "wrong", triesLeft: MAX_ATTEMPTS - attempts };
 }

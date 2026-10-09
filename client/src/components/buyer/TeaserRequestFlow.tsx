@@ -95,6 +95,7 @@ export function TeaserRequestFlow(p: TeaserRequestFlowProps) {
         skipNda={!p.ndaRequired}
         onCancel={p.onClose}
         onAccepted={(body) => done(body)}
+        onEmailCheckRequired={() => setStep("email")}
       />
     );
   }

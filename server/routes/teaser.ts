@@ -126,6 +126,13 @@ async function sendError(res: Response, err: unknown, deal: Deal | null, fallbac
 
 const dealOf = (res: Response) => res.locals.deal as Deal;
 
+/** The link already holds the requester's "About you" answers (sent on this link before). */
+export function storedRequestProfile(ndaProfile: unknown): boolean {
+  if (!ndaProfile || typeof ndaProfile !== "object") return false;
+  const p = ndaProfile as Record<string, unknown>;
+  return typeof p.buyerType === "string" && typeof p.name === "string" && !!p.name.trim() && typeof p.submittedAt === "string";
+}
+
 async function stateOf(deal: Deal, row: TeaserRow, staleness = false) {
   return teaserState(deal, row, { staleness });
 }
@@ -862,7 +869,8 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
             return res.status(400).json({ error: issue?.message || "Please complete the form", field: issue?.path?.[0] ?? null, code: "profile_invalid" });
           }
           profile = parsed.data as unknown as Record<string, unknown>;
-          await storage.updateBuyerAccess(g.access.id, { buyerName: parsed.data.name, buyerCompany: parsed.data.company ?? g.access.buyerCompany, ndaProfile: { ...((g.access.ndaProfile as Record<string, unknown> | null) ?? {}), ...parsed.data, submittedAt: new Date().toISOString() } } as never);
+          // The link keeps the name and company the broker sent it to; the requester's own answers live in nda_profile and on the request.
+          await storage.updateBuyerAccess(g.access.id, { ndaProfile: { ...((g.access.ndaProfile as Record<string, unknown> | null) ?? {}), ...parsed.data, submittedAt: new Date().toISOString() } } as never);
           try {
             const { applyNdaProfile } = await import("../buyers/nda-profile.js");
             const fresh = await storage.getBuyerAccess(g.access.id);
@@ -871,10 +879,14 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
             console.error("[teaser] applying the request profile failed:", err);
           }
         } else if (body.confirmProfile) {
-          const { ndaProfileAccount } = await import("../buyers/nda-profile.js");
-          const acct = await ndaProfileAccount(g.access);
-          if (!acct || !hasMatchableProfile(acct)) return res.status(400).json({ error: "Please tell us a little about yourself first", code: "profile_required" });
-        } else if (!g.access.ndaProfile) {
+          // "Confirm what's on file": the answers already sent on this link (a retry after a failed send),
+          // or the buyer account's profile.
+          if (!storedRequestProfile(g.access.ndaProfile)) {
+            const { ndaProfileAccount } = await import("../buyers/nda-profile.js");
+            const acct = await ndaProfileAccount(g.access);
+            if (!acct || !hasMatchableProfile(acct)) return res.status(400).json({ error: "Please tell us a little about yourself first", code: "profile_required" });
+          }
+        } else if (!storedRequestProfile(g.access.ndaProfile)) {
           return res.status(400).json({ error: "Please tell us a little about yourself first", code: "profile_required" });
         }
       }

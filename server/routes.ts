@@ -5149,10 +5149,18 @@ Return JSON only.`,
       const problem = viewLinkProblem(access);
       if (problem || !access) { const e = viewLinkError(problem ?? "not_found"); return res.status(e.status).json({ error: e.error }); }
       if (!(await linkReadable(access))) return res.status(403).json(isTeaserOnly(access.accessLevel) ? { code: "not_published", error: "This summary isn't available right now." } : notPublishedBody());
-      const buyer = await ndaProfileAccount(access);
-      const c = (buyer?.buyerCriteria as Record<string, any>) || {};
       const ndaDeal = await storage.getDeal(access.dealId);
       if (!ndaDeal) return res.status(404).json({ error: "Deal not found" });
+      // A teaser link is mailed in bulk and still opens when forwarded: the
+      // recipient's details (email, phone, budget, proof of funds) are only
+      // shown once the link's own address is confirmed (the 6-digit code).
+      if (isTeaserOnly(access.accessLevel)) {
+        const { emailCheckState } = await import("./teaser/email-check");
+        const state = await emailCheckState(access, ndaDeal, req.session?.buyerId ?? null);
+        if (!state.verified) return res.status(400).json({ error: "Confirm your email first.", code: "email_check_required", maskedEmail: state.maskedEmail });
+      }
+      const buyer = await ndaProfileAccount(access);
+      const c = (buyer?.buyerCriteria as Record<string, any>) || {};
       // The brokerage's own NDA, exactly as this buyer will sign it.
       const nda = await buyerNdaFor(ndaDeal, access);
       res.json({
@@ -5252,12 +5260,19 @@ Return JSON only.`,
       // a concurrent second signing (both passed the ndaSigned check above)
       // loses here and writes nothing — not to this row, not to the buyer's
       // account — so it can't replace the signature record.
+      const accessFields = ndaAccessFields(access, profile, signature as unknown as Record<string, unknown>);
+      // A teaser link stays under the name and company the broker sent it to
+      // (a colleague may sign): the signer lives in nda_profile and on the request.
+      if (teaserEmailCheck) {
+        delete accessFields.buyerName;
+        delete accessFields.buyerCompany;
+      }
       const recorded = await storage.recordBuyerNdaSignature(access.id, {
         ndaSigned: true,
         ndaSignedAt: signedAt,
         ndaSignedIp: ip,
         ndaVersion: nda.hash,
-        ...ndaAccessFields(access, profile, signature as unknown as Record<string, unknown>),
+        ...accessFields,
         ...(gateStamped ? { firstViewedAt: null, viewCount: 0, reminderStage: "none", lastReminderAt: null } : {}),
       } as any);
       // A concurrent signing got there first: that signature stands.

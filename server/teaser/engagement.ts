@@ -10,7 +10,7 @@ import { isTeaserOnly, normalizeAccessLevel, sameAccessLevel, TEASER_ACCESS_LEVE
 import type { RenditionPage } from "@shared/analytics-v2";
 import type { TeaserEngagement, TeaserEngagementBuyer } from "@shared/teaser";
 import { viewLinkProblem } from "../buyers/view-access";
-import { latestPass, requestStateFor, TEASER_REQUEST_SOURCE } from "./requests";
+import { latestPass, namesMismatch, requestStateFor, TEASER_REQUEST_SOURCE } from "./requests";
 
 export interface TeaserVisitRow {
   accessId: string;
@@ -164,9 +164,14 @@ export function computeTeaserEngagement(input: ComputeInput): TeaserEngagement {
     const problem = viewLinkProblem(a, now);
     const active = isTeaserOnly(a.accessLevel) && !a.revokedAt;
     const worthACall = !!first && now - first.getTime() >= 2 * DAY && req.state === "none" && !pass && !problem && isTeaserOnly(a.accessLevel);
+    // Who asked, when it isn't the person the link was sent to (a colleague signed).
+    const asked = (reqRow as { teaserRequest?: { signerName?: string | null } | null } | undefined)?.teaserRequest;
+    const nda = (a.ndaProfile as { name?: string; signature?: { signerName?: string } } | null) ?? null;
+    const signer = asked?.signerName ?? nda?.signature?.signerName ?? nda?.name ?? null;
     return {
       accessId: a.id,
       name: a.buyerName ?? null,
+      signedBy: signer && namesMismatch(a.buyerName, signer) ? signer : null,
       company: a.buyerCompany ?? null,
       email: a.buyerEmail,
       sentAt: granted?.at ?? (a.createdAt ? new Date(a.createdAt).toISOString() : null),

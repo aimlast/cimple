@@ -7,6 +7,8 @@
  *    firstViewedAt untouched; `reading` present except for the owner's preview;
  *    an expired link → {code:"expired", teaser:true, firm}; revoked → the generic 403;
  *  - sign-nda on a teaser link WITHOUT the email check → 400; with it → one request;
+ *  - buyer-profile on a teaser link needs the email check too (a forwarded
+ *    link can't read the recipient's email, phone, budget or background);
  *  - /cim-request without an NDA needs a profile; a CIM-level link → 409;
  *  - teaser-pass records reasons and never touches the CIM decision;
  *  - fresh-link only for expired teaser links, once a day;
@@ -153,10 +155,41 @@ async function main() {
     assert.match(r.json.error, /revoked/);
   });
 
+  await check("a forwarded teaser link can't read the recipient's profile: buyer-profile needs the email check (masked address only)", async () => {
+    // The recipient has a buyer account with a profile on file (outreach links it).
+    T.buyers.push({
+      id: "BU-ANYA", email: "anya@northfield.invalid", emailVerified: true, passwordHash: "hash", name: "Anya Brooks", phone: "416-555-0142",
+      company: "Northfield Holdings", title: "Partner", buyerType: "financial", background: "Ex-operator, two exits in cold-chain logistics.",
+      targetIndustries: ["Logistics"], targetLocations: ["Ontario"], hasProofOfFunds: true,
+      buyerCriteria: { lookingFor: "Refrigerated carriers", askingPriceMin: 8000000, askingPriceMax: 20000000 },
+    });
+    const fwd = mkAccess({ buyerEmail: "anya@northfield.invalid", buyerName: "Anya Brooks", buyerUserId: "BU-ANYA" });
+    const p = await call("GET", `/api/view/${fwd.accessToken}/buyer-profile`);
+    assert.equal(p.status, 400, p.text);
+    assert.equal(p.json.code, "email_check_required");
+    assert.equal(p.json.maskedEmail, "a•••@northfield.invalid");
+    for (const secret of ["anya@northfield.invalid", "416-555-0142", "two exits", "8000000", "Northfield Holdings", "Refrigerated carriers"]) assert.ok(!p.text.includes(secret), `${secret} must not be shown before the code`);
+    // Once the link's own address is confirmed, the profile is there to prefill.
+    await call("POST", `/api/view/${fwd.accessToken}/email-check`);
+    const code = /(\d{3}) (\d{3})/.exec(h.codes[h.codes.length - 1].html)!.slice(1).join("");
+    assert.equal(h.codes[h.codes.length - 1].to, "anya@northfield.invalid");
+    const v = await call("POST", `/api/view/${fwd.accessToken}/email-check/verify`, { code });
+    assert.equal(v.status, 200, v.text);
+    const p2 = await call("GET", `/api/view/${fwd.accessToken}/buyer-profile`);
+    assert.equal(p2.status, 200, p2.text);
+    assert.equal(p2.json.onFile.phone, "416-555-0142");
+    assert.equal(p2.json.email, "anya@northfield.invalid");
+    // A CIM-level link (personal, behind the NDA) is unchanged.
+    const cim = mkAccess({ accessLevel: "blind", buyerEmail: "anya@northfield.invalid", buyerUserId: "BU-ANYA" });
+    assert.equal((await call("GET", `/api/view/${cim.accessToken}/buyer-profile`)).status, 200);
+    h.codes.splice(0, h.codes.length);
+  });
+
   await check("sign-nda on a teaser link without the email check → 400 email_check_required", async () => {
     const p = await call("GET", `/api/view/${link.accessToken}/buyer-profile`);
-    assert.equal(p.status, 200, p.text);
-    const r = await call("POST", `/api/view/${link.accessToken}/sign-nda`, { profile: PROFILE, signerName: "Natalie Vasconcelos", termsHash: p.json.nda.hash });
+    assert.equal(p.status, 400, p.text);
+    assert.equal(p.json.code, "email_check_required");
+    const r = await call("POST", `/api/view/${link.accessToken}/sign-nda`, { profile: PROFILE, signerName: "Natalie Vasconcelos", termsHash: "x" });
     assert.equal(r.status, 400);
     assert.equal(r.json.code, "email_check_required");
     assert.equal(T.access.find((a) => a.id === link.id).ndaSigned, false);
@@ -219,6 +252,55 @@ async function main() {
     assert.equal(c.json.code, "already_cim");
     const revoked = mkAccess({ revokedAt: new Date() });
     assert.equal((await call("POST", `/api/view/${revoked.accessToken}/cim-request`, {})).status, 403);
+  });
+
+  const verifyLink = async (token: string) => {
+    await call("POST", `/api/view/${token}/email-check`);
+    const code = /(\d{3}) (\d{3})/.exec(h.codes[h.codes.length - 1].html)!.slice(1).join("");
+    const v = await call("POST", `/api/view/${token}/email-check/verify`, { code });
+    assert.equal(v.status, 200, v.text);
+  };
+
+  await check("no NDA: 'Try again' after a failed send confirms the answers already sent on the link (no account needed)", async () => {
+    const l3 = mkAccess({ dealId: "D-NONDA", accessToken: "tok-nonda-retry", buyerEmail: "sam@retry.invalid", buyerName: "Sam Ortiz" });
+    await verifyLink(l3.accessToken);
+    // Nothing on file and no account: confirming alone is refused.
+    const none = await call("POST", `/api/view/${l3.accessToken}/cim-request`, { confirmProfile: true });
+    assert.equal(none.status, 400);
+    assert.equal(none.json.code, "profile_required");
+    // The first send saved the answers on the link, then the request itself failed (as if the database dropped it).
+    T.access.find((a) => a.id === l3.id).ndaProfile = { ...PROFILE, name: "Sam Ortiz", submittedAt: new Date().toISOString() };
+    const retry = await call("POST", `/api/view/${l3.accessToken}/cim-request`, { confirmProfile: true });
+    assert.equal(retry.status, 200, retry.text);
+    assert.equal(retry.json.state, "requested");
+    const req = T.approvals.find((a) => a.buyerAccessId === l3.id);
+    assert.equal(req.buyerName, "Sam Ortiz");
+    assert.equal(req.category, "pe_generalist", "the request carries the answers on the link");
+  });
+
+  await check("a colleague signs on the link: the link keeps the name it was sent to; the signer shows on the request and the teaser stage", async () => {
+    const l4 = mkAccess({ accessToken: "tok-colleague", buyerEmail: "priya@harbourcap.invalid", buyerName: "Priya Shah", buyerCompany: "Harbour Capital" });
+    await verifyLink(l4.accessToken);
+    const p = await call("GET", `/api/view/${l4.accessToken}/buyer-profile`);
+    assert.equal(p.status, 200, p.text);
+    const r = await call("POST", `/api/view/${l4.accessToken}/sign-nda`, { profile: { ...PROFILE, name: "Dana Wu", company: "Wu Family Office" }, signerName: "Dana Wu", termsHash: p.json.nda.hash });
+    assert.equal(r.status, 200, r.text);
+    const row = T.access.find((a) => a.id === l4.id);
+    assert.equal(row.buyerName, "Priya Shah", "the link stays under the name the broker sent it to");
+    assert.equal(row.buyerCompany, "Harbour Capital");
+    assert.equal(row.ndaProfile.name, "Dana Wu");
+    assert.equal(row.ndaProfile.signature.signerName, "Dana Wu");
+    const req = T.approvals.find((a) => a.buyerAccessId === l4.id);
+    assert.equal(req.teaserRequest.linkName, "Priya Shah");
+    assert.equal(req.teaserRequest.signerName, "Dana Wu");
+    assert.equal(req.teaserRequest.mismatch, true);
+    const eng = await call("GET", "/api/deals/D-PAC/teaser/engagement", undefined, broker);
+    assert.equal(eng.status, 200, eng.text);
+    const b = eng.json.buyers.find((x: { accessId: string }) => x.accessId === l4.id);
+    assert.equal(b.name, "Priya Shah");
+    assert.equal(b.signedBy, "Dana Wu");
+    const own = eng.json.buyers.find((x: { accessId: string }) => x.accessId === link.id);
+    assert.equal(own.signedBy, null, "the recipient signing herself shows no 'signed by'");
   });
 
   await check("a teaser link can't decide, ask questions or read the Q&A feed", async () => {

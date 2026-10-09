@@ -271,6 +271,7 @@ export function HaveTeaserStage({
                       <p className="font-medium text-foreground">{b.name || b.email}</p>
                       {b.company && <p className="mt-0.5 text-xs text-muted-foreground">{b.company}</p>}
                       {b.name && <p className="text-xs text-muted-foreground/60">{b.email}</p>}
+                      {b.signedBy && <p className="mt-0.5 text-[11px] text-amber-500" data-testid={`text-teaser-signed-by-${b.accessId}`}>Signed by {b.signedBy}</p>}
                       {b.expired && b.active && <p className="mt-0.5 text-[11px] text-amber-500">Link expired</p>}
                     </td>
                     <td className="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground">{sentLine(b)}</td>
@@ -289,6 +290,7 @@ export function HaveTeaserStage({
                   <div className="min-w-0">
                     <p className="truncate font-medium">{b.name || b.email}</p>
                     <p className="truncate text-xs text-muted-foreground">{[b.company, b.name ? b.email : null].filter(Boolean).join(" · ")}</p>
+                    {b.signedBy && <p className="truncate text-[11px] text-amber-500">Signed by {b.signedBy}</p>}
                   </div>
                   {actions(b, "-card")}
                 </div>

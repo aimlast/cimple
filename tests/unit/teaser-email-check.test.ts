@@ -2,6 +2,8 @@
  * The email check on a teaser link (server/teaser/email-check.ts):
  *  - the code goes to the link's own address only;
  *  - a wrong code → triesLeft; 5 failures lock it; expiry → "expired";
+ *  - guesses sent at the same moment each take their own try (counted
+ *    atomically before comparing): 10 at once → 5 tried, the rest locked;
  *  - the send limits (3 an hour, 10 a day per link);
  *  - a verified buyer account with the same email skips it; a different email doesn't;
  *  - a demo deal skips it without sending;
@@ -73,6 +75,31 @@ async function main() {
     const a3 = { ...access, id: "A3", accessToken: "tok-3" };
     await ec.sendEmailCode(a3 as never, deal as never);
     assert.deepEqual(await ec.verifyEmailCode(a3, codeOf(), Date.now() + ec.CODE_TTL_MS + 1000), { verified: false, code: "expired" });
+  });
+
+  await check("10 guesses at once: each takes its own try — 5 are compared, the rest are locked, and the right code then can't get in", async () => {
+    ec._resetEmailCheckLimitsForTests();
+    // A store that waits like a database between every call (the UPDATE itself is one statement).
+    const wait = () => new Promise((r) => setTimeout(r, 3));
+    const slow = {
+      async latest(id: string) { await wait(); return mem.latest(id); },
+      async insert(row: Parameters<typeof mem.insert>[0]) { await wait(); return mem.insert(row); },
+      async update(id: string, patch: Parameters<typeof mem.update>[1]) { await wait(); return mem.update(id, patch); },
+      async claimAttempt(id: string, max: number) { await wait(); return mem.claimAttempt(id, max); },
+    };
+    ec._setEmailCheckStoreForTests(slow);
+    const a9 = { ...access, id: "A9", accessToken: "tok-9" };
+    await ec.sendEmailCode(a9 as never, deal as never);
+    const right = codeOf();
+    const wrong = right === "000001" ? "000002" : "000001";
+    const results = await Promise.all(Array.from({ length: 10 }, () => ec.verifyEmailCode(a9, wrong)));
+    const wrongs = results.filter((r) => !r.verified && r.code === "wrong").length;
+    const locked = results.filter((r) => !r.verified && r.code === "locked").length;
+    assert.equal(wrongs, 4, JSON.stringify(results));
+    assert.equal(locked, 6);
+    assert.equal(mem.rows.find((r) => r.buyerAccessId === "A9")!.attempts, 5, "never more than 5 tries counted");
+    assert.deepEqual(await ec.verifyEmailCode(a9, right), { verified: false, code: "locked" });
+    ec._setEmailCheckStoreForTests(mem);
   });
 
   await check("send limits: 3 an hour per link", async () => {

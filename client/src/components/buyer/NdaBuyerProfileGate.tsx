@@ -82,7 +82,7 @@ function Field({ label, hint, children, required }: { label: string; hint?: stri
 const priceSelect = "h-9 w-full rounded-md border border-input bg-background px-2 text-sm";
 
 export function NdaBuyerProfileGate({
-  dealName, token, onAccepted, purpose = "cim", onCancel, skipNda = false,
+  dealName, token, onAccepted, purpose = "cim", onCancel, skipNda = false, onEmailCheckRequired,
 }: {
   dealName: string;
   token: string;
@@ -94,13 +94,19 @@ export function NdaBuyerProfileGate({
   onCancel?: () => void;
   /** The deal has no NDA: step 1 sends the request with the profile. */
   skipNda?: boolean;
+  /** A teaser link whose email check has lapsed: go back to the code step (the profile isn't shown before it). */
+  onEmailCheckRequired?: () => void;
 }) {
   const request = purpose === "request";
   const { data, isLoading, refetch } = useQuery<ProfileResponse>({
     queryKey: ["/api/view", token, "buyer-profile"],
     queryFn: async () => {
       const r = await fetch(`/api/view/${token}/buyer-profile`);
-      if (!r.ok) throw new Error("Couldn't load your profile");
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        if (body?.code === "email_check_required" && onEmailCheckRequired) onEmailCheckRequired();
+        throw new Error("Couldn't load your profile");
+      }
       return r.json();
     },
   });
@@ -195,6 +201,7 @@ export function NdaBuyerProfileGate({
         if (body?.code === "profile_required") { setStep("about"); setEditing(true); }
         // The terms changed since the page loaded — load the current text to read.
         if (body?.code === "nda_terms_changed") await refetch();
+        if (body?.code === "email_check_required" && onEmailCheckRequired) { onEmailCheckRequired(); return; }
         throw new Error(body.error || "Could not record your signature — please try again.");
       }
       setSigned(true);
@@ -220,6 +227,7 @@ export function NdaBuyerProfileGate({
       if (!res.ok) {
         if (body?.code === "profile_required") { setStep("about"); setEditing(true); }
         if (body?.code === "has_cim_link" || body?.code === "already_cim") throw new Error("You already have access to the CIM. Use the link your broker sent you.");
+        if (body?.code === "email_check_required" && onEmailCheckRequired) { onEmailCheckRequired(); return; }
         throw new Error(body.error || "Couldn't send your request. Try again.");
       }
       setSigned(true);
