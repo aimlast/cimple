@@ -10,7 +10,7 @@ import type { BrokerGlData } from "@/lib/gl-api";
 
 export type GlView = "addbacks" | "ledger" | "statements" | "seller";
 
-export function GlKpiStrip({ data, onOpen }: { data: BrokerGlData; onOpen: (v: GlView) => void }) {
+export function GlKpiStrip({ data, onOpen, onBuyers }: { data: BrokerGlData; onOpen: (v: GlView) => void; onBuyers?: () => void }) {
   const ledgers = data.ledgers;
   const ready = ledgers.filter((l) => l.status === "ready" && l.role === "ledger");
   const reading = ledgers.some((l) => l.status === "reading");
@@ -57,6 +57,11 @@ export function GlKpiStrip({ data, onOpen }: { data: BrokerGlData; onOpen: (v: G
     if (tr.accountantRequest?.sentAt) sellerSub = `Their accountant, ${tr.accountantRequest.name}, has a link`;
   }
 
+  const shownAt = data.buyers?.publishedAt ?? data.tracing?.publishedAt ?? null;
+  const changes = data.buyers?.changes.length ?? 0;
+  const v = data.buyers?.versions;
+  const versionsWords = v ? [v.dd ? "Due diligence" : "", v.normal ? "Full" : "", v.blind ? "Blind" : ""].filter(Boolean).join(" · ") : undefined;
+
   return (
     <div className="grid grid-cols-2 gap-2 lg:grid-cols-5" data-testid="gl-kpi-strip">
       <KpiCell label="Ledger" tone={ledgerTone} sub={ledgerSub} onClick={() => onOpen("ledger")} testId="gl-kpi-ledger">{ledgerText}</KpiCell>
@@ -67,8 +72,15 @@ export function GlKpiStrip({ data, onOpen }: { data: BrokerGlData; onOpen: (v: G
         {addbacksText}
       </KpiCell>
       <KpiCell label="Seller" tone={sellerTone} sub={sellerSub} onClick={() => onOpen("seller")} testId="gl-kpi-seller">{sellerText}</KpiCell>
-      <KpiCell label="Buyers" className="col-span-2 lg:col-span-1" sub={data.tracing?.publishedAt ? undefined : "You choose what buyers see once the review is done"} testId="gl-kpi-buyers">
-        {data.tracing?.publishedAt ? `Shown since ${shortDate(data.tracing.publishedAt)}` : "Not shown yet"}
+      <KpiCell
+        label="Buyers"
+        className="col-span-2 lg:col-span-1"
+        tone={shownAt ? "good" : "muted"}
+        sub={shownAt ? (changes ? `${changes} change${changes === 1 ? "" : "s"} since — update what they see` : versionsWords) : "You choose what buyers see once the review is done"}
+        onClick={onBuyers}
+        testId="gl-kpi-buyers"
+      >
+        {shownAt ? `Shown since ${shortDate(shownAt)}` : "Not shown yet"}
       </KpiCell>
     </div>
   );

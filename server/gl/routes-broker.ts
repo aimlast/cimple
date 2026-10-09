@@ -29,6 +29,7 @@ import { glProgressForDeal } from "./progress";
 import { remindGlRequest, sendGlRequest, sendTraceQuestion } from "./notify";
 import { sellerEntry } from "./seller-view";
 import { parseMoneyToCents } from "./text";
+import { buildEvidence, evidenceChangeCount, publishEvidence, publishPreview, unpublishEvidence } from "./evidence";
 
 const dealIdOf = (req: Request) => String(req.params.dealId);
 
@@ -551,6 +552,66 @@ export function registerGlBrokerRoutes(app: Express): void {
       res.json({ ok: true });
     } catch (err) {
       fail(res, "save that")(err);
+    }
+  });
+
+  // ── What buyers see (§8.1, D30) ──
+
+  // The publish dialog: per-version defaults, the exact note texts, the warnings.
+  app.get("/api/deals/:dealId/gl/publish-preview", ...auth, async (req, res) => {
+    try {
+      const dealId = dealIdOf(req);
+      await refreshGl(dealId);
+      res.json(await publishPreview(dealId));
+    } catch (err) {
+      fail(res, "load what buyers would see")(err);
+    }
+  });
+
+  // "Show to buyers" / "Update what buyers see".
+  app.post("/api/deals/:dealId/gl/publish", ...auth, async (req, res) => {
+    try {
+      const bad = refuseUnknownKeys(req.body, ["versions", "leaveOut"]);
+      if (bad) return res.status(400).json({ error: bad });
+      const v = req.body?.versions;
+      if (!v || typeof v !== "object" || ["dd", "normal", "blind"].some((k) => typeof v[k] !== "boolean") || Object.keys(v).some((k) => !["dd", "normal", "blind"].includes(k))) {
+        return res.status(400).json({ error: "Choose which versions show it." });
+      }
+      const leaveOut = req.body?.leaveOut ?? [];
+      if (!Array.isArray(leaveOut) || leaveOut.length > 200 || leaveOut.some((k: unknown) => typeof k !== "string" || k.length > 200)) {
+        return res.status(400).json({ error: "Those add-backs couldn't be read." });
+      }
+      const r = await publishEvidence(dealIdOf(req), { versions: { dd: v.dd, normal: v.normal, blind: v.blind }, leaveOut }, req.session.brokerId ?? null);
+      res.json({ ok: true, ...r });
+    } catch (err) {
+      fail(res, "show it to buyers")(err);
+    }
+  });
+
+  // "Stop showing it to buyers".
+  app.delete("/api/deals/:dealId/gl/publish", ...auth, async (req, res) => {
+    try {
+      await unpublishEvidence(dealIdOf(req));
+      res.json({ ok: true });
+    } catch (err) {
+      fail(res, "take it off what buyers see")(err);
+    }
+  });
+
+  // Exactly what a buyer would get, for the broker: the live data or the published (tightened) snapshot.
+  app.get("/api/deals/:dealId/gl/evidence", ...auth, async (req, res) => {
+    try {
+      const mode = String(req.query.mode ?? "dd");
+      const source = String(req.query.source ?? "published");
+      // "preview" (the CIM builder): what buyers see when it's published, else the live data marked as a preview.
+      if (!["dd", "normal", "blind"].includes(mode) || !["live", "published", "preview"].includes(source)) return res.status(400).json({ error: "Pick a version." });
+      const dealId = dealIdOf(req);
+      const changes = await evidenceChangeCount(dealId);
+      const from = source === "preview" ? (changes.publishedAt ? "published" : "live") : (source as "live" | "published");
+      const payload = await buildEvidence(dealId, mode as "dd" | "normal" | "blind", from);
+      res.json({ payload, publishedAt: changes.publishedAt, changes: changes.changes });
+    } catch (err) {
+      fail(res, "load the evidence")(err);
     }
   });
 

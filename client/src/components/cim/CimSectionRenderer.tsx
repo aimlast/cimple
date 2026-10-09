@@ -42,6 +42,9 @@ import { ImageGalleryRenderer }       from "./renderers/ImageGallery";
 import { VideoRenderer }              from "./renderers/Video";
 import { LocationMapRenderer }        from "./renderers/LocationMap";
 import { LockedSectionBody }          from "./renderers/LockedSection";
+import { GlEvidenceBlock }            from "./gl/GlEvidenceBlock";
+import { GlMark }                     from "./gl/GlMark";
+import { glNoteOf }                   from "@shared/gl-evidence";
 import { ProseFallback, sanitizeLayoutData } from "./richText";
 
 interface CimSectionRendererProps {
@@ -80,6 +83,7 @@ const RENDERERS = {
   image_gallery: ImageGalleryRenderer,
   video: VideoRenderer,
   location_map: LocationMapRenderer,
+  gl_evidence: GlEvidenceBlock,
 } satisfies Record<CimLayoutKey, ComponentType<any>>;
 
 /** Layouts without their own heading (they are headings themselves). */
@@ -130,6 +134,8 @@ export function CimSectionRenderer({ section, branding, brokerMode = false, hide
   const content = section.brokerEditedContent || section.aiDraftContent || "";
 
   const locked = section.layoutType === LOCKED_LAYOUT_TYPE;
+  // gl: the Full/Blind note on the earnings bridge ("6 of 6 add-backs … found in the books").
+  const glNote = locked ? null : glNoteOf(section.layoutData);
   const Renderer = (RENDERERS as Record<string, ComponentType<any>>)[section.layoutType];
 
   // Unregistered layout: its prose if it has any; otherwise buyers don't see
@@ -181,7 +187,10 @@ export function CimSectionRenderer({ section, branding, brokerMode = false, hide
           ) : undefined}
         />
       )}
-      <CimBlockScope pageId={section.id}>{inner}</CimBlockScope>
+      <CimBlockScope pageId={section.id}>
+        {inner}
+        {glNote && <GlMark variant="footnote" note={glNote} preview={glNote.preview} />}
+      </CimBlockScope>
     </div>
   );
 }

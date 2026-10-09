@@ -4983,7 +4983,10 @@ Return JSON only.`,
       // — [] after a failed read, so nothing unapproved is served). The kept
       // copy of an update under review is already what buyers were served
       // (published: null).
-      const buyerCim = buildBuyerCim({ deal: servedDeal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published });
+      // What gl (and dd, at its merge) add on top of the sections — one helper for every buyer path.
+      const { buyerCimExtras } = await import("./cim/buyer-extras");
+      const extras = await buyerCimExtras(servedDeal, access.accessLevel, access.id);
+      const buyerCim = buildBuyerCim({ deal: servedDeal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published, ...extras });
       if (buyerCim.preparing) {
         // No redacted version exists yet. Do NOT serve the real, un-redacted
         // sections — that would leak identity to the first viewer. Serve a
@@ -7528,7 +7531,9 @@ Return JSON only.`,
           held = true;
         } else {
           chatBaseSections = chatRows.sections;
-          chatSections = buildBuyerCim({ deal: chatCodename ? { ...deal, blindCodename: chatCodename } : deal, accessLevel: access.accessLevel, sections: chatRows.sections, overrides: chatRows.overrides, media: chatMedia, askingPrice: listedAskingPrice(deal), published: chatRows.published }).sections;
+          const { buyerCimExtras } = await import("./cim/buyer-extras");
+          const chatExtras = await buyerCimExtras(deal, access.accessLevel, access.id);
+          chatSections = buildBuyerCim({ deal: chatCodename ? { ...deal, blindCodename: chatCodename } : deal, accessLevel: access.accessLevel, sections: chatRows.sections, overrides: chatRows.overrides, media: chatMedia, askingPrice: listedAskingPrice(deal), published: chatRows.published, ...chatExtras }).sections;
         }
       }
       const answerSections: AnswerSection[] = chatSections

@@ -53,6 +53,7 @@ import { blindIdentifiers, blindTitleRedactor } from "./blind-identifiers";
 import { blindLeakTerms, blindPlaceholders, collectStrings, findBlindLeaks } from "./blind-guard";
 import { buyerMediaLayoutData, dealAddressFragments, isMediaLayout, type MediaAssetRef } from "./cim-media";
 import { factAmounts, parseChartNumber, withStatedChartTotal } from "./cim-chart-values";
+import { GL_EVIDENCE_LAYOUT, GL_EVIDENCE_SECTION_KEY, GL_EVIDENCE_TITLE, glEvidenceAnchor, type GlEvidencePayload, type GlNoteData } from "./gl-evidence";
 
 export interface BuyerSection {
   id: string;
@@ -83,6 +84,8 @@ export interface BuyerCim {
   leaked: string[];
   /** Per leaked section: what it still contained (for the broker, never the buyer). */
   leakReasons: Record<string, string>;
+  /** gl: the add-back evidence attached (the DD page, or the Full/Blind note) — null when none was. */
+  glEvidence: GlEvidencePayload | null;
 }
 
 /**
@@ -442,6 +445,40 @@ interface BuyerCimInput {
    * broker preview) = every section as it stands.
    */
   published?: CimSectionOverride[] | null;
+  /**
+   * gl: what this buyer is shown about the add-backs found in the books
+   * (server/gl/evidence.ts glEvidenceForBuyer / buildEvidence). DD: a page
+   * of its own after the earnings bridge. Full/Blind: a note on the bridge
+   * section, checked by the Blind guard with it. Omitted/null = nothing.
+   */
+  glEvidence?: GlEvidencePayload | null;
+}
+
+/** gl: the DD page "Where each add-back is in the books" (never passes withCurrentFigures — its figures are the published ones). */
+function glEvidencePage(dealId: string, payload: GlEvidencePayload, after: BuyerSection | undefined): BuyerSection {
+  return {
+    id: payload.pageId,
+    dealId,
+    sectionKey: GL_EVIDENCE_SECTION_KEY,
+    sectionTitle: GL_EVIDENCE_TITLE,
+    order: (after?.order ?? 0) + 0.5,
+    layoutType: GL_EVIDENCE_LAYOUT,
+    layoutData: payload,
+    aiDraftContent: null,
+    brokerEditedContent: null,
+    isVisible: true,
+  };
+}
+
+/** gl: the note a Full/Blind payload carries (null when that version is off). */
+function glNoteFrom(payload: GlEvidencePayload | null | undefined, mode: "blind" | "normal"): GlNoteData | null {
+  if (!payload || payload.mode !== mode || !payload.note) return null;
+  return { text: payload.note, lineIds: payload.lines.filter((l) => l.mark).map((l) => l.lineId), ...(payload.preview ? { preview: true } : {}) };
+}
+
+function withGlNote(section: BuyerSection, note: GlNoteData): BuyerSection {
+  const data = section.layoutData && typeof section.layoutData === "object" && !Array.isArray(section.layoutData) ? (section.layoutData as Record<string, unknown>) : {};
+  return { ...section, layoutData: { ...data, _glNote: note } };
 }
 
 function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
@@ -510,7 +547,11 @@ function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
       const data = mediaData(s, null);
       if (data) sections.push(withCurrentFigures({ ...base(s), layoutData: withoutAiPreparedBy(s.layoutType, data) }));
     }
-    return { mode, sections, preparing: false, heldBack: 0, leaked: [], leakReasons: {} };
+    // gl: the note under the earnings bridge.
+    const note = glNoteFrom(input.glEvidence, "normal");
+    const at = note ? glEvidenceAnchor(sections) : -1;
+    if (note && at >= 0) sections[at] = withGlNote(sections[at], note);
+    return { mode, sections, preparing: false, heldBack: 0, leaked: [], leakReasons: {}, glEvidence: note && at >= 0 ? input.glEvidence ?? null : null };
   }
 
   const overrideMap = new Map(input.overrides.map((o) => [String(o.cimSectionId), o]));
@@ -532,14 +573,21 @@ function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
       const o = s.ddStaleAt ? undefined : overrideMap.get(s.id);
       sections.push(withCurrentFigures(o ? { ...base(s), ...pick(applySectionOverride(s, o, "dd")) } : base(s)));
     }
-    return { mode, sections, preparing: false, heldBack: 0, leaked: [], leakReasons: {} };
+    // gl: the page "Where each add-back is in the books", right after the earnings bridge.
+    const ev = input.glEvidence;
+    if (ev && ev.mode === "dd" && ev.lines.length > 0 && sections.length > 0) {
+      const at = glEvidenceAnchor(sections);
+      sections.splice(at + 1, 0, glEvidencePage(deal.id, ev, sections[at]));
+      return { mode, sections, preparing: false, heldBack: 0, leaked: [], leakReasons: {}, glEvidence: ev };
+    }
+    return { mode, sections, preparing: false, heldBack: 0, leaked: [], leakReasons: {}, glEvidence: null };
   }
 
   // ── Blind ──
   // No Blind version at all yet (a live CIM's section held back for want of
   // an approved Blind version is not that — raw.overrides has the deal's).
   if (input.overrides.length === 0 && raw.overrides.length === 0) {
-    return { mode, sections: [], preparing: visible.length > 0, heldBack: 0, leaked: [], leakReasons: {} };
+    return { mode, sections: [], preparing: visible.length > 0, heldBack: 0, leaked: [], leakReasons: {}, glEvidence: null };
   }
   const codename = deal.blindCodename || "Confidential Opportunity";
   const redactTitle = blindTitleRedactor(deal as any, codename);
@@ -552,9 +600,22 @@ function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
   const leakReasons: Record<string, string> = {};
   // Real key → neutral key, for every section (relatedSections point at keys).
   const keyMap = new Map(visible.map((s) => [s.sectionKey, blindSectionKey(s.id)]));
+  // gl: the note goes on the earnings bridge among the sections that can be
+  // served, BEFORE the identity check below reads them, so the check covers
+  // it — a hit holds the note back, never the section.
+  const glNote = glNoteFrom(input.glEvidence, "blind");
+  let glNoteAttached = false;
+  let glAnchorId: string | null = null;
+  if (glNote) {
+    const candidates = visible.filter((s) => getCimLayout(s.layoutType)?.blind !== "exclude" && overrideMap.has(s.id) && !s.blindStaleAt && !(teaser && sectionTier(s) === "full"));
+    const at = glEvidenceAnchor(candidates.map((s) => ({ sectionKey: s.sectionKey, sectionTitle: s.blindTitle || s.sectionTitle, layoutType: s.layoutType })));
+    glAnchorId = at >= 0 ? candidates[at].id : null;
+  }
   /** Serve it only if nothing identifying is left in what the buyer receives. */
   const serve = (s: CimSection, served: BuyerSection) => {
-    const section = withCurrentFigures(served);
+    let section = withCurrentFigures(served);
+    const withNote = !!glNote && s.id === glAnchorId;
+    if (withNote) section = withGlNote(section, glNote!);
     // relatedSections carry the real (title-derived) keys — switch them to
     // neutral ones before the check; unknown keys are dropped.
     const data = section.layoutData as Record<string, unknown> | null;
@@ -566,9 +627,25 @@ function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
           .filter((k): k is string => !!k),
       };
     }
-    const texts = [section.sectionTitle, section.aiDraftContent ?? "", section.brokerEditedContent ?? "", checkedData(s, section.layoutData)];
-    const leaks = findBlindLeaks(texts, leakTerms);
-    const placeholders = leaks.length ? [] : blindPlaceholders(texts, [s.sectionTitle, s.aiDraftContent ?? "", s.brokerEditedContent ?? "", ...collectStrings(s.layoutData)]);
+    const check = (sec: BuyerSection) => {
+      const texts = [sec.sectionTitle, sec.aiDraftContent ?? "", sec.brokerEditedContent ?? "", checkedData(s, sec.layoutData)];
+      const leaks = findBlindLeaks(texts, leakTerms);
+      const placeholders = leaks.length ? [] : blindPlaceholders(texts, [s.sectionTitle, s.aiDraftContent ?? "", s.brokerEditedContent ?? "", ...collectStrings(s.layoutData)]);
+      return { leaks, placeholders };
+    };
+    let { leaks, placeholders } = check(section);
+    if (withNote && (leaks.length > 0 || placeholders.length > 0)) {
+      // gl: hold the note back, not the section, when the note is what the check stopped.
+      const { _glNote: _held, ...rest } = section.layoutData as Record<string, unknown>;
+      const without = { ...section, layoutData: rest };
+      const again = check(without);
+      if (again.leaks.length === 0 && again.placeholders.length === 0) {
+        out.push(without);
+        return;
+      }
+      section = without;
+      ({ leaks, placeholders } = again);
+    }
     if (leaks.length > 0 || placeholders.length > 0) {
       heldBack++;
       leaked.push(s.id);
@@ -577,6 +654,7 @@ function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
         : `it kept placeholders such as ${placeholders.slice(0, 2).join(", ")}`;
       return;
     }
+    if (withNote) glNoteAttached = true;
     out.push(section);
   };
   visible.forEach((s) => {
@@ -622,7 +700,7 @@ function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
     s.layoutData = { ...data, relatedSections: (data.relatedSections as string[]).filter((k) => servedKeys.has(k)) };
   }
 
-  return { mode, sections: out, preparing: false, heldBack, leaked, leakReasons };
+  return { mode, sections: out, preparing: false, heldBack, leaked, leakReasons, glEvidence: glNoteAttached ? input.glEvidence ?? null : null };
 }
 
 /**

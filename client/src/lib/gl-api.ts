@@ -102,6 +102,25 @@ export interface BrokerGlData {
   possible?: PossibleAddback[];
   payDoc?: { slips: string; short: string; box: string | null };
   demo?: boolean;
+  /** What buyers see now and what changed since the broker published. */
+  buyers?: { publishedAt: string | null; versions: GlVersions | null; changes: string[] };
+}
+
+export interface GlVersions { dd: boolean; normal: boolean; blind: boolean }
+
+/** GET …/gl/publish-preview — the "What buyers see about the add-backs" dialog. */
+export interface GlPublishPreview {
+  gate: GlGate;
+  canPublish: boolean;
+  blocked: string | null;
+  versions: GlVersions;
+  reasons: { normal: string | null; blind: string | null };
+  notes: { normal: string | null; blind: string | null };
+  lines: Array<{ key: string; label: string; status: "found" | "partly_found" | "not_found" | "document" | "statement"; statusWords: string; defaultLeftOut: boolean; years: string[] }>;
+  warnings: string[];
+  published: { at: string; versions: GlVersions; leaveOut: string[] } | null;
+  changes: string[];
+  agreeYears: string[];
 }
 
 export interface GlProgressData { glTracing: GlTracingProgress | null; gate?: GlGate | null }

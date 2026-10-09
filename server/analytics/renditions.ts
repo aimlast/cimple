@@ -241,7 +241,9 @@ export async function servedCimFor(
   ]);
   if (rows.missing) return null;
   const servedDeal = keptCodename ? { ...deal, blindCodename: keptCodename } : deal;
-  const cim = buildBuyerCim({ deal: servedDeal, accessLevel, sections: rows.sections, overrides: rows.overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published });
+  const { buyerCimExtras } = await import("../cim/buyer-extras");
+  const extras = await buyerCimExtras(deal, accessLevel, null);
+  const cim = buildBuyerCim({ deal: servedDeal, accessLevel, sections: rows.sections, overrides: rows.overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published, ...extras });
   if (cim.preparing || cim.sections.length === 0) return null;
   const design = await designPayload(deal, mode);
   return {

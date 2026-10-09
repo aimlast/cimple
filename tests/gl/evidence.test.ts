@@ -1,0 +1,186 @@
+/**
+ * gl spec §12.1 tests 20 + 23-adjacent: what buyers are shown about the
+ * add-backs, end to end on the fictional Brightwater deal (memory store, no
+ * AI): the broker reviews, the publish dialog's defaults and note, the
+ * snapshot, and each version's payload —
+ *   Blind   only constants, counts and fiscal years (the guard finds nothing)
+ *   Full    labels and per-year counts, no account / vendor / description / software / dates
+ *   DD      the entries (masked), ≤200 per year + "more", the documents, the reasons
+ * line ids stable across re-runs and different across deals; the access
+ * levels mapped through the registry (teaser → nothing; C4); the DD
+ * writer's lines and the teaser line.
+ */
+import assert from "node:assert/strict";
+import { test, done } from "./_harness";
+import { cleanup } from "./_fake-storage";
+import { brightwater } from "./_brightwater";
+import { refreshGl } from "../../server/gl/service";
+import { loadGlContext } from "../../server/gl/context";
+import { confirmSummary, writeLinks } from "../../server/gl/links";
+import { recomputeTraces } from "../../server/gl/match-run";
+import {
+  buildEvidence, glEvidenceForBuyer, glLineId, glLineIdsForDeal, glPageId, glTeaserLine, glWriterLines, GL_TEASER_LINE,
+  loadEvidenceState, projectEvidence, publishEvidence, publishPreview, snapshotFromState, GlPublishError,
+} from "../../server/gl/evidence";
+import { cimModeForAccessLevel, isTeaserOnly } from "../../server/gl/levels";
+import { blindLeakTerms, collectStrings, findBlindLeaks } from "../../shared/blind-guard";
+import type { GlTieOutYear } from "../../shared/gl-types";
+
+const B = brightwater();
+const dealId = B.deal.id;
+await B.readLedger("qbo-classic.csv");
+await refreshGl(dealId, { force: true });
+
+const store = B.w.gl;
+const byLabel = async () => new Map((await store.listTraces(dealId)).filter((t) => !t.removedAt).map((t) => [t.label, t]));
+
+// The broker confirms what Cimple found and reviews every add-back.
+{
+  const traces = await byLabel();
+  const c = await loadGlContext(dealId);
+  for (const label of ["Owner vehicle expenses", "Meals & entertainment (50% personal use estimate)", "Employment settlement (one-time)", "Related party salary - Emma Brightwater (spouse)"]) {
+    const t = traces.get(label)!;
+    const n = await confirmSummary(t, { by: "broker", memberId: null }, c);
+    if (n === 0) {
+      // No one-tap summary: tick every proposal.
+      const props = store.data.links.filter((k) => k.traceId === t.id && k.state === "proposed");
+      await writeLinks(t, { add: props.map((k) => ({ ledgerId: k.ledgerId!, rowNo: k.rowNo! })) }, { by: "broker", memberId: null }, c);
+    }
+  }
+  await recomputeTraces(dealId);
+  for (const t of (await store.listTraces(dealId)).filter((x) => !x.removedAt && x.proof !== "statement")) {
+    const computed = t.computed as any;
+    await store.updateTrace(t.id, { reviewedAt: new Date(), brokerVerdict: computed?.suggestedVerdict ?? "not_found", buyerReason: t.label.startsWith("Owner vehicle") ? "The owner's personal vehicle; a new owner won't have it." : null } as any);
+  }
+  // The ledger agrees with the statements in every year (fixed for the test: the tie-out has its own tests).
+  const tie: Record<string, GlTieOutYear> = { "2022": { state: "agrees" }, "2023": { state: "agrees" }, "2024": { state: "agrees" } };
+  await store.updateTracing(dealId, { tieOut: tie, sellerConfirmation: { role: "owner", memberId: null, name: "Dan Brightwater", at: "2025-03-02T10:00:00.000Z" } } as any);
+}
+
+await test("publish preview: defaults, the exact note, the warnings", async () => {
+  const p = await publishPreview(dealId);
+  assert.equal(p.canPublish, true, p.blocked ?? "");
+  assert.equal(p.versions.dd, true);
+  assert.ok(p.lines.length >= 6, "every reviewed add-back (statement lines too)");
+  assert.ok(p.notes.normal && /of \d+ add-backs?: /.test(p.notes.normal), p.notes.normal ?? "");
+  assert.ok(/not an audit/.test(p.notes.normal!));
+  assert.ok(p.warnings.some((w) => /every due-diligence buyer/.test(w)));
+  if (!p.versions.normal) assert.ok(p.reasons.normal, "a version that starts off says why");
+});
+
+await test("publishing is refused until the review is done; nothing to show is refused", async () => {
+  const t = (await store.listTraces(dealId)).find((x) => !x.removedAt && x.proof !== "statement")!;
+  await store.updateTrace(t.id, { reviewedAt: null } as any);
+  await assert.rejects(publishEvidence(dealId, { versions: { dd: true, normal: false, blind: false }, leaveOut: [] }, "broker-1"), (e: unknown) => e instanceof GlPublishError && /Finish 'Add-backs in the books'/.test((e as Error).message));
+  await store.updateTrace(t.id, { reviewedAt: new Date() } as any);
+  await assert.rejects(publishEvidence(dealId, { versions: { dd: false, normal: false, blind: false }, leaveOut: [] }, "broker-1"), GlPublishError);
+});
+
+await publishEvidence(dealId, { versions: { dd: true, normal: true, blind: true }, leaveOut: ["golf club dues"] }, "broker-1");
+
+await test("Blind: constants, counts and fiscal years only — the guard finds nothing", async () => {
+  const p = (await buildEvidence(dealId, "blind", "published"))!;
+  assert.ok(p, "published with the Blind note on");
+  assert.equal(p.mode, "blind");
+  for (const l of p.lines) assert.deepEqual(Object.keys(l).sort(), ["lineId", "mark", "status"]);
+  assert.ok(p.note && /add-backs?: the costs were/.test(p.note));
+  const text = collectStrings(p).join(" ");
+  for (const word of ["Brightwater", "Lexus", "Petro", "Holloway", "QuickBooks", "Emma", "Dan"]) assert.ok(!text.includes(word), `blind payload mentions ${word}`);
+  assert.equal(findBlindLeaks(collectStrings(p), blindLeakTerms(B.deal as any, { codename: "Project Harbour" })).length, 0);
+  assert.equal(p.lines.some((l) => p.lines.filter((x) => x.lineId === l.lineId).length > 1), false);
+});
+
+await test("Full: labels and per-year counts, never an account, a vendor, a description, the software or a date", async () => {
+  const p = (await buildEvidence(dealId, "normal", "published"))!;
+  const json = JSON.stringify(p);
+  for (const word of ["Lexus", "Petro", "Holloway", "QuickBooks", "Vehicle – Owner", "2024-0"]) assert.ok(!json.includes(word), `full payload has ${word}`);
+  assert.ok(p.lines.every((l) => (l.years ?? []).every((y) => y.entries.length === 0)));
+  assert.ok(p.lines.some((l) => (l.years ?? []).some((y) => y.entryCount > 0)), "counts are there");
+  assert.ok(!p.lines.some((l) => /golf/i.test(l.label ?? "")), "a left-out add-back isn't shown");
+});
+
+await test("DD: the entries, masked; the documents; the reason; the tie-out and the confirmation", async () => {
+  const p = (await buildEvidence(dealId, "dd", "published"))!;
+  assert.equal(p.pageId, glPageId(dealId));
+  const vehicles = p.lines.find((l) => l.label === "Owner vehicle expenses")!;
+  assert.ok(vehicles, "the vehicles line");
+  const y24 = vehicles.years!.find((y) => y.year === "2024")!;
+  assert.ok(y24.entries.length > 0 && y24.entries.length <= 200);
+  assert.ok(y24.entries.some((e) => /Lexus/.test(`${e.name} ${e.memo}`)), "vendors shown to due-diligence buyers");
+  assert.equal(vehicles.why, "The owner's personal vehicle; a new owner won't have it.");
+  assert.ok(vehicles.ledger && vehicles.ledger.documentId);
+  const spouse = p.lines.find((l) => /Related party salary/.test(l.label ?? ""));
+  if (spouse) {
+    const names = spouse.years!.flatMap((y) => y.entries.map((e) => e.name ?? ""));
+    assert.ok(names.every((n) => !n || /Brightwater/.test(n)), "only the related party's own name on her pay rows");
+  }
+  assert.deepEqual(p.tieOut?.map((t) => t.state), ["agrees", "agrees", "agrees"]);
+  assert.equal(p.confirmation?.role, "owner");
+  assert.ok(!JSON.stringify(p).includes("Per an email"), "the broker's sourcing never reaches buyers");
+});
+
+await test("≤200 entries per year, the rest counted", async () => {
+  const s = await loadEvidenceState(dealId);
+  const { snapshot } = await snapshotFromState(s, { versions: { dd: true, normal: false, blind: false }, leaveOut: [], publishedBy: null });
+  const line = snapshot.lines.find((l) => l.years.some((y) => y.entries.length > 0))!;
+  const y = line.years.find((x) => x.entries.length > 0)!;
+  const many = Array.from({ length: 260 }, (_, i) => ({ ...y.entries[0], linkId: `x${i}`, rowNo: 10_000 + i }));
+  const big = { ...snapshot, lines: [{ ...line, years: [{ ...y, entries: many }] }] };
+  const p = projectEvidence(big, "dd", { staffNames: [], heldNames: [] })!;
+  assert.equal(p.lines[0].years![0].entries.length, 200);
+  assert.equal(p.lines[0].years![0].moreEntries, 60);
+  assert.equal(p.lines[0].years![0].entryCount, 260);
+});
+
+await test("line ids: stable across re-runs, different across deals; glLineIdsForDeal maps analysis ids", async () => {
+  const before = (await buildEvidence(dealId, "dd", "published"))!.lines.map((l) => l.lineId).sort();
+  await refreshGl(dealId, { force: true });
+  const after = (await buildEvidence(dealId, "dd", "published"))!.lines.map((l) => l.lineId).sort();
+  assert.deepEqual(after, before);
+  assert.notEqual(glLineId(dealId, "owner vehicle expenses"), glLineId("another-deal", "owner vehicle expenses"));
+  const ids = await glLineIdsForDeal(dealId);
+  assert.equal(ids.get("ab_3"), glLineId(dealId, "owner vehicle expenses"));
+  assert.equal(ids.get("ab_1"), ids.get("owner compensation president dan brightwater"), "owner pay: the excess line's id");
+});
+
+await test("buyers by access level (C4): teaser nothing; legacy and new keys map through the registry", async () => {
+  assert.equal(await glEvidenceForBuyer(dealId, "teaser_only", "a1"), null);
+  assert.equal(await glEvidenceForBuyer(dealId, "", "a1"), null, "unreadable → least access");
+  assert.equal(await glEvidenceForBuyer(dealId, null, "a1"), null);
+  assert.equal((await glEvidenceForBuyer(dealId, "teaser", "a1"))?.mode, "blind", "legacy teaser = the Blind CIM");
+  assert.equal((await glEvidenceForBuyer(dealId, "full", "a1"))?.mode, "blind", "legacy full = the Blind CIM");
+  assert.equal((await glEvidenceForBuyer(dealId, "blind", "a1"))?.mode, "blind");
+  assert.equal((await glEvidenceForBuyer(dealId, "loi", "a1"))?.mode, "normal", "legacy loi = the Full CIM");
+  assert.equal((await glEvidenceForBuyer(dealId, "named", "a1"))?.mode, "normal");
+  assert.equal((await glEvidenceForBuyer(dealId, "due_diligence", "a1"))?.mode, "dd");
+  assert.equal(isTeaserOnly("teaser_only"), true);
+  assert.equal(isTeaserOnly("teaser"), false);
+  assert.equal(cimModeForAccessLevel("teaser_only"), "blind", "fail-closed second lock");
+});
+
+await test("the DD writer's lines: label, status, years — no vendor, no description", async () => {
+  const lines = await glWriterLines(dealId);
+  assert.ok(lines.length > 0);
+  assert.ok(lines.some((l) => /Owner vehicle expenses: found in the books/.test(l)), lines.join("\n"));
+  for (const word of ["Lexus", "Petro", "Holloway", "Shell"]) assert.ok(!lines.join(" ").includes(word));
+});
+
+await test("the teaser line: only with the Blind note published and every line found in agreeing books", async () => {
+  const line = await glTeaserLine(dealId);
+  const p = (await buildEvidence(dealId, "blind", "published"))!;
+  const proof = p.lines.filter((l) => l.status !== "statement");
+  assert.equal(line, proof.every((l) => l.mark) ? GL_TEASER_LINE : null);
+  await store.updateTracing(dealId, { published: { ...(await store.getTracing(dealId))!.published!, versions: { dd: true, normal: true, blind: false } } } as any);
+  assert.equal(await glTeaserLine(dealId), null);
+});
+
+await test("nothing published → no evidence for buyers and no writer lines", async () => {
+  await store.updateTracing(dealId, { published: null } as any);
+  assert.equal(await glEvidenceForBuyer(dealId, "due_diligence", "a1"), null);
+  assert.deepEqual(await glWriterLines(dealId), []);
+  const live = await buildEvidence(dealId, "dd", "live");
+  assert.equal(live?.preview, true, "the broker's preview is marked");
+});
+
+cleanup(B.w);
+done("evidence");

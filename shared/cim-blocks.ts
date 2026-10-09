@@ -485,6 +485,24 @@ const BLOCK_SPEC: Record<CimLayoutKey, (L: AnyRecord, ctx: LayoutCtx) => Raw[]> 
     const m = normalizeLocationMap(L);
     return [...titleBlocks(m.title, undefined), b("map", "location", regionOnly ? "Map (general area)" : "Map", READING_MODEL.map, 380)];
   },
+
+  // "Where each add-back is in the books" (due diligence, shared/gl-evidence.ts;
+  // GlEvidenceBlock): an intro, whether the ledger agrees with the statements,
+  // then one block per add-back (item:i, in the payload's order). Keys come
+  // from the order of the lines, never from values.
+  gl_evidence: (L) => {
+    const lines = (Array.isArray(L.lines) ? L.lines : []).filter(isRecord);
+    if (lines.length === 0) return [];
+    return [
+      b("intro", "text", "Introduction", readMs("Each add-back below is matched to entries in the company's general ledger. This shows where each cost is recorded. It was matched by the owner and reviewed by the broker; it is not an audit or a quality-of-earnings review."), 88),
+      b("summary", "text", "Does the ledger match the statements?", READING_MODEL.heading * 4, 60),
+      ...lines.map((l, i) => {
+        const years = Array.isArray(l.years) ? l.years.filter(isRecord) : [];
+        const entries = years.reduce((n: number, y) => n + Math.min(12, Array.isArray(y.entries) ? y.entries.length : 0), 0);
+        return b(`item:${i}`, "table", `Add-back: ${quoteStart(str(l.label) || "an add-back", 6)}`, READING_MODEL.tableRowBase * (2 + entries) + READING_MODEL.heading, 120 + entries * 26);
+      }),
+    ];
+  },
 };
 
 function fallback(ctx: LayoutCtx): Raw[] {

@@ -83,6 +83,8 @@ export interface BrokerGlView {
   possible: PossibleAddback[];
   payDoc: { slips: string; short: string; box: string | null };
   demo: boolean;
+  /** What buyers see now (the broker's published snapshot) and what changed since. */
+  buyers: { publishedAt: string | null; versions: { dd: boolean; normal: boolean; blind: boolean } | null; changes: string[] };
 }
 
 const iso = (d: unknown) => (d ? new Date(d as string).toISOString() : null);
@@ -147,6 +149,13 @@ export async function buildBrokerView(c: GlDealContext): Promise<BrokerGlView> {
   const last = Math.max(0, ...sellerActs, ...traceActs);
   const covered = new Set(links.filter((k) => k.state === "confirmed" || k.state === "proposed").map((k) => k.account ?? "").filter(Boolean));
   const totals = c.ready.length ? await store.dealAccountTotals(c.dealId, Array.from(c.readyIds)) : [];
+  const pub = tr.published as { v?: number; versions?: { dd: boolean; normal: boolean; blind: boolean } } | null;
+  let buyers: BrokerGlView["buyers"] = { publishedAt: null, versions: null, changes: [] };
+  if (pub && pub.v === 1) {
+    const { evidenceChangeCount } = await import("./evidence");
+    const ch = await evidenceChangeCount(c.dealId).catch(() => ({ publishedAt: iso(tr.publishedAt), changes: [] as string[] }));
+    buyers = { publishedAt: ch.publishedAt, versions: pub.versions ?? null, changes: ch.changes };
+  }
   return {
     analysis: { present: analyses.some((a) => a.status === "completed" || a.status === "reviewed") },
     tracing: {
@@ -175,5 +184,6 @@ export async function buildBrokerView(c: GlDealContext): Promise<BrokerGlView> {
     possible: possibleAddbacks(totals, covered),
     payDoc: pay,
     demo: !!c.deal?.demoKey,
+    buyers,
   };
 }

@@ -160,5 +160,5 @@ export interface GlLedgerView {
   createdAt: string;
 }
 
-/** What buyers are shown about the add-backs (gl_tracing.published) — the shape is fixed in shared/gl-evidence.ts (pass 3). */
-export type GlPublishedEvidence = Record<string, unknown>;
+/** What buyers are shown about the add-backs (gl_tracing.published) — the shape lives in shared/gl-evidence.ts. */
+export type { GlPublishedEvidence } from "./gl-evidence";

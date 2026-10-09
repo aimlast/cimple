@@ -40,6 +40,7 @@ import { TieOutPanel } from "./TieOutPanel";
 import { SuggestionsPanel } from "./SuggestionsPanel";
 import { ColumnMappingDialog } from "./ColumnMappingDialog";
 import { WaiveDialog } from "./GlGenerationNotice";
+import { EvidencePreviewSheet, PublishEvidenceDialog } from "./PublishEvidenceDialog";
 import { shortDate } from "./gl-ui";
 import { formatCount, formatPeriod, ledgerStatusWords, softwareLabel } from "@shared/gl-copy";
 import { primarySellerInvite } from "@shared/seller-invite-revocation";
@@ -78,6 +79,7 @@ export function BrokerGlPanel({ dealId, variant = "full" }: { dealId: string; va
   const { data, isLoading, error, refetch } = useBrokerGl(dealId);
   const url = usePanelUrl();
   const [sending, setSending] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const { data: invites = [] } = useQuery<SellerInvite[]>({
     queryKey: ["/api/deals", dealId, "invites"],
     queryFn: async () => {
@@ -125,7 +127,7 @@ export function BrokerGlPanel({ dealId, variant = "full" }: { dealId: string; va
           <Button size="sm" variant="outline" className="h-7 text-xs ml-auto" onClick={() => refetch()}>Try again</Button>
         </div>
       ) : (
-        <GlKpiStrip data={data} onOpen={(v) => url.set({ gl: v === "addbacks" ? null : v, addback: null, year: null })} />
+        <GlKpiStrip data={data} onOpen={(v) => url.set({ gl: v === "addbacks" ? null : v, addback: null, year: null })} onBuyers={() => setPublishing(true)} />
       )}
 
       {!data.tracesError && <RequestStrip dealId={dealId} data={data} onSend={() => setSending(true)} />}
@@ -149,7 +151,7 @@ export function BrokerGlPanel({ dealId, variant = "full" }: { dealId: string; va
       </div>
 
       {url.view === "addbacks" && data.tracesError && <LedgersView dealId={dealId} data={data} />}
-      {url.view === "addbacks" && !data.tracesError && <AddbacksView dealId={dealId} data={data} onOpen={(t, y) => url.set({ addback: t.id, year: y ?? null })} onSend={() => setSending(true)} onLedger={() => url.set({ gl: "ledger" })} />}
+      {url.view === "addbacks" && !data.tracesError && <AddbacksView dealId={dealId} data={data} onOpen={(t, y) => url.set({ addback: t.id, year: y ?? null })} onSend={() => setSending(true)} onLedger={() => url.set({ gl: "ledger" })} onPublish={() => setPublishing(true)} />}
       {url.view === "ledger" && <LedgersView dealId={dealId} data={data} />}
       {url.view === "statements" && <TieOutPanel dealId={dealId} data={data} onUploadAdjustments={() => url.set({ gl: "ledger" })} />}
       {url.view === "seller" && <SuggestionsPanel dealId={dealId} data={data} />}
@@ -165,6 +167,7 @@ export function BrokerGlPanel({ dealId, variant = "full" }: { dealId: string; va
       </Sheet>
 
       <SendToSellerDialog open={sending} onOpenChange={setSending} dealId={dealId} data={data} previewHref={previewHref} />
+      <PublishEvidenceDialog open={publishing} onOpenChange={setPublishing} dealId={dealId} />
     </div>
   );
 }
@@ -237,9 +240,10 @@ function RequestStrip({ dealId, data, onSend }: { dealId: string; data: BrokerGl
   );
 }
 
-function AddbacksView({ dealId, data, onOpen, onSend, onLedger }: { dealId: string; data: BrokerGlData; onOpen: (t: BrokerTrace, y?: string) => void; onSend: () => void; onLedger: () => void }) {
+function AddbacksView({ dealId, data, onOpen, onSend, onLedger, onPublish }: { dealId: string; data: BrokerGlData; onOpen: (t: BrokerTrace, y?: string) => void; onSend: () => void; onLedger: () => void; onPublish: () => void }) {
   const { toast } = useToast();
   const [statementsOpen, setStatementsOpen] = useState(false);
+  const [seeing, setSeeing] = useState(false);
   const act = useMutation({
     mutationFn: ({ url, body }: { url: string; body?: unknown }) => sendJson<{ reviewed?: number }>("POST", url, body ?? {}),
     onSuccess: () => invalidateGl(dealId),
@@ -255,8 +259,29 @@ function AddbacksView({ dealId, data, onOpen, onSend, onLedger }: { dealId: stri
   if (needs.length === 0) return <EmptyState text="None of the add-backs need proof from the books — they all come straight from the financial statements." />;
   const requested = !!data.tracing?.requestedAt && !data.tracing.withdrawnAt;
   const canReviewAll = needs.some((t) => !t.reviewedAt && t.includeInCim && t.computed?.suggestedVerdict === "found");
+  const gateDone = data.gate?.state === "done" || data.gate?.state === "waived";
+  const shownAt = data.buyers?.publishedAt ?? null;
+  const changes = data.buyers?.changes ?? [];
   return (
     <div className="space-y-3" data-testid="gl-addbacks-view">
+      {shownAt && (
+        <div className="rounded-lg border border-success/30 bg-success/5 p-3 flex flex-col gap-2 sm:flex-row sm:items-center" data-testid="gl-shown-strip">
+          <div className="flex-1 min-w-0 text-sm">
+            <p>Shown to buyers since {shortDate(shownAt)}.</p>
+            {changes.length > 0 && (
+              <details className="mt-0.5 text-xs text-muted-foreground">
+                <summary className="cursor-pointer">{changes.length} change{changes.length === 1 ? "" : "s"} since then</summary>
+                <ul className="mt-1 list-disc pl-4 space-y-0.5">{changes.map((c) => <li key={c}>{c}</li>)}</ul>
+              </details>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={onPublish} data-testid="gl-update-buyers">Update what buyers see…</Button>
+            <Button size="sm" variant="ghost" className="h-8 text-xs gap-1" onClick={() => setSeeing(true)}><Eye className="h-3.5 w-3.5" /> See what buyers see</Button>
+          </div>
+        </div>
+      )}
+      <EvidencePreviewSheet dealId={dealId} open={seeing} onOpenChange={setSeeing} />
       {!requested && data.gate?.state !== "waived" && (
         <div className="rounded-lg border border-teal/30 bg-teal/5 p-4 space-y-3" data-testid="gl-setup">
           <p className="text-sm font-medium">Show where each add-back is in the books</p>
@@ -269,12 +294,20 @@ function AddbacksView({ dealId, data, onOpen, onSend, onLedger }: { dealId: stri
           </div>
         </div>
       )}
-      {canReviewAll && (
-        <div className="flex justify-end">
-          <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5" disabled={act.isPending}
-            onClick={() => act.mutate({ url: `/api/deals/${dealId}/gl/review-found` }, { onSuccess: (r) => toast({ title: `${r?.reviewed ?? 0} marked reviewed` }) })} data-testid="gl-review-found">
-            <CheckCircle2 className="h-3.5 w-3.5" /> Mark all that add up as reviewed
-          </Button>
+      {(canReviewAll || !shownAt) && (
+        <div className="flex flex-wrap justify-end gap-2">
+          {canReviewAll && (
+            <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5" disabled={act.isPending}
+              onClick={() => act.mutate({ url: `/api/deals/${dealId}/gl/review-found` }, { onSuccess: (r) => toast({ title: `${r?.reviewed ?? 0} marked reviewed` }) })} data-testid="gl-review-found">
+              <CheckCircle2 className="h-3.5 w-3.5" /> Mark all that add up as reviewed
+            </Button>
+          )}
+          {!shownAt && (
+            <Button size="sm" className="h-8 text-xs gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90" disabled={!gateDone} onClick={onPublish}
+              title={gateDone ? undefined : "Review every add-back first"} data-testid="gl-show-buyers">
+              <BookCheck className="h-3.5 w-3.5" /> Show to buyers…
+            </Button>
+          )}
         </div>
       )}
       <AddbackGrid traces={needs} onOpen={onOpen} busy={act.isPending}
