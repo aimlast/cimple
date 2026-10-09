@@ -36,9 +36,9 @@
  *
  * Owned by the heatmap stream.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "wouter";
-import { AlertCircle, ChevronLeft, ChevronRight, ChevronUp, Eye, EyeOff, FileSearch, LayoutList, RefreshCw, Rows3 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { Link, useLocation, useSearch } from "wouter";
+import { AlertCircle, ChevronLeft, ChevronRight, ChevronUp, Eye, EyeOff, FileSearch, LayoutList, RefreshCw, Rows3, Users } from "lucide-react";
 import {
   formatReadingTime,
   viewerPageKey,
@@ -46,7 +46,7 @@ import {
   type EngagementDocumentResponse,
   type EngagementRenditionResponse,
 } from "@shared/analytics-v2";
-import { useEngagementDocument, useEngagementRendition } from "@/hooks/useEngagement";
+import { useEngagementBuyers, useEngagementDocument, useEngagementRendition } from "@/hooks/useEngagement";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -60,10 +60,12 @@ import { PageChips, PageRail } from "./PageRail";
 import { PageTable } from "./PageTable";
 import { ReachChart } from "./ReachChart";
 import { StatusLine } from "./StatusLine";
+import { HeatLegend, PageLegend } from "./Legends";
+import { CompareBar, CompareCanvases, compareBuyersOf, useMinWidth } from "./CompareView";
 import { heatChrome } from "../heat";
 import {
-  defaultSectionView, drawMode, effectiveScope, expandCount, heatIntensity, heatMaxMs, legendTicks, pageHeatMaxMs, pageInView, pageLegendTicks, pageOfText,
-  pageRank, paperTint, readersText, selectPageIndex, unreadBlocks, washFill,
+  compareParam, compareReaders, compareReducer, compareStart, defaultSectionView, drawMode, effectiveScope, expandCount, firstName, heatIntensity, heatMaxMs,
+  pageHeatMaxMs, pageInView, pageOfText, pageRank, parseCompareParam, readersText, selectPageIndex, unreadBlocks, validCompare,
   type HeatScope, type PageOrder, type SectionView,
 } from "./viewer-model";
 
@@ -96,6 +98,33 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
   // A collapsible section's view (null = its default: see defaultSectionView).
   const [viewWanted, setViewWanted] = useState<SectionView | null>(null);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const wide = useMinWidth(1280) && !isMobile;
+
+  // Compare buyers (§3.7): held here, so a page turn, arrow key, swipe or
+  // filter change never closes it; mirrored in ?compare=<A>~<B> for links.
+  // The buyers come from the Buyers list without the segment or buyer filter
+  // (an outer filter must never empty a side).
+  const { data: buyerList } = useEngagementBuyers(dealId, { range: filters.range, device: filters.device, segment: "all", buyers: [] });
+  const cbuyers = useMemo(() => compareBuyersOf(buyerList?.buyers ?? []), [buyerList]);
+  const [compare, dispatchCompare] = useReducer(compareReducer, null);
+  const search = useSearch();
+  const [location, setLocation] = useLocation();
+  const compareInit = useRef(false);
+  useEffect(() => {
+    if (compareInit.current || !buyerList) return;
+    compareInit.current = true;
+    const s = validCompare(cbuyers, parseCompareParam(new URLSearchParams(search).get("compare")));
+    if (s) dispatchCompare({ type: "start", state: s });
+  }, [buyerList, cbuyers, search]);
+  useEffect(() => {
+    if (!compareInit.current) return;
+    const q = new URLSearchParams(search);
+    const want = compare ? compareParam(compare) : null;
+    if ((q.get("compare") ?? null) === want) return;
+    if (want) q.set("compare", want); else q.delete("compare");
+    const qs = q.toString();
+    setLocation(`${location}${qs ? `?${qs}` : ""}`, { replace: true });
+  }, [compare, search, location, setLocation]);
 
   const pages = doc?.pages ?? [];
   const index = selectPageIndex(pages, pageParam);
@@ -113,6 +142,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
   const go = useCallback((i: number) => {
     const p = pages[i];
     if (!p) return;
+    dispatchCompare({ type: "page" });
     setSelectedKey(null);
     setHoveredKey(null);
     setViewWanted(null);
@@ -162,6 +192,10 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
   const maxMs = heatMaxMs(pages, scope, currentInView);
   const unreadCount = current && paint ? unreadBlocks(current, servedPage?.blocks, sectionView).length : 0;
   const filteredToOne = filters.buyers.length === 1;
+  const comparing = !!compare && !!current && !!rendition && layout === "pages";
+  const compareFrom = compareStart(cbuyers, filteredToOne ? filters.buyers[0] : null);
+  const canCompare = !!compareFrom && compareReaders(cbuyers).length >= 2 && (doc.openedBy >= 2 || filteredToOne);
+  const compareName = filteredToOne ? cbuyers.find((b) => b.accessId === filters.buyers[0])?.name ?? null : null;
   const onOnlyBuyer = (accessId: string) => onFiltersChange({ ...filters, buyers: [accessId], segment: "all" });
 
   const panel = current ? (
@@ -227,7 +261,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
           <PageTable pages={pages} order={order} openedBy={doc.openedBy} onOpen={(i) => { setLayout("pages"); go(i); }} />
         </div>
       ) : (
-        <div className={cn("grid", isMobile ? "gap-2.5" : "gap-5", "md:grid-cols-[210px_minmax(0,1fr)]", "xl:grid-cols-[220px_minmax(0,1fr)_300px]")}>
+        <div className={cn("grid", isMobile ? "gap-2.5" : "gap-5", "md:grid-cols-[210px_minmax(0,1fr)]", comparing ? "xl:grid-cols-[220px_minmax(0,1fr)]" : "xl:grid-cols-[220px_minmax(0,1fr)_300px]")}>
           {isMobile ? (
             <PageChips pages={pages} selectedIndex={index} onSelect={go} />
           ) : (
@@ -256,7 +290,11 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
 
             {current && <StatusLine page={current} doc={doc} ctx={statusCtx} />}
 
-            {current && (
+            {comparing && compare && (
+              <CompareBar buyers={cbuyers} state={compare} dispatch={dispatchCompare} filters={filters} compact={isMobile} />
+            )}
+
+            {current && !comparing && (
               <div className={cn("flex flex-wrap items-center text-xs text-muted-foreground", isMobile ? "gap-x-2 gap-y-1.5" : "gap-x-4 gap-y-2")} data-testid="heat-toggles">
                 <label className="inline-flex items-center gap-2">
                   <Switch checked={showHeat} onCheckedChange={setShowHeat} aria-label="Show reading time colours" />
@@ -317,10 +355,26 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
                     {!isMobile && (showNamed ? "Show what the buyer saw" : "Show the named version")}
                   </button>
                 )}
+                {canCompare && compareFrom && (
+                  <button
+                    type="button"
+                    onClick={() => { setNamedWanted(false); setShowUnread(false); dispatchCompare({ type: "start", state: compareFrom }); }}
+                    aria-label={compareName ? `Compare ${firstName(compareName)} with others` : "Compare buyers"}
+                    title={compareName ? `Compare ${firstName(compareName)} with others` : "Compare one buyer's reading with others"}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-md border border-border text-xs text-foreground/85 hover:text-foreground",
+                      isMobile ? "h-8 w-8 justify-center" : "px-2 py-1",
+                    )}
+                    data-testid="compare-start"
+                  >
+                    <Users className="h-3.5 w-3.5" />
+                    {!isMobile && (compareName ? `Compare ${firstName(compareName)} with others` : "Compare")}
+                  </button>
+                )}
               </div>
             )}
 
-            {sectionView && paint && current && (
+            {sectionView && paint && current && !comparing && (
               <p className="text-xs text-muted-foreground" data-testid="section-view-note">
                 {sectionView === "collapsed"
                   ? `Buyers first see this section collapsed, as shown. ${expandCount(current) === 0 ? "Nobody has opened it yet." : `Opened ${expandCount(current)} time${expandCount(current) === 1 ? "" : "s"} — switch to Opened to see what they read.`}${current.part > 0 ? " Collapsed, the whole section sits on its first page." : ""}`
@@ -344,7 +398,28 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
                 if (Math.abs(dx) > 70 && Math.abs(dx) > 2 * Math.abs(dy)) go(dx < 0 ? Math.min(pages.length - 1, index + 1) : Math.max(0, index - 1));
               }}
             >
-              {showNamed && namedError ? (
+              {comparing && compare && current && rendition ? (
+                <CompareCanvases
+                  dealId={dealId}
+                  filters={filters}
+                  doc={doc}
+                  buyers={cbuyers}
+                  state={compare}
+                  current={current}
+                  rendition={rendition}
+                  renditionPage={servedPage}
+                  showHeat={showHeat}
+                  scope={scope}
+                  sectionView={sectionView}
+                  onViewChange={(v) => { setViewWanted(v); setSelectedKey(null); }}
+                  selectedKey={selectedKey}
+                  hoveredKey={hoveredKey}
+                  onSelectKey={setSelectedKey}
+                  onHoverKey={setHoveredKey}
+                  touch={isMobile}
+                  wide={wide}
+                />
+              ) : showNamed && namedError ? (
                 <p className="rounded-lg border border-border p-8 text-center text-sm text-muted-foreground">Couldn&apos;t load the named version. Use “Show what the buyer saw” above to go back.</p>
               ) : rLoading || (showNamed && !named) ? (
                 <Skeleton className="h-[70vh] w-full rounded-[3px]" />
@@ -378,7 +453,9 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
 
             {current && (
               <div className="flex flex-wrap items-center justify-between gap-3">
-                {paint && showHeat
+                {comparing
+                  ? <span />
+                  : paint && showHeat
                   ? <HeatLegend maxMs={maxMs} scope={effectiveScope(scope, current)} />
                   : mode === "wash" && showHeat ? <PageLegend maxPageMs={maxPageMs} /> : <span />}
                 <PagerButtons pageOf={pageOfText(current.label, pages)} onPrev={index > 0 ? () => go(index - 1) : null} onNext={index < pages.length - 1 ? () => go(index + 1) : null} />
@@ -386,7 +463,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
             )}
           </div>
 
-          {!isMobile && (
+          {!isMobile && !comparing && (
             <aside className="md:col-span-2 xl:col-span-1 xl:sticky xl:top-3 xl:self-start xl:max-h-[calc(100vh-7rem)] xl:overflow-y-auto rounded-lg border border-border bg-card p-4">
               {panel}
             </aside>
@@ -394,7 +471,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
         </div>
       )}
 
-      {isMobile && current && layout === "pages" && (
+      {isMobile && current && layout === "pages" && !comparing && (
         <>
           <button
             type="button"
@@ -492,49 +569,6 @@ function PagerButtons({ pageOf, onPrev, onNext }: { pageOf: string; onPrev: (() 
       <PagerButton dir="prev" onClick={onPrev} />
       <span className="tabular-nums">{pageOf}</span>
       <PagerButton dir="next" onClick={onNext} />
-    </div>
-  );
-}
-
-/** Seconds legend for the paper colours (drawn on a paper swatch so the shades match the page). */
-function HeatLegend({ maxMs, scope }: { maxMs: number; scope: HeatScope }) {
-  const ticks = legendTicks(maxMs);
-  if (ticks.length === 0) return <span />;
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground" data-testid="engagement-heat-legend">
-      <span>Reading time on each part{scope === "page" ? " (this page)" : ""}:</span>
-      <span className="inline-flex items-stretch overflow-hidden rounded-sm border border-border" style={{ background: "#FBF9F4" }}>
-        {ticks.map((t) => (
-          <span key={t.t} className="flex flex-col items-center px-1.5 pt-1 pb-0.5">
-            <span className="h-2.5 w-8 rounded-[2px]" style={{ background: paperTint(t.t) ?? "transparent", mixBlendMode: "multiply" }} />
-            <span className="mt-0.5 text-[10px] tabular-nums" style={{ color: "#201D18" }}>{t.label}</span>
-          </span>
-        ))}
-      </span>
-      <span className="inline-flex items-center gap-1">
-        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-semibold" style={{ background: "#201D18", color: "#FBF9F4" }}>1</span>
-        most time on this page
-      </span>
-    </div>
-  );
-}
-
-/** Legend for the whole-page shade: the page's reading time against the busiest page. */
-function PageLegend({ maxPageMs }: { maxPageMs: number }) {
-  const ticks = pageLegendTicks(maxPageMs);
-  if (ticks.length === 0) return <span />;
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground" data-testid="engagement-page-legend">
-      <span>Whole page shaded by its reading time:</span>
-      <span className="inline-flex items-stretch overflow-hidden rounded-sm border border-border" style={{ background: "#FBF9F4" }}>
-        {ticks.map((t) => (
-          <span key={t.t} className="flex flex-col items-center px-1.5 pt-1 pb-0.5">
-            <span className="h-2.5 w-8 rounded-[2px]" style={{ background: washFill(t.t) ?? "transparent", mixBlendMode: "multiply" }} />
-            <span className="mt-0.5 text-[10px] tabular-nums" style={{ color: "#201D18" }}>{t.label}</span>
-          </span>
-        ))}
-      </span>
-      <span>· darkest = the most-read page ({formatReadingTime(maxPageMs)})</span>
     </div>
   );
 }

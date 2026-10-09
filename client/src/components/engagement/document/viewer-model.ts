@@ -607,3 +607,166 @@ export function reachCountsLine(input: {
   if (last && steepestDrop(recorded)) parts.push(`${last.buyers} got to page ${last.label}${input.oldTracking ? ", the last page recorded" : ""}`);
   return parts.join(" · ");
 }
+
+// ── Compare buyers (heat-map spec §3.7) ──────────────────────────────────
+
+/** The groups side B can be. */
+export type CompareGroup = "all-others" | "interested" | "passed" | "undecided";
+export const COMPARE_GROUPS: readonly CompareGroup[] = ["interested", "all-others", "passed", "undecided"];
+const GROUP_LABEL: Record<CompareGroup, string> = {
+  interested: "Interested buyers",
+  "all-others": "Everyone else",
+  passed: "Buyers who passed",
+  undecided: "Undecided buyers",
+};
+/** The filter parser's cap on buyer ids per query (shared/analytics-v2.ts parseEngagementFilters). */
+export const COMPARE_GROUP_MAX = 200;
+
+export interface CompareState {
+  /** Side A: one buyer link. */
+  a: string;
+  /** Side B: a group, or another buyer link. */
+  b: CompareGroup | string;
+}
+
+const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const isGroup = (v: string): v is CompareGroup => (COMPARE_GROUPS as readonly string[]).includes(v);
+
+/** "?compare=<accessIdA>~<all-others|interested|passed|undecided|accessId>" → state; null for anything else. */
+export function parseCompareParam(v: string | null | undefined): CompareState | null {
+  const m = /^([A-Za-z0-9_-]{1,64})~([A-Za-z0-9_-]{1,64})$/.exec(String(v ?? ""));
+  if (!m || m[1] === m[2]) return null;
+  return { a: m[1], b: m[2] };
+}
+export function compareParam(s: CompareState): string {
+  return `${s.a}~${s.b}`;
+}
+
+/** A buyer as compare sees it (from the Buyers list: call order, decision, reading). */
+export interface CompareBuyer {
+  accessId: string;
+  name: string;
+  decision: string | null;
+  rank: number;
+  activeMs: number;
+  visits: number;
+}
+
+const hasReading = (b: CompareBuyer) => b.visits > 0 && b.activeMs >= READING_RULES.readerMinMs;
+const decided = (d: string | null) => d === "interested" || d === "not_interested";
+
+/** Buyers who can be side A: every buyer with reading, in call-list order. */
+export function compareReaders(buyers: readonly CompareBuyer[]): CompareBuyer[] {
+  return buyers.filter(hasReading).sort((x, y) => x.rank - y.rank || x.name.localeCompare(y.name));
+}
+
+export interface CompareGroupOption {
+  key: CompareGroup;
+  label: string;
+  ids: string[];
+  /** Why it can't be picked (shown in the menu), or null. */
+  disabled: string | null;
+}
+
+/** Side B's groups for this A: A is never in them; empty or over-large groups are disabled. The outer segment filter is ignored. */
+export function compareGroups(buyers: readonly CompareBuyer[], a: string): CompareGroupOption[] {
+  const others = compareReaders(buyers).filter((b) => b.accessId !== a);
+  const pick: Record<CompareGroup, (b: CompareBuyer) => boolean> = {
+    interested: (b) => b.decision === "interested",
+    "all-others": () => true,
+    passed: (b) => b.decision === "not_interested",
+    undecided: (b) => !decided(b.decision),
+  };
+  return COMPARE_GROUPS.map((key) => {
+    const ids = others.filter(pick[key]).map((b) => b.accessId);
+    const disabled = ids.length === 0 ? "nobody yet" : ids.length > COMPARE_GROUP_MAX ? `over ${COMPARE_GROUP_MAX} buyers, pick a smaller group` : null;
+    return { key, label: GROUP_LABEL[key], ids, disabled };
+  });
+}
+
+/** Default side B: the interested buyers when A hasn't decided and another interested buyer read it, else everyone else. */
+export function defaultCompareB(buyers: readonly CompareBuyer[], a: string): CompareGroup {
+  const me = buyers.find((b) => b.accessId === a);
+  const interested = compareGroups(buyers, a).find((g) => g.key === "interested")!;
+  return me && !decided(me.decision) && interested.ids.length > 0 ? "interested" : "all-others";
+}
+
+/** The ids and words for side B ("Interested buyers", or one buyer's name). */
+export function compareSideB(buyers: readonly CompareBuyer[], s: CompareState): { ids: string[]; label: string; group: boolean } {
+  if (isGroup(s.b)) {
+    const g = compareGroups(buyers, s.a).find((x) => x.key === s.b)!;
+    return { ids: g.disabled ? [] : g.ids, label: g.label, group: true };
+  }
+  const one = buyers.find((b) => b.accessId === s.b);
+  return { ids: one ? [one.accessId] : [], label: one?.name ?? "That buyer", group: false };
+}
+
+/** A valid state for these buyers (unknown ids are dropped), or null. */
+export function validCompare(buyers: readonly CompareBuyer[], s: CompareState | null): CompareState | null {
+  if (!s) return null;
+  const readers = compareReaders(buyers);
+  if (!readers.some((b) => b.accessId === s.a)) return null;
+  if (isGroup(s.b)) return s;
+  return ID_RE.test(s.b) && s.b !== s.a && readers.some((b) => b.accessId === s.b) ? s : { a: s.a, b: defaultCompareB(buyers, s.a) };
+}
+
+/** How to start comparing: the one filtered buyer (or the first to call) against the default group. */
+export function compareStart(buyers: readonly CompareBuyer[], filteredTo: string | null): CompareState | null {
+  const readers = compareReaders(buyers);
+  if (readers.length < 2) return null;
+  const a = (filteredTo && readers.find((b) => b.accessId === filteredTo)?.accessId) || readers[0].accessId;
+  return { a, b: defaultCompareB(buyers, a) };
+}
+
+export type CompareAction =
+  | { type: "start"; state: CompareState }
+  | { type: "setA"; a: string; buyers: readonly CompareBuyer[] }
+  | { type: "setB"; b: CompareGroup | string }
+  | { type: "done" }
+  /** A page turn, an arrow key, a swipe or a filter change: compare stays open. */
+  | { type: "page" }
+  | { type: "filters" };
+
+export function compareReducer(state: CompareState | null, action: CompareAction): CompareState | null {
+  switch (action.type) {
+    case "start": return action.state;
+    case "done": return null;
+    case "setA": {
+      if (!state) return null;
+      // B stays unless it is now A (then the default group for the new A).
+      const b = state.b === action.a ? defaultCompareB(action.buyers, action.a) : state.b;
+      return { a: action.a, b };
+    }
+    case "setB": return state && action.b !== state.a ? { ...state, b: action.b } : state;
+    default: return state;
+  }
+}
+
+/** A side's page as an average per reader (side B: divided by its readers of the page). */
+export function perBuyerPage<T extends Pick<DocumentPage, "attentionMs" | "skimMs" | "blocks">>(page: T, divisor: number): T {
+  if (!(divisor > 1)) return page;
+  const d = (x: number) => Math.round(x / divisor);
+  return {
+    ...page,
+    attentionMs: d(page.attentionMs),
+    skimMs: d(page.skimMs),
+    blocks: page.blocks.map((b) => ({ ...b, attentionMs: d(b.attentionMs), skimMs: d(b.skimMs), visibleMs: d(b.visibleMs), pointerMs: d(b.pointerMs) })),
+  };
+}
+
+/** One shared scale for both sides: the busiest part on either side, on this page or across the whole CIM. */
+export function sharedMaxMs(
+  a: { pages: ReadonlyArray<Pick<DocumentPage, "blocks">>; current: Pick<DocumentPage, "blocks"> | null },
+  b: { pages: ReadonlyArray<Pick<DocumentPage, "blocks">>; current: Pick<DocumentPage, "blocks"> | null },
+  scope: HeatScope,
+): number {
+  const ref = a.current ?? b.current;
+  const s = effectiveScope(scope, ref);
+  return Math.max(heatMaxMs(a.pages, s, a.current ?? ref), heatMaxMs(b.pages, s, b.current ?? ref));
+}
+
+/** "Lillian Cho" → "Lillian" (for "Compare Lillian with others"). */
+export function firstName(name: string): string {
+  const w = name.trim().split(/\s+/)[0] ?? "";
+  return w || name;
+}

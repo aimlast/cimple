@@ -27,7 +27,10 @@ import {
   steepestDrop, topBlocks, unreadBlocks, TINT_STRENGTH, defaultSectionView, inView, isUnread, pageInView, pageOfText,
   drawMode, statusSentence, whyNotes, washFill, WASH_MAX_ALPHA, pageRank, railTint, pageLegendTicks, recordedReach, reachCountsLine,
   pageHeatMaxMs, ordinal, shortDate, type StatusContext,
+  parseCompareParam, compareParam, compareGroups, defaultCompareB, compareReducer, compareStart, compareSideB, validCompare,
+  perBuyerPage, sharedMaxMs, firstName, COMPARE_GROUP_MAX, type CompareBuyer, type CompareState,
 } from "../../client/src/components/engagement/document/viewer-model";
+import { compareFiltersText } from "../../client/src/components/engagement/document/CompareView";
 import { PageCanvas } from "../../client/src/components/engagement/document/PageCanvas";
 import { updateNote } from "../../client/src/components/engagement/document/PagePanel";
 
@@ -472,8 +475,80 @@ test("mixed reading: the parts are painted and a badge says how much was read as
 
 console.log("words and removals");
 
+// ── Compare buyers (§3.7) ──────────────────────────────────────────────
+console.log("compare buyers");
+const cb = (accessId: string, decision: string | null, rank: number, activeMs = 60_000, visits = 1): CompareBuyer => ({ accessId, name: `${accessId.toUpperCase()} Name`, decision, rank, activeMs, visits });
+const CB: CompareBuyer[] = [
+  cb("lillian", "lapsed", 3), cb("gurdeep", "interested", 0), cb("natalie", "interested", 1), cb("julien", "not_interested", 5),
+  cb("wei", "not_interested", 6, 0, 0), // opened, no reading
+  cb("marcus", null, 4, 2_000, 1),       // under 3 s: not a reader
+];
+test("the ?compare= value round-trips; anything else is ignored", () => {
+  const s: CompareState = { a: "lillian", b: "interested" };
+  assert.deepEqual(parseCompareParam(compareParam(s)), s);
+  assert.deepEqual(parseCompareParam("lillian~gurdeep"), { a: "lillian", b: "gurdeep" });
+  for (const bad of ["", "lillian", "lillian~", "~x", "a b~c", "x~x", "a~b~c", null, undefined]) assert.equal(parseCompareParam(bad as string), null, String(bad));
+  assert.equal(validCompare(CB, { a: "wei", b: "interested" }), null, "A must have reading");
+  assert.deepEqual(validCompare(CB, { a: "lillian", b: "nobody-here" }), { a: "lillian", b: "interested" }, "an unknown B falls back to the default group");
+});
+test("groups never contain A, ignore the outer segment, and disable empty groups", () => {
+  const g = compareGroups(CB, "gurdeep");
+  const by = Object.fromEntries(g.map((x) => [x.key, x]));
+  assert.deepEqual(by.interested.ids, ["natalie"]);
+  assert.deepEqual(by["all-others"].ids, ["natalie", "lillian", "julien"], "call order; no Wei (no reading), no Marcus (under 3 s)");
+  assert.deepEqual(by.passed.ids, ["julien"]);
+  assert.deepEqual(by.undecided.ids, ["lillian"]);
+  const lonely = compareGroups([cb("a", "interested", 0), cb("b", "interested", 1)], "a");
+  assert.equal(lonely.find((x) => x.key === "passed")!.disabled, "nobody yet");
+});
+test("a group over 200 buyers is disabled (the filter's cap)", () => {
+  const many = Array.from({ length: COMPARE_GROUP_MAX + 2 }, (_, i) => cb(`b${i}`, "interested", i));
+  const g = compareGroups(many, "b0").find((x) => x.key === "interested")!;
+  assert.equal(g.ids.length, COMPARE_GROUP_MAX + 1);
+  assert.equal(g.disabled, "over 200 buyers, pick a smaller group");
+  assert.deepEqual(compareSideB(many, { a: "b0", b: "interested" }).ids, [], "a disabled group loads nothing");
+});
+test("default B: interested buyers for an undecided A when one read it, else everyone else", () => {
+  assert.equal(defaultCompareB(CB, "lillian"), "interested");
+  assert.equal(defaultCompareB(CB, "gurdeep"), "all-others");
+  assert.equal(defaultCompareB([cb("x", null, 0), cb("y", "not_interested", 1)], "x"), "all-others");
+  assert.deepEqual(compareStart(CB, "lillian"), { a: "lillian", b: "interested" }, "starts from the one filtered buyer");
+  assert.deepEqual(compareStart(CB, null), { a: "gurdeep", b: "all-others" }, "else the first to call");
+  assert.equal(compareStart([cb("x", null, 0)], null), null, "needs two readers");
+  assert.equal(firstName("Lillian Cho"), "Lillian");
+});
+test("compareReducer keeps compare open across page turns and filter changes; A can't also be B", () => {
+  let s = compareReducer(null, { type: "start", state: { a: "lillian", b: "interested" } });
+  s = compareReducer(s, { type: "page" });
+  s = compareReducer(s, { type: "filters" });
+  assert.deepEqual(s, { a: "lillian", b: "interested" });
+  s = compareReducer(s, { type: "setB", b: "gurdeep" });
+  assert.deepEqual(s, { a: "lillian", b: "gurdeep" });
+  s = compareReducer(s, { type: "setA", a: "gurdeep", buyers: CB });
+  assert.deepEqual(s, { a: "gurdeep", b: "all-others" }, "B was the new A: back to the default group");
+  assert.deepEqual(compareReducer(s, { type: "setB", b: "gurdeep" }), s, "B can't be A");
+  assert.equal(compareReducer(s, { type: "done" }), null);
+});
+test("side B is drawn per buyer: the page and its parts divided by its readers; one shared scale", () => {
+  const page = { attentionMs: 90_000, skimMs: 9_000, readers: 3, blocks: [
+    { key: "row:0", kind: "table", label: "Row: Revenue", attentionMs: 60_000, skimMs: 3_000, visibleMs: 70_000, pointerMs: 0 },
+    { key: "row:1", kind: "table", label: "Row: COGS", attentionMs: 30_000, skimMs: 6_000, visibleMs: 40_000, pointerMs: 300 },
+    { key: "text:0", kind: "text", label: "Text", attentionMs: 1_000, skimMs: 0, visibleMs: 2_000, pointerMs: 0 },
+  ] } as unknown as DocumentPage;
+  const per = perBuyerPage(page, 3);
+  assert.equal(per.attentionMs, 30_000);
+  assert.deepEqual(per.blocks.map((b) => b.attentionMs), [20_000, 10_000, 333]);
+  assert.equal(perBuyerPage(page, 1), page);
+  const a = { ...page, blocks: [{ ...page.blocks[0], attentionMs: 45_000 }, page.blocks[1], page.blocks[2]] } as DocumentPage;
+  assert.equal(sharedMaxMs({ pages: [a], current: a }, { pages: [per], current: per }, "page"), 45_000, "the larger side's busiest part");
+  assert.equal(compareFiltersText({ range: "7d", device: "desktop" }), "Last 7 days · Computer");
+  assert.equal(compareFiltersText({ range: "all", device: "all" }), "");
+});
+
 const VIEWER_FILES = [
   "client/src/components/engagement/document/DocumentView.tsx",
+  "client/src/components/engagement/document/CompareView.tsx",
+  "client/src/components/engagement/document/Legends.tsx",
   "client/src/components/engagement/document/StatusLine.tsx",
   "client/src/components/engagement/document/PageCanvas.tsx",
   "client/src/components/engagement/document/PagePanel.tsx",
