@@ -297,7 +297,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
             {current && !comparing && (
               <div className={cn("flex flex-wrap items-center text-xs text-muted-foreground", isMobile ? "gap-x-2 gap-y-1.5" : "gap-x-4 gap-y-2")} data-testid="heat-toggles">
                 <label className="inline-flex items-center gap-2">
-                  <Switch checked={showHeat} onCheckedChange={setShowHeat} aria-label="Show reading time colours" />
+                  <Switch checked={showHeat && mode !== "none"} disabled={mode === "none"} onCheckedChange={setShowHeat} aria-label="Show reading time colours" />
                   Reading-time colours
                 </label>
                 {isMobile && (

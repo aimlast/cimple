@@ -90,7 +90,7 @@ export function CompareBar({ buyers, state, dispatch, filters, compact }: Compar
       </Select>
       <span className="text-foreground/85">with</span>
       <Select value={state.b} onValueChange={(b) => dispatch({ type: "setB", b })}>
-        <SelectTrigger className={cn("h-7 text-xs", compact ? "w-[9.5rem]" : "w-[12rem]")} aria-label="Who to compare with" data-testid="compare-b">
+        <SelectTrigger className={cn("h-7 text-xs", compact ? "w-[11rem]" : "w-[12.5rem]")} aria-label="Who to compare with" data-testid="compare-b">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
