@@ -22,6 +22,8 @@ const STATUS: Record<MoveStatus, { label: (m: WorkspaceMove) => string; tone: st
   held: { label: (m) => `Held: FY${m.heldYear ?? ""} doesn't match the statements`, tone: "text-amber-500", Icon: AlertTriangle },
 };
 
+const STATUS_ORDER: Record<MoveStatus, number> = { waiting: 0, stale_seller: 1, stale_figures: 2, none: 3, held: 4, shown: 5, hidden: 6 };
+
 const FILTERS: Array<{ key: MoveFilter; label: string }> = [
   { key: "all", label: "All" },
   { key: "waiting", label: "Waiting for your OK" },
@@ -114,7 +116,10 @@ function Actions({ m, a }: { m: WorkspaceMove; a: MovesActions }) {
 
 export function MovesTab({ moves, filter, onFilter, actions }: { moves: WorkspaceMove[]; filter: MoveFilter; onFilter: (f: MoveFilter) => void; actions: MovesActions }) {
   const counts = useMemo(() => moveCounts(moves), [moves]);
-  const rows = moves.filter((m) => moveMatches(m, filter));
+  // What needs the broker first: notes waiting for an OK, then the ones that need a look, then
+  // figures with no reason, held years, and what buyers already see; the biggest change first in each.
+  const rows = moves.filter((m) => moveMatches(m, filter)).sort((a, b) =>
+    STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || Math.abs(b.delta ?? 0) - Math.abs(a.delta ?? 0));
   const waiting = moves.filter((m) => m.note && m.note.status === "suggested" && !m.note.staleReason && m.status === "waiting");
   const bulk = waiting.filter((m) => !m.note!.internalOnly);
   const internal = waiting.length - bulk.length;
@@ -165,12 +170,12 @@ export function MovesTab({ moves, filter, onFilter, actions }: { moves: Workspac
             <table className="w-full table-fixed text-left">
               <thead className="bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
                 <tr>
-                  <th className="w-[20%] px-3 py-2 font-medium">Figure</th>
-                  <th className="w-[11%] px-3 py-2 font-medium">Change</th>
-                  <th className="w-[27%] px-3 py-2 font-medium">What buyers read</th>
-                  <th className="w-[11%] px-3 py-2 font-medium">Based on</th>
-                  <th className="w-[13%] px-3 py-2 font-medium">Status</th>
-                  <th className="w-[18%] px-3 py-2 font-medium"><span className="sr-only">Actions</span></th>
+                  <th className="w-[18%] px-3 py-2 font-medium">Figure</th>
+                  <th className="w-[10%] px-3 py-2 font-medium">Change</th>
+                  <th className="w-[28%] px-3 py-2 font-medium">What buyers read</th>
+                  <th className="w-[10%] px-3 py-2 font-medium">Based on</th>
+                  <th className="w-[17%] px-3 py-2 font-medium">Status</th>
+                  <th className="w-[17%] px-3 py-2 font-medium"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">

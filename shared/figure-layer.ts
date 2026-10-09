@@ -425,7 +425,11 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
     const context = notes.find((n) => n.kind === "context") ?? null;
     const whyNote = movement ?? context;
     const why = whyNote ? noteView(whyNote, mode, broker) : null;
-    const view: FigureView = { id: idFor(key), year: fig.year, display: first.display };
+    // The value as the note reads it: "$293,240" whether the cell printed "293240", "(293,240)" or
+    // "($293,240)"; a scaled figure ("$31.02M") stays as printed. Only a non-expense below zero keeps a sign.
+    const display = /[a-z]/i.test(first.display.replace(/^\s*(?:c\$|us\$|ca\$|cad|usd)/i, "")) ? first.display
+      : `${first.shown < 0 && !fig.expense ? "−" : ""}${dollars(first.shown)}`;
+    const view: FigureView = { id: idFor(key), year: fig.year, display };
     if (mode !== "blind") view.label = fig.lineLabel;
     if (why) view.why = why;
     if (movement && why && movement.valuesSnapshot.fromYear) {

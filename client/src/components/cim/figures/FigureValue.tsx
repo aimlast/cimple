@@ -63,8 +63,9 @@ export function FigureTrigger({ fig, block, children, className, showState = tru
   const mode = ctx?.layer.mode ?? "normal";
   const state = mode === "dd" ? figureState(fig) : null;
   const hasNote = !!fig.why;
-  // Broker preview: a figure that needs a reason gets a fainter mark (never shown to buyers).
-  const needsReason = !hasNote && ctx?.layer.audience === "broker" && (fig.noReason || !!fig.hint);
+  // Broker preview: a fainter mark only where Cimple's analysis already suggests the reason (one click
+  // to use it) — marking every figure with no reason underlined whole tables. Never shown to buyers.
+  const needsReason = !hasNote && ctx?.layer.audience === "broker" && !!fig.noReason && !!fig.hint;
 
   const record = useCallback(() => {
     if (recorded.current) return;

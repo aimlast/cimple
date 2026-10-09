@@ -140,6 +140,15 @@ test("DD buyers: check ids are opaque (a check key carries the figure key)", asy
   assert.ok(!JSON.stringify(layer).includes("~tax_return:"), "no check keys in the buyer payload");
 });
 
+test("a figure reads as money in its note, however the cell printed it ('293240', '(412,000)')", async () => {
+  const { fx, raw } = await fixtureRaw("pacific", { locate: false });
+  const layer = buildFigureLayer(fx.sections as any, figureInputsFor(raw, { audience: "broker", mode: "normal" }), "normal")!;
+  const views = Object.values(layer.figures);
+  assert.ok(views.length > 10);
+  for (const v of views) assert.match(v.display, /^−?\$[\d,]+(?:\.\d+)?(?:\s?[KMB]|\s?million)?$|^\$?[\d.]+\s?[a-zA-Z]+$/, v.display);
+  assert.ok(!views.some((v) => /^\(|^\d/.test(v.display)), "no bare or bracketed numbers");
+});
+
 test("a broker preview followed by a buyer view on the same raw inputs serves no suggested note", async () => {
   const { fx, raw } = await lakeshore();
   const broker = buildFigureLayer(fx.sections as any, figureInputsFor(raw, { audience: "broker", mode: "normal" }), "normal")!;
