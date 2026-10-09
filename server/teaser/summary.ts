@@ -143,8 +143,8 @@ async function countsFor(dealId: string, now = Date.now()): Promise<TeaserSummar
 export async function templateName(key: string, brokerId: string): Promise<string> {
   if (isBuiltInTeaserTemplate(key)) return TEASER_TEMPLATES[key].name;
   if (savedTemplateId(key)) {
-    const { savedTemplateDef } = await import("./templates-store");
-    return (await savedTemplateDef(key, brokerId).catch(() => null))?.name ?? "Your template";
+    const { savedTemplateName } = await import("./templates-store");
+    return (await savedTemplateName(key, brokerId).catch(() => null)) ?? "Your template";
   }
   return TEASER_TEMPLATES.one_page.name;
 }

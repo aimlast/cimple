@@ -194,6 +194,9 @@ async function main() {
     assert.equal(kn.reasonForSalePhrase("Owner's health — a recent diagnosis; retiring early"), null);
     assert.equal(kn.reasonForSalePhrase("Partners in a dispute"), null);
     assert.equal(kn.financingPhrase("No vendor financing"), null);
+    assert.equal(kn.financingPhrase("Tony will carry 10-15% of purchase price, 3-year term, not an earn-out"), "Vendor financing available");
+    assert.equal(kn.transitionPhrase("6-month transition with Tony, close by early 2026, Tony present through heating season"), "6-month handover");
+    assert.equal(kn.reasonForSalePhrase("Tony retiring, going to Florida"), "Owner retiring");
     assert.equal(kn.transitionPhrase("Owner will not stay on"), null);
     // "Interested?": three numbered steps, the contact as a plain line under them (not step 04).
     const next = doc.blocks.find((b) => b.slot === "next_step")!;

@@ -248,7 +248,10 @@ export function transitionPhrase(t: string | null | undefined): string | null {
 export function financingPhrase(t: string | null | undefined): string | null {
   const s = (t ?? "").trim();
   if (!s) return null;
-  if (!/\b(?:vendor (?:take[- ]?back|financ\w*|note|loan)|seller (?:financ\w*|note|carry|take[- ]?back)|owner financ\w*|\bVTB\b|seller carry)/i.test(s)) return null;
+  const offered = /\b(?:vendor (?:take[- ]?back|financ\w*|note|loan)|seller (?:financ\w*|note|carry|take[- ]?back)|owner financ\w*|\bVTB\b|seller carry)/i.test(s)
+    // "Tony will carry 10-15% of the purchase price": the seller carrying part of the price.
+    || /\b(?:will|would|can|could|to|willing to) carry\b[^.;]{0,40}\b(?:price|purchase|note|%|percent)/i.test(s);
+  if (!offered) return null;
   if (/\b(?:no|not|won't|will not|unwilling|isn't|is not|without)\b[^.;]{0,30}\b(?:vendor|seller|owner|VTB)/i.test(s)) return null;
   return "Vendor financing available";
 }

@@ -393,6 +393,13 @@ export async function deleteTeaserTemplate(brokerId: string, id: string): Promis
   return ok;
 }
 
+/** A saved template's name only (the summary's label — no re-check needed, nothing of it reaches buyers). */
+export async function savedTemplateName(key: string, brokerId: string): Promise<string | null> {
+  const id = savedTemplateId(key);
+  if (!id) return null;
+  return (await templates.get(brokerId, id))?.name ?? null;
+}
+
 /** A "saved:<id>" key → the template definition (broker-scoped; null when it isn't theirs or is gone). */
 export async function savedTemplateDef(key: string, brokerId: string): Promise<TeaserTemplateDef | null> {
   const id = savedTemplateId(key);
