@@ -55,7 +55,7 @@ import { buyerInsight, rankBuyers } from "../engagement/insights";
 import { insightContext } from "../engagement/responses";
 import { buildCallList } from "../routes/engagement-insights";
 import type { AccessRow, BrokerInputs, DashboardItem, QuestionRow } from "./load";
-import { accessLevelRank, isTeaserOnly, seesCim } from "./levels";
+import { accessLevelRank, isTeaserOnly, seesCim, TEASER_RENDITION_MODE } from "./levels";
 
 const DAY = 86_400_000;
 const CONTACTED_MS = 48 * 3_600_000;
@@ -68,15 +68,27 @@ const t = (iso: string | null | undefined): number => (iso ? Date.parse(iso) || 
 
 const cimCache = new WeakMap<CaptureFacts, CaptureFacts>();
 
-/** The same facts with only CIM links (teaser-only links removed). */
+/**
+ * The same facts with only CIM links (teaser-only links removed). When the
+ * version the facts were drawn on is a TEASER rendition (a deal whose only
+ * rendition is the teaser), its blocks are not the CIM's pages: no pages
+ * (so "How far they got" says "—", never "0 of 7"). After the teaser merge
+ * the loader never picks a teaser rendition (INTEGRATION §2.13) and this
+ * is a no-op; it stays as a second lock.
+ */
 export function cimOnly(facts: CaptureFacts): CaptureFacts {
   let out = cimCache.get(facts);
   if (!out) {
     out = { ...facts, buyers: facts.buyers.filter((b) => seesCim(b.accessLevel)) };
+    if (isTeaserRendition(facts.rendition)) {
+      out = { ...out, pages: [], rendition: null, renditions: facts.renditions.filter((r) => !isTeaserRendition(r)) };
+    }
     cimCache.set(facts, out);
   }
   return out;
 }
+
+const isTeaserRendition = (r: { mode: string } | null | undefined): boolean => !!r && r.mode === TEASER_RENDITION_MODE;
 
 /** Active visits (≥ 3 s of active reading). */
 export function activeVisits(b: Pick<BuyerReadingFacts, "visits">): VisitFacts[] {

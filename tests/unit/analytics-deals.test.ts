@@ -90,6 +90,24 @@ assert.equal(teaserCounts([accessOf("x", { id: "p", name: "P" })]), null);
   assert.equal(b.contentPages, null);
 }
 
+// A deal whose only rendition is the TEASER (checker AN2-7): its blocks are not the CIM's pages —
+// "How far they got" is "—", never "0 of 7" (the loader skips teaser renditions after the teaser
+// merge; this is the second lock in cimOnly).
+{
+  const TZ: DealSpec = { ...LIVE, id: "tz", name: "Teaser Proof Beacon", renditionMode: "teaser" };
+  const i = inputsOf([TZ]);
+  assert.ok(i.items[0].facts.pages.length > 0, "the teaser rendition has blocks");
+  const r = dealRows(i, "all", NOW)[0];
+  assert.equal(r.contentPages, 0, "a teaser rendition's blocks are never counted as CIM pages");
+  assert.equal(r.medianPagesReached, null, "'—', not '0 of 7'");
+  const { buyerRows } = await import("../../server/analytics-dashboard/buyers");
+  const b = buyerRows(i, NOW).find((x) => x.accessId === "a")!;
+  assert.equal(b.contentPages, null);
+  assert.equal(b.pagesRead, null);
+  // A normal rendition is untouched.
+  assert.equal(dealRows(inputsOf([LIVE]), "all", NOW)[0].contentPages, 4);
+}
+
 // A deal whose facts failed is left out (and reported as partial by the route).
 const failed = dealRows(inputsOf([LIVE, OLD], { failed: [{ dealId: "old", dealName: "Old Tracker Deal" }], noFacts: ["old"] }), "all", NOW);
 assert.deepEqual(failed.map((r) => r.dealId), ["live"]);

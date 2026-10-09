@@ -90,6 +90,8 @@ export interface DealSpec {
   visits?: VisitSpec[];
   reading?: ReadingSpec[];
   questions?: Array<{ id: string; access: string | null; text: string; daysAgo: number; status: string; published?: boolean }>;
+  /** The drawn rendition's mode (default "normal"; "teaser" = a deal whose only rendition is the teaser). */
+  renditionMode?: string;
 }
 
 export function dealOf(spec: DealSpec): Deal {
@@ -180,7 +182,7 @@ export function factsOf(spec: DealSpec, filters: EngagementFilters = DEFAULT_ENG
     id: q.id, accessId: q.access, text: q.text, askedAt: ago(q.daysAgo), pageId: null, status: q.status,
     answered: ["published", "answered", "approved"].includes(q.status) || !!q.published,
   }));
-  const rendition = { id: R, mode: "normal", variant: "full", createdAt: ago(30), visits: visits.length };
+  const rendition = { id: R, mode: spec.renditionMode ?? "normal", variant: spec.renditionMode === "teaser" ? "teaser" : "full", createdAt: ago(30), visits: visits.length };
   const facts = assembleFacts({
     deal: deal as any, filters, now: NOW, accesses: accesses as any, live: [], renditions: [rendition], chosen: rendition,
     indexes: new Map([[R, PAGES]]), visits, sums: Array.from(sums.values()), visitPages: [], events: [], questions, decisions: [],
