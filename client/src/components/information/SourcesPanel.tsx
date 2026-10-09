@@ -27,6 +27,7 @@ import { sourceContributionText, sourceCountText, sourceFoundNothing } from "@sh
 import type { DocumentSourceMeta, SourceKind } from "@shared/schema";
 import { KIND_META, formatShortDate, sourceDateValue } from "./source-kinds";
 import { informationKey, requestJson, useInformationAction } from "./useInformation";
+import { SourceRoomLine } from "@/components/vdr/SourceRoomLine";
 
 const PLATFORM: Record<string, string> = { zoom: "Zoom", meet: "Google Meet", teams: "Teams", cimple: "Cimple call", person: "In person", other: "Other" };
 
@@ -358,6 +359,8 @@ export function SourceViewer({
               {source.visibility === "broker_only" ? " · Broker only" : ""}
             </DialogDescription>
           </DialogHeader>
+
+          {source.documentId && <SourceRoomLine dealId={dealId} documentId={source.documentId} visibility={source.visibility} />}
 
           {source.meta?.rereadFailed && (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs" data-testid="source-reread-failed">

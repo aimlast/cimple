@@ -303,8 +303,8 @@ export default function ActiveCIMs() {
                 </p>
                 {pendingArchive?.isLive && (
                   <p className="rounded-md border border-teal/30 bg-teal/5 px-3 py-2 text-foreground/90">
-                    This deal is live. Buyer links keep working, but new buyer questions and approvals for it won't
-                    show on your dashboard while it's archived.
+                    This deal is live. Buyer links keep working, including the data room, but new buyer questions and
+                    approvals for it won't show on your dashboard while it's archived.
                   </p>
                 )}
               </div>

@@ -7,6 +7,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { applyAnalyticsRateLimits } from "./analytics-dashboard/limits";
 import { applyTogetherRateLimits } from "./together/limits";
+import { applyVdrRateLimits } from "./vdr/rate-limits";
 import { createHash } from "crypto";
 import * as Sentry from "@sentry/node";
 import { registerRoutes } from "./routes";
@@ -210,6 +211,9 @@ app.use("/api/view/:token/reading", rateLimit({
 // numbers): read-only, 120 a minute per IP (server/analytics-dashboard/limits.ts).
 applyAnalyticsRateLimits(app);
 
+// ── vdr limiters ── the data room's buyer routes (per link), the broker's upload, emails and "Draft again" (server/vdr/rate-limits.ts).
+applyVdrRateLimits(app, aiLimiter);
+
 // Session type augmentation
 declare module "express-session" {
   interface SessionData {
@@ -297,6 +301,10 @@ app.use((req, res, next) => {
       import("./documents/ingest").then((m) => m.startInterruptedReadRecovery()).catch((err) => console.error("[ingest] interrupted-read recovery failed:", err));
       // ── together recovery ── Interview together: sessions a restart cut off are picked up again; parts that waited for the AI are retried (only where live filing runs).
       import("./together/recovery").then((m) => m.startTogetherRecovery()).catch((err) => console.error("[together] recovery failed to start:", err));
+      // ── vdr: data-room documents a restart left unprepared go back in the (one-at-a-time) queue ──
+      import("./vdr/prepare").then((m) => m.startPrepareQueue()).catch((err) => console.error("[vdr] prepare queue failed to start:", err));
+      // ── vdr: buyer descriptions waiting to be drafted (persisted queue; per-deal daily cap) ──
+      import("./vdr/buyer-summary").then((m) => m.startSummaryQueue()).catch((err) => console.error("[vdr] description queue failed to start:", err));
       // Once per volume: files earlier deletes left behind (no row points at them) leave the volume.
       if (process.env.NODE_ENV === "production") {
         // First what deleted deals left (their rows made their files look in use), then files no row points at.

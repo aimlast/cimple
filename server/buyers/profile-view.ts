@@ -339,7 +339,9 @@ export interface TimelineEvent {
     | "link_expired" | "first_view" | "viewing" | "nda_signed" | "decision" | "question" | "outreach" | "email"
     | "approval" | "profile_edit" | "login"
     // The teaser (server/teaser/*).
-    | "teaser_sent" | "teaser_opened" | "cim_requested" | "teaser_passed";
+    | "teaser_sent" | "teaser_opened" | "cim_requested" | "teaser_passed"
+    // vdr: the data room (given it, opened documents, downloads, requests, team).
+    | "data_room";
   title: string;
   detail?: string | null;
   dealId?: string | null;
@@ -474,6 +476,11 @@ export async function buildBuyerTimeline(brokerId: string, buyerId: string): Pro
 
   for (const q of ctx.questions) {
     push({ id: `q-${q.id}`, at: q.createdAt, kind: "question", title: "Asked a question", detail: `“${q.question.slice(0, 280)}”${q.status === "published" ? " — answered" : ""}`, dealId: q.dealId, dealName: dealName(q.dealId) });
+  }
+  // Data room (vdr §9.4): one line per day they opened documents, downloads, requests, their team.
+  {
+    const { vdrTimelineEventsFor } = await import("../vdr/timeline");
+    for (const e of await vdrTimelineEventsFor(ctx.accesses, fmtDuration)) push({ ...e, dealName: dealName(e.dealId) });
   }
   for (const o of ctx.outreach) {
     push({ id: `o-${o.id}`, at: o.sentAt ?? o.createdAt, kind: "outreach", title: o.status === "sent" ? "You emailed them about a listing" : o.status === "draft" ? "Outreach drafted" : "Outreach email not delivered",

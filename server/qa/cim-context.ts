@@ -18,8 +18,8 @@
 import { storage } from "../storage";
 import { CIM_PRESENTATION_KEYS } from "@shared/cim-layouts";
 import { blindLeakTerms } from "@shared/blind-guard";
-import { readerMaySeeRow, rowScope } from "@shared/buyer-qa-scope";
-import type { BuyerQuestion } from "@shared/schema";
+import { readerMaySeeRow, roomRowsFor, rowScope } from "@shared/buyer-qa-scope";
+import type { BuyerQuestion, Deal } from "@shared/schema";
 import { normalizeFinancialTable } from "@shared/financial-table";
 import { formatSqft, rentLabel, splitLeaseType } from "@shared/cim-location";
 import { buildBuyerCim, cimHeldFromBuyers } from "@shared/cim-buyer-view";
@@ -550,6 +550,18 @@ export async function publishedQuestionsFor(deal: QaDeal, reader: QaReader, cim?
     const scope = rowScope(q, q.buyerAccessId && levelOf.has(q.buyerAccessId) ? levelOf.get(q.buyerAccessId) : false);
     return readerMaySeeRow(q, scope, reader, terms);
   });
+  // Data-room questions (vdr spec §9.9): another buyer's answer the broker
+  // shared with the document's readers ("room") reaches this reader only
+  // while they can open that document right now — never a teaser or Blind
+  // CIM reader, never after it's unshared. The chatbot's knowledge base
+  // reads this function, so it inherits the rule.
+  const candidates = roomRowsFor(all, reader.id, new Set(all.map((q) => q.vdrItemId).filter((x): x is string => !!x)));
+  if (candidates.length > 0) {
+    const link = accesses.find((a) => a.id === reader.id);
+    const { itemIdsVisibleToLink } = await import("../vdr/access");
+    const open = link ? await itemIdsVisibleToLink(deal as unknown as Deal, link) : new Set<string>();
+    inScope.push(...roomRowsFor(candidates, reader.id, open));
+  }
   if (!inScope.some(isUnreviewedAiAnswer)) return inScope;
   const current = cim ?? (await readerCim(deal, reader));
   return inScope.filter((q) => answerStillHolds(q, current));
@@ -593,6 +605,10 @@ export function faqKnowledgeRows(
       // Not asked on any page of a served CIM (reading analytics).
       sectionId: null,
       renditionId: null,
+      // Not about a data-room document.
+      vdrItemId: null,
+      vdrPage: null,
+      vdrTeamMemberId: null,
       createdAt: f.createdAt,
       updatedAt: f.updatedAt,
     }));

@@ -17,6 +17,9 @@ import { isPageWidth, zipTooLarge, zipTotals } from "./child/limits";
 import { openPdf, pageText, renderPage } from "./child/pdf";
 import { renderPhoto } from "./child/photo";
 import { readJobFile } from "./child/read-file";
+import { runBasePage, runPrepare } from "./child/prepare";
+import { compositePage } from "./child/watermark";
+import { buildOriginalPdf, buildPagesPdf, buildValuesXlsx } from "./child/download";
 import type { ChildMessage, ChildRequest, RenderJob } from "./render-jobs";
 
 const shimInstalled = installGetBuiltinModuleShim();
@@ -47,6 +50,19 @@ async function runJob(job: RenderJob): Promise<unknown> {
       if (zipTooLarge(totals)) throw new ChildJobError("too_large", `${totals.entries} entries, ${totals.uncompressedBytes} bytes uncompressed`);
       return totals;
     }
+    case "prepare":
+      return runPrepare(job);
+    case "basePage":
+      return runBasePage(job);
+    case "composite":
+      if (!isPageWidth(job.width)) throw new ChildJobError("unreadable", "width must be 700 or 1400");
+      return compositePage(job.file, job.width, job.mark, clampQuality(job.quality));
+    case "pagesPdf":
+      return { bytes: await buildPagesPdf(job) };
+    case "valuesXlsx":
+      return { bytes: await buildValuesXlsx(job) };
+    case "originalPdf":
+      return { bytes: await buildOriginalPdf(job) };
     default:
       throw new ChildJobError("unreadable", "unknown job");
   }
@@ -57,7 +73,12 @@ function clampQuality(q: unknown): number {
 }
 
 function send(msg: ChildMessage) {
-  if (process.connected) process.send!(msg);
+  if (!process.connected) return;
+  try {
+    process.send!(msg, undefined, undefined, (err) => { if (err) process.exit(0); });
+  } catch {
+    process.exit(0);
+  }
 }
 
 if (!process.send) {
@@ -96,4 +117,10 @@ process.on("message", async (raw: unknown) => {
   }
 });
 process.on("disconnect", () => process.exit(0));
+// The web process may kill or drop the channel while an answer is on its way
+// (a timeout): that write fails with EPIPE / channel closed — exit quietly.
+process.on("error", (err: NodeJS.ErrnoException) => {
+  if (err?.code === "EPIPE" || err?.code === "ERR_IPC_CHANNEL_CLOSED") process.exit(0);
+  throw err;
+});
 send({ type: "ready", pid: process.pid });

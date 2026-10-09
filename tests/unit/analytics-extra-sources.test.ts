@@ -18,6 +18,7 @@ import { ACTIVITY_GROUP_OF, HEADS_UP_MAX, TEASER_HEADS_UP_ID } from "../../share
 import { _setTeaserEngagementSourceForTests, type TeaserEngagementSource } from "../../server/teaser/engagement";
 import { _resetExtraSources, extraActivity, extraHeadsUp } from "../../server/analytics-dashboard/extra-sources";
 import {
+  _setVdrDealActivityLoaderForTests,
   combineTeaserHeadsUp,
   registerAnalyticsExtraSources,
   teaserActivitySource,
@@ -147,20 +148,24 @@ await test("Who to call stays CIM-only (C7): teaser readers are never on it", ()
 });
 
 await test("registration: once, in order; the registered sources feed the dashboards", async () => {
+  // The data room's source (registered at the vdr merge) reads no database here: no deal has a room.
+  _setVdrDealActivityLoaderForTests(async () => new Map());
   _resetExtraSources();
   registerAnalyticsExtraSources();
   registerAnalyticsExtraSources();
   const items = await extraActivity(deals, { since: null, now: NOW });
   assert.equal(items.filter((i) => i.kind === "teaser_opened").length, 4, "registered once (no duplicates)");
+  assert.equal(items.filter((i) => i.kind === "data_room").length, 0, "no data room on these deals");
   const lines = await extraHeadsUp(deals, NOW);
   assert.deepEqual(lines.map((h) => h.id), [TEASER_HEADS_UP_ID]);
+  _setVdrDealActivityLoaderForTests(null);
 });
 
 await test("the deal Engagement tab offers the Teaser view (registered extra view)", async () => {
   await import("./react-global");
   const { EXTRA_ENGAGEMENT_VIEWS } = await import("../../client/src/components/engagement/extra-views");
   const { useDealHasTeaser } = await import("../../client/src/components/teaser/useTeaserSummary");
-  assert.deepEqual(EXTRA_ENGAGEMENT_VIEWS.map((v) => v.key), ["teaser"], "teaser now; data-room joins at the vdr merge");
+  assert.deepEqual(EXTRA_ENGAGEMENT_VIEWS.map((v) => v.key), ["teaser", "data-room"], "teaser (step 4), then the data room (step 6)");
   const teaser = EXTRA_ENGAGEMENT_VIEWS[0];
   assert.equal(teaser.label, "Teaser");
   assert.equal(teaser.useAvailable, useDealHasTeaser);

@@ -19,7 +19,7 @@ import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadin
 import { InterviewOutlineCard } from "@/components/deal/InterviewOutlineCard";
 import { ReopenInterviewButton } from "@/components/deal/ReopenInterviewButton";
 import { OpenInterviewItemsCard } from "@/components/deal/OpenInterviewItemsCard";
-import { SellerChecklistCard } from "@/components/deal/SellerChecklistCard";
+import { DocumentsSummaryCard } from "@/components/deal/DocumentsSummaryCard";
 import { SellerReviewControls } from "@/components/deal/SellerReviewControls";
 import { sellerIntakeState } from "@shared/seller-portal";
 import { discrepancyBlocksCim, routedButNeverAsked } from "@shared/discrepancy-gate";
@@ -2276,158 +2276,6 @@ function SectionsAwaitingApproval({
 }
 
 /* ═══════════════════════════════════════════
-   DOCUMENT TABLE (full list below phases)
-═══════════════════════════════════════════ */
-function DocumentTable() {
-  const { dealId } = useDeal();
-  const { toast } = useToast();
-  // Deletion is permanent and the trash icon only appears on hover — always
-  // confirm before removing an uploaded financial document.
-  const [pendingDelete, setPendingDelete] = useState<DocType | null>(null);
-
-  const { data: documents = [], error: docsError, refetch: refetchDocs } = useQuery<DocType[]>({
-    queryKey: ["/api/deals", dealId, "documents"],
-    queryFn: async () => {
-      const r = await fetch(`/api/deals/${dealId}/documents`);
-      if (!r.ok) throw new Error("Failed to load documents");
-      return r.json();
-    },
-    refetchInterval: (query) =>
-      query.state.data?.some(isDocProcessing) ? DOC_POLL_MS : false,
-  });
-
-  const deleteDoc = useMutation({
-    mutationFn: (doc: DocType) =>
-      apiJson("DELETE", `/api/documents/${doc.id}`, undefined, "Couldn't delete the document"),
-    onSuccess: (_, doc) => {
-      queryClient.invalidateQueries({
-        queryKey: ["/api/deals", dealId, "documents"],
-      });
-      setPendingDelete(null);
-      toast({ title: "Document deleted", description: doc.name });
-    },
-    onError: (e: Error) =>
-      toast({
-        title: "Delete failed",
-        description: e.message,
-        variant: "destructive",
-      }),
-  });
-
-  if (docsError) {
-    return <PanelError what="documents" onRetry={() => refetchDocs()} />;
-  }
-  if (documents.length === 0) return null;
-
-  return (
-    <div className="mt-6 pt-6 border-t border-border">
-      <h3 className="text-sm font-semibold mb-3">
-        All Documents ({documents.length})
-      </h3>
-      <div className="rounded-lg border border-border overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border bg-muted/30">
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
-                Name
-              </th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
-                Category
-              </th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
-                Status
-              </th>
-              <th className="w-10" />
-            </tr>
-          </thead>
-          <tbody>
-            {documents.map((doc) => (
-              <tr
-                key={doc.id}
-                className="border-b border-border last:border-0 group hover:bg-muted/20"
-              >
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                    <span className="truncate">{doc.name}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-2.5 text-muted-foreground capitalize">
-                  {doc.category}
-                </td>
-                <td className="px-4 py-2.5">
-                  <span
-                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-2xs font-medium ${
-                      (doc.status as string) === "extracted"
-                        ? "bg-success-muted text-success-muted-foreground"
-                        : (doc.status as string) === "parsing"
-                          ? "bg-amber-500/10 text-amber-600"
-                          : "bg-muted text-muted-foreground"
-                    }`}
-                  >
-                    {doc.status}
-                  </span>
-                </td>
-                <td className="px-4 py-2.5">
-                  <button
-                    onClick={() => setPendingDelete(doc)}
-                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive transition-all"
-                    aria-label={`Delete ${doc.name}`}
-                    data-testid={`button-delete-document-${doc.id}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <AlertDialog
-        open={!!pendingDelete}
-        onOpenChange={(open) => {
-          if (!open && !deleteDoc.isPending) setPendingDelete(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this document?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingDelete?.name
-                ? `"${pendingDelete.name}" and any data extracted from it will be permanently removed from this deal. This cannot be undone.`
-                : "This document will be permanently removed from this deal. This cannot be undone."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteDoc.isPending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteDoc.isPending}
-              onClick={(e) => {
-                // Keep the dialog open while the request runs so a failure
-                // can be shown in place.
-                e.preventDefault();
-                if (pendingDelete) deleteDoc.mutate(pendingDelete);
-              }}
-              data-testid="button-confirm-delete-document"
-            >
-              {deleteDoc.isPending ? (
-                <>
-                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Deleting...
-                </>
-              ) : (
-                "Delete"
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════
    OVERVIEW TAB — Phase accordion + documents
 ═══════════════════════════════════════════ */
 /** A request (from the DealShell header stepper) to open and scroll to a phase. */
@@ -2626,8 +2474,9 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
             </p>
           </div>
           <CrmLinkCard dealId={dealId} variant="compact" />
-          {/* What the seller is asked to upload — verify, waive, ask again */}
-          <SellerChecklistCard dealId={dealId} />
+          {/* The Data room is the home for files (vdr): one line here; the
+              seller's checklist moved to Data room › To do › Seller checklist. */}
+          <DocumentsSummaryCard dealId={dealId} />
           <DocumentUploadCard openSignal={uploadSignal} />
           <IntegrationPromptCard
             onOpenTranscripts={() =>
@@ -2640,9 +2489,6 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
           />
         </div>
       )}
-
-      {/* Document table below phases */}
-      <DocumentTable />
 
       {/* Buyer pulse: who is reading, who to call first (replaces the old analytics widget) */}
       <div className="mt-6 pt-6 border-t border-border empty:hidden">

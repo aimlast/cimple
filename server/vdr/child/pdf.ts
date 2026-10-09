@@ -54,8 +54,14 @@ export type RenderedPage = {
   capped: boolean;
 };
 
-/** Renders one page on a white canvas (form fields drawn, as the document shows them). */
-export async function renderPage(doc: PDFDocumentProxy, pageNo: number, width: PageWidth): Promise<RenderedPage> {
+/**
+ * Renders one page on a white canvas.
+ *   "forms" (the canary's default): pdf.js ENABLE_FORMS — no form-field values drawn;
+ *   "all":  every annotation drawn — used on the SANITISED served copy, where
+ *           only form widgets are left, so their filled-in values show;
+ *   "none": no annotation drawn at all (a PDF Cimple couldn't sanitise).
+ */
+export async function renderPage(doc: PDFDocumentProxy, pageNo: number, width: PageWidth, annotations: "forms" | "all" | "none" = "forms"): Promise<RenderedPage> {
   if (!Number.isInteger(pageNo) || pageNo < 1 || pageNo > doc.numPages) {
     throw new ChildJobError("unreadable", `no page ${pageNo}`);
   }
@@ -73,7 +79,7 @@ export async function renderPage(doc: PDFDocumentProxy, pageNo: number, width: P
     canvas: null,
     canvasContext: ctx as unknown as CanvasRenderingContext2D,
     viewport,
-    annotationMode: pdfjs.AnnotationMode.ENABLE_FORMS,
+    annotationMode: annotations === "all" ? pdfjs.AnnotationMode.ENABLE : annotations === "none" ? pdfjs.AnnotationMode.DISABLE : pdfjs.AnnotationMode.ENABLE_FORMS,
   }).promise;
   return { page, viewport, canvas, width: fit.width, height: fit.height, capped: fit.capped };
 }

@@ -1,6 +1,6 @@
 /**
  * The heads-up lines under the numbers (at most two, only when they apply):
- * a registered source's line first (the data room), then buyer links running
+ * a registered source's line first (the data room, then the teaser), then buyer links running
  * out within 7 days, then buyers who haven't opened 3 days after you gave
  * access. Each has "See them" → the Buyers tab showing exactly the buyers
  * the line counted (`?notice=<id>`; the line's number = the rows).
@@ -12,7 +12,7 @@
  */
 import { Link } from "wouter";
 import { ChevronRight, Flag } from "lucide-react";
-import { HEADS_UP_MAX, TEASER_HEADS_UP_ID, type HeadsUp as HeadsUpLine } from "@shared/analytics-dashboard";
+import { HEADS_UP_MAX, TEASER_HEADS_UP_ID, VDR_NOW_HEADS_UP_ID, VDR_WEEK_HEADS_UP_ID, type HeadsUp as HeadsUpLine } from "@shared/analytics-dashboard";
 
 /** The phone's words when a line has the row to itself (the full sentence shows on a computer). */
 export function headsUpShort(h: HeadsUpLine): string {
@@ -20,6 +20,8 @@ export function headsUpShort(h: HeadsUpLine): string {
   if (h.id === "expiring") return `${n} link${n === 1 ? " runs" : "s run"} out this week`;
   if (h.id === "not_opened") return `${n} buyer${n === 1 ? " hasn't" : "s haven't"} opened after 3 days`;
   if (h.id === TEASER_HEADS_UP_ID) return `${n} read the teaser but didn't ask`;
+  if (h.id === VDR_NOW_HEADS_UP_ID) return n === 1 && h.names[0] ? `${h.names[0]} is in the data room now` : `${n} in the data room now`;
+  if (h.id === VDR_WEEK_HEADS_UP_ID) return `${n} opened the data room this week`;
   return h.text;
 }
 
@@ -29,6 +31,8 @@ export function headsUpTiny(h: HeadsUpLine): string {
   if (h.id === "expiring") return `${n} link${n === 1 ? " runs" : "s run"} out`;
   if (h.id === "not_opened") return `${n} not opened`;
   if (h.id === TEASER_HEADS_UP_ID) return `${n} teaser, no ask`;
+  if (h.id === VDR_NOW_HEADS_UP_ID) return `${n} in the data room`;
+  if (h.id === VDR_WEEK_HEADS_UP_ID) return `${n} in the data room this week`;
   return h.text;
 }
 

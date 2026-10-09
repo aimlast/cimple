@@ -17,6 +17,8 @@
  */
 import type { ComponentType, ReactNode } from "react";
 import type { AccessLevel } from "@shared/access-levels";
+import { VdrPublishNote, useVdrTileLines, vdrTileTooltips } from "@/components/vdr/cim-slots";
+import { useRoom } from "@/hooks/useDataRoom";
 
 export interface CimTabViewProps {
   dealId: string;
@@ -59,7 +61,13 @@ export interface AccessTileLineSource {
   /** A tooltip per tile ("No data room"), when there is no line. */
   useTooltips?: (dealId: string) => Partial<Record<AccessLevel, string>>;
 }
-export const ACCESS_TILE_LINES: AccessTileLineSource[] = [];
+export const ACCESS_TILE_LINES: AccessTileLineSource[] = [
+  // (dd's source goes FIRST at the dd merge: "dd first, then vdr".)
+  // The data room (vdr, merge step 6): Due diligence "+ data room · {k} documents shared" (or "{n} the DD
+  // CIM points to aren't shared · Share them"); Full CIM "+ data room for {n} buyers you chose"; Teaser and
+  // Blind CIM say "No data room" in the tooltip (C13).
+  { key: "vdr", useLines: (dealId) => useVdrTileLines(dealId).lines, useTooltips: () => vdrTileTooltips() },
+];
 
 export type VersionCardKey = "blind" | "named" | "dd";
 export interface VersionCardExtraSource {
@@ -85,7 +93,18 @@ export interface PublishNoteSource {
   key: string;
   useNotes: (dealId: string) => ReactNode[];
 }
-export const CIM_PUBLISH_NOTES: PublishNoteSource[] = [];
+export const CIM_PUBLISH_NOTES: PublishNoteSource[] = [
+  // The data room (vdr): "The DD CIM points to {n} documents not shared with due-diligence buyers · Share
+  // them" — only when there is something to say; it never blocks publishing.
+  {
+    key: "vdr",
+    useNotes: (dealId) => {
+      const room = useRoom(dealId);
+      const notShared = room.data?.room ? room.data.kpis.ddCitedNotShared : 0;
+      return notShared > 0 ? [<VdrPublishNote key="vdr-publish" dealId={dealId} />] : [];
+    },
+  },
+];
 
 /** The tile lines for a level: dd's first, then vdr's, at most 2. */
 export function tileLinesFor(level: AccessLevel, all: Array<Partial<Record<AccessLevel, TileLine[]>>>): TileLine[] {

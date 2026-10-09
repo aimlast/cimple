@@ -18,6 +18,7 @@ import type { FC } from "react";
 import type { EngagementFilters } from "@shared/analytics-v2";
 import { useDealHasTeaser } from "@/components/teaser/useTeaserSummary";
 import { TeaserEngagementPanel } from "@/components/teaser/TeaserEngagementPanel";
+import { DataRoomActivity, useDealHasDataRoom } from "@/components/vdr/DataRoomActivity";
 
 export type EngagementFilterKey = "buyers" | "when" | "device" | "version";
 
@@ -46,5 +47,12 @@ export const EXTRA_ENGAGEMENT_VIEWS: ExtraEngagementView[] = [
     useAvailable: useDealHasTeaser,
     filters: [],
     Component: ({ dealId }) => <TeaserEngagementPanel dealId={dealId} />,
+  },
+  {
+    key: "data-room",
+    label: "Data room",
+    useAvailable: useDealHasDataRoom,
+    filters: [],
+    Component: ({ dealId }) => <DataRoomActivity dealId={dealId} variant="engagement" />,
   },
 ];

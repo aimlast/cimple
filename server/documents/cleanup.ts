@@ -91,6 +91,11 @@ export async function deleteDocumentAndProvenance(docId: string): Promise<string
     console.warn("[documents] together clean-up failed:", e);
   }
 
+  // The data room (INTEGRATION §2.17 step 3): its item becomes a tombstone;
+  // the cleaned copy, prepared pages and page text go. Never throws.
+  const { onSourceDeleted } = await import("../vdr/setup");
+  await onSourceDeleted(doc);
+
   await removeDocumentFile(doc);
   return removed;
 }

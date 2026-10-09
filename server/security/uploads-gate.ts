@@ -24,8 +24,12 @@ import path from "path";
 import fs from "fs";
 import { DOCS_URL_PREFIX, resolveDocumentPath } from "../documents/document-path";
 
-/** Folders under /uploads that are never served statically. */
-const PRIVATE_FOLDERS = ["private-media", "tmp-past-cim"];
+/**
+ * Folders under /uploads that are never served statically. The data room's
+ * cleaned copies and prepared pages (private-vdr, private-vdr-cache) reach
+ * readers only through the data-room routes, which check every request.
+ */
+export const PRIVATE_FOLDERS = ["private-media", "tmp-past-cim", "private-vdr", "private-vdr-cache"];
 
 export type UploadsPath =
   | { kind: "document"; name: string }

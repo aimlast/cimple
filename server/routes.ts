@@ -64,6 +64,7 @@ import { questionWaitingOn } from "@shared/analytics-dashboard";
 import { registerTeaserRoutes } from "./routes/teaser.js";
 import { registerTogetherRoutes } from "./routes/together.js";
 import { registerDataRoomRoutes } from "./routes/data-room.js";
+import { registerDataRoomBuyerRoutes } from "./routes/data-room-buyer.js";
 import { registerReadingRoutes } from "./routes/reading.js";
 import { recordRendition } from "./analytics/renditions.js";
 import { viewRoomStamp } from "./analytics/reading-ingest.js";
@@ -2647,6 +2648,12 @@ Return JSON only.`,
         updates as Partial<InsertDealDocumentRequirement>,
       );
 
+      // Data room: linking a file to a row a buyer's request created makes that request "Ready to share".
+      if (linkedDoc) {
+        const { onRequirementFulfilled } = await import("./vdr/requests");
+        await onRequirementFulfilled(existing.id, linkedDoc.id);
+      }
+
       // Linking a file that was uploaded without a category gives it the
       // row's category so the broker's list shows "financials", not "other".
       if (linkedDoc && (linkedDoc.category === "other" || !linkedDoc.category)) {
@@ -2668,6 +2675,11 @@ Return JSON only.`,
       if (unlinkedBySeller) {
         const previous = await storage.getDocument(previousFileId);
         if (previous && previous.dealId === req.params.dealId && previous.uploadedBy === "seller") {
+          // Data room: a replacement takes the old file's place (not shared); a
+          // file buyers could open, simply removed by the seller, goes to the broker's To do.
+          const { markReplacement, onSourceDeleted } = await import("./vdr/setup");
+          if (typeof updates.uploadedFileId === "string") await markReplacement(previous.id, updates.uploadedFileId);
+          else await onSourceDeleted(previous, { bySeller: true });
           const { deleteDocumentAndProvenance } = await import("./documents/cleanup");
           await deleteDocumentAndProvenance(previous.id).catch((e) => console.warn("[documents] seller unlink cleanup failed:", e));
         }
@@ -2760,6 +2772,11 @@ Return JSON only.`,
       // Its first read is still running (a long source read in parts): never a second, concurrent read.
       const { isBeingRead } = await import("./documents/ingest");
       if (isBeingRead(doc.id)) return res.status(409).json({ status: "running", message: "Cimple is still reading this source. It will show its facts when it's done." });
+      // A data-room file stored without reading: asking for this one source to be
+      // read is the broker changing their mind (vdr; "read all" still skips the others).
+      const { clearStoredOnly } = await import("./documents/reprocess");
+      const cleared = clearStoredOnly((doc as { sourceMeta?: Parameters<typeof clearStoredOnly>[0] }).sourceMeta ?? null);
+      if (cleared) await storage.updateDocument(doc.id, { sourceMeta: cleared } as any);
       const { startReprocessJob } = await import("./documents/reprocess-jobs");
       const { job, started } = startReprocessJob(deal.id, undefined, undefined, { onlyDocumentIds: [doc.id] });
       res.status(started ? 202 : 409).json(job);
@@ -3214,10 +3231,21 @@ Return JSON only.`,
       .catch((err) => console.error(`[parser] failed for doc ${docId}:`, err));
   }
 
-  app.post("/api/deals/:dealId/documents/upload", docUpload.single("file"), async (req, res) => {
+  // Who may upload is checked BEFORE multer writes the file (it used to be
+  // written first and deleted on refusal); the body is the shared
+  // createUploadedDocument (server/documents/upload.ts), which the data
+  // room's own upload uses too.
+  const uploadAllowed = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      // Auth runs after multer (which has already written the file to the
-      // deal's dir); on failure, delete the orphaned file before returning.
+      if (!(await canAccessDeal(req, req.params.dealId))) return res.status(401).json({ error: "Not authorized" });
+      next();
+    } catch (err) {
+      console.error("Upload auth error:", err);
+      res.status(500).json({ error: "Upload failed" });
+    }
+  };
+  app.post("/api/deals/:dealId/documents/upload", uploadAllowed, docUpload.single("file"), async (req, res) => {
+    try {
       if (!(await canAccessDeal(req, req.params.dealId))) {
         if (req.file?.path) fs.unlink(req.file.path, () => {});
         return res.status(401).json({ error: "Not authorized" });
@@ -3227,142 +3255,21 @@ Return JSON only.`,
           error: (req as any).fileRejectionReason || "No file uploaded",
         });
       }
-      const { subcategory } = req.body;
-      const rawTitle = typeof req.body.title === "string" ? req.body.title.trim() : "";
-      const requirementId =
-        typeof req.body.requirementId === "string" && req.body.requirementId.trim() ? req.body.requirementId.trim() : undefined;
       // Attribute the upload by the credential that carried it, not by
       // whatever session cookie happens to be in the browser: the seller
       // pages always send X-Seller-Token, so a broker previewing the seller
       // view (or a seller whose browser also holds a broker session) is
       // still a seller upload. canAccessDeal already admitted the request.
       const viaSellerToken = await sellerTokenMatchesDeal(req, req.params.dealId);
-      const uploadedBy: "broker" | "seller" = viaSellerToken ? "seller" : "broker";
-
-      // An explicit checklist row decides the parser category (a seller's
-      // checklist upload used to land as "other" and parse with the wrong
-      // prompt). Sellers may not replace a row the broker has verified.
-      const { docCategoryForRequirement, linkUploadToRequirement, categoryAfterLink } = await import("./documents/requirements");
-      let targetRequirement: Awaited<ReturnType<typeof storage.getDocumentRequirement>> | undefined;
-      if (requirementId) {
-        targetRequirement = await storage.getDocumentRequirement(requirementId);
-        if (!targetRequirement || targetRequirement.dealId !== req.params.dealId) {
-          fs.unlink(req.file.path, () => {});
-          return res.status(400).json({ error: "That checklist item doesn't belong to this deal" });
-        }
-        if (uploadedBy === "seller" && targetRequirement.status === "verified") {
-          fs.unlink(req.file.path, () => {});
-          return res.status(409).json({ error: "Your broker has already verified this document — ask them before replacing it" });
-        }
-      }
-      // A document the interview asked for (an open document request): the
-      // upload answers it, and the request closes.
-      const taskId = typeof req.body.taskId === "string" && req.body.taskId.trim() ? req.body.taskId.trim() : undefined;
-      let targetTask: Awaited<ReturnType<typeof storage.getTask>> | undefined;
-      if (taskId) {
-        const { sellerMaySatisfyTask } = await import("@shared/seller-portal");
-        targetTask = await storage.getTask(taskId);
-        if (!sellerMaySatisfyTask(targetTask, req.params.dealId, targetTask?.dealId)) {
-          fs.unlink(req.file.path, () => {});
-          return res.status(400).json({ error: "That request isn't open on this deal any more" });
-        }
-      }
-      const requestedCategory = typeof req.body.category === "string" && req.body.category.trim() ? req.body.category.trim() : "";
-      const category =
-        requestedCategory && requestedCategory !== "other"
-          ? requestedCategory
-          : targetRequirement
-            ? docCategoryForRequirement(targetRequirement.category)
-            : requestedCategory || "other";
-
-      // Pasted text carries its own title; keep it verbatim as the display
-      // name. Only the on-disk filename (doc_<random>.ext) needs sanitising.
-      const displayName = (rawTitle || decodeUploadName(req.file.originalname)).slice(0, 200);
-      // Provenance v2: the broker says what kind of source this is (email,
-      // call transcript, CRM note…) and who may see it. A seller's upload is
-      // always a shared document.
-      const { isSourceKind } = await import("./interview/info-merger");
-      const { cleanSourceMeta, defaultVisibilityForKind } = await import("./documents/ingest");
-      const requestedKind = uploadedBy === "broker" && isSourceKind(req.body.sourceKind) ? req.body.sourceKind : "document";
-      let sourceMeta: ReturnType<typeof cleanSourceMeta> = null;
-      if (uploadedBy === "broker" && typeof req.body.sourceMeta === "string" && req.body.sourceMeta.trim()) {
-        try { sourceMeta = cleanSourceMeta(JSON.parse(req.body.sourceMeta)); } catch { sourceMeta = null; }
-      }
-      const visibility =
-        uploadedBy === "broker" && (req.body.visibility === "broker_only" || req.body.visibility === "shared")
-          ? req.body.visibility
-          : uploadedBy === "broker" ? defaultVisibilityForKind(requestedKind) : "shared";
-      const doc = await storage.createDocument({
+      const { createUploadedDocument } = await import("./documents/upload");
+      const out = await createUploadedDocument({
         dealId: req.params.dealId,
-        uploadedBy,
-        name: displayName,
-        originalName: displayName,
-        category,
-        subcategory: subcategory || null,
-        fileUrl: `/uploads/docs/${req.file.filename}`,
-        fileSize: req.file.size ?? null,
-        mimeType: req.file.mimetype || null,
-        status: "pending",
-        sourceKind: requestedKind,
-        sourceMeta,
-        visibility,
-      } as any);
-
-      // Credit the upload against the checklist: the explicit row when one
-      // was chosen, otherwise the best unambiguous keyword match (so a
-      // broker dropping "2023 P&L.pdf" counts toward the financials row).
-      // When the seller replaces their own earlier upload, that file goes.
-      const previousFileId = targetRequirement?.uploadedFileId ?? null;
-      // A broker-only source is never credited on the seller's checklist
-      // (the seller would see its name there).
-      const linkedRequirement = visibility === "broker_only" ? null : await linkUploadToRequirement({
-        dealId: req.params.dealId,
-        docId: doc.id,
-        fileName: displayName,
-        docCategory: category,
-        uploadedBy,
-        requirementId,
-        sourceKind: requestedKind,
+        file: req.file,
+        uploadedBy: viaSellerToken ? "seller" : "broker",
+        body: req.body ?? {},
       });
-      // Matched to a checklist row by its name ("2024 P&L.pdf" → "Financial
-      // Statements"): an uncategorised upload takes the row's category, as a
-      // chosen row does, so it is read as a statement (the financial analysis
-      // extracts line items only from financial documents).
-      const linkedCategory = categoryAfterLink(category, linkedRequirement);
-      if (linkedCategory !== category) {
-        await storage.updateDocument(doc.id, { category: linkedCategory } as any);
-        (doc as any).category = linkedCategory;
-      }
-      if (linkedRequirement && previousFileId && previousFileId !== doc.id && uploadedBy === "seller") {
-        const previous = await storage.getDocument(previousFileId);
-        if (previous && previous.dealId === req.params.dealId && previous.uploadedBy === "seller") {
-          const { deleteDocumentAndProvenance } = await import("./documents/cleanup");
-          await deleteDocumentAndProvenance(previous.id).catch((e) => console.warn("[documents] replace cleanup failed:", e));
-        }
-      }
-
-      let satisfiedTask: { id: string; title: string } | null = null;
-      if (targetTask) {
-        const note = `${uploadedBy === "seller" ? "The seller" : "You"} uploaded "${displayName}" for this request.`;
-        // Copies of the same request an earlier turn re-created close with it
-        // (the seller's list shows them as one row — one would pop back up).
-        const { openItemTaskIds } = await import("@shared/seller-portal");
-        const dealTasks = await storage.getTasksByDeal(req.params.dealId);
-        const now = new Date();
-        for (const tid of openItemTaskIds(dealTasks, targetTask)) {
-          const t = tid === targetTask.id ? targetTask : dealTasks.find((x) => x.id === tid);
-          if (!t) continue;
-          await storage.updateTask(tid, {
-            status: "completed",
-            completedAt: now,
-            brokerNotes: t.brokerNotes ? `${t.brokerNotes}\n${note}` : note,
-          } as any);
-        }
-        satisfiedTask = { id: targetTask.id, title: targetTask.title };
-      }
-
-      parseDocumentAsync(doc.id);
-      res.json({ ...doc, linkedRequirement, satisfiedTask });
+      if (!out.ok) return res.status(out.status).json({ error: out.error });
+      res.json({ ...out.doc, linkedRequirement: out.linkedRequirement, satisfiedTask: out.satisfiedTask });
     } catch (error: any) {
       console.error("Upload error:", error);
       res.status(500).json({ error: "Upload failed" });
@@ -4724,6 +4631,7 @@ Return JSON only.`,
       // but never listed among the seller's own documents — §7.5.)
       const { isTogetherSitting } = await import("./together/transcript");
       const allDocs = kbDocuments.filter((d) => (d as any).visibility !== "broker_only" && !isTogetherSitting(d));
+      const sellerRoomDocs = await (await import("./vdr/seller-chips")).sellerRoomDocumentIds(deal.id);
 
       // Buyer questions waiting on the seller's approval — each with its own
       // review link, on every step (the approval email can land in spam).
@@ -4800,6 +4708,9 @@ Return JSON only.`,
               uploadedFileName: linked?.name ?? null,
               uploadedBy: r.uploadedBy ?? null,
               uploadedAt: r.uploadedAt ?? null,
+              // vdr §7: shared with buyers who signed an NDA (never who, never activity); the broker's "needed by".
+              inDataRoom: !!linked && sellerRoomDocs.has(linked.id),
+              neededBy: (r as any).neededBy ?? null,
             };
           }),
         },
@@ -4956,6 +4867,10 @@ Return JSON only.`,
     try {
       const access = await storage.getBuyerAccessByToken(req.params.token);
       if (!access) {
+        // Data room (vdr): a buyer's team member's link opens their data room, never the CIM.
+        const { teamLinkRedirect } = await import("./vdr/team-link");
+        const redirect = await teamLinkRedirect(req.params.token);
+        if (redirect) return res.status(404).json({ code: "team_link", redirect });
         return res.status(404).json({ error: "Access denied or link expired" });
       }
 
@@ -4992,7 +4907,10 @@ Return JSON only.`,
       // holds the discrepancy + approval gates). Not a view either: no stamp,
       // so the decision reminders don't start on a CIM nobody could read.
       if (!dealPublishedForBuyers(deal)) {
-        return res.status(403).json(notPublishedBody());
+        // Data room (vdr): a buyer in due diligence keeps the room when the CIM is taken offline.
+        const { viewRoomDataRoom } = await import("./routes/data-room-buyer");
+        const dataRoom = await viewRoomDataRoom(req.params.token);
+        return res.status(403).json({ ...notPublishedBody(), ...(dataRoom?.available ? { dataRoom } : {}) });
       }
 
       // Stamp the view: firstViewedAt anchors the decision-reminder pipeline
@@ -5190,6 +5108,9 @@ Return JSON only.`,
             cimLayoutVersion: deal.cimLayoutVersion ?? null, sections: buyerCim.sections, design, live: baseSections,
           })
         : null;
+      // Data room (vdr): the header's "Memorandum | Data room" switch and the downloads line.
+      const { viewRoomDataRoom } = await import("./routes/data-room-buyer");
+      const dataRoom = await viewRoomDataRoom(req.params.token);
       res.json({
         access: accessPayload(await stampAndBuild(served)),
         deal: publicDeal,
@@ -5200,6 +5121,7 @@ Return JSON only.`,
         design,
         cimMode,
         ...(reading ? { reading } : {}),
+        ...(dataRoom ? { dataRoom } : {}),
       });
     } catch (error: any) {
       console.error("Error fetching buyer access:", error);
@@ -8010,10 +7932,19 @@ Return JSON only.`,
       if (status !== undefined) updates.status = status;
       if (publishedAnswer !== undefined) updates.publishedAnswer = publishedAnswer;
       if (isPublished !== undefined) updates.isPublished = isPublished;
+      // Data room (vdr spec §9.9): a question about a document stays with the
+      // buyer who asked ("private") unless the broker shows it to the
+      // document's other readers ("room") — never "all".
+      const vdrShare = typeof req.body?.shareWithDocumentReaders === "boolean" ? req.body.shareWithDocumentReaders : undefined;
+      if (existingQ.vdrItemId) {
+        const { vdrAnswerScope } = await import("@shared/buyer-qa-scope");
+        updates.answerScope = vdrAnswerScope(existingQ.answerScope, vdrShare);
+      }
       // Published by the broker on purpose → for every buyer (a Blind buyer
       // still never sees it if it names the business — buyer-qa-scope.ts).
       if (isPublished === true) {
-        updates.answerScope = "all";
+        // (A data-room question keeps the scope set above — never "all".)
+        if (!existingQ.vdrItemId) updates.answerScope = "all";
         // Sharing an AI answer makes it the broker's answer: recorded as
         // their draft, which is what lets other buyers read it
         // (approvedForSharing in shared/buyer-qa-scope.ts) — and it no
@@ -8027,7 +7958,10 @@ Return JSON only.`,
         const effectiveStatus = typeof status === "string" ? status : existingQ.status;
         if (effectiveStatus === "published" && !existingQ.brokerDraft && brokerDraft === undefined) updates.brokerDraft = adopted;
         if (!existingQ.publishedAnswer && publishedAnswer === undefined) updates.publishedAnswer = adopted;
-        updates.addedToKnowledgeBase = true;
+        // A data-room answer feeds the knowledge base only when shown to the document's readers.
+        updates.addedToKnowledgeBase = existingQ.vdrItemId ? updates.answerScope === "room" : true;
+      } else if (existingQ.vdrItemId) {
+        updates.addedToKnowledgeBase = updates.answerScope === "room" && !!existingQ.isPublished && isPublished !== false;
       }
 
       // Generate approval token when sending to seller
@@ -8109,14 +8043,15 @@ Return JSON only.`,
 
       if (approved) {
         const publishedAnswer = revision || question.brokerDraft || question.aiAnswer || "";
+        // A data-room question keeps the scope the broker chose ("private" / "room", vdr §9.9).
+        const { approvalScope } = await import("@shared/buyer-qa-scope");
         const published = await storage.updateBuyerQuestion(question.id, {
           sellerApproved: true,
           sellerApprovedAt: new Date(),
           status: "published",
           isPublished: true,
           publishedAnswer,
-          addedToKnowledgeBase: true,
-          answerScope: "all",
+          ...approvalScope(question),
         } as any);
         if (answerNoticeDue(question, published)) {
           void notifyBuyerQuestionAnswered(published!, process.env.APP_URL || `${req.protocol}://${req.get("host")}`);
@@ -8159,14 +8094,15 @@ Return JSON only.`,
       const { approved, revision } = req.body;
 
       if (approved) {
+        // A data-room question keeps the scope the broker chose ("private" / "room", vdr §9.9).
+        const { approvalScope } = await import("@shared/buyer-qa-scope");
         const question = await storage.updateBuyerQuestion(questionId, {
           sellerApproved: true,
           sellerApprovedAt: new Date(),
           status: "published",
           isPublished: true,
           publishedAnswer: revision || undefined,
-          addedToKnowledgeBase: true,
-          answerScope: "all",
+          ...approvalScope(existingQ),
         } as any);
 
         if (!question) return res.status(404).json({ error: "Question not found" });
@@ -8300,11 +8236,12 @@ Return JSON only.`,
   registerEngagementRoutes(app);
   registerEngagementInsightRoutes(app);
   registerAnalyticsDashboardRoutes(app);
-  registerAnalyticsExtraSources(); // teaser's (and later vdr's) activity + heads-up lines, INTEGRATION §2.9
+  registerAnalyticsExtraSources(); // teaser's and vdr's activity + heads-up lines, INTEGRATION §2.9
   registerTogetherRoutes(app);
   registerTeaserRoutes(app, { grant: (request, deal, baseUrl, review, opts) => grantApprovedBuyer(request as any, deal, baseUrl, review, opts) });
-  // Data room (vdr). Wave 0: only the renderer canary, GET /api/vdr/health.
+  // Data room (vdr): the broker's room + the renderer canary (GET /api/vdr/health), then the buyer's room.
   registerDataRoomRoutes(app);
+  registerDataRoomBuyerRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;

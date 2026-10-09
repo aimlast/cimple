@@ -23,6 +23,7 @@ import {
   cimRenditions, buyerVisits, readingRollups, readingBenchmarks,
   dealTeasers, buyerLinkEmailChecks,
   togetherSittings, togetherLines, togetherChunks, coverageMarks,
+  vdrRooms, vdrFolders, vdrItems, vdrShares, vdrBuyerSettings, vdrRequests, vdrViews, vdrActivity, vdrPageText, vdrTeamMembers,
 } from "@shared/schema";
 import { resolveDocumentPath } from "../documents/document-path";
 
@@ -72,6 +73,18 @@ export const DEAL_CHILD_TABLES = {
   together_lines: { table: togetherLines, column: togetherLines.dealId, mode: "delete" },
   together_chunks: { table: togetherChunks, column: togetherChunks.dealId, mode: "delete" },
   coverage_marks: { table: coverageMarks, column: coverageMarks.dealId, mode: "delete" },
+  // The data room (vdr): the room, its index, sharing, per-buyer settings,
+  // requests, views, the audit log, the served text and buyers' team members.
+  vdr_rooms: { table: vdrRooms, column: vdrRooms.dealId, mode: "delete" },
+  vdr_folders: { table: vdrFolders, column: vdrFolders.dealId, mode: "delete" },
+  vdr_items: { table: vdrItems, column: vdrItems.dealId, mode: "delete" },
+  vdr_shares: { table: vdrShares, column: vdrShares.dealId, mode: "delete" },
+  vdr_buyer_settings: { table: vdrBuyerSettings, column: vdrBuyerSettings.dealId, mode: "delete" },
+  vdr_requests: { table: vdrRequests, column: vdrRequests.dealId, mode: "delete" },
+  vdr_views: { table: vdrViews, column: vdrViews.dealId, mode: "delete" },
+  vdr_activity: { table: vdrActivity, column: vdrActivity.dealId, mode: "delete" },
+  vdr_page_text: { table: vdrPageText, column: vdrPageText.dealId, mode: "delete" },
+  vdr_team_members: { table: vdrTeamMembers, column: vdrTeamMembers.dealId, mode: "delete" },
   buyer_emails: { table: buyerEmails, column: buyerEmails.dealId, mode: "detach", field: "dealId" },
   buyer_users: { table: buyerUsers, column: buyerUsers.invitedByDeal, mode: "detach", field: "invitedByDeal" },
 } as const;
@@ -122,10 +135,11 @@ export async function dealFilesToRemove(db: Db, dealId: string, root?: string): 
     .filter((p): p is string => !!p);
 }
 
-/** Deletes a deal, its rows everywhere, its documents' files and its private media folder. */
+/** Deletes a deal, its rows everywhere, its documents' files, its private media folder and its data-room folders. */
 export async function deleteDealEverywhere(dealId: string): Promise<{ files: number }> {
   const { db } = await import("../db");
   const { dealMediaDir } = await import("../cim/media-store");
+  const { vdrDealDirs } = await import("../vdr/files");
   const files = await dealFilesToRemove(db, dealId);
   await deleteDealRows(db, dealId);
   let removed = 0;
@@ -133,5 +147,9 @@ export async function deleteDealEverywhere(dealId: string): Promise<{ files: num
     try { fs.unlinkSync(f); removed++; } catch { /* already gone */ }
   }
   try { fs.rmSync(dealMediaDir(dealId), { recursive: true, force: true }); } catch { /* none */ }
+  // The data room's cleaned copies and prepared pages (private-vdr/<id>, private-vdr-cache/<id>).
+  for (const dir of vdrDealDirs(dealId)) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* none */ }
+  }
   return { files: removed };
 }

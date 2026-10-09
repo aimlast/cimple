@@ -742,6 +742,13 @@ export const buyerQuestions = pgTable("buyer_questions", {
   // "cim-disclaimer"/"cim-contact") and the rendition they were reading.
   sectionId: text("section_id"),
   renditionId: text("rendition_id"),
+  // @anchor:buyer-questions-cols:vdr
+  // A question asked about a data-room document (vdr spec §9.9): the room
+  // item, the page in view, and the buyer's team member who asked (null =
+  // the buyer). Such rows skip the AI and keep a "private" / "room" scope.
+  vdrItemId: varchar("vdr_item_id"),
+  vdrPage: integer("vdr_page"),
+  vdrTeamMemberId: varchar("vdr_team_member_id"),
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -1686,6 +1693,10 @@ export const NOTIFICATION_ROUTING: Record<string, { teams: string[]; roles?: str
   // The seller's answer on the CIM review page (/seller/:token/review).
   cim_seller_approved: { teams: ["broker"], roles: ["lead", "associate"] },
   cim_changes_requested: { teams: ["broker"], roles: ["lead", "associate"] },
+  // vdr (founder Q21, additive — no existing event changes): "Your broker added documents to your
+  // checklist", sent only on the broker's click. To drop it, delete this line; server/vdr/emails.ts
+  // then uses seller_followup_questions (owner, representative) instead.
+  seller_document_request: { teams: ["seller"], roles: ["owner", "representative", "accountant"] },
 };
 
 // Buyer decision next-step options (shown after "interested in moving forward")
@@ -2154,6 +2165,11 @@ export const dealDocumentRequirements = pgTable("deal_document_requirements", {
 
   sortOrder: integer("sort_order").notNull().default(0),
 
+  // @anchor:document-requirements-cols:vdr
+  // When the broker needs it by (a buyer's data-room request asked of the
+  // seller, source "buyer_request"; vdr spec §5.8). Shown to the seller.
+  neededBy: timestamp("needed_by"),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -2216,6 +2232,8 @@ export interface DocumentSourceMeta {
   readFailed?: { at: string; reason: string; retryable?: boolean };
   /** A long source read only in part (some parts failed, or it is longer than Cimple reads). */
   partialRead?: { at: string; reason: string; readParts: number; parts: number; readChars: number; totalChars: number; retryable?: boolean };
+  /** vdr: the broker chose "Just store them in the data room" — not read for facts until "Read again". */
+  readSkipped?: boolean;
 }
 
 // @anchor:schema-tail:crm
@@ -3070,3 +3088,241 @@ export const coverageMarks = pgTable("coverage_marks", {
 ]);
 export type CoverageMarkRow = typeof coverageMarks.$inferSelect;
 export type InsertCoverageMark = typeof coverageMarks.$inferInsert;
+
+// @anchor:schema-tail:oct-vdr
+// ── Data room (VDR) — vdr spec §8 ───────────────────────────────────────────
+// Every table carries deal_id and is deleted with the deal (DEAL_CHILD_TABLES).
+// Pure rules live in shared/vdr.ts; DB access in server/vdr/store.ts.
+
+/** One row per deal that has a data room. */
+export const vdrRooms = pgTable("vdr_rooms", {
+  dealId: varchar("deal_id").primaryKey(),
+  status: text("status").notNull().default("open"),            // open | closed
+  autoAddNew: boolean("auto_add_new").notNull().default(true),
+  planAppliedAt: timestamp("plan_applied_at"),                 // set-up step 2 confirmed
+  setUpAt: timestamp("set_up_at").defaultNow().notNull(),
+  setUpBy: varchar("set_up_by"),                               // users.id | "demo-seed"
+  closedAt: timestamp("closed_at"),
+  summaryBudgetDay: text("summary_budget_day"),                // "2026-10-09" (AI cap, §9.8)
+  summaryBudgetUsed: integer("summary_budget_used").notNull().default(0),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+export type VdrRoom = typeof vdrRooms.$inferSelect;
+export type InsertVdrRoom = typeof vdrRooms.$inferInsert;
+
+/** A folder of the room's index. Numbers are computed (shared/vdr.ts indexNumbers), never stored. */
+export const vdrFolders = pgTable("vdr_folders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  parentId: varchar("parent_id"),                              // null = top level
+  name: text("name").notNull(),                                // ≤ 120 chars
+  position: integer("position").notNull().default(0),
+  presetKey: text("preset_key"),                               // "financial.tax" … null for broker folders
+  shareHint: jsonb("share_hint").$type<{ levels: string[] } | null>(),  // the plan's choice; only ever a suggestion
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("vdr_folders_deal_parent_idx").on(t.dealId, t.parentId, t.position),
+  uniqueIndex("vdr_folders_deal_preset_uq").on(t.dealId, t.presetKey).where(sql`${t.presetKey} IS NOT NULL`),
+]);
+export type VdrFolder = typeof vdrFolders.$inferSelect;
+export type InsertVdrFolder = typeof vdrFolders.$inferInsert;
+
+/** A deal document placed in the room (or its tombstone once the source is gone). */
+export const vdrItems = pgTable("vdr_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  folderId: varchar("folder_id").notNull(),
+  documentId: varchar("document_id"),                          // null once the source is gone (tombstone)
+  title: text("title").notNull(),                              // the room's name (≤ 200); defaults to documents.name
+  position: integer("position").notNull().default(0),
+  addedBy: text("added_by").notNull().default("broker"),       // auto | broker | seller | demo-seed
+  addedAt: timestamp("added_at").defaultNow().notNull(),
+  downloadable: boolean("downloadable").notNull().default(false),
+  downloadOriginal: boolean("download_original").notNull().default(false),  // §4.3
+  // Broker's cleaned copy, served instead of the original. Private:
+  // "private-vdr/<dealId>/<random>.<ext>" under UPLOADS_DIR. Never read into the deal's facts.
+  cleanCopyPath: text("clean_copy_path"),
+  cleanCopyMime: text("clean_copy_mime"),
+  cleanCopyName: text("clean_copy_name"),
+  cleanCopyAt: timestamp("clean_copy_at"),
+  buyerSummary: text("buyer_summary"),
+  buyerSummaryPoints: jsonb("buyer_summary_points").$type<string[]>(),
+  buyerSummarySource: text("buyer_summary_source"),           // ai | broker | basic
+  buyerSummaryStatus: text("buyer_summary_status"),           // pending | drafted | accepted | failed (null = none yet)
+  buyerSummaryHidden: boolean("buyer_summary_hidden").notNull().default(false),
+  buyerSummaryAt: timestamp("buyer_summary_at"),
+  prepared: jsonb("prepared").$type<import("./vdr").VdrPrepared>(),
+  checkedAt: timestamp("checked_at"),                          // §4.9 "I've checked it"
+  checkedBy: varchar("checked_by"),
+  checkedFlags: jsonb("checked_flags").$type<string[]>(),
+  checkedForFile: text("checked_for_file"),                    // prepared.forFile at the time of the tick
+  fileVersion: integer("file_version").notNull().default(1),
+  fileChangedAt: timestamp("file_changed_at"),
+  removedAt: timestamp("removed_at"),
+  removedReason: text("removed_reason"),                       // source_deleted | seller_removed | made_private | broker
+  replacedByItemId: varchar("replaced_by_item_id"),
+  replacesItemId: varchar("replaces_item_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("vdr_items_deal_folder_idx").on(t.dealId, t.folderId, t.position),
+  uniqueIndex("vdr_items_document_live_uq").on(t.documentId).where(sql`${t.documentId} IS NOT NULL AND ${t.removedAt} IS NULL`),
+]);
+export type VdrItem = typeof vdrItems.$inferSelect;
+export type InsertVdrItem = typeof vdrItems.$inferInsert;
+
+/** Who may open an item: an access level or one buyer (by email), allow or deny. */
+export const vdrShares = pgTable("vdr_shares", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  itemId: varchar("item_id").notNull(),
+  audience: text("audience").notNull(),                        // level | buyer
+  accessLevel: text("access_level"),                           // audience = level: normalizeAccessLevel() output
+  buyerEmail: text("buyer_email"),                             // audience = buyer: buyerKey(email) (V17)
+  viaAccessId: varchar("via_access_id"),                       // the link the broker picked (display only)
+  effect: text("effect").notNull().default("allow"),           // allow | deny (deny only with audience = buyer)
+  createdBy: varchar("created_by"),                            // users.id | "plan" | "demo-seed"
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("vdr_shares_item_level_uq").on(t.itemId, t.accessLevel).where(sql`${t.audience} = 'level'`),
+  uniqueIndex("vdr_shares_item_buyer_uq").on(t.itemId, t.buyerEmail).where(sql`${t.audience} = 'buyer'`),
+  index("vdr_shares_deal_idx").on(t.dealId),
+  index("vdr_shares_deal_buyer_idx").on(t.dealId, t.buyerEmail),
+]);
+export type VdrShare = typeof vdrShares.$inferSelect;
+export type InsertVdrShare = typeof vdrShares.$inferInsert;
+
+/** Per buyer (by email) per deal: room access, downloads, visit stamps (V17). */
+export const vdrBuyerSettings = pgTable("vdr_buyer_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),   // surrogate key: schema.ts uses no composite keys today
+  dealId: varchar("deal_id").notNull(),
+  buyerEmail: text("buyer_email").notNull(),                   // buyerKey(email)
+  roomAccess: text("room_access").notNull().default("auto"),   // auto | on | off
+  allowDownloads: boolean("allow_downloads").notNull().default(false),
+  lastVisitAt: timestamp("last_visit_at"),
+  previousVisitAt: timestamp("previous_visit_at"),
+  updatedBy: varchar("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [uniqueIndex("vdr_buyer_settings_deal_buyer_uq").on(t.dealId, t.buyerEmail)]);
+export type VdrBuyerSettings = typeof vdrBuyerSettings.$inferSelect;
+export type InsertVdrBuyerSettings = typeof vdrBuyerSettings.$inferInsert;
+
+/** A buyer's request for a document (or for the room). */
+export const vdrRequests = pgTable("vdr_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  buyerAccessId: varchar("buyer_access_id").notNull(),         // the principal's link
+  buyerEmail: text("buyer_email").notNull(),
+  teamMemberId: varchar("team_member_id"),                     // set when a team member asked
+  listId: varchar("list_id"),                                  // groups a pasted list
+  kind: text("kind").notNull(),                                // document | room_access (team requests live in vdr_team_members)
+  itemId: varchar("item_id"),
+  documentId: varchar("document_id"),                          // a DD citation's document (never echoed to the buyer)
+  text: text("text").notNull(),                                // ≤ 500 chars
+  status: text("status").notNull().default("open"),            // open | asked_seller | ready_to_share | shared | declined
+  requirementId: varchar("requirement_id"),
+  readyDocumentId: varchar("ready_document_id"),               // the seller upload that answers it
+  brokerNote: text("broker_note"),                             // shown to the buyer
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: varchar("resolved_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("vdr_requests_deal_status_idx").on(t.dealId, t.status),
+  index("vdr_requests_buyer_idx").on(t.dealId, t.buyerEmail),
+  index("vdr_requests_requirement_idx").on(t.requirementId),
+]);
+export type VdrRequest = typeof vdrRequests.$inferSelect;
+export type InsertVdrRequest = typeof vdrRequests.$inferInsert;
+
+/** One opening of a document. The id is SERVER-issued (POST …/views/start). */
+export const vdrViews = pgTable("vdr_views", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  buyerAccessId: varchar("buyer_access_id").notNull(),
+  buyerEmail: text("buyer_email").notNull(),
+  teamMemberId: varchar("team_member_id"),
+  itemId: varchar("item_id").notNull(),
+  documentId: varchar("document_id"),
+  fileVersion: integer("file_version").notNull().default(1),
+  trace: text("trace").notNull(),                              // 6 chars, §9.7; unique per deal in practice
+  source: text("source"),                                      // room | search | new | cim | question | preview | demo
+  startedAt: timestamp("started_at").defaultNow().notNull(),
+  lastSeenAt: timestamp("last_seen_at").defaultNow().notNull(),
+  activeMs: integer("active_ms").notNull().default(0),
+  pageMs: jsonb("page_ms").$type<Record<string, number>>().default(sql`'{}'::jsonb`), // "3" → ms; "s:<sheet>" for sheets
+  maxPage: integer("max_page"),
+  deviceClass: text("device_class"),                           // desktop | tablet | phone
+  downloaded: boolean("downloaded").notNull().default(false),
+}, (t) => [
+  index("vdr_views_deal_seen_idx").on(t.dealId, t.lastSeenAt),
+  index("vdr_views_buyer_idx").on(t.dealId, t.buyerEmail),
+  index("vdr_views_item_idx").on(t.itemId),
+  index("vdr_views_trace_idx").on(t.dealId, t.trace),
+]);
+export type VdrView = typeof vdrViews.$inferSelect;
+export type InsertVdrView = typeof vdrViews.$inferInsert;
+
+/** Append-only audit log. No update/delete route; removed only with the deal. */
+export const vdrActivity = pgTable("vdr_activity", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  at: timestamp("at").defaultNow().notNull(),
+  actorKind: text("actor_kind").notNull(),                     // broker | buyer | team | seller | system
+  actorId: varchar("actor_id"),                                // users.id | buyer_access.id | vdr_team_members.id | seller_invites.id
+  action: text("action").notNull(),                            // VdrAction (shared/vdr.ts)
+  itemId: varchar("item_id"),
+  folderId: varchar("folder_id"),
+  buyerEmail: text("buyer_email"),                             // the buyer acted on / acting
+  detail: jsonb("detail"),                                     // small, no document text
+  ipHash: text("ip_hash"),                                     // keyed HMAC (as buyer_visits.ip_hash); never the raw IP
+}, (t) => [
+  index("vdr_activity_deal_at_idx").on(t.dealId, t.at),
+  index("vdr_activity_item_idx").on(t.itemId),
+  index("vdr_activity_buyer_idx").on(t.dealId, t.buyerEmail),
+]);
+export type VdrActivity = typeof vdrActivity.$inferSelect;
+export type InsertVdrActivity = typeof vdrActivity.$inferInsert;
+
+/** Text of the SERVED file (covered, hidden words dropped), per page or chunk — search + locating figures. */
+export const vdrPageText = pgTable("vdr_page_text", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  itemId: varchar("item_id").notNull(),
+  page: integer("page").notNull(),                             // PDF page; sheet chunk ordinal; 1 for docx/text
+  label: text("label").notNull(),                              // "Page 3" | "Sheet 'Customers', rows 1–1,000"
+  text: text("text").notNull(),                                // ≤ 200 KB per row
+  forFile: text("for_file").notNull(),                         // prepared.forFile it was built from
+}, (t) => [
+  uniqueIndex("vdr_page_text_item_page_uq").on(t.itemId, t.page),
+  index("vdr_page_text_deal_idx").on(t.dealId),
+]);
+export type VdrPageText = typeof vdrPageText.$inferSelect;
+export type InsertVdrPageText = typeof vdrPageText.$inferInsert;
+
+/** A buyer's team member (V18). The token is stored hashed. */
+export const vdrTeamMembers = pgTable("vdr_team_members", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  principalEmail: text("principal_email").notNull(),           // buyerKey of the buyer they work for
+  addedViaAccessId: varchar("added_via_access_id").notNull(),
+  name: text("name").notNull(),                                // ≤ 120
+  email: text("email").notNull(),                              // lower-cased
+  role: text("role").notNull(),                                // accountant | lawyer | lender | adviser | colleague
+  status: text("status").notNull().default("requested"),       // requested | active | declined | removed
+  tokenHash: text("token_hash"),                               // sha256(token) hex; set when activated
+  ackAt: timestamp("ack_at"),
+  ackName: text("ack_name"),
+  ackIpHash: text("ack_ip_hash"),
+  lastVisitAt: timestamp("last_visit_at"),
+  previousVisitAt: timestamp("previous_visit_at"),
+  linkSentAt: timestamp("link_sent_at"),
+  createdBy: text("created_by").notNull(),                     // broker | buyer
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("vdr_team_members_token_uq").on(t.tokenHash).where(sql`${t.tokenHash} IS NOT NULL`),
+  uniqueIndex("vdr_team_members_deal_email_uq").on(t.dealId, t.principalEmail, t.email),
+]);
+export type VdrTeamMember = typeof vdrTeamMembers.$inferSelect;
+export type InsertVdrTeamMember = typeof vdrTeamMembers.$inferInsert;

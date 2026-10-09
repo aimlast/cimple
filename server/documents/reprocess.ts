@@ -24,6 +24,7 @@
  * The broker's endpoint runs it as a background job (reprocess-jobs.ts).
  */
 import { isTogetherSitting } from "../together/transcript";
+import { isImageMime } from "@shared/vdr";
 import fs from "fs";
 import { storage } from "../storage";
 import { extractTextWithPages, isPdfSource } from "./parser";
@@ -145,6 +146,18 @@ export function _setReprocessRetryDelaysForTests(delays: number[] | null): void 
   _setExtractionRetryDelaysForTests(delays);
 }
 
+/** A data-room file the broker chose to store without reading (`sourceMeta.readSkipped`, server/documents/upload.ts). */
+export function storedOnlySource(doc: { sourceMeta?: unknown }): boolean {
+  return !!(doc.sourceMeta as DocumentSourceMeta | null)?.readSkipped;
+}
+
+/** "Read again" on one stored-only source: the broker now wants it read, so the choice is cleared (null = nothing to clear). */
+export function clearStoredOnly(meta: DocumentSourceMeta | null | undefined): DocumentSourceMeta | null {
+  if (!meta?.readSkipped) return null;
+  const { readSkipped: _skipped, ...rest } = meta;
+  return rest as DocumentSourceMeta;
+}
+
 export async function reprocessDealDocuments(
   dealId: string,
   onProgress?: (p: ReprocessProgress) => void,
@@ -183,6 +196,11 @@ export async function reprocessDealDocuments(
     // An "Interview together" transcript is replay-only: what the session filed
     // (guarded, minus what was undone) is replayed, never read again from its text.
     if (isTogetherSitting(doc)) return { data: stored, freshText: null };
+    // The data room (INTEGRATION §2.17): a picture is never read (no text, and
+    // Cimple never sends pictures to the AI); a file the broker chose to "Just
+    // store in the data room" keeps what it had until they ask for that one
+    // source ("Read again" clears the choice before this job starts).
+    if (isImageMime(doc.mimeType) || storedOnlySource(doc)) return { data: stored, freshText: null };
 
     let text: string | null = null;
     // How the text was laid out (a PDF's pages) — tells a scan from a readable file.

@@ -14,7 +14,9 @@
  *  - auto-grant Blind CIM with the CIM live → granted at once, grantedBy auto,
  *    no buyer email; with the CIM not live → left pending;
  *  - the broker's notice uses buyer_approval_requested with escaped values;
- *  - NOTIFICATION_ROUTING is unchanged (snapshot).
+ *  - NOTIFICATION_ROUTING is unchanged (snapshot) apart from the additive
+ *    keys INTEGRATION §4.3 / §8 Q21 sanctions for gl and vdr (no existing
+ *    event's recipients change; the teaser adds none).
  *
  *   DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=disabled npx tsx tests/unit/teaser-grant.test.ts
  */
@@ -214,11 +216,18 @@ async function main() {
 
   await check("NOTIFICATION_ROUTING is unchanged (snapshot)", async () => {
     const { NOTIFICATION_ROUTING } = await import("../../shared/schema");
-    const digest = createHash("sha256").update(JSON.stringify(NOTIFICATION_ROUTING)).digest("hex").slice(0, 16);
+    // The keys other streams may ADD (never change an existing one): gl's two, vdr's one (merged at release step 6).
+    const added = Object.keys(NOTIFICATION_ROUTING).filter((k) => SANCTIONED_ADDITIONS.includes(k));
+    const base = Object.fromEntries(Object.entries(NOTIFICATION_ROUTING).filter(([k]) => !SANCTIONED_ADDITIONS.includes(k)));
+    const digest = createHash("sha256").update(JSON.stringify(base)).digest("hex").slice(0, 16);
     assert.ok(!("teaser_request" in NOTIFICATION_ROUTING) && !("buyer_asked_for_cim" in NOTIFICATION_ROUTING));
     assert.ok("buyer_approval_requested" in NOTIFICATION_ROUTING);
-    console.log(`    (routing digest ${digest})`);
+    console.log(`    (routing digest ${digest}; sanctioned additions present: ${added.join(", ") || "none"})`);
     assert.equal(digest, ROUTING_DIGEST, "NOTIFICATION_ROUTING changed — the teaser must not touch it");
+    const routing = NOTIFICATION_ROUTING as Record<string, { teams: string[]; roles: string[] }>;
+    if ("seller_document_request" in routing) {
+      assert.deepEqual(routing.seller_document_request, { teams: ["seller"], roles: ["owner", "representative", "accountant"] }, "vdr's key as INTEGRATION §4.3 lists it");
+    }
   });
 
   await h.close();
@@ -227,6 +236,8 @@ async function main() {
 }
 /** sha256 of JSON.stringify(NOTIFICATION_ROUTING) at the base (c12adfb), first 16 hex. */
 const ROUTING_DIGEST = "3dc6390740ad9e4c";
+/** INTEGRATION §4.3 / §8 Q21: the only keys a later stream may add (gl: 2, vdr: 1), each additive. */
+const SANCTIONED_ADDITIONS = ["seller_gl_request", "gl_needs_broker", "seller_document_request"];
 main().catch((err) => {
   console.error(err);
   process.exit(1);

@@ -16,6 +16,7 @@ import { formatReadingTime } from "@shared/analytics-v2";
 import { useEngagementBuyers } from "@/hooks/useEngagement";
 import { PageStrip, StatusChip, stripScale } from "@/components/engagement/buyers/parts";
 import { AccessLevelSelect } from "@/components/cim-builder/AccessLevelSelect";
+import { useDdRoomNudge } from "@/components/vdr/cim-slots";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -28,6 +29,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Clock, ThumbsUp, ThumbsDown, Timer, MoreHorizontal, Link2, CalendarPlus, Ban, UserPlus, Send, Lock, Target,
   ChevronDown, ChevronRight,
+  FolderLock,
 } from "lucide-react";
 import type { AccessFit } from "@shared/buyer-fit";
 import { invalidateBuyerPipeline } from "@/lib/buyer-pipeline";
@@ -154,6 +156,8 @@ export function HaveCimStage({ dealId, published, buyers: allBuyers, revokedBuye
   const qc = useQueryClient();
   const [revokeTarget, setRevokeTarget] = useState<any | null>(null);
   const [fitFor, setFitFor] = useState<any | null>(null);
+  // vdr §5.12: a buyer moved to due diligence → "N documents the DD CIM points to aren't shared yet · Share them".
+  useDdRoomNudge(dealId, buyers);
 
   // How each buyer read the CIM (the reading tracker — the same judgement
   // as the Engagement tab). Enriches the table but isn't essential: degrades quietly.
@@ -301,6 +305,10 @@ export function HaveCimStage({ dealId, published, buyers: allBuyers, revokedBuye
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => setFitFor(r.buyer)}>
           <Target className="h-3.5 w-3.5 mr-2" /> Why this fit?
+        </DropdownMenuItem>
+        {/* Data room (vdr §5.12): this buyer's room access, downloads and what they can see. */}
+        <DropdownMenuItem onClick={() => setLocation(`/deal/${dealId}/data-room?view=buyers&buyer=${encodeURIComponent(r.buyer.id)}`)} data-testid={`menu-data-room-${r.buyer.id}${testIdSuffix}`}>
+          <FolderLock className="h-3.5 w-3.5 mr-2" /> Data room access…
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem className="text-red-500 focus:text-red-500" onClick={() => setRevokeTarget(r.buyer)}>

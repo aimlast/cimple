@@ -402,6 +402,14 @@ export interface HeadsUp {
  * takes both slots.
  */
 export const TEASER_HEADS_UP_ID = "teaser_worth";
+/**
+ * The data room's heads-up line (registered at the vdr merge, the same file):
+ * "{Name} is in the {deal} data room now" while someone reads there, else
+ * "{n} buyers opened the {deal} data room this week" — one line over every
+ * deal, first when present (analytics §3.2).
+ */
+export const VDR_NOW_HEADS_UP_ID = "data_room_now";
+export const VDR_WEEK_HEADS_UP_ID = "data_room_week";
 
 /** The built-in heads-up lines, as a Buyers-tab chip (`?tab=buyers&notice=<id>`). */
 export type NoticeId = "expiring" | "not_opened";

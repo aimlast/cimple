@@ -9,7 +9,7 @@
  * Falls back to legacy cimContent text if no AI sections exist yet.
  */
 import { useState, useEffect, useRef } from "react";
-import { useParams } from "wouter";
+import { Link, useLocation, useParams } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -38,6 +38,9 @@ import { CimBlockScope, CimBlocksProvider } from "@/components/cim/blocks";
 import { ExpiredTeaserCard, TeaserNotAvailable, TeaserView, type TeaserViewData } from "@/components/buyer/TeaserView";
 import { READING_SHEET_ATTR, useCimReading } from "@/lib/cim-reading";
 import type { ViewRoomReading } from "@shared/analytics-v2";
+import type { ViewRoomDataRoom } from "@shared/vdr-api";
+import { RoomSwitch } from "@/components/vdr/RoomSwitch";
+import { VdrLinkProvider } from "@/components/vdr/VdrLinkContext";
 
 type BuyerDecision = "under_review" | "interested" | "not_interested" | "lapsed";
 
@@ -84,19 +87,27 @@ interface ViewData {
   pendingSections?: number;
   /** Reading analytics: the served version's opaque id + page order (content branch only). */
   reading?: ViewRoomReading;
+  /** The data room (vdr): the header switch and the downloads line. */
+  dataRoom?: ViewRoomDataRoom;
 }
 
 /** A section the buyer's access level doesn't open yet (server sends title only). */
 const isLocked = (s: CimSection) => (s as CimSection & { locked?: boolean }).locked === true;
 
 /** Parse an error body defensively — proxies return HTML during deploys. */
-async function readErrorBody(res: Response): Promise<{ error?: string; code?: string; teaser?: boolean; firm?: string | null }> {
+async function readErrorBody(res: Response): Promise<{ error?: string; code?: string; teaser?: boolean; firm?: string | null; [k: string]: any }> {
   return res.json().catch(() => ({}));
 }
 
 /** A load failure that carries the server's reason code (e.g. not_published) — and whether it's a teaser link. */
 class ViewRoomError extends Error {
-  constructor(message: string, readonly code?: string, readonly teaser = false, readonly firm: string | null = null) {
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly teaser = false,
+    readonly firm: string | null = null,
+    readonly body: Record<string, any> = {},
+  ) {
     super(message);
   }
 }
@@ -126,9 +137,14 @@ function Watermark({ email }: { email: string }) {
 // ── Main component ─────────────────────────────────────────────────────────
 export default function BuyerViewRoom() {
   const { token } = useParams<{ token: string }>();
+  const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const [timeOnPage, setTimeOnPage] = useState(0);
   const [localDecision, setLocalDecision] = useState<BuyerDecision | null>(null);
+  // A data-room document open beside the CIM (VdrViewerDrawer). While it is
+  // open the CIM reading tracker is paused (those seconds count as away, never
+  // reading) and each document opened records "vdr_open" (INTEGRATION §2.4).
+  const [roomDrawerOpen, setRoomDrawerOpen] = useState(false);
   const startTimeRef = useRef(Date.now());
 
   const { data, isLoading, error } = useQuery<ViewData & Partial<Pick<TeaserViewData, "document">>>({
@@ -138,7 +154,7 @@ export default function BuyerViewRoom() {
       const res = await fetch(`/api/view/${token}`);
       if (!res.ok) {
         const body = await readErrorBody(res);
-        throw new ViewRoomError(body.error || "Access denied", body.code, body.teaser === true, body.firm ?? null);
+        throw new ViewRoomError(body.error || "Access denied", body.code, body.teaser === true, body.firm ?? null, body);
       }
       return res.json();
     },
@@ -161,6 +177,7 @@ export default function BuyerViewRoom() {
     accessId: data?.access?.id,
     reading: data?.reading ?? null,
     enabled: hasContent && !data?.ndaGate && !data?.preparing && !data?.updating,
+    paused: roomDrawerOpen,
   });
 
   // Timer
@@ -182,6 +199,12 @@ export default function BuyerViewRoom() {
         <Skeleton className="h-[500px] w-full" />
       </div>
     );
+  }
+
+  // A buyer's team member's link: their data room (never the memorandum).
+  if (error instanceof ViewRoomError && error.code === "team_link" && typeof error.body.redirect === "string" && error.body.redirect.startsWith("/view/")) {
+    setTimeout(() => setLocation(error.body.redirect, { replace: true }), 0);
+    return null;
   }
 
   // A teaser link (INTEGRATION §2.4, before every CIM branch): an expired
@@ -210,6 +233,13 @@ export default function BuyerViewRoom() {
           <Clock className="h-8 w-8 mx-auto text-muted-foreground/60" />
           <h2 className="text-lg font-semibold">Not available yet</h2>
           <p className="text-sm text-muted-foreground">Your broker will let you know as soon as this CIM is ready to view.</p>
+          {error.body?.dataRoom?.available && (
+            <div className="pt-2">
+              <Button asChild size="sm" data-testid="view-room-open-data-room">
+                <Link href={`/view/${token}/data-room`}>Open the data room</Link>
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -323,6 +353,9 @@ export default function BuyerViewRoom() {
               </p>
             </div>
           </div>
+          {data.dataRoom?.available && (
+            <RoomSwitch token={token!} active="memo" newCount={data.dataRoom.newCount} className="hidden md:inline-flex" />
+          )}
           <div className="flex items-center gap-3">
             <p className="text-xs text-muted-foreground hidden sm:block">{access.buyerEmail}</p>
             <span className="flex items-center gap-1.5 text-xs text-muted-foreground border border-border rounded-full px-2.5 py-1">
@@ -331,6 +364,11 @@ export default function BuyerViewRoom() {
             </span>
           </div>
         </div>
+        {data.dataRoom?.available && (
+          <div className="border-t border-border px-4 py-2 md:hidden">
+            <RoomSwitch token={token!} active="memo" newCount={data.dataRoom.newCount} full />
+          </div>
+        )}
       </header>
 
       {/* ── Sticky section nav (appears after scrolling past cover) ────── */}
@@ -383,7 +421,7 @@ export default function BuyerViewRoom() {
                   <span>Access</span>
                   <Badge variant="outline" className="text-[9px] h-4">{buyerFacingLevelLabel(access.accessLevel)}</Badge>
                 </div>
-                {access.canDownload === false && (
+                {(data.dataRoom?.available ? !data.dataRoom.allowDownloads : access.canDownload === false) && (
                   <div className="flex items-center gap-1 text-muted-foreground/60">
                     <Lock className="h-3 w-3" /> No downloads
                   </div>
@@ -393,6 +431,12 @@ export default function BuyerViewRoom() {
           </aside>
 
           {/* ── Main CIM content ─────────────────────────────────────────────── */}
+          {/* Data-room citations (VdrCitationChip) and links inside the CIM open beside it (vdr §6.6). */}
+          <VdrLinkProvider source={{ kind: "buyer", token: token! }} onDrawerChange={(open, itemId) => {
+              // Recorded on the page being read, before the pause starts.
+              if (open && itemId) tracker.record("vdr_open", null, undefined, `doc:${itemId}`);
+              setRoomDrawerOpen(open);
+            }}>
           <main className="flex-1 min-w-0">
             {hasAiSections && !!data.pendingSections && (
               <p className="mb-3 text-xs text-muted-foreground flex items-center gap-2" data-testid="view-pending-sections">
@@ -485,6 +529,7 @@ export default function BuyerViewRoom() {
             )}
 
           </main>
+          </VdrLinkProvider>
         </div>
       </div>
 
