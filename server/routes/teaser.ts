@@ -854,7 +854,7 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
         }
       }
       const access = (await storage.getBuyerAccess(g.access.id)) ?? g.access;
-      const result = await ensureTeaserRequest(access, g.deal, { profile: profile as never, note: body.note ?? null, emailCheck: check.method }, {
+      const result = await ensureTeaserRequest(access, g.deal, { profile: profile as never, note: body.note ?? null, emailCheck: check.method, linkName: g.access.buyerName ?? null }, {
         autoGrantLevel: g.row.autoGrant,
         autoGrant: deps.grant
           ? async (request, level) => {

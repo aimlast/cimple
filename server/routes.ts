@@ -5280,7 +5280,7 @@ Return JSON only.`,
           const { getDealTeaser } = await import("./teaser/store");
           const teaserRow = await getDealTeaser(ndaDeal.id);
           const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
-          const result = await ensureTeaserRequest(recorded, ndaDeal, { profile, signerName, emailCheck: teaserEmailCheck }, {
+          const result = await ensureTeaserRequest(recorded, ndaDeal, { profile, signerName, emailCheck: teaserEmailCheck, linkName: access.buyerName ?? null }, {
             autoGrantLevel: teaserRow?.autoGrant ?? "off",
             autoGrant: async (request, level) => {
               await grantApprovedBuyer(request, ndaDeal, baseUrl, {}, { grantedBy: "auto", notifyBuyer: false, level });
@@ -6079,9 +6079,8 @@ Return JSON only.`,
       const deal = await storage.getDeal(dealId);
       if (!deal || !dealPublishedForBuyers(deal)) return 0;
       // Approved by the seller, or given by the broker while the CIM wasn't live (approved_waiting_publish).
-      const waiting = (await storage.getBuyerApprovalRequestsByDeal(dealId)).filter(
-        (r) => (r.status === "approved_by_seller" || r.status === "approved_waiting_publish") && !r.grantedBuyerAccessId,
-      );
+      const { waitingForPublish } = await import("./teaser/requests");
+      const waiting = (await storage.getBuyerApprovalRequestsByDeal(dealId)).filter(waitingForPublish);
       let granted = 0;
       for (const request of waiting) {
         try {

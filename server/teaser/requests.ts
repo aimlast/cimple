@@ -24,6 +24,15 @@ export const TEASER_REQUEST_SOURCE = "teaser_request";
 /** Statuses where the request is still with the broker or the seller. */
 export const OPEN_REQUEST_STATUSES = new Set(["pending_broker_review", "approved_by_broker", "pending_seller_review", "approved_by_seller", "approved_waiting_publish"]);
 
+/**
+ * Approved while the CIM wasn't live — granted at publish (grantWaitingApprovals):
+ * the seller's approval (approved_by_seller) or the broker's "Give access"
+ * (approved_waiting_publish), not yet given.
+ */
+export function waitingForPublish(r: { status: string; grantedBuyerAccessId?: string | null }): boolean {
+  return (r.status === "approved_by_seller" || r.status === "approved_waiting_publish") && !r.grantedBuyerAccessId;
+}
+
 export class TeaserRequestError extends Error {
   constructor(public status: 400 | 403 | 404 | 409, message: string, public code: string) {
     super(message);
@@ -118,6 +127,8 @@ export interface EnsureRequestInput {
   note?: string | null;
   signerName?: string | null;
   emailCheck: "code" | "account" | "demo";
+  /** The name the broker sent the link to, read BEFORE the NDA/profile step rewrote the row. */
+  linkName?: string | null;
 }
 
 export interface EnsureRequestDeps {
@@ -158,12 +169,13 @@ export async function ensureTeaserRequest(
     const nda = ((fresh.ndaProfile as Record<string, unknown> | null) ?? {}) as Partial<NdaBuyerProfile> & { signature?: { signerName?: string } };
     const profile = (input.profile ?? nda) as Partial<NdaBuyerProfile>;
     const signerName = input.signerName ?? nda.signature?.signerName ?? profile.name ?? null;
+    const linkName = input.linkName !== undefined ? input.linkName : fresh.buyerName ?? null;
     const info: TeaserRequestInfo = {
-      linkName: fresh.buyerName ?? null,
+      linkName,
       linkEmail: fresh.buyerEmail,
       signerName,
       emailCheck: input.emailCheck,
-      mismatch: namesMismatch(fresh.buyerName, signerName),
+      mismatch: namesMismatch(linkName, signerName),
     };
     const category = categoryFor(profile as NdaBuyerProfile);
     const hasProof = profile.proofOfFunds === "yes";
