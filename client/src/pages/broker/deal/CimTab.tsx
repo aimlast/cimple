@@ -12,7 +12,7 @@
  * Other streams add only through the slots in ./cim-tab-slots.tsx — tile
  * lines, tabs, Versions-card extras, attention rows, publish notes.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -193,6 +193,18 @@ export function CimTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!data, urlView]);
 
+  // On a phone the tabs scroll sideways: keep the open one in view (e.g. a link straight to Numbers & sources).
+  const tabBarRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const bar = tabBarRef.current;
+    const active = bar?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+    if (!bar || !active) return;
+    const b = bar.getBoundingClientRect();
+    const a = active.getBoundingClientRect();
+    if (a.left < b.left) bar.scrollLeft -= b.left - a.left + 16;
+    else if (a.right > b.right) bar.scrollLeft += a.right - b.right + 16;
+  }, [view, !!data]);
+
   if (isLoading) {
     return (
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-4" data-testid="cim-tab-loading">
@@ -342,7 +354,7 @@ export function CimTab() {
       </section>
 
       {/* Tabs */}
-      <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+      <div ref={tabBarRef} className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
         <div role="tablist" aria-label="CIM" className="inline-flex min-w-full gap-1 rounded-lg border border-border bg-muted/30 p-1 sm:min-w-0" data-testid="cim-tab-views">
           {tabs.map((t) => (
             <button
