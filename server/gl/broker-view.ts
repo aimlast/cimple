@@ -12,7 +12,7 @@ import { brokerCellWords, payDocWords, PROOF_LABEL, type GlProofKind } from "@sh
 import { glStore } from "./store";
 import { gateFrom, type GlGate } from "./gate";
 import { tieOutWords, tieOutSummary } from "./tie-out";
-import { possibleAddbacks, type PossibleAddback } from "./discover";
+import { ONE_OFF_TERMS, possibleAddbacks, possibleOneOffs, type PossibleAddback } from "./discover";
 import type { GlDealContext } from "./context";
 import { glSellerEvent } from "./notify";
 import { assistantWords, glAssistantState } from "./rank-ai";
@@ -54,6 +54,8 @@ export interface BrokerTraceView {
   proposedYears: string[];
   /** What Cimple's assistant is doing (or did) for this add-back, in words (null = nothing). */
   assistant: { state: string; words: string } | null;
+  /** An add-back no longer in the analysis whose ticked entries look like they belong here ("Move the ticked entries to…"). */
+  moveFrom: { traceId: string; label: string; count: number } | null;
 }
 
 export interface GlRecipient { id: string; name: string | null; email: string; role: string; via: "members" | "seller_invite"; muted: boolean }
@@ -113,6 +115,7 @@ export function brokerTraceView(t: GlAddbackTrace, links: GlTraceLink[], docShor
     question: (t.question as any) ?? null, brokerVerdict: t.brokerVerdict, reviewedAt: iso(t.reviewedAt), brokerNote: t.brokerNote, brokerNoteShown: t.brokerNoteShown,
     buyerReason: t.buyerReason, leftOut: (t.leftOut as any) ?? null, includeInCim: t.includeInCim, computed, cells, proposedYears,
     assistant: (() => { const a = glAssistantState(t.id); const words = assistantWords(a); return a && words ? { state: a.state, words } : null; })(),
+    moveFrom: null,
   };
 }
 
@@ -125,6 +128,42 @@ export async function glRecipients(dealId: string, members?: DealMember[], invit
     const m = ms.find((x) => x.id === r.recipientId);
     return { id: r.recipientId, name: r.name, email: r.email, role: m?.role ?? "owner", via: r.via, muted: !!r.muted };
   });
+}
+
+const LABEL_STOP = new Set(["the", "and", "for", "owner", "owners", "expenses", "expense", "costs", "cost", "personal", "one", "time"]);
+const labelWords = (l: string) => new Set(l.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !LABEL_STOP.has(w)));
+
+/**
+ * A removed add-back (renamed by a re-run of the analysis) whose ticked
+ * entries look like they belong to this one: similar words in the label
+ * (half or more shared) and a claimed year in common (pure).
+ */
+export function moveSuggestion(t: Pick<GlAddbackTrace, "id" | "label" | "claims">, removed: Array<Pick<GlAddbackTrace, "id" | "label">>, links: Array<Pick<GlTraceLink, "traceId" | "state" | "fiscalYear">>): { traceId: string; label: string; count: number } | null {
+  const mine = labelWords(t.label);
+  const years = new Set(Object.keys((t.claims as Record<string, number>) ?? {}));
+  let best: { traceId: string; label: string; count: number; score: number } | null = null;
+  for (const r of removed) {
+    const theirs = labelWords(r.label);
+    const shared = Array.from(mine).filter((w) => theirs.has(w)).length;
+    const score = shared / Math.max(1, Math.min(mine.size, theirs.size));
+    if (score < 0.5) continue;
+    const count = links.filter((k) => k.traceId === r.id && k.state === "confirmed" && years.has(k.fiscalYear)).length;
+    if (count === 0) continue;
+    if (!best || score > best.score) best = { traceId: r.id, label: r.label, count, score };
+  }
+  return best ? { traceId: best.traceId, label: best.label, count: best.count } : null;
+}
+
+/** Large one-off legal or settlement entries no add-back holds (rules only). */
+async function oneOffsFor(c: GlDealContext, links: GlTraceLink[]): Promise<PossibleAddback[]> {
+  if (c.ready.length === 0) return [];
+  const store = glStore();
+  const linked = new Set(links.filter((k) => k.ledgerId && (k.state === "confirmed" || k.state === "proposed")).map((k) => `${k.ledgerId}:${k.rowNo}`));
+  const rows = [];
+  for (const y of Array.from(c.yearsAll).sort().slice(-4)) {
+    rows.push(...(await store.candidateRows({ dealId: c.dealId, fiscalYear: y, ledgerIds: Array.from(c.readyIds), accountKeys: [], terms: ONE_OFF_TERMS, amounts: [], limit: 300 })));
+  }
+  return possibleOneOffs(rows, linked);
 }
 
 /** The panel's payload (needs the deal's context; syncing is the caller's step). */
@@ -178,14 +217,18 @@ export async function buildBrokerView(c: GlDealContext): Promise<BrokerGlView> {
       requireBeforeCim: tr.requireBeforeCim,
       publishedAt: iso(tr.publishedAt),
     },
-    traces: live.map((t) => brokerTraceView(t, links, pay.short)),
+    traces: live.map((t) => {
+      const v = brokerTraceView(t, links, pay.short);
+      const removed = traces.filter((x) => x.removedAt);
+      return removed.length ? { ...v, moveFrom: moveSuggestion(t, removed, links) } : v;
+    }),
     tieOut: { years, summary: tieOutSummary(tieOut, accepted) },
     gate: gateFrom(tr, traces, { confirmedLinks: links.filter((k) => k.state === "confirmed").length }),
     seller: primary ? { name: primary.sellerName ?? null, email: primary.sellerEmail ?? null } : null,
     sellerLastActiveAt: last ? new Date(last).toISOString() : null,
     recipients: await glRecipients(c.dealId, members, invites),
     suggestions: ((tr.sellerSuggestions as GlSellerSuggestion[] | null) ?? []).filter((s) => s.status === "new"),
-    possible: possibleAddbacks(totals, covered),
+    possible: [...possibleAddbacks(totals, covered), ...(await oneOffsFor(c, links))],
     payDoc: pay,
     demo: !!c.deal?.demoKey,
     buyers,

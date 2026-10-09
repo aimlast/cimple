@@ -36,7 +36,7 @@ import { refreshGl } from "../gl/service";
 import { loadGlContext } from "../gl/context";
 import { buildBrokerView } from "../gl/broker-view";
 import { registerGlBrokerRoutes } from "../gl/routes-broker";
-import { registerGlSellerRoutes, sellerBooksPayload, SUPPORT_MAX_BYTES } from "../gl/routes-seller";
+import { receiveSupportFile, registerGlSellerRoutes, saveSupportDocument, sellerBooksPayload, SUPPORT_MAX_BYTES } from "../gl/routes-seller";
 import { registerGlBuyerRoutes } from "../gl/routes-buyer";
 // The assistant's two jobs install themselves on load: the column mapper (ledger reader) and the ranker (proposal run).
 import "../gl/map-columns-ai";
@@ -577,6 +577,30 @@ export function registerGlRoutes(app: Express): void {
   // ── Pass 2: the add-backs (broker and seller) ──
   registerGlBrokerRoutes(app);
   registerGlSellerRoutes(app, { supportGate: glUploadGate("seller", SUPPORT_MAX_BYTES) });
+  // The broker uploads a supporting document (a T4, an invoice) from the add-back's drawer — like the seller can.
+  app.post(
+    "/api/deals/:dealId/gl/traces/:traceId/support-docs",
+    requireBroker,
+    requireOwnedDeal,
+    glUploadGate("broker", SUPPORT_MAX_BYTES),
+    receiveSupportFile(),
+    async (req, res) => {
+      const cleanup = () => { if (req.file?.path) fs.unlink(req.file.path, () => {}); };
+      try {
+        const t = await glStore().getTrace(String(req.params.traceId));
+        if (!t || t.dealId !== String(req.params.dealId) || t.removedAt) { cleanup(); return res.status(404).json({ error: "Add-back not found" }); }
+        if (!req.file) return res.status(400).json({ error: (req as any).glRejected ? "Upload a PDF, a photo (JPG or PNG) or a spreadsheet." : "Choose the document to upload." });
+        const r = await saveSupportDocument({ dealId: t.dealId, trace: t, file: req.file, body: req.body, by: "broker", memberId: null });
+        if ("error" in r) { cleanup(); return res.status(400).json({ error: r.error }); }
+        res.json({ ok: true, documentId: r.documentId });
+      } catch (err) {
+        cleanup();
+        console.error("[gl] broker support upload failed:", err);
+        if (!res.headersSent) res.status(500).json({ error: "Couldn't upload the document — try again." });
+      }
+    },
+  );
+
   // ── Pass 3: buyers ("Ask about this entry"; the ledger rows are served by the data room through viewer.ts) ──
   registerGlBuyerRoutes(app);
 

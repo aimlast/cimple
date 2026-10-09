@@ -63,6 +63,8 @@ export interface BrokerTrace {
   proposedYears: string[];
   /** What Cimple's assistant is doing (or did) for this add-back, in words. */
   assistant?: { state: string; words: string } | null;
+  /** A removed add-back whose ticked entries look like they belong here. */
+  moveFrom?: { traceId: string; label: string; count: number } | null;
 }
 
 export interface GlRecipient { id: string; name: string | null; email: string; role: string; via: "members" | "seller_invite"; muted: boolean }

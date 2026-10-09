@@ -117,6 +117,12 @@ export interface GlStore {
    * the masked view.
    */
   buyerSearchRows(q: { ledgerId: string; fy?: string | null; accountKey?: string | null; q: string; limit?: number }): Promise<GlTransaction[]>;
+  /**
+   * "Move the ticked entries to…" (an add-back renamed by a re-run of the
+   * analysis): the decided links of `from` for these years move to `to`;
+   * a proposal on `to` for the same entry gives way. Returns how many moved.
+   */
+  moveDecidedLinks(fromTraceId: string, toTraceId: string, years: string[]): Promise<number>;
   /** The atomic AI budget reservation (§7.4): true when this call fits today's cap. */
   reserveAi(dealId: string, kind: GlAiKind, cap: number, day: string): Promise<boolean>;
 }
@@ -572,6 +578,25 @@ export const pgStore: GlStore = {
     parts.push(sql`(${never} OR ${words})`);
     return db.select().from(glTransactions).where(and(...parts)).orderBy(asc(glTransactions.rowNo)).limit(Math.min(q.limit ?? 2000, 2000));
   },
+  async moveDecidedLinks(fromTraceId, toTraceId, years) {
+    if (years.length === 0) return 0;
+    const db = await pgDb();
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`
+        DELETE FROM gl_trace_links t
+        WHERE t.trace_id = ${toTraceId} AND t.state = 'proposed' AND t.ledger_id IS NOT NULL
+          AND EXISTS (SELECT 1 FROM gl_trace_links f WHERE f.trace_id = ${fromTraceId} AND f.state IN ('confirmed', 'rejected')
+                      AND f.ledger_id = t.ledger_id AND f.row_no = t.row_no AND f.fiscal_year IN (${sql.join(years.map((y) => sql`${y}`), sql`, `)}))`);
+      const res = await tx.execute(sql`
+        UPDATE gl_trace_links f SET trace_id = ${toTraceId}, updated_at = now()
+        WHERE f.trace_id = ${fromTraceId} AND f.state IN ('confirmed', 'rejected') AND f.fiscal_year IN (${sql.join(years.map((y) => sql`${y}`), sql`, `)})
+          AND NOT EXISTS (SELECT 1 FROM gl_trace_links x WHERE x.trace_id = ${toTraceId}
+                          AND ((f.ledger_id IS NOT NULL AND x.ledger_id = f.ledger_id AND x.row_no = f.row_no)
+                            OR (f.document_id IS NOT NULL AND x.document_id = f.document_id AND x.fiscal_year = f.fiscal_year)))
+        RETURNING f.id`);
+      return ((res as unknown as { rowCount?: number | null }).rowCount ?? 0);
+    });
+  },
   async reserveAi(dealId, kind, cap, day) {
     const db = await pgDb();
     // One statement (§7.4): a new UTC day resets all four counters; otherwise only under the cap.
@@ -927,6 +952,19 @@ export function memoryStore(data: MemoryStoreData = { tracing: [], ledgers: [], 
         .filter((t) => has(t.account) || has(t.txnNumber) || (cents !== null && Math.abs(t.amountCents) === Math.abs(cents)) || (!PAYROLL_KEY_RE.test(t.accountKey) && (has(t.name) || has(t.memo))))
         .sort((a, b) => a.rowNo - b.rowNo)
         .slice(0, Math.min(q.limit ?? 2000, 2000));
+    },
+    async moveDecidedLinks(fromTraceId, toTraceId, years) {
+      const decided = data.links.filter((k) => k.traceId === fromTraceId && (k.state === "confirmed" || k.state === "rejected") && years.includes(k.fiscalYear));
+      const same = (a: GlTraceLink, b: GlTraceLink) => (a.ledgerId && a.ledgerId === b.ledgerId && a.rowNo === b.rowNo) || (a.documentId && a.documentId === b.documentId && a.fiscalYear === b.fiscalYear);
+      data.links = data.links.filter((t) => !(t.traceId === toTraceId && t.state === "proposed" && decided.some((f) => f.ledgerId && same(f, t))));
+      let n = 0;
+      for (const f of decided) {
+        if (data.links.some((x) => x.traceId === toTraceId && same(f, x))) continue;
+        f.traceId = toTraceId;
+        f.updatedAt = now();
+        n++;
+      }
+      return n;
     },
     async reserveAi(dealId, kind, cap, day) {
       // Synchronous read-modify-write: the memory twin of the one-statement reservation (no await inside).

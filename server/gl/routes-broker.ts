@@ -438,6 +438,29 @@ export function registerGlBrokerRoutes(app: Express): void {
     }
   });
 
+  // "Move the ticked entries to…": an add-back renamed by a re-run of the analysis keeps the seller's work.
+  app.post("/api/deals/:dealId/gl/traces/:traceId/move-links", ...auth, async (req, res) => {
+    try {
+      const bad = refuseUnknownKeys(req.body, ["fromTraceId"]);
+      if (bad) return res.status(400).json({ error: bad });
+      const t = await ownedTrace(req, res);
+      if (!t) return;
+      const from = await glStore().getTrace(String(req.body?.fromTraceId ?? ""));
+      if (!from || from.dealId !== t.dealId || !from.removedAt) return res.status(404).json({ error: "Those entries couldn't be found." });
+      const years = Object.keys((t.claims as Record<string, number>) ?? {});
+      const moved = await withGlLock(t.dealId, async () => {
+        const n = await glStore().moveDecidedLinks(from.id, t.id, years);
+        const c = await loadGlContext(t.dealId);
+        await proposeUnlocked(t.dealId, [t.id], { ai: "none", force: true }, c);
+        await recomputeTraces(t.dealId, [t.id], c);
+        return n;
+      });
+      res.json({ ok: true, moved });
+    } catch (err) {
+      fail(res, "move the entries")(err);
+    }
+  });
+
   app.put("/api/deals/:dealId/gl/traces/:traceId/links", ...auth, async (req, res) => {
     try {
       const bad = refuseUnknownKeys(req.body, ["fy", "add", "remove", "reject"]);

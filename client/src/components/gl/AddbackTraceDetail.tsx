@@ -24,6 +24,7 @@ import { getJson, glKeys, sendJson, type BrokerEntriesData, type BrokerEntry, ty
 import { invalidateGl } from "@/hooks/useGlStatus";
 import { Pill, dollars, ledgerDate, money, statusTone } from "./gl-ui";
 import { ApplyLedgerAmountDialog } from "./ApplyLedgerAmountDialog";
+import { SupportDocUpload } from "./SupportDocUpload";
 import { accountPath, PROOF_LABEL, VERDICT_WORDS, YEAR_STATUS_WORDS } from "@shared/gl-copy";
 import type { GlYearStatus } from "@shared/gl-types";
 
@@ -33,17 +34,21 @@ const NOT_IN_LEDGER: Record<string, string> = {
   unsure: "the seller isn't sure",
 };
 
-export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, onClose }: {
+export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, payDoc: payDocProp, onClose }: {
   dealId: string;
   trace: BrokerTrace;
   initialYear?: string | null;
   docShort: string;
+  /** The deal's pay documents (T4 slips / W-2 forms / the payroll summary). */
+  payDoc?: { slips: string; short: string; box: string | null };
   onClose: () => void;
 }) {
   const { toast } = useToast();
   const years = Object.keys(trace.claims).filter((y) => /^\d{4}$/.test(y)).sort();
   const [year, setYear] = useState<string>(initialYear && years.includes(initialYear) ? initialYear : years[years.length - 1] ?? "");
   const [more, setMore] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const payDoc = payDocProp ?? { slips: "year-end payroll summary", short: docShort, box: null };
   const [question, setQuestion] = useState("");
   const [verdict, setVerdict] = useState<string>(trace.brokerVerdict ?? trace.computed?.suggestedVerdict ?? "found");
   const [note, setNote] = useState(trace.brokerNote ?? "");
@@ -141,6 +146,24 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, onClo
               : <Pill tone="muted">Being read…</Pill>}
           </div>
         ))}
+        {trace.proof !== "statement" && (
+          uploading ? (
+            <div className="rounded-md border border-border p-3" data-testid="gl-drawer-support-upload">
+              <SupportDocUpload
+                uploadUrl={`/api/deals/${dealId}/gl/traces/${trace.id}/support-docs`}
+                years={years}
+                kind={trace.proof === "payroll" ? "payroll" : trace.proof === "one_off" ? "one_off" : "other"}
+                payDoc={payDoc}
+                onDone={() => { setUploading(false); changed(); toast({ title: "Document added", description: "Cimple looks for the amount in it once it's read." }); }}
+              />
+              <Button size="sm" variant="ghost" className="mt-1 h-8 text-xs" onClick={() => setUploading(false)}>Cancel</Button>
+            </div>
+          ) : (
+            <Button size="sm" variant="ghost" className="h-8 text-xs gap-1.5 -ml-2" onClick={() => setUploading(true)} data-testid="gl-drawer-upload-doc">
+              <FileText className="h-3.5 w-3.5" /> Upload a supporting document ({trace.proof === "payroll" ? payDoc.slips : trace.proof === "one_off" ? "invoice or letter" : "any document"})
+            </Button>
+          )
+        )}
       </section>
 
       {/* The seller's words */}
@@ -156,6 +179,18 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, onClo
             </div>
           )}
         </section>
+      )}
+
+      {trace.moveFrom && (
+        <div className="rounded-lg border border-teal/30 bg-teal/5 p-3 space-y-2" data-testid="gl-move-from">
+          <p className="text-sm">
+            {trace.moveFrom.count} entr{trace.moveFrom.count === 1 ? "y was" : "ies were"} ticked for <strong>"{trace.moveFrom.label}"</strong>, which is no longer in the analysis. They look like they belong here.
+          </p>
+          <Button size="sm" variant="outline" className="h-8 text-xs" disabled={act.isPending}
+            onClick={() => act.mutate({ method: "POST", url: `/api/deals/${dealId}/gl/traces/${trace.id}/move-links`, body: { fromTraceId: trace.moveFrom!.traceId } }, { onSuccess: (r: any) => toast({ title: `${r?.moved ?? 0} entr${r?.moved === 1 ? "y" : "ies"} moved here` }) })}>
+            Move the ticked entries here
+          </Button>
+        </div>
       )}
 
       {trace.assistant && (

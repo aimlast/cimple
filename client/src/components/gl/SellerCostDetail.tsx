@@ -37,6 +37,7 @@ export function SellerCostDetail({ token, cost, year, onYear, onBack, payDoc, pr
   const [offOpen, setOffOpen] = useState(false);
   const [offText, setOffText] = useState(cost.note ?? "");
   const [notInOpen, setNotInOpen] = useState(false);
+  const [notInScope, setNotInScope] = useState<"year" | "all">(cost.years.length > 1 ? "year" : "all");
   const [searchOpen, setSearchOpen] = useState(false);
   const [docOpen, setDocOpen] = useState(cost.proof === "payroll");
   const y = cost.years.find((x) => x.year === year) ?? cost.years[cost.years.length - 1];
@@ -76,6 +77,14 @@ export function SellerCostDetail({ token, cost, year, onYear, onBack, payDoc, pr
   if (!y) return null;
   const last = idx >= cost.years.length - 1;
   const pending = write.isPending || !!preview;
+  // "This isn't in my ledger": for this year only (then on to the next year) or for every year (then back to the list).
+  const notIn = (reason: "personal" | "unsure") => {
+    const yearOnly = notInScope === "year" && cost.years.length > 1;
+    write.mutate(
+      { url: `/api/seller/${token}/gl/traces/${cost.id}/not-in-ledger`, body: { reason, ...(yearOnly ? { fy: y.year } : {}) } },
+      { onSuccess: () => { setNotInOpen(false); if (yearOnly && !last) onYear(cost.years[idx + 1].year); else onBack(); } },
+    );
+  };
 
   return (
     <div className="space-y-5" data-testid="books-cost">
@@ -186,10 +195,22 @@ export function SellerCostDetail({ token, cost, year, onYear, onBack, payDoc, pr
         <div>
           <button type="button" className="text-sm text-teal hover:underline" onClick={() => setNotInOpen((v) => !v)} aria-expanded={notInOpen}>This isn't in my ledger</button>
           {notInOpen && (
-            <div className="mt-2 grid gap-2 sm:grid-cols-3">
-              <Button variant="outline" className="h-auto min-h-10 whitespace-normal text-left justify-start" disabled={pending} onClick={() => write.mutate({ url: `/api/seller/${token}/gl/traces/${cost.id}/not-in-ledger`, body: { reason: "personal" } }, { onSuccess: () => { setNotInOpen(false); onBack(); } })}>I paid it personally, outside the business</Button>
-              <Button variant="outline" className="h-auto min-h-10 whitespace-normal text-left justify-start" onClick={() => { setDocOpen(true); setNotInOpen(false); }}>It's in another document</Button>
-              <Button variant="outline" className="h-auto min-h-10 whitespace-normal text-left justify-start" disabled={pending} onClick={() => write.mutate({ url: `/api/seller/${token}/gl/traces/${cost.id}/not-in-ledger`, body: { reason: "unsure" } }, { onSuccess: () => { setNotInOpen(false); onBack(); } })}>I'm not sure</Button>
+            <div className="mt-2 space-y-2">
+              {cost.years.length > 1 && (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm" role="radiogroup" aria-label="Which years">
+                  <label className="flex items-center gap-1.5 min-h-[32px]">
+                    <input type="radio" name={`notin-${cost.id}`} checked={notInScope === "year"} onChange={() => setNotInScope("year")} /> Only {y.year}
+                  </label>
+                  <label className="flex items-center gap-1.5 min-h-[32px]">
+                    <input type="radio" name={`notin-${cost.id}`} checked={notInScope === "all"} onChange={() => setNotInScope("all")} /> Every year
+                  </label>
+                </div>
+              )}
+              <div className="grid gap-2 sm:grid-cols-3">
+                <Button variant="outline" className="h-auto min-h-10 whitespace-normal text-left justify-start" disabled={pending} onClick={() => notIn("personal")}>I paid it personally, outside the business</Button>
+                <Button variant="outline" className="h-auto min-h-10 whitespace-normal text-left justify-start" onClick={() => { setDocOpen(true); setNotInOpen(false); }}>It's in another document</Button>
+                <Button variant="outline" className="h-auto min-h-10 whitespace-normal text-left justify-start" disabled={pending} onClick={() => notIn("unsure")}>I'm not sure</Button>
+              </div>
             </div>
           )}
         </div>

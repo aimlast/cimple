@@ -57,7 +57,7 @@ export function SuggestionsPanel({ dealId, data }: { dealId: string; data: Broke
       <section className="rounded-lg border border-border bg-card p-3 sm:p-4 space-y-3">
         <div>
           <h4 className="text-sm font-medium">Possible add-backs we noticed in the ledger</h4>
-          <p className="text-xs text-muted-foreground mt-0.5">Accounts that often hold the owner's own costs and that no add-back covers yet.</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Accounts that often hold the owner's own costs, and large one-off legal or settlement payments, that no add-back covers yet.</p>
         </div>
         {possible.length === 0 ? (
           <p className="text-xs text-muted-foreground">{data.ledgers.some((l) => l.status === "ready") ? "Nothing stands out." : "Once a ledger is read, Cimple looks for them."}</p>

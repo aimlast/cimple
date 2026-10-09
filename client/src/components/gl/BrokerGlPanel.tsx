@@ -162,7 +162,7 @@ export function BrokerGlPanel({ dealId, variant = "full" }: { dealId: string; va
             <SheetTitle className="pr-6 break-words">{open?.label}</SheetTitle>
             <SheetDescription>Where this add-back is in the books.</SheetDescription>
           </SheetHeader>
-          {open && <div className="mt-4"><AddbackTraceDetail key={open.id} dealId={dealId} trace={open} initialYear={url.year} docShort={data.payDoc?.short ?? "document"} onClose={() => url.set({ addback: null, year: null })} /></div>}
+          {open && <div className="mt-4"><AddbackTraceDetail key={open.id} dealId={dealId} trace={open} initialYear={url.year} docShort={data.payDoc?.short ?? "document"} payDoc={data.payDoc} onClose={() => url.set({ addback: null, year: null })} /></div>}
         </SheetContent>
       </Sheet>
 

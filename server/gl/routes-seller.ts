@@ -115,7 +115,44 @@ const SUPPORT_EXT = [".pdf", ".jpg", ".jpeg", ".png", ".xlsx", ".xls", ".csv"];
 export const SUPPORT_MAX_BYTES = 15 * 1024 * 1024;
 const uploadsDir = () => process.env.UPLOADS_DIR || path.join(process.cwd(), "public", "uploads");
 
-function receiveSupportFile() {
+/**
+ * A supporting document (a T4, an invoice) for one add-back, from the seller
+ * or the broker: a documents row (addback_support, normal reading), one
+ * confirmed document link per year with the typed amount, the add-back's
+ * numbers recomputed; the amounts are looked for in the text once it is read.
+ */
+export async function saveSupportDocument(input: {
+  dealId: string;
+  trace: GlAddbackTrace;
+  file: { originalname: string; filename: string; size?: number; mimetype?: string };
+  body: Record<string, unknown> | undefined;
+  by: "seller" | "broker";
+  memberId: string | null;
+}): Promise<{ documentId: string } | { error: string }> {
+  const parsed = parseSupportAmounts(input.trace, input.body?.years, input.body?.amounts);
+  if ("error" in parsed) return { error: parsed.error };
+  const name = Buffer.from(input.file.originalname, "latin1").toString("utf8").slice(0, 200);
+  const doc = await storage.createDocument({
+    dealId: input.dealId, uploadedBy: input.by, name, originalName: name, category: "financials", subcategory: "addback_support",
+    fileUrl: `/uploads/docs/${input.file.filename}`, fileSize: input.file.size ?? null, mimeType: input.file.mimetype || null, status: "pending",
+    sourceKind: "document", sourceMeta: { glTraceId: input.trace.id }, visibility: "shared",
+  } as any);
+  const store = glStore();
+  for (const y of parsed.years) {
+    await store.upsertDocLink({
+      traceId: input.trace.id, dealId: input.dealId, fiscalYear: y.year, documentId: doc.id, amountCents: y.cents, docAmountCheck: null,
+      state: "confirmed", proposedBy: input.by === "seller" ? "seller_document" : "broker", decidedBy: input.by, decidedByMember: input.memberId, decidedAt: new Date(),
+    } as any);
+  }
+  if (input.by === "seller" && input.trace.sellerStatus === "not_started") await store.updateTrace(input.trace.id, { sellerStatus: "in_progress" } as Partial<GlAddbackTrace>);
+  await recomputeTraces(input.dealId, [input.trace.id]);
+  // The normal reader reads it; when it's done the amounts are looked for in its text (ingest.ts finally → onGlSupportDocumentRead).
+  const { ingestDocument } = await import("../documents/ingest");
+  void ingestDocument(doc.id).catch((err) => console.error(`[gl] reading support document ${doc.id} failed:`, err));
+  return { documentId: doc.id };
+}
+
+export function receiveSupportFile() {
   const mw = multer({
     storage: multer.diskStorage({
       destination: (_req, _file, cb) => {
@@ -324,30 +361,12 @@ export function registerGlSellerRoutes(app: Express, opts: { supportGate: (req: 
         const found = await sellerTrace(req, res, caller);
         if (!found) return cleanup();
         if (!req.file) return res.status(400).json({ error: (req as any).glRejected ? "Upload a PDF, a photo (JPG or PNG) or a spreadsheet." : "Choose the document to upload." });
-        const parsed = parseSupportAmounts(found.trace, req.body?.years, req.body?.amounts);
-        if ("error" in parsed) {
+        const r = await saveSupportDocument({ dealId: caller.deal.id, trace: found.trace, file: req.file, body: req.body, by: "seller", memberId: caller.memberId });
+        if ("error" in r) {
           cleanup();
-          return res.status(400).json({ error: parsed.error });
+          return res.status(400).json({ error: r.error });
         }
-        const name = Buffer.from(req.file.originalname, "latin1").toString("utf8").slice(0, 200);
-        const doc = await storage.createDocument({
-          dealId: caller.deal.id, uploadedBy: "seller", name, originalName: name, category: "financials", subcategory: "addback_support",
-          fileUrl: `/uploads/docs/${req.file.filename}`, fileSize: req.file.size ?? null, mimeType: req.file.mimetype || null, status: "pending",
-          sourceKind: "document", sourceMeta: { glTraceId: found.trace.id }, visibility: "shared",
-        } as any);
-        const store = glStore();
-        for (const y of parsed.years) {
-          await store.upsertDocLink({
-            traceId: found.trace.id, dealId: caller.deal.id, fiscalYear: y.year, documentId: doc.id, amountCents: y.cents, docAmountCheck: null,
-            state: "confirmed", proposedBy: "seller_document", decidedBy: "seller", decidedByMember: caller.memberId, decidedAt: new Date(),
-          } as any);
-        }
-        if (found.trace.sellerStatus === "not_started") await store.updateTrace(found.trace.id, { sellerStatus: "in_progress" } as Partial<GlAddbackTrace>);
-        await recomputeTraces(caller.deal.id, [found.trace.id]);
-        // The normal reader reads it; when it's done the amounts are looked for in its text (ingest.ts finally → onGlSupportDocumentRead).
-        const { ingestDocument } = await import("../documents/ingest");
-        void ingestDocument(doc.id).catch((err) => console.error(`[gl] reading support document ${doc.id} failed:`, err));
-        res.json({ ok: true, documentId: doc.id });
+        res.json({ ok: true, documentId: r.documentId });
       } catch (err) {
         cleanup();
         fail(res, "upload the document")(err);
