@@ -433,6 +433,12 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
   activeReads.add(doc.id);
   const stopHeartbeat = startReadHeartbeat(doc.id);
   try {
+    // A general ledger (INTEGRATION §2.17, top step 2) is read entry by entry
+    // by the ledger reader (server/gl/ingest.ts) — never by the extractor,
+    // never merged as facts; a PDF/Word ledger is stored with a note. $0.
+    const { ingestLedgerFromDocument } = await import("../gl/ingest");
+    const asLedger = await ingestLedgerFromDocument(doc);
+    if (asLedger) return asLedger;
     await storage.updateDocument(doc.id, { status: "parsing" } as any);
     let text = "";
     // How the text was laid out (a PDF's pages) — tells a scan from a readable file.

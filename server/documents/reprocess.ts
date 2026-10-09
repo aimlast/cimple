@@ -177,6 +177,14 @@ export async function reprocessDealDocuments(
       doc.extractedData && typeof doc.extractedData === "object"
         ? normaliseExtraction(doc.extractedData as Record<string, unknown>, doc.extractedText ?? null, documentKind(doc))
         : null;
+    // A general ledger is never re-read by the extractor and carries no facts:
+    // "reprocess all" skips it; "Read it again" on it re-runs the ledger reader.
+    if (doc.subcategory === "general_ledger") {
+      if (onlyIds?.has(doc.id)) {
+        void import("../gl/ingest").then((m) => m.rereadLedgerDocument(doc.id)).catch((err) => console.error(`[reprocess] ledger re-read of ${doc.id} failed:`, err));
+      }
+      return { data: null, freshText: null, skipped: true };
+    }
     // A run for chosen sources: every other one keeps what it had.
     if (onlyIds && !onlyIds.has(doc.id)) return { data: stored, freshText: null, skipped: true };
 

@@ -58,6 +58,7 @@ import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
 import { registerEngagementRoutes } from "./routes/engagement.js";
 import { registerEngagementInsightRoutes } from "./routes/engagement-insights.js";
 import { registerDataRoomRoutes } from "./routes/data-room.js";
+import { registerGlRoutes } from "./routes/gl.js";
 import { registerReadingRoutes } from "./routes/reading.js";
 import { recordRendition, variantForAccessLevel } from "./analytics/renditions.js";
 import { viewRoomStamp } from "./analytics/reading-ingest.js";
@@ -331,6 +332,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     getDocumentsByFileUrl: (u) => storage.getDocumentsByFileUrl(u) as any,
     getDeal: (id) => storage.getDeal(id) as any,
     getSellerInviteByToken: (t) => storage.getSellerInviteByToken(t) as any,
+    // gl: a ledger / add-back support file opens only for the owner's or accountant's link.
+    getDealMembers: (id) => storage.getDealMembers(id) as any,
   }, (root) => expressStatic(root));
 
   // ── Broker + buyer authentication, buyer dashboard ────────────────────
@@ -2445,6 +2448,17 @@ Return JSON only.`,
       // seller link must get the seller allowlist, not the checklist editor.
       const isBrokerSession =
         !!req.session.brokerId && !!(await getOwnedDeal(req.params.dealId, req.session.brokerId));
+      // The general-ledger row (gl spec E21) updates itself when the ledger is
+      // read: a seller can't change it at all, the broker only its note,
+      // whether it's required and its place in the list.
+      const { isGlRequirement } = await import("./documents/requirements");
+      if (isGlRequirement(existing)) {
+        const glKeys = ["notes", "isRequired", "sortOrder"];
+        const touched = Object.keys(body).filter((k) => body[k] !== undefined && k !== "reason");
+        if (!isBrokerSession || touched.some((k) => !glKeys.includes(k))) {
+          return res.status(409).json({ error: "This item updates itself when the ledger is read." });
+        }
+      }
       const allowedKeys = isBrokerSession
         ? ["status", "uploadedFileId", "uploadedBy", "uploadedAt", "notes", "isRequired", "documentName", "category", "sortOrder"]
         : ["status", "uploadedFileId", "uploadedBy"];
@@ -3168,13 +3182,27 @@ Return JSON only.`,
         uploadedBy === "broker" && (req.body.visibility === "broker_only" || req.body.visibility === "shared")
           ? req.body.visibility
           : uploadedBy === "broker" ? defaultVisibilityForKind(requestedKind) : "shared";
+      // A file uploaded for the general-ledger row is filed as a ledger (the
+      // ledger reader credits the row once it is read — gl spec D23).
+      const { isGlRequirement } = await import("./documents/requirements");
+      const forGlRow = !!targetRequirement && isGlRequirement(targetRequirement);
+      if (forGlRow && uploadedBy === "seller") {
+        // Only the owner's or the accountant's link uploads the ledger (gl spec D24).
+        const token = (req.headers["x-seller-token"] as string | undefined) || (typeof req.query.token === "string" ? req.query.token : "");
+        const invite = token ? await storage.getSellerInviteByToken(token) : undefined;
+        const { sellerLinkRights, OWNER_OR_ACCOUNTANT_MESSAGE } = await import("@shared/seller-link-rights");
+        if (!invite || !sellerLinkRights(invite, await storage.getDealMembers(req.params.dealId)).canTraceAddbacks) {
+          fs.unlink(req.file.path, () => {});
+          return res.status(403).json({ error: OWNER_OR_ACCOUNTANT_MESSAGE });
+        }
+      }
       const doc = await storage.createDocument({
         dealId: req.params.dealId,
         uploadedBy,
         name: displayName,
         originalName: displayName,
-        category,
-        subcategory: subcategory || null,
+        category: forGlRow ? "financials" : category,
+        subcategory: forGlRow ? "general_ledger" : subcategory || null,
         fileUrl: `/uploads/docs/${req.file.filename}`,
         fileSize: req.file.size ?? null,
         mimeType: req.file.mimetype || null,
@@ -7933,6 +7961,8 @@ Return JSON only.`,
   registerEngagementInsightRoutes(app);
   // Data room (vdr). Wave 0: only the renderer canary, GET /api/vdr/health.
   registerDataRoomRoutes(app);
+  // Add-backs in the books (gl): ledgers, traces, the seller's books page.
+  registerGlRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;

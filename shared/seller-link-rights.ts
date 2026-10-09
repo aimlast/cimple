@@ -25,6 +25,13 @@ export interface SellerLinkRights {
   canApproveCim: boolean;
   /** May see and answer buyer questions waiting on the seller. */
   canApproveQa: boolean;
+  /**
+   * May upload the general ledger and show where the add-backs are in the
+   * books (gl spec D24): the owner (the original invite, or an `owner`
+   * member) or an `accountant` member — by role, never by `view_financials`
+   * (the attorney has that). The ledger holds every employee's pay.
+   */
+  canTraceAddbacks: boolean;
 }
 
 type InviteLike = { sellerEmail?: string | null };
@@ -56,10 +63,10 @@ export function sellerLinkRights(invite: InviteLike, members: MemberLike[]): Sel
     : undefined;
   if (!member) {
     // The seller the broker invited directly — the owner.
-    return { role: "owner", memberId: null, canApproveCim: true, canApproveQa: true };
+    return { role: "owner", memberId: null, canApproveCim: true, canApproveQa: true, canTraceAddbacks: true };
   }
   if (member.inviteStatus === "revoked") {
-    return { role: member.role ?? "revoked", memberId: member.id, canApproveCim: false, canApproveQa: false };
+    return { role: member.role ?? "revoked", memberId: member.id, canApproveCim: false, canApproveQa: false, canTraceAddbacks: false };
   }
   const perms = permissionsOf(member);
   const role = member.role ?? "";
@@ -68,8 +75,15 @@ export function sellerLinkRights(invite: InviteLike, members: MemberLike[]): Sel
     memberId: member.id,
     canApproveCim: perms.includes("approve_cim"),
     canApproveQa: perms.includes("approve_qa") && QA_ROLES.includes(role),
+    canTraceAddbacks: TRACE_ROLES.includes(role),
   };
 }
+
+/** The seller-team roles that may work on the general ledger (gl spec D24). */
+const TRACE_ROLES = ["owner", "accountant"];
+
+/** What a link without the ledger right sees on the books page. */
+export const OWNER_OR_ACCOUNTANT_MESSAGE = "Your broker asked the business owner or the accountant to do this step.";
 
 /** The message a link without sign-off rights gets. */
 export const OWNER_SIGNS_OFF_MESSAGE =

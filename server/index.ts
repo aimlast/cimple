@@ -197,6 +197,40 @@ app.use("/api/view/:token/reading", rateLimit({
   message: { error: "Too many requests" },
 }));
 
+// ── gl limiters (Add-backs in the books, server/routes/gl.ts) ──
+// Ledger uploads: 20 an hour per IP, shared by the broker's and the seller's
+// GL upload routes, checked before a byte is written (the gate in gl.ts then
+// checks the caller, the size and the uploads in flight). Seller GL routes
+// are keyed by a hash of the link, never the raw token.
+const glUploadIpLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many uploads. Please try again in a while." },
+});
+const glUploadOnly = (limiter: ReturnType<typeof rateLimit>) => (req: Request, res: Response, next: NextFunction) =>
+  req.method === "POST" && (req.path === "/" || req.path === "") ? limiter(req, res, next) : next();
+app.use("/api/deals/:dealId/gl/ledgers", glUploadOnly(glUploadIpLimiter));
+app.use("/api/seller/:token/gl/ledgers", glUploadOnly(glUploadIpLimiter));
+const glSellerKey = (req: Request) => `gl:${createHash("sha256").update(String(req.params.token ?? "")).digest("hex").slice(0, 32)}`;
+app.use("/api/seller/:token/gl", rateLimit({
+  windowMs: 60 * 1000,
+  limit: (req) => (req.method === "GET" ? 120 : 240),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: glSellerKey,
+  message: { error: "Too many requests" },
+}));
+app.use("/api/seller/:token/gl/ledgers", glUploadOnly(rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: glSellerKey,
+  message: { error: "Too many uploads. Please try again in a while." },
+})));
+
 // Session type augmentation
 declare module "express-session" {
   interface SessionData {
@@ -282,6 +316,8 @@ app.use((req, res, next) => {
       import("./crm/buyer-sync").then((m) => m.startBuyerSyncScheduler()).catch((err) => console.error("[buyer-sync] scheduler failed to start:", err));
       // Sources a redeploy cut off mid-read are marked "couldn't read" (with "Read it again").
       import("./documents/ingest").then((m) => m.startInterruptedReadRecovery()).catch((err) => console.error("[ingest] interrupted-read recovery failed:", err));
+      // ── gl: ledger reads a restart cut off are queued again (twice at most) ──
+      import("./gl/ingest").then((m) => m.startLedgerReadRecovery()).catch((err) => console.error("[gl] ledger read recovery failed:", err));
       // Once per volume: files earlier deletes left behind (no row points at them) leave the volume.
       if (process.env.NODE_ENV === "production") {
         // First what deleted deals left (their rows made their files look in use), then files no row points at.

@@ -84,6 +84,14 @@ export async function deleteDocumentAndProvenance(docId: string): Promise<string
     console.warn("[documents] provenance cleanup failed:", e);
   }
 
+  // A general ledger (INTEGRATION §2.17 step 2): its entries and ledger row
+  // go under the GL lock, links keep their snapshot as "orphaned", the
+  // checklist row follows. Never throws.
+  if (doc.subcategory === "general_ledger") {
+    const { onLedgerDocumentDeleted } = await import("../gl/ingest");
+    await onLedgerDocumentDeleted(doc);
+  }
+
   await removeDocumentFile(doc);
   return removed;
 }

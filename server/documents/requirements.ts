@@ -418,8 +418,48 @@ export async function populateDocumentRequirements(
     });
     created++;
   }
+  // The general ledger is asked for on every deal, with the other financial
+  // documents (gl spec D23); its status comes only from the ledger reader.
+  if (await ensureGlRequirement(dealId)) created++;
 
   return created;
+}
+
+// ─── The general-ledger row (gl spec D23, server/gl/*) ────────────────
+
+/** The checklist row asking for the general ledger. Its status is set only by the ledger reader (server/gl/requirement.ts). */
+export const GL_REQUIREMENT_NAME = "General Ledger (3 Years, Excel or CSV)";
+export const GL_REQUIREMENT_SOURCE = "gl_tracing";
+/** Sorts with the financial statements and tax returns (rows 0–5). */
+export const GL_REQUIREMENT_SORT = 5;
+
+/** True for the general-ledger row: never keyword-credited, never re-planned, status set by gl only. */
+export function isGlRequirement(row: { source?: string | null } | null | undefined): boolean {
+  return !!row && row.source === GL_REQUIREMENT_SOURCE;
+}
+
+/** Adds the general-ledger row to a deal once (idempotent). Resolves true when it was added. Never throws. */
+export async function ensureGlRequirement(dealId: string): Promise<boolean> {
+  try {
+    const existing = await storage.getDocumentRequirementsByDeal(dealId);
+    if (existing.some((r) => isGlRequirement(r) || r.documentName === GL_REQUIREMENT_NAME)) return false;
+    await storage.createDocumentRequirement({
+      dealId,
+      documentName: GL_REQUIREMENT_NAME,
+      category: "financial",
+      isRequired: true,
+      source: GL_REQUIREMENT_SOURCE,
+      status: "missing",
+      sortOrder: GL_REQUIREMENT_SORT,
+    } as any);
+    // A ledger already read on the deal credits it at once.
+    const { syncGlRequirement } = await import("../gl/requirement");
+    await syncGlRequirement(dealId).catch(() => undefined);
+    return true;
+  } catch (err) {
+    console.warn(`[requirements] couldn't add the general-ledger request on deal ${dealId}:`, err);
+    return false;
+  }
 }
 
 /** A deal's source as the request planner sees it. */
@@ -651,7 +691,11 @@ export function findMatchingRequirement<T extends LinkableRequirement>(
   // name ("Financial statements FY2023" → "Financial Statements (3 Years)").
   const uncategorised = docCategory === "other";
   const candidates = requirements.filter(
-    (r) => (r.status === "missing" || r.status === "unavailable") && (uncategorised || docCategoryForRequirement(r.category) === docCategory),
+    (r) =>
+      (r.status === "missing" || r.status === "unavailable") &&
+      // The general-ledger row is credited only by the ledger reader.
+      !isGlRequirement(r as { source?: string | null }) &&
+      (uncategorised || docCategoryForRequirement(r.category) === docCategory),
   );
 
   // An equipment or vehicle lease is not the premises lease, and the premises
@@ -708,6 +752,8 @@ export async function linkUploadToRequirement(opts: {
       ? requirements.find((r) => r.id === opts.requirementId)
       : findMatchingRequirement(requirements, opts.fileName, opts.docCategory);
     if (!target) return null;
+    // The general-ledger row updates itself when the ledger is read (server/gl/requirement.ts).
+    if (isGlRequirement(target)) return null;
     await storage.updateDocumentRequirement(target.id, {
       status: "uploaded",
       uploadedFileId: opts.docId,
@@ -740,7 +786,8 @@ export async function releaseRequirementsFor(
 ): Promise<number> {
   try {
     const requirements = await storage.getDocumentRequirementsByDeal(dealId);
-    const released = requirements.filter((r) => r.uploadedFileId === docId);
+    // (The general-ledger row is re-synced by the ledger reader, never released here.)
+    const released = requirements.filter((r) => r.uploadedFileId === docId && !isGlRequirement(r));
     if (released.length === 0) return 0;
     // Another source on the deal that is this document (the final statements
     // after the draft was deleted): the row is credited to it instead of
@@ -802,6 +849,7 @@ export function replacementDocumentFor<T extends ChecklistSource>(
   remaining: T[],
   credited: ReadonlySet<string> = new Set(),
 ): T | undefined {
+  if (isGlRequirement(row as { source?: string | null })) return undefined;
   const asOpen = { ...row, status: "missing" };
   // (A category the parser doesn't use is read as none — then every word of the row's name must match.)
   const docCategory = (c: string | null | undefined) => (c && KNOWN_DOC_CATEGORIES.has(c) ? c : "other");

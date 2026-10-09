@@ -171,8 +171,16 @@ export function softwareFrom(headers: string[], titleText: string, accountHeadin
   return "other";
 }
 
+/** A heading row's fingerprint: its normalised texts in column order (trailing blanks dropped). Same headings → same layout. */
 export function headerFingerprint(headers: string[]): string {
-  return createHash("sha256").update(headers.map(normHeader).join("|")).digest("hex").slice(0, 24);
+  const norm = headers.map(normHeader);
+  while (norm.length && norm[norm.length - 1] === "") norm.pop();
+  return createHash("sha256").update(norm.join("|")).digest("hex").slice(0, 24);
+}
+
+/** The fingerprint of a row read from a file (any cell kinds). */
+export function rowFingerprint(cells: unknown[]): string {
+  return headerFingerprint(cells.map((c) => cellText(c, 120)));
 }
 
 export function basisFromTitleRows(texts: string[]): GlBasis | null {
@@ -271,7 +279,7 @@ export function detectLayout(rows: GlRawRow[]): DetectResult | null {
     confidence,
     software: softwareFrom(headers, allTitle.join(" "), accountHeadings),
     basis: stats.basis ?? basisFromTitleRows(allTitle),
-    headerFingerprint: headerFingerprint(headers),
+    headerFingerprint: rowFingerprint(headerRow.cells),
     accounts,
     shaky,
     datesAmbiguous: ambiguous,
