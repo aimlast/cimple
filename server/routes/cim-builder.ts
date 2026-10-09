@@ -294,6 +294,17 @@ export function registerCimBuilderRoutes(app: Express): void {
         // `total` = links that can open the CIM now (not revoked, not expired):
         // the count the regenerate dialogs quote and the hold is decided on.
         buyers: { total: openBuyerLinks(buyers), byLevel },
+        // The teaser tile on the CIM tab (server/teaser/summary.ts; reading counts are its own).
+        teaser: await (async () => {
+          try {
+            const { getDealTeaser } = await import("../teaser/store");
+            const { teaserSummary } = await import("../teaser/summary");
+            return await teaserSummary(deal, await getDealTeaser(deal.id));
+          } catch (err) {
+            console.warn(`[cim-builder] teaser summary skipped for deal ${deal.id}:`, (err as Error)?.message);
+            return null;
+          }
+        })(),
         deal: {
           isLive: !!deal.isLive,
           cimLayoutGeneratedAt: deal.cimLayoutGeneratedAt ?? null,

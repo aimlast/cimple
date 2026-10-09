@@ -370,3 +370,23 @@ export async function setGeneration(dealId: string, generation: TeaserGeneration
 export async function deleteTeaser(dealId: string): Promise<void> {
   await store.delete(dealId);
 }
+
+/**
+ * A codename rename (server/cim/codenames.ts): the old codename swapped in
+ * the draft, the published copy and the seller-check copy. Returns how many
+ * documents changed (0 or 1 row; counted per document).
+ */
+export async function renameTeaserCodename(dealId: string, swap: (s: string) => string, next: string): Promise<number> {
+  const { mapStrings } = await import("@shared/blind-guard");
+  let changed = 0;
+  await store.update(dealId, (r) => {
+    const draft = mapStrings(r.draft, swap);
+    const published = r.published ? mapStrings(r.published, swap) : null;
+    const sellerCheck = r.sellerCheck ? { ...r.sellerCheck, doc: mapStrings(r.sellerCheck.doc, swap) } : null;
+    if (JSON.stringify(draft) !== JSON.stringify(r.draft)) changed++;
+    if (JSON.stringify(published) !== JSON.stringify(r.published)) changed++;
+    if (JSON.stringify(sellerCheck) !== JSON.stringify(r.sellerCheck)) changed++;
+    return { draft, published, sellerCheck, codenameUsed: next };
+  });
+  return changed;
+}

@@ -3,6 +3,7 @@
  * buyer in the broker's contact list, shared by the Suggested buyers list and
  * the AI deep check so both always see the same candidates.
  */
+import { isTeaserOnly } from "@shared/access-levels";
 import { storage } from "../storage";
 import { matchBuyerToDeal, type MatchBreakdown } from "./engine";
 import { calculateQualifiedLeadScore } from "../scoring/buyer-score";
@@ -84,23 +85,28 @@ export async function scoreBuyersForDeal(deal: Deal): Promise<ScoredBuyer[]> {
  */
 export function reachedBuyers(
   outreach: Array<{ buyerUserId?: string | null; buyerEmail?: string | null }>,
-  access: Array<{ buyerUserId?: string | null; buyerEmail?: string | null }>,
+  access: Array<{ buyerUserId?: string | null; buyerEmail?: string | null; accessLevel?: string | null }>,
   approvals: Array<{ buyerEmail?: string | null; status?: string | null }> = [],
-): (buyer: { id: string; email?: string | null }) => { alreadyHasAccess: boolean; alreadyContacted: boolean; inApproval: boolean } {
+): (buyer: { id: string; email?: string | null }) => { alreadyHasAccess: boolean; alreadyContacted: boolean; inApproval: boolean; teaserOnly: boolean } {
   const norm = (e?: string | null) => (e || "").trim().toLowerCase();
   const ids = (rows: typeof outreach) => new Set(rows.map((r) => r.buyerUserId).filter((x): x is string => !!x));
   const emails = (rows: typeof outreach) => new Set(rows.map((r) => norm(r.buyerEmail)).filter(Boolean));
   const accessIds = ids(access), accessEmails = emails(access);
+  // A buyer whose only link here is a Teaser link has the summary, not the CIM ("Have the teaser").
+  const cimAccess = access.filter((a) => !isTeaserOnly(a.accessLevel));
+  const cimIds = ids(cimAccess), cimEmails = emails(cimAccess);
   const contactedIds = ids(outreach), contactedEmails = emails(outreach);
   // Submitted for approval (waiting on the broker or the seller, approved, or
   // turned down): already in the pipeline, so never suggested again.
   const approvalEmails = new Set(approvals.filter((a) => a.status !== "withdrawn").map((a) => norm(a.buyerEmail)).filter(Boolean));
   return (buyer) => {
     const email = norm(buyer.email);
+    const alreadyHasAccess = accessIds.has(buyer.id) || (!!email && accessEmails.has(email));
     return {
-      alreadyHasAccess: accessIds.has(buyer.id) || (!!email && accessEmails.has(email)),
+      alreadyHasAccess,
       alreadyContacted: contactedIds.has(buyer.id) || (!!email && contactedEmails.has(email)),
       inApproval: !!email && approvalEmails.has(email),
+      teaserOnly: alreadyHasAccess && !(cimIds.has(buyer.id) || (!!email && cimEmails.has(email))),
     };
   };
 }
