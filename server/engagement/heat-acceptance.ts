@@ -43,7 +43,8 @@ function distinctPages(doc: EngagementDocumentResponse): { all: string[]; colour
  * reading is coloured part by part (never a whole-page wash), the reading is
  * marked as sample data (skipped in --qa-copy-preview, which has no tag),
  * and no page carries another page's title (the page-19 mix-up). Then the
- * deal's own expectations (pacific / beacon).
+ * deal's own expectations (pacific / beacon). --preview (untagged sample
+ * visits) skips what depends on the tag: the sample flag and the reach basis.
  */
 export function heatAcceptance(
   doc: EngagementDocumentResponse,
@@ -81,9 +82,13 @@ export function heatAcceptance(
     if (coloured.length < 24) fails.push(`only ${coloured.length} of ${all.length} pages are coloured part by part (need ≥ 24)`);
     if (doc.openedTotal !== 13) fails.push(`“opened it” is ${doc.openedTotal}, expected 13`);
     if (doc.openedBy !== 12) fails.push(`“with reading recorded” is ${doc.openedBy}, expected 12`);
-    if (doc.reachBasis !== "old_tracking") fails.push(`reach basis is ${doc.reachBasis}, expected old_tracking`);
-    const last = doc.lastRecordedIndex != null ? doc.pages[doc.lastRecordedIndex] : null;
-    if (!last || last.label !== "27") fails.push(`the last recorded page is ${last ? last.label : "none"}, expected 27`);
+    // Preview mode writes untagged visits, which read as part-by-part tracking
+    // (reach from each visit's furthest page): the reach basis needs the tag.
+    if (!opts.preview) {
+      if (doc.reachBasis !== "old_tracking") fails.push(`reach basis is ${doc.reachBasis}, expected old_tracking`);
+      const last = doc.lastRecordedIndex != null ? doc.pages[doc.lastRecordedIndex] : null;
+      if (!last || last.label !== "27") fails.push(`the last recorded page is ${last ? last.label : "none"}, expected 27`);
+    }
   }
   if (expect === "beacon") {
     if (doc.versionNote?.kind !== "held" || (!opts.preview && !doc.versionNote.sample)) {

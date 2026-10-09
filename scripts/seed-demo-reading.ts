@@ -226,7 +226,8 @@ function printPlan(ctx: Ctx, plan: DemoPlan, versions: Record<string, Version | 
   console.log("  Buyer                    Sees            Decision          Depth  Visits  Pages  Minutes  Part rows  Device");
   for (const b of plan.perBuyer) {
     const buyer = ctx.buyers.find((x) => x.id === b.accessId)!;
-    console.log(`  ${b.name.slice(0, 23).padEnd(23)}  ${buyerAccessLabel(b.level).padEnd(14)}  ${(buyer.decision ?? "undecided").padEnd(16)}  ${b.depth.toFixed(2).padStart(5)}  ${String(b.visits).padStart(6)}  ${String(b.pages).padStart(5)}  ${String(Math.round(b.minutes)).padStart(7)}  ${String(b.partRows).padStart(9)}  ${b.device}`);
+    const decision = buyer.decision === "not_interested" ? "passed" : buyer.decision === "need_more_time" ? "needs more time" : buyer.decision === "interested" || buyer.decision === "lapsed" ? buyer.decision : "undecided";
+    console.log(`  ${b.name.slice(0, 23).padEnd(23)}  ${buyerAccessLabel(b.level).padEnd(14)}  ${decision.padEnd(16)}  ${b.depth.toFixed(2).padStart(5)}  ${String(b.visits).padStart(6)}  ${String(b.pages).padStart(5)}  ${String(Math.round(b.minutes)).padStart(7)}  ${String(b.partRows).padStart(9)}  ${b.device}`);
   }
   for (const s of plan.skipped) {
     const name = ctx.buyers.find((x) => x.id === s.accessId)?.name ?? "A buyer";
