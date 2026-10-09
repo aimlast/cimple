@@ -243,6 +243,8 @@ export async function snapshotFromState(
       statementDocs: t.proof === "statement" ? statementDocsFor(s, years) : [],
     });
   }
+  // Buyers read the add-backs found in the books first; lines straight from the statements go last.
+  lines.sort((a, b) => Number(a.status === "statement") - Number(b.status === "statement"));
   const tieOut = tieOutRows(s.tracing, info);
   const agreeYears = tieOut.filter((r) => r.state === "agrees" || r.state === "accepted").map((r) => r.year);
   const ledgerYears = Array.from(new Set(lines.filter((l) => l.status !== "statement").flatMap((l) => l.years.map((y) => y.year))));
@@ -409,7 +411,8 @@ export function noteFor(snap: GlPublishedEvidence): string | null {
 
 export function projectEvidence(snap: GlPublishedEvidence, mode: GlEvidenceMode, ctx: ProjectContext): GlEvidencePayload | null {
   if (mode === "dd" ? !snap.versions.dd : mode === "normal" ? !snap.versions.normal : !snap.versions.blind) return null;
-  const lines = snap.lines;
+  // Found-in-the-books lines first, lines straight from the statements last (older snapshots too).
+  const lines = [...snap.lines].sort((a, b) => Number(a.status === "statement") - Number(b.status === "statement"));
   if (lines.length === 0) return null;
   const agree = new Set(snap.noteYears);
   const summary = summaryOf(lines);
@@ -487,7 +490,7 @@ export function projectEvidence(snap: GlPublishedEvidence, mode: GlEvidenceMode,
     return {
       lineId: l.lineId, status: l.status, mark: markFor(l, agree), label: l.label, years,
       share: l.share, why: l.why, brokerNote: l.brokerNote, sellerNote: l.sellerNote,
-      ledger: led ? { documentId: led.documentId, software: led.software ? softwareLabel(led.software) : null, period: led.period } : null,
+      ledger: led ? { documentId: led.documentId, software: led.software && led.software !== "other" ? softwareLabel(led.software) : null, period: led.period } : null,
       docs: l.years.flatMap((y) => y.docs.map((d) => ({ documentId: d.documentId, name: d.label, year: d.year, amount: dollars(d.amountCents), check: d.check }))),
       statementDocs: l.statementDocs,
     };
@@ -499,7 +502,7 @@ export function projectEvidence(snap: GlPublishedEvidence, mode: GlEvidenceMode,
     note: null,
     tieOut: snap.tieOut,
     confirmation: snap.confirmation,
-    source: first ? { software: first.software ? softwareLabel(first.software) : null, period: snap.ledgers.length === 1 ? first.period : starts.join("; ") } : null,
+    source: first ? { software: first.software && first.software !== "other" ? softwareLabel(first.software) : null, period: snap.ledgers.length === 1 ? first.period : starts.join("; ") } : null,
     lines: out,
   };
 }

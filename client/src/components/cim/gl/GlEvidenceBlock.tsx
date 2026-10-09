@@ -80,9 +80,10 @@ export function GlEvidenceBlock({ layoutData }: Props) {
 
       <AskContext.Provider value={token && !p.preview ? { token, ask: setAsking } : null}>
         <div className="space-y-4">
-          {p.lines.map((line, i) => (
+          {p.lines.map((line, i) => line.status === "statement" ? null : (
             <LineBlock key={line.lineId} line={line} attrs={ba(`item:${i}`)} asking={asking?.lineId === line.lineId ? asking : null} onDone={() => setAsking(null)} />
           ))}
+          <StatementLines lines={p.lines} attrsFor={(i) => ba(`item:${i}`)} />
         </div>
       </AskContext.Provider>
     </div>
@@ -149,6 +150,39 @@ function AskButton({ target, label = "Ask" }: { target: AskTarget; label?: strin
     <button type="button" className="inline-flex items-center gap-1 text-[11px] font-medium text-[hsl(var(--cim-brass))] hover:underline" onClick={() => ctx.ask(target)} data-testid="gl-ask">
       <MessageSquare className="h-3 w-3" aria-hidden /> {label}
     </button>
+  );
+}
+
+/** Lines straight from the financial statements (amortization, interest, taxes): one compact card at the end. */
+function StatementLines({ lines, attrsFor }: { lines: GlEvidenceLine[]; attrsFor: (i: number) => Record<string, string> }) {
+  const links = useGlLinks();
+  const rows = lines.map((l, i) => ({ l, i })).filter((x) => x.l.status === "statement");
+  if (rows.length === 0) return null;
+  return (
+    <section className="rounded-lg border border-[hsl(var(--cim-line))] bg-[hsl(var(--cim-paper))] px-4 py-3 sm:px-5" data-testid="gl-statement-lines">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h4 className="text-sm font-semibold text-[hsl(var(--cim-heading))]">From the financial statements</h4>
+        <span className="text-xs text-[hsl(var(--cim-ink-muted))]">No separate entries to show</span>
+      </div>
+      <ul className="mt-2 divide-y divide-[hsl(var(--cim-line-soft))]">
+        {rows.map(({ l, i }) => {
+          const ys = (l.years ?? []).filter((y) => y.status !== "left_out");
+          return (
+            <li key={l.lineId} className="flex flex-col gap-0.5 py-1.5 text-sm sm:flex-row sm:items-baseline sm:justify-between sm:gap-4" {...attrsFor(i)}>
+              <span className="min-w-0 break-words text-[hsl(var(--cim-ink))]">
+                {l.label ?? "Add-back"}
+                {(l.statementDocs ?? []).length > 0 && (
+                  <span className="ml-1.5 text-xs text-[hsl(var(--cim-ink-muted))]">· {(l.statementDocs ?? []).slice(0, 3).map((d, k) => (
+                    <span key={`${d.documentId}-${d.year}`}>{k > 0 && ", "}{links.doc ? links.doc(d.documentId, d.name) : d.name}</span>
+                  ))}</span>
+                )}
+              </span>
+              <span className="shrink-0 text-xs tabular-nums text-[hsl(var(--cim-ink-soft))]">{ys.map((y) => `${y.year} ${money(y.claimed)}`).join(" · ")}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 

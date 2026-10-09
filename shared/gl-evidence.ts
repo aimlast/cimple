@@ -234,14 +234,14 @@ export function glNoteText(input: { found: number; documents: number; total: num
   const shown = input.found + input.documents;
   if (input.total <= 0 || shown <= 0) return null;
   const head = `${shown} of ${input.total} add-back${input.total === 1 ? "" : "s"}`;
+  const years = glYearsWords(input.agreeYears);
+  const ledger = `found in the company's general ledger${years ? `, which agrees with the financial statements for ${years}` : ""}`;
   const where = input.documents > 0 && input.found > 0
-    ? "the costs were found in the company's general ledger or shown by supporting documents"
+    ? `the costs were ${ledger}${years ? "," : ""} or shown by supporting documents such as pay slips`
     : input.documents > 0
       ? "the costs were shown by supporting documents such as pay slips"
-      : "the costs were found in the company's general ledger";
-  const years = glYearsWords(input.agreeYears);
-  const agrees = input.found > 0 && years ? `, which agrees with the financial statements for ${years}` : "";
-  return `${head}: ${where}${agrees}. ${GL_NOT_AN_AUDIT}`;
+      : `the costs were ${ledger}`;
+  return `${head}: ${where}. ${GL_NOT_AN_AUDIT}`;
 }
 
 /** The DD page's opening paragraph. */
