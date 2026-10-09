@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, integer, boolean, bigint, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, integer, boolean, bigint, index, uniqueIndex, numeric } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -2829,3 +2829,172 @@ export const readingBenchmarks = pgTable("reading_benchmarks", {
   index("reading_benchmarks_industry_idx").on(t.industry, t.pageRole),
 ]);
 export type ReadingBenchmark = typeof readingBenchmarks.$inferSelect;
+
+// @anchor:schema-tail:oct-dd
+// ── Notes on the CIM's figures + the due-diligence figure checks ────────────
+// (stream "dd": server/cim/figures/*, shared/figure-*.ts). A note is keyed by
+// the figure (line + year), never by a section, so it survives regenerations
+// and attaches wherever any version of the CIM shows that figure. Questions
+// about the numbers live in their own table — never in `discrepancies`, whose
+// conflict engines and CIM lock must not see them.
+
+/** What a figure note rests on (broker-side; buyers get a basis label + citations only). */
+export interface FigureNoteSource {
+  kind: "document" | "transcript" | "interview" | "fact" | "discrepancy" | "computed" | "hint";
+  documentId?: string;
+  sessionId?: string;
+  messageIndex?: number;
+  factKey?: string;
+  discrepancyId?: string;
+  /** ≤ 240 characters. */
+  quote?: string;
+  page?: number | null;
+  /** A broker resolution note (internal wording). */
+  internal?: true;
+}
+/** The figures a note was written (and approved) for; served only while they still match. */
+export interface FigureValuesSnapshot {
+  year: string;
+  value: number;
+  fromYear?: string;
+  fromValue?: number;
+  other?: number;
+  components?: Record<string, number>;
+}
+/** A newer machine version of a note the refresh may not write over (approved, hidden, edited, broker-written). */
+export interface FigureNoteProposal {
+  text: string;
+  blindText: string | null;
+  sources: FigureNoteSource[];
+  valuesSnapshot: FigureValuesSnapshot;
+  inputFingerprint: string;
+  at: string;
+}
+export interface FigureNoteEvent {
+  at: string;
+  by: "cimple" | "broker" | "owner";
+  what: "written" | "edited" | "approved" | "hidden" | "restored" | "flagged" | "proposal_used";
+  comment?: string;
+}
+/** The last AI pass (or refresh) on a deal's figures. */
+export interface FigureBuildStatus {
+  status: "running" | "done" | "failed";
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
+  written?: number;
+  candidates?: number;
+  warnings?: string[];
+  skippedBecauseEdited?: number;
+}
+/** Where a figure was found in a document's text (D11), or that it wasn't. */
+export type FigureLocatedEntry = { index: number; page: number | null; sourceLabel: string | null } | { missing: true };
+
+export const cimFigureNotes = pgTable("cim_figure_notes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  /** "operatingExpenses|2023", "line:facility-rent-warehouse|2023". */
+  figureKey: text("figure_key").notNull(),
+  /** "movement" | "difference" | "context" */
+  kind: text("kind").notNull(),
+  /** movement: the earlier year; difference: "tax_return:<documentId>" | "cim_statements:<documentId>" | "restated:<documentId>"; context: "". */
+  compareKey: text("compare_key").notNull().default(""),
+  /** "computed" | "ai" | "broker" */
+  origin: text("origin").notNull(),
+  /** "suggested" | "approved" | "hidden" — buyers see approved notes only. */
+  status: text("status").notNull().default("suggested"),
+  /** Named wording (Full CIM + due diligence). */
+  text: text("text").notNull(),
+  /** Blind CIM wording; null = not shown in the Blind CIM. */
+  blindText: text("blind_text"),
+  sources: jsonb("sources").$type<FigureNoteSource[]>().notNull().default(sql`'[]'::jsonb`),
+  valuesSnapshot: jsonb("values_snapshot").$type<FigureValuesSnapshot>().notNull(),
+  inputFingerprint: text("input_fingerprint").notNull(),
+  /** "figures_changed" | "source_removed" | "seller_flagged" | null */
+  staleReason: text("stale_reason"),
+  proposal: jsonb("proposal").$type<FigureNoteProposal | null>(),
+  /** The owner's "Change this" comment — broker-only. */
+  sellerComment: text("seller_comment"),
+  history: jsonb("history").$type<FigureNoteEvent[]>().notNull().default(sql`'[]'::jsonb`),
+  approvedAt: timestamp("approved_at"),
+  approvedBy: varchar("approved_by"),
+  editedAt: timestamp("edited_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("cim_figure_notes_uniq").on(t.dealId, t.figureKey, t.kind, t.compareKey),
+  index("cim_figure_notes_deal").on(t.dealId, t.status),
+]);
+export type CimFigureNote = typeof cimFigureNotes.$inferSelect;
+export type InsertCimFigureNote = typeof cimFigureNotes.$inferInsert;
+
+/** The broker's decision on one due-diligence check (show / leave out / Cimple read it wrong). */
+export const ddCheckDecisions = pgTable("dd_check_decisions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  /** "<figureKey>~<compareKey>" */
+  checkKey: text("check_key").notNull(),
+  /** "shown" | "left_out" | "corrected" */
+  state: text("state").notNull(),
+  /** Broker-only. */
+  reason: text("reason"),
+  correctedValue: numeric("corrected_value", { precision: 18, scale: 2 }),
+  valuesSnapshot: jsonb("values_snapshot").$type<{ base: number; other: number }>().notNull(),
+  decidedBy: varchar("decided_by"),
+  decidedAt: timestamp("decided_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("dd_check_decisions_uniq").on(t.dealId, t.checkKey),
+]);
+export type DdCheckDecision = typeof ddCheckDecisions.$inferSelect;
+
+/** Questions about the numbers for the seller (never rows in `discrepancies`). */
+export const cimFigureQuestions = pgTable("cim_figure_questions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  figureKey: text("figure_key").notNull(),
+  /** "movement" | "difference" */
+  kind: text("kind").notNull(),
+  compareKey: text("compare_key").notNull().default(""),
+  /** The fact key the seller's answer is recorded under ("reasonFuelChange2023"). */
+  captureKey: text("capture_key").notNull(),
+  /** Seller wording. */
+  question: text("question").notNull(),
+  valuesShown: jsonb("values_shown").$type<Record<string, string | number>>().notNull(),
+  /** "suggested" | "ask_seller" | "answered" | "asked" | "closed" */
+  status: text("status").notNull().default("suggested"),
+  routedAt: timestamp("routed_at"),
+  /** "auto" | "broker" */
+  routedBy: text("routed_by"),
+  raisedAt: timestamp("raised_at"),
+  sessionId: varchar("session_id"),
+  /** "not_needed" | "written_by_broker" | "note_approved" | "figures_changed" */
+  closedReason: text("closed_reason"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("cim_figure_questions_uniq").on(t.dealId, t.figureKey, t.kind, t.compareKey),
+  index("cim_figure_questions_deal").on(t.dealId, t.status),
+]);
+export type CimFigureQuestion = typeof cimFigureQuestions.$inferSelect;
+
+/** One row per deal; every column has its own setter (server/cim/figures/store.ts) — never written as a whole. */
+export const cimFigureState = pgTable("cim_figure_state", {
+  dealId: varchar("deal_id").primaryKey(),
+  build: jsonb("build").$type<FigureBuildStatus | null>(),
+  /** "YYYY-MM-DD" (UTC) of the AI budget below. */
+  budgetDay: text("budget_day"),
+  budgetCalls: integer("budget_calls").notNull().default(0),
+  /** null = not chosen (new deals on, deals from before the release off). */
+  autoAsk: boolean("auto_ask"),
+  /** Due-diligence buyers see the checks since then (null = not shown). */
+  ddShownAt: timestamp("dd_shown_at"),
+  ddShownBy: varchar("dd_shown_by"),
+  /** The last build's keep-out holds (broker-side only). */
+  keepOut: jsonb("keep_out").$type<{ names: string[]; at: string; by: "ai" | "rules" } | null>(),
+  /** "<docId>@<docUpdatedAt>#<value>" → where it was found (D11). */
+  located: jsonb("located").$type<Record<string, FigureLocatedEntry>>().notNull().default(sql`'{}'::jsonb`),
+  refreshedFingerprint: text("refreshed_fingerprint"),
+  refreshedAt: timestamp("refreshed_at"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+export type CimFigureState = typeof cimFigureState.$inferSelect;

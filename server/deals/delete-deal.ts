@@ -21,6 +21,7 @@ import {
   cimSectionOverrides, discrepancies, dealMembers, notifications, buyerApprovalRequests, dealOutreach,
   dealDocumentRequirements, buyerEmails, dealMedia, buyerUsers, cimPublishedSnapshots,
   cimRenditions, buyerVisits, readingRollups, readingBenchmarks,
+  cimFigureNotes, ddCheckDecisions, cimFigureQuestions, cimFigureState,
 } from "@shared/schema";
 import { resolveDocumentPath } from "../documents/document-path";
 
@@ -61,6 +62,12 @@ export const DEAL_CHILD_TABLES = {
   buyer_visits: { table: buyerVisits, column: buyerVisits.dealId, mode: "delete" },
   cim_renditions: { table: cimRenditions, column: cimRenditions.dealId, mode: "delete" },
   reading_benchmarks: { table: readingBenchmarks, column: readingBenchmarks.dealId, mode: "delete" },
+  // Notes on the CIM's figures, due-diligence check decisions, questions about
+  // the numbers and the per-deal figure state (server/cim/figures/*).
+  cim_figure_notes: { table: cimFigureNotes, column: cimFigureNotes.dealId, mode: "delete" },
+  dd_check_decisions: { table: ddCheckDecisions, column: ddCheckDecisions.dealId, mode: "delete" },
+  cim_figure_questions: { table: cimFigureQuestions, column: cimFigureQuestions.dealId, mode: "delete" },
+  cim_figure_state: { table: cimFigureState, column: cimFigureState.dealId, mode: "delete" },
   buyer_emails: { table: buyerEmails, column: buyerEmails.dealId, mode: "detach", field: "dealId" },
   buyer_users: { table: buyerUsers, column: buyerUsers.invitedByDeal, mode: "detach", field: "invitedByDeal" },
 } as const;
