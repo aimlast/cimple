@@ -199,10 +199,10 @@ export function SellerCostDetail({ token, cost, year, onYear, onBack, payDoc, pr
               {cost.years.length > 1 && (
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm" role="radiogroup" aria-label="Which years">
                   <label className="flex items-center gap-1.5 min-h-[32px]">
-                    <input type="radio" name={`notin-${cost.id}`} checked={notInScope === "year"} onChange={() => setNotInScope("year")} /> Only {y.year}
+                    <input type="radio" className="h-4 w-4 accent-[hsl(var(--teal))]" name={`notin-${cost.id}`} checked={notInScope === "year"} onChange={() => setNotInScope("year")} /> Only {y.year}
                   </label>
                   <label className="flex items-center gap-1.5 min-h-[32px]">
-                    <input type="radio" name={`notin-${cost.id}`} checked={notInScope === "all"} onChange={() => setNotInScope("all")} /> Every year
+                    <input type="radio" className="h-4 w-4 accent-[hsl(var(--teal))]" name={`notin-${cost.id}`} checked={notInScope === "all"} onChange={() => setNotInScope("all")} /> Every year
                   </label>
                 </div>
               )}

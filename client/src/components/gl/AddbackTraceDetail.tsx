@@ -161,7 +161,7 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, payDo
             </div>
           ) : (
             <Button size="sm" variant="ghost" className="h-8 text-xs gap-1.5 -ml-2" onClick={() => setUploading(true)} data-testid="gl-drawer-upload-doc">
-              <FileText className="h-3.5 w-3.5" /> Upload a supporting document ({trace.proof === "payroll" ? payDoc.slips : trace.proof === "one_off" ? "invoice or letter" : "any document"})
+              <FileText className="h-3.5 w-3.5" /> {trace.proof === "payroll" ? `Upload the ${payDoc.slips}` : trace.proof === "one_off" ? "Upload the invoice or letter" : "Upload a supporting document"}
             </Button>
           )
         )}
@@ -294,13 +294,21 @@ function BuyerVisibility({ e, busy, onSet }: { e: BrokerEntry; busy: boolean; on
       </span>
     );
   }
+  if (!shownAnyway && !hidden) {
+    // An ordinary entry: the rare "hide it" sits out of the way (on hover; not on phones).
+    return (
+      <span className="hidden sm:block absolute right-3 bottom-1.5 text-2xs text-muted-foreground" data-testid="gl-entry-buyer">
+        <button type="button" className="opacity-0 group-hover:opacity-100 focus:opacity-100 underline-offset-2 hover:underline" disabled={busy} onClick={() => onSet(false)}>Hide the details from buyers</button>
+      </span>
+    );
+  }
   return (
     <span className="block mt-0.5 text-2xs text-muted-foreground" data-testid="gl-entry-buyer">
       {shownAnyway
         ? <>Shown to due-diligence buyers (it names {why}) · <button type="button" className="underline" disabled={busy} onClick={() => onSet(null)}>Withhold again</button></>
         : hidden
           ? <>{why ? `Buyers see the date, account and amount only (${why})` : "Hidden from buyers"} · <button type="button" className="underline" disabled={busy} onClick={() => (why ? setStep(1) : onSet(null))}>{why ? "Show it to buyers…" : "Show it again"}</button></>
-          : <button type="button" className="underline-offset-2 hover:underline" disabled={busy} onClick={() => onSet(false)}>Hide the details from buyers</button>}
+          : null}
     </span>
   );
 }
@@ -313,7 +321,7 @@ function EntryTable({ rows, onTick, busy, onShowDetails }: { rows: BrokerEntry[]
         {rows.map((e) => {
           const ticked = e.state === "confirmed";
           return (
-            <li key={e.id} className="flex items-start gap-2 px-3 py-2 text-xs">
+            <li key={e.id} className="group relative flex items-start gap-2 px-3 py-2 text-xs">
               <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[hsl(var(--teal))]" checked={ticked} disabled={busy}
                 aria-label={`Tick: ${ledgerDate(e.date)} · ${e.name ?? ""} · ${money(e.amountCents)}`} onChange={(ev) => onTick(e, ev.target.checked)} />
               <div className="flex-1 min-w-0">
