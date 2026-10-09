@@ -24,6 +24,7 @@ import { invalidateRoom, shortDate, useRoomBuyers, vdrFetch } from "@/hooks/useD
 import { PanelError } from "@/components/deal/PanelError";
 import { useRoomActions } from "./actions";
 import { AddTeamMemberDialog, TeamRows } from "./TeamParts";
+import { ShareWithBuyerDialog } from "./ShareWithBuyerDialog";
 
 export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string; focusAccessId: string | null; onViewAs: (accessId: string) => void }) {
   const { data, isLoading, error, refetch } = useRoomBuyers(dealId);
@@ -34,6 +35,8 @@ export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string
   const [moving, setMoving] = useState<NotEligibleBuyerRow | null>(null);
   const [addingTo, setAddingTo] = useState<RoomBuyerRow | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [shareTo, setShareTo] = useState<RoomBuyerRow | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
 
   const extend = useMutation({
     mutationFn: async (b: RoomBuyerRow) => {
@@ -79,6 +82,7 @@ export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string
       <DropdownMenuTrigger asChild><Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`More for ${b.company || b.name || b.email}`}><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem onClick={() => onViewAs(b.accessId)} disabled={!b.hasRoom}>View as this buyer</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => { setShareTo(b); setShareOpen(true); }} disabled={!b.hasRoom} data-testid={`buyer-share-${b.accessId}`}>Share documents with this buyer…</DropdownMenuItem>
         <DropdownMenuItem onClick={() => { setAddingTo(b); setAddOpen(true); }} disabled={!b.hasRoom || (b.team ?? []).length >= 5} data-testid={`buyer-add-team-${b.accessId}`}>Add someone from their team…</DropdownMenuItem>
         {b.buyerUserId && <DropdownMenuItem onClick={() => setLocation(`/broker/buyers/${b.buyerUserId}`)}>Open their profile</DropdownMenuItem>}
         <DropdownMenuItem onClick={() => setLocation(`/deal/${dealId}/buyers`)}>Open the Buyers tab</DropdownMenuItem>
@@ -177,6 +181,7 @@ export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string
         </div>
       )}
 
+      <ShareWithBuyerDialog dealId={dealId} buyer={shareTo} open={shareOpen} onOpenChange={setShareOpen} />
       {/* Stays mounted after closing so the new link can be shown once. */}
       {addingTo && <AddTeamMemberDialog key={addingTo.accessId} dealId={dealId} accessId={addingTo.accessId} buyerLabel={addingTo.company || addingTo.name || addingTo.email} open={addOpen} onOpenChange={setAddOpen} />}
 
