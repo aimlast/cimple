@@ -9,7 +9,8 @@
  *   - Every other app page uses <CimpleWordmark /> (theme-aware, never the old green).
  *   - Landing pages (v1/v2/v3): wordmark only in the nav and footer; the icon PNG is gone
  *     entirely (the v3 hero mock CIM shows a dashed "Logo" box: CIMs carry the broker's brand).
- *   - Tab icons are the icon alone (favicon.svg / favicon-32.png / apple-touch-icon.png).
+ *   - Tab icons are the icon alone (favicon.svg / favicon-32.png / favicon.ico / apple-touch-icon.png).
+ *   - The artwork exists once (client/public/); the stacked lockup picture is gone from the repo.
  *   - Emails carry no logo image at all.
  *
  * NOTE: the phone-sheet case is checked here only through class rules, because SSR can't render
@@ -21,6 +22,7 @@
  * hand-made mask, never the two side by side.
  */
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -295,6 +297,14 @@ for (const open of [false, true]) {
   }
   assert.equal(pngSize(fs.readFileSync(pub("favicon-32.png"))), TAB);
   assert.equal(pngSize(fs.readFileSync(pub("apple-touch-icon.png"))), "180x180");
+  // /favicon.ico (asked for by browsers without the link tags, crawlers, link previews) is the
+  // same tab icon: favicon-32.png inside a one-image ICO wrapper.
+  const ico = fs.readFileSync(pub("favicon.ico"));
+  assert.deepEqual([ico.readUInt16LE(0), ico.readUInt16LE(2), ico.readUInt16LE(4)], [0, 1, 1], "favicon.ico: a one-image ICO header");
+  assert.deepEqual([ico[6], ico[7]], [32, 32], "favicon.ico: a 32×32 entry");
+  const icoLen = ico.readUInt32LE(14), icoOff = ico.readUInt32LE(18);
+  assert.equal(icoOff + icoLen, ico.length, "favicon.ico: one image, nothing after it");
+  assert.ok(ico.subarray(icoOff).equals(fs.readFileSync(pub("favicon-32.png"))), "favicon.ico wraps exactly client/public/favicon-32.png");
 
   const index = fs.readFileSync(path.join(ROOT, "client/index.html"), "utf8");
   const links = [...index.matchAll(/<link rel="(icon|apple-touch-icon)"[^>]*>/g)].map((m) => m[0]);
@@ -312,6 +322,35 @@ for (const open of [false, true]) {
     for (const png of ["cimple-icon.png", "cimple-text.png", "cimple-logo.png"]) {
       assert.ok(!s.includes(png), `${rel(f)} references ${png} — emails and server pages use the text label only (logo rule)`);
     }
+  }
+}
+
+// ── 10. One copy of the artwork; the rejected lockup nowhere in the repo ──
+{
+  // The stacked picture (icon above the word, 891×891) removed on 2026-10-09. A copy under any
+  // name or folder could be wired up again, so its bytes may not exist anywhere in the repo.
+  const LOCKUP_MD5 = "e34b114975ccfef6c562846bced2abf1";
+  const SKIP = new Set(["node_modules", "dist", "uploads"]);
+  const files: string[] = [];
+  const scan = (dir: string) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (e.name.startsWith(".") || SKIP.has(e.name)) continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) scan(p);
+      else files.push(p);
+    }
+  };
+  scan(ROOT);
+  assert.ok(files.some((f) => rel(f) === "client/public/favicon.svg"), "the scan sees the repo");
+  const artwork = files.map(rel).filter((r) => /(^|\/)cimple-(logo|icon|text)\.[a-z]+$/i.test(r)).sort();
+  assert.deepEqual(
+    artwork,
+    ["client/public/cimple-icon.png", "client/public/cimple-text.png"],
+    "the Cimple artwork exists once, in client/public/ (icon + wordmark); remove any other copy, and never a cimple-logo file",
+  );
+  for (const f of files.filter((f) => /\.png$/i.test(f))) {
+    const md5 = crypto.createHash("md5").update(fs.readFileSync(f)).digest("hex");
+    assert.notEqual(md5, LOCKUP_MD5, `${rel(f)} is the removed stacked lockup (icon above the word) — delete it`);
   }
 }
 
