@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { queryClient } from "@/lib/queryClient";
-import { getJson, glKeys, type SellerGlData } from "@/lib/gl-api";
+import { getJson, glKeys, sendJson, type SellerGlData } from "@/lib/gl-api";
 import { ExportHelp } from "./ExportHelp";
 import { LedgerUpload } from "./LedgerUpload";
 import { CantGetLedgerSheet } from "./CantGetLedgerSheet";
@@ -24,6 +24,8 @@ export function SellerGlRow({ token, name, isRequired }: { token: string; name: 
   const [open, setOpen] = useState(false);
   const [showAdjustments, setShowAdjustments] = useState(false);
   const [cantOpen, setCantOpen] = useState(false);
+  const [emailing, setEmailing] = useState(false);
+  const [emailed, setEmailed] = useState<string | null>(null);
   const { data, error, isLoading } = useQuery<SellerGlData, Error & { status?: number }>({
     queryKey: glKeys.seller(token),
     queryFn: () => getJson<SellerGlData>(`/api/seller/${token}/gl`),
@@ -65,7 +67,24 @@ export function SellerGlRow({ token, name, isRequired }: { token: string; name: 
       )}
       <ExportHelp start={range.start} end={range.end} />
       {isMobile && (
-        <p className="text-xs text-muted-foreground">Exporting is easier on a computer — you can open this page there and upload it from that computer.</p>
+        <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+          <p className="text-xs text-muted-foreground">Exporting is easier on a computer — open this page there and upload it from that computer.</p>
+          <button type="button" className="text-xs text-teal hover:underline flex items-center gap-1 min-h-8 disabled:opacity-50" disabled={!!data?.preview || emailing}
+            onClick={async () => {
+              setEmailing(true);
+              try {
+                const r = await sendJson<{ sent: boolean; demo: boolean }>("POST", `/api/seller/${token}/gl/email-me-link`);
+                setEmailed(r.demo ? "This is a demo — nothing was emailed." : r.sent ? "Sent — check your email on your computer." : "We couldn't send it right now.");
+              } catch (e) {
+                setEmailed(e instanceof Error ? e.message : "We couldn't send it right now.");
+              } finally {
+                setEmailing(false);
+              }
+            }}>
+            Email me the link to my books page
+          </button>
+          {emailed && <p className="text-xs text-muted-foreground" role="status">{emailed}</p>}
+        </div>
       )}
       <LedgerUpload
         uploadUrl={`/api/seller/${token}/gl/ledgers`}

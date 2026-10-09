@@ -100,6 +100,15 @@ export async function glTraceGate(dealId: string): Promise<GlGate> {
  * generation (only with the hold switch on).
  */
 export async function assertGlGate(deal: Pick<Deal, "id">, kind: "cim" | "dd"): Promise<GlGate> {
+  if (kind === "cim") {
+    // Only the hold switch stops a full CIM: one row read; the full gate only when it's on.
+    try {
+      const { glStore } = await import("./store");
+      if (!(await glStore().getTracing(deal.id))?.requireBeforeCim) return gateFrom(null, []);
+    } catch {
+      return gateFrom(null, []);
+    }
+  }
   const gate = await glTraceGate(deal.id);
   if (kind === "dd" && gate.holdsDd) throw new GlTraceRequiredError(DD_GATE_MESSAGE(gate.toGo, gate.total), gate);
   if (kind === "cim" && gate.holdsCim) throw new GlTraceRequiredError(CIM_HOLD_MESSAGE(gate.toGo), gate);

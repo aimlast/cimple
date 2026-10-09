@@ -46,11 +46,11 @@ import { primarySellerInvite } from "@shared/seller-invite-revocation";
 import type { GlLedgerView } from "@shared/gl-types";
 import type { SellerInvite } from "@shared/schema";
 
-const VIEWS: Array<{ key: GlView; label: string }> = [
-  { key: "addbacks", label: "Add-backs" },
-  { key: "ledger", label: "Ledger" },
-  { key: "statements", label: "Matches the statements" },
-  { key: "seller", label: "From the seller" },
+const VIEWS: Array<{ key: GlView; label: string; short: string }> = [
+  { key: "addbacks", label: "Add-backs", short: "Add-backs" },
+  { key: "ledger", label: "Ledger", short: "Ledger" },
+  { key: "statements", label: "Matches the statements", short: "Statements" },
+  { key: "seller", label: "From the seller", short: "Seller" },
 ];
 
 const FYE_OPTIONS: Array<[string, string]> = [
@@ -121,7 +121,7 @@ export function BrokerGlPanel({ dealId, variant = "full" }: { dealId: string; va
 
       {data.tracesError ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm flex flex-wrap items-center gap-2" data-testid="gl-traces-error">
-          <AlertTriangle className="h-4 w-4 text-amber-500" /> The add-backs couldn't load. The ledger is below.
+          <AlertTriangle className="h-4 w-4 text-amber-500" /> The add-backs couldn't load right now. The ledger files are still here.
           <Button size="sm" variant="outline" className="h-7 text-xs ml-auto" onClick={() => refetch()}>Try again</Button>
         </div>
       ) : (
@@ -138,9 +138,9 @@ export function BrokerGlPanel({ dealId, variant = "full" }: { dealId: string; va
             return (
               <button key={v.key} type="button" role="tab" aria-selected={url.view === v.key}
                 onClick={() => url.set({ gl: v.key === "addbacks" ? null : v.key, addback: null, year: null })}
-                className={cn("shrink-0 px-3 py-2 text-sm border-b-2 transition-colors min-h-[40px]", url.view === v.key ? "border-teal text-foreground font-medium" : "border-transparent text-muted-foreground hover:text-foreground")}
+                className={cn("shrink-0 px-2.5 sm:px-3 py-2 text-sm border-b-2 transition-colors min-h-[40px]", url.view === v.key ? "border-teal text-foreground font-medium" : "border-transparent text-muted-foreground hover:text-foreground")}
                 data-testid={`gl-view-${v.key}`}>
-                {v.label}
+                <span className="hidden sm:inline">{v.label}</span><span className="sm:hidden">{v.short}</span>
                 {badge > 0 && <span className="ml-1.5 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-teal/15 px-1 text-2xs text-teal">{badge}</span>}
               </button>
             );
@@ -148,7 +148,8 @@ export function BrokerGlPanel({ dealId, variant = "full" }: { dealId: string; va
         </div>
       </div>
 
-      {url.view === "addbacks" && <AddbacksView dealId={dealId} data={data} onOpen={(t, y) => url.set({ addback: t.id, year: y ?? null })} onSend={() => setSending(true)} onLedger={() => url.set({ gl: "ledger" })} />}
+      {url.view === "addbacks" && data.tracesError && <LedgersView dealId={dealId} data={data} />}
+      {url.view === "addbacks" && !data.tracesError && <AddbacksView dealId={dealId} data={data} onOpen={(t, y) => url.set({ addback: t.id, year: y ?? null })} onSend={() => setSending(true)} onLedger={() => url.set({ gl: "ledger" })} />}
       {url.view === "ledger" && <LedgersView dealId={dealId} data={data} />}
       {url.view === "statements" && <TieOutPanel dealId={dealId} data={data} onUploadAdjustments={() => url.set({ gl: "ledger" })} />}
       {url.view === "seller" && <SuggestionsPanel dealId={dealId} data={data} />}

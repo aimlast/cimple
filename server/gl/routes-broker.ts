@@ -349,7 +349,8 @@ export function registerGlBrokerRoutes(app: Express): void {
       const { notify } = await import("../notifications/service");
       const roleLabel = (TEAM_ROLES.seller as Record<string, { label: string }>).accountant?.label ?? "Accountant";
       const copy = teamInviteCopy({ teamType: "seller", roleLabel, businessName: deal?.businessName ?? null, blindCodename: deal?.blindCodename ?? null, accessLevel: null, hasSellerLink: true });
-      await notify(dealId, "invite", {
+      // Demo deals never email (their people are fictional); the link exists either way.
+      if (!deal?.demoKey) await notify(dealId, "invite", {
         title: copy.title,
         body: `${copy.body}\n\nYour client asked you to show where a few costs sit in the company's books: upload the general ledger and check the entries Cimple suggests.`,
         actionUrl: `/seller/${invite.token}/books`,
