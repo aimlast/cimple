@@ -269,7 +269,7 @@ function YearBlock({ line, year: y, defaultOpen }: { line: GlEvidenceLine; year:
   return (
     <div data-testid={`gl-year-${y.year}`}>
       <p className="text-sm font-medium text-[hsl(var(--cim-ink))]">
-        {y.yearLabel || y.year} <span className="font-normal text-[hsl(var(--cim-ink-muted))]">· Added back {money(y.claimed)}</span>
+        {y.yearLabel || y.year} <span className="font-normal text-[hsl(var(--cim-ink-muted))]">· {line.pay ? "Pay" : "Added back"} {money(y.claimed)}</span>
       </p>
       {hasShare && line.share && (
         <p className="mt-0.5 text-xs text-[hsl(var(--cim-ink-muted))]">{glShareText(line.label ?? "The cost's", line.share, y.target, y.claimed, money)}</p>
@@ -308,10 +308,10 @@ function YearBlock({ line, year: y, defaultOpen }: { line: GlEvidenceLine; year:
         </ul>
       )}
 
-      {!noSupport && !y.entriesOnRequest && (
+      {!noSupport && !y.entriesOnRequest && (y.entryCount > 0 || Math.round(y.difference) !== 0) && (
         <p className="mt-2 text-xs text-[hsl(var(--cim-ink-soft))]" data-testid={`gl-subtotal-${y.year}`}>
           {y.entryCount > 0 ? "These entries" : "Shown"}: <span className="font-medium tabular-nums">{money(y.found)}</span>
-          {" · "}{hasShare ? "The whole cost" : "Added back"}: <span className="tabular-nums">{money(y.target)}</span>
+          {" · "}{hasShare ? "The whole cost" : line.pay ? "Pay" : "Added back"}: <span className="tabular-nums">{money(y.target)}</span>
           {" · "}Difference: <span className="tabular-nums">{Math.round(y.difference) === 0 ? "none" : `${money(Math.abs(y.difference))} (${(diffPct * 100).toFixed(1)}%)`}</span>
         </p>
       )}

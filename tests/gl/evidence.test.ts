@@ -182,5 +182,17 @@ await test("nothing published → no evidence for buyers and no writer lines", a
   assert.equal(live?.preview, true, "the broker's preview is marked");
 });
 
+await test("the dialog warns when the CIM's earnings bridge predates the analysis the add-backs come from", async () => {
+  const st = (await import("../../server/storage")).storage as any;
+  st.getCimSectionsByDeal = async () => [
+    { id: "s1", sectionKey: "overview", sectionTitle: "Overview", layoutType: "prose_highlight", order: 1, isVisible: true, updatedAt: new Date("2025-03-01") },
+    { id: "s2", sectionKey: "bridge", sectionTitle: "Earnings Bridge", layoutType: "waterfall_chart", order: 2, isVisible: true, updatedAt: new Date("2025-01-15") },
+  ];
+  const p = await publishPreview(dealId);
+  assert.ok(p.warnings.some((w) => /"Earnings Bridge" was written before the latest financial analysis/.test(w)), p.warnings.join(" | "));
+  st.getCimSectionsByDeal = async () => [{ id: "s2", sectionKey: "bridge", sectionTitle: "Earnings Bridge", layoutType: "waterfall_chart", order: 2, isVisible: true, updatedAt: new Date("2025-02-10") }];
+  assert.ok(!(await publishPreview(dealId)).warnings.some((w) => /written before/.test(w)));
+});
+
 cleanup(B.w);
 done("evidence");

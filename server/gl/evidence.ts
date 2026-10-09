@@ -241,6 +241,7 @@ export async function snapshotFromState(
       status: buyerStatusFor(t, buyerComputed),
       parties: ownParties.map((p) => ({ first: p.first, last: p.last })),
       personal: PERSONAL_CATEGORY.has(t.category ?? "") || PERSONAL_LABEL.test(t.label),
+      pay: t.proof === "payroll" || t.category === "owner_comp",
       share,
       why: screenForBuyers(t.buyerReason, info),
       brokerNote: t.brokerNoteShown ? screenForBuyers(t.brokerNote, info) : null,
@@ -495,7 +496,7 @@ export function projectEvidence(snap: GlPublishedEvidence, mode: GlEvidenceMode,
     const led = top ? ledgerOf.get(top) : null;
     return {
       lineId: l.lineId, status: l.status, mark: markFor(l, agree), label: l.label, years,
-      share: l.share, why: l.why, brokerNote: l.brokerNote, sellerNote: l.sellerNote,
+      share: l.share, why: l.why, brokerNote: l.brokerNote, sellerNote: l.sellerNote, ...(l.pay ? { pay: true } : {}),
       ledger: led ? { documentId: led.documentId, software: led.software && led.software !== "other" ? softwareLabel(led.software) : null, period: led.period } : null,
       docs: l.years.flatMap((y) => y.docs.map((d) => ({ documentId: d.documentId, name: d.label, year: d.year, amount: dollars(d.amountCents), check: d.check }))),
       statementDocs: l.statementDocs,
@@ -690,6 +691,8 @@ export async function publishPreview(dealId: string): Promise<PublishPreview> {
     warnings.push(`${r.year}: the ledger's net income differs from the statements${r.difference ? ` by ${money(Math.abs(r.difference))}` : ""} and you haven't accepted it — the Full and Blind notes won't mention ${r.year}.`);
   }
   if (skippedUnreviewed.length) warnings.push(`Not reviewed yet, so left out: ${skippedUnreviewed.join(", ")}.`);
+  const stale = await bridgeOlderThanAnalysis(dealId).catch(() => null);
+  if (stale) warnings.push(`Your CIM's "${stale}" was written before the latest financial analysis — regenerate it so the bridge and the note show the same add-backs.`);
   const pub = s.tracing.published as GlPublishedEvidence | null;
   const changes = pub && pub.v === 1 ? await changesSincePublished(s, pub) : [];
   const done = gate.state === "done" || gate.state === "waived";
@@ -711,6 +714,23 @@ export async function publishPreview(dealId: string): Promise<PublishPreview> {
     changes,
     agreeYears: snapshot.tieOut.filter((r) => r.state === "agrees" || r.state === "accepted").map((r) => r.year),
   };
+}
+
+/**
+ * The CIM's earnings-bridge section (where the note goes) when it was last
+ * written before the analysis the add-backs come from — its title, else null.
+ */
+async function bridgeOlderThanAnalysis(dealId: string): Promise<string | null> {
+  const [sections, { analysisForTraces }] = await Promise.all([storage.getCimSectionsByDeal(dealId), import("./service")]);
+  const visible = (sections ?? []).filter((x) => x.isVisible !== false).sort((a, b) => a.order - b.order);
+  if (visible.length === 0) return null;
+  const { glEvidenceAnchor } = await import("@shared/gl-evidence");
+  const at = glEvidenceAnchor(visible);
+  const analysis = await analysisForTraces(dealId);
+  const when = analysis?.updatedAt ? new Date(analysis.updatedAt as string).getTime() : NaN;
+  const sec = at >= 0 ? visible[at] : null;
+  if (!sec || !Number.isFinite(when)) return null;
+  return new Date(sec.updatedAt as unknown as string).getTime() < when ? sec.sectionTitle : null;
 }
 
 /** What changed since the broker published: what tightening took away, and what waits for "Update what buyers see". */

@@ -196,31 +196,44 @@ function NoteQuote({ text }: { text: string | null }) {
   return <blockquote className="mt-1.5 border-l-2 border-teal/50 pl-3 text-sm italic text-foreground/90" data-testid="gl-publish-note">"{text}"</blockquote>;
 }
 
-/** "See the page": the DD page from the live data, on the CIM paper. */
-export function EvidencePreviewSheet({ dealId, open, onOpenChange }: { dealId: string; open: boolean; onOpenChange: (o: boolean) => void }) {
-  const { data, isLoading, error } = useQuery<{ payload: GlEvidencePayload | null }>({
-    queryKey: ["/api/deals", dealId, "gl", "evidence", "dd", "live"],
-    queryFn: () => getJson(`/api/deals/${dealId}/gl/evidence?mode=dd&source=live`),
+/**
+ * The DD page on the CIM paper. source "live": the data as it stands (the
+ * publish dialog's "See the page"); "preview": what buyers see now when it's
+ * published, else the live data marked "Not shown to buyers yet".
+ */
+export function EvidencePreviewSheet({ dealId, open, onOpenChange, source = "live" }: { dealId: string; open: boolean; onOpenChange: (o: boolean) => void; source?: "live" | "preview" }) {
+  const { data, isLoading, error } = useQuery<{ payload: GlEvidencePayload | null; publishedAt: string | null }>({
+    queryKey: ["/api/deals", dealId, "gl", "evidence", "dd", source],
+    queryFn: () => getJson(`/api/deals/${dealId}/gl/evidence?mode=dd&source=${source}`),
     enabled: open,
     staleTime: 0,
   });
+  // Live data on a deal already shown to buyers: they see it after "Update what buyers see", not "after you publish".
+  const liveAfterPublish = source === "live" && !!data?.publishedAt;
+  const payload = data?.payload && liveAfterPublish ? { ...data.payload, preview: false } : data?.payload ?? null;
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-3xl p-0 overflow-y-auto" data-testid="gl-evidence-sheet">
         <SheetHeader className="px-4 pt-4 sm:px-6 text-left">
           <SheetTitle>Where each add-back is in the books</SheetTitle>
-          <SheetDescription>What due-diligence buyers will see, from the data as it stands now.</SheetDescription>
+          <SheetDescription>
+            {source === "preview" && data?.publishedAt
+              ? `What due-diligence buyers see now (shown since ${shortDate(data.publishedAt)}).`
+              : liveAfterPublish
+                ? "With your latest changes — buyers see these after you click Update what buyers see."
+                : "What due-diligence buyers will see, from the data as it stands now."}
+          </SheetDescription>
         </SheetHeader>
         <div className="p-3 sm:p-6">
           {isLoading ? (
             <div className="flex items-center gap-2 py-10 justify-center text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
           ) : error ? (
             <p className="py-6 text-sm text-center">This couldn't load right now.</p>
-          ) : !data?.payload ? (
+          ) : !payload ? (
             <p className="py-6 text-sm text-center text-muted-foreground">Nothing to show yet — review the add-backs first.</p>
           ) : (
             <div className="cim-doc rounded-lg bg-[hsl(var(--cim-paper))] px-4 py-5 sm:px-8 sm:py-8 shadow-sm">
-              <GlEvidenceBlock layoutData={data.payload} />
+              <GlEvidenceBlock layoutData={payload} />
             </div>
           )}
         </div>

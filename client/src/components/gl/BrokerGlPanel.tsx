@@ -217,12 +217,12 @@ function RequestStrip({ dealId, data, onSend }: { dealId: string; data: BrokerGl
       ) : tr.requestedAt && !tr.withdrawnAt ? (
         <div className="rounded-lg border border-border bg-card p-3 flex flex-col gap-2 sm:flex-row sm:items-center" data-testid="gl-with-seller">
           <p className="text-sm flex-1">
-            Sent to {seller} on {shortDate(tr.requestedAt)} · {tr.sellerDoneAt ? `finished ${shortDate(tr.sellerDoneAt)} — your turn to review` : !hasLedger ? "waiting for the ledger" : `checking entries: ${doneCount} of ${traces.length} done`}
+            Sent to {seller} on {shortDate(tr.requestedAt)} · {tr.sellerDoneAt ? (gate.state === "done" ? `finished ${shortDate(tr.sellerDoneAt)} · you've reviewed every add-back` : `finished ${shortDate(tr.sellerDoneAt)} — your turn to review`) : !hasLedger ? "waiting for the ledger" : `checking entries: ${doneCount} of ${traces.length} done`}
           </p>
           <div className="flex flex-wrap gap-2">
             {!tr.sellerDoneAt && <Button size="sm" variant="outline" className="h-8 text-xs" disabled={act.isPending} onClick={() => act.mutate({ url: `/api/deals/${dealId}/gl/remind` }, { onSuccess: (r) => toast({ title: "Reminder sent", description: r?.demo ? "This is a demo deal — nothing was emailed." : undefined }) })}>Remind {first}</Button>}
             <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={onSend}>Send more costs</Button>
-            <Button size="sm" variant="ghost" className="h-8 text-xs text-muted-foreground" disabled={act.isPending} onClick={() => act.mutate({ url: `/api/deals/${dealId}/gl/withdraw` })}>Withdraw the request</Button>
+            {!tr.sellerDoneAt && <Button size="sm" variant="ghost" className="h-8 text-xs text-muted-foreground" disabled={act.isPending} onClick={() => act.mutate({ url: `/api/deals/${dealId}/gl/withdraw` })}>Withdraw the request</Button>}
           </div>
         </div>
       ) : null}
@@ -281,7 +281,7 @@ function AddbacksView({ dealId, data, onOpen, onSend, onLedger, onPublish }: { d
           </div>
         </div>
       )}
-      <EvidencePreviewSheet dealId={dealId} open={seeing} onOpenChange={setSeeing} />
+      <EvidencePreviewSheet dealId={dealId} open={seeing} onOpenChange={setSeeing} source="preview" />
       {!requested && data.gate?.state !== "waived" && (
         <div className="rounded-lg border border-teal/30 bg-teal/5 p-4 space-y-3" data-testid="gl-setup">
           <p className="text-sm font-medium">Show where each add-back is in the books</p>

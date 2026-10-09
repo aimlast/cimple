@@ -88,6 +88,8 @@ export interface GlEvidenceLine {
   years?: GlEvidenceYear[];
   /** DD: the share added back of a cost (meals at 50%). */
   share?: { pct: number; basis: "estimate" | "documented"; doc?: string } | null;
+  /** DD: the owner's or a related party's pay — the year shows the pay, which the bridge may split (excess / market salary). */
+  pay?: boolean;
   /** DD: "Why it's added back" — the broker's text, screened. */
   why?: string | null;
   /** DD, when the broker shows it. */
@@ -176,6 +178,8 @@ export interface GlSnapshotLine {
   parties: Array<{ first: string; last: string }>;
   /** The add-back is a personal or related-party cost (personal entries in it are withheld). */
   personal: boolean;
+  /** The owner's or a related party's pay (shown as pay, not as the amount added back). */
+  pay?: boolean;
   share: { pct: number; basis: "estimate" | "documented"; doc?: string } | null;
   why: string | null;
   brokerNote: string | null;

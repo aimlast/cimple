@@ -27,7 +27,8 @@ export function GlKpiStrip({ data, onOpen, onBuyers }: { data: BrokerGlData; onO
   let ledgerSub: string | undefined;
   if (needsColumns) { ledgerText = "Needs columns"; ledgerTone = "warn"; ledgerSub = "Cimple couldn't tell which column is which — check it."; }
   else if (ready.length) {
-    ledgerText = `${softwareLabel(ready[0].software).replace(/ export$/, "")} · ${formatCount(rows)} entries`;
+    const program = ready[0].software && ready[0].software !== "other" ? softwareLabel(ready[0].software).replace(/ export$/, "") : "General ledger";
+    ledgerText = `${program} · ${formatCount(rows)} entries`;
     ledgerSub = privateOnly ? "Private to you — the seller can't see it" : period;
     ledgerTone = privateOnly ? "warn" : "good";
   } else if (reading) { ledgerText = "Reading…"; }

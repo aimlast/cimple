@@ -85,6 +85,7 @@ export function fakeWorld(): FakeWorld {
   s.getDealMembers = async (dealId: string) => w.members.filter((m) => m.dealId === dealId);
   s.getSellerInviteByToken = async (t: string) => w.invites.find((i) => i.token === t);
   s.getFinancialAnalysesByDeal = async () => [];
+  s.getCimSectionsByDeal = async () => [];
   return w;
 }
 
