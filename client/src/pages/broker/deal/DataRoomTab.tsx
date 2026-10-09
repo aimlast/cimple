@@ -86,7 +86,7 @@ export function DataRoomTab() {
     return (
       <div className="space-y-4 p-4 sm:p-6">
         {/* The same grid as the strip (3 on phones, 5 from md) so nothing jumps when it loads (checker r2 R2-4). */}
-        <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-border md:grid-cols-5">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-[72px] rounded-none md:h-[88px]" />)}</div>
+        <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-border md:grid-cols-5">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-[71px] rounded-none md:h-[122px] lg:h-[108px]" />)}</div>
         <div className="flex gap-5">
           <div className="hidden w-[260px] space-y-2 lg:block">{Array.from({ length: 9 }).map((_, i) => <Skeleton key={i} className="h-7 w-full" />)}</div>
           <div className="flex-1 space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}</div>

@@ -25,7 +25,8 @@ export function RoomKpis({ kpis, onGo }: { kpis: Kpis; onGo: (view: RoomView, ex
       {cells.map((c) => (
         // Top-aligned: a cell without a sub-line lines up with its neighbours (checker r2 R2-4).
         <button key={c.key} onClick={c.go} className={cn("group relative flex flex-col items-stretch justify-start bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted/30 md:px-4 md:py-4", c.wide && "col-span-2 md:col-span-1")} data-testid={`room-kpi-${c.key}`}>
-          <p className="text-[10px] font-medium uppercase leading-tight tracking-[0.1em] text-muted-foreground/70 md:text-2xs md:tracking-[0.14em]">{c.label}</p>
+          {/* Two lines kept for the label where narrow cells wrap it, so every number in a row sits at one height. */}
+          <p className="min-h-[2lh] text-[10px] font-medium uppercase leading-tight tracking-[0.1em] text-muted-foreground/70 md:text-2xs md:tracking-[0.14em] lg:min-h-0">{c.label}</p>
           <p className="mt-1.5 font-mono text-xl font-medium leading-none tabular-nums md:mt-2 md:text-2xl">{c.value}</p>
           {c.sub && <p className="mt-1.5 hidden truncate text-xs text-muted-foreground md:block">{c.sub}</p>}
           <div className="absolute bottom-0 left-4 right-4 h-px bg-teal/0 transition-colors group-hover:bg-teal/40" />
@@ -117,7 +118,8 @@ export function OpenedLine({ item }: { item: RoomItemRow }) {
 /** What a document is, in a few words ("FY2023 · PDF · 6 pages"). */
 export function ItemMeta({ item }: { item: RoomItemRow }) {
   const bits = [item.doc?.periodLabel, item.sizeLabel].filter(Boolean);
-  return <span className="text-xs text-muted-foreground">{bits.join(" · ")}</span>;
+  // Its own line: the status under it ("Getting it ready…") never runs into "PDF".
+  return <span className="block text-xs text-muted-foreground">{bits.join(" · ")}</span>;
 }
 
 export function DocIcon({ className }: { className?: string }) {

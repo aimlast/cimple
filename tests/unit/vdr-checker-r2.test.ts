@@ -100,11 +100,15 @@ const buttons = html.match(/<button[^>]*>/g) ?? [];
 assert.equal(buttons.length, 5);
 for (const b of buttons) assert.match(b, /flex flex-col items-stretch justify-start/, `every cell top-aligned: ${b}`);
 assert.match(html, /grid grid-cols-3 [^"]*md:grid-cols-5/, "3 on phones, 5 from md");
+const labels = html.match(/<p class="[^"]*uppercase[^"]*"/g) ?? [];
+assert.equal(labels.length, 5);
+for (const l of labels) assert.match(l, /min-h-\[2lh\][^"]*lg:min-h-0/, `labels keep two lines where cells are narrow, so numbers line up: ${l}`);
 const tab = fs.readFileSync(path.join(process.cwd(), "client/src/pages/broker/deal/DataRoomTab.tsx"), "utf8");
 const skeleton = /room\.isLoading[\s\S]{0,400}?className="(grid [^"]+)"/.exec(tab);
 assert.ok(skeleton, "the loading strip");
 assert.match(skeleton![1], /\bgrid-cols-3\b/, `the loading strip has the strip's phone grid: ${skeleton![1]}`);
 assert.match(skeleton![1], /\bmd:grid-cols-5\b/);
+assert.match(tab, /<Skeleton key=\{i\} className="h-\[71px\] rounded-none md:h-\[122px\] lg:h-\[108px\]"/, "loading cells as tall as the real ones (measured: 71 / 122 / 108 px)");
 ok("R2-4: KPI cells top-aligned; the loading strip uses the same 3/5 grid");
 
 // ── R2-6: one time zone, named ──
