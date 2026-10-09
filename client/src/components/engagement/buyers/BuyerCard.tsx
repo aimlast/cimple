@@ -135,7 +135,7 @@ export function BuyerCard(props: BuyerCardProps) {
       {/* Where they read */}
       <div className="mt-3" title={`See where ${card.name.split(" ")[0]} read →`}>
         <PageStrip cells={card.pageStrip} titles={card.mode === "blind" ? blindTitles : titles} maxMs={maxMs} onOpen={(c: PageStripCell) => openPage(c)} />
-        {props.legend && <StripLegend className="mt-1.5" />}
+        {props.legend && card.pageStrip.length > 0 && <StripLegend className="mt-1.5" />}
       </div>
 
       {/* What to say */}

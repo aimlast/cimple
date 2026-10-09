@@ -119,7 +119,7 @@ export function KpiStrip(props: KpiStripProps) {
   );
   if (!collapsible || !kpis) return blocks;
   return (
-    <>
+    <div>
       <button
         type="button"
         onClick={() => setExpanded((e) => !e)}
@@ -130,8 +130,8 @@ export function KpiStrip(props: KpiStripProps) {
         <span className="min-w-0 flex-1 truncate tabular-nums text-foreground/90">{kpiOneLine(kpis)}</span>
         <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 transition-transform", expanded && "rotate-180")} />
       </button>
-      <div className={cn(expanded ? "block" : "hidden", "md:block")}>{blocks}</div>
-    </>
+      <div className={cn(expanded ? "mt-2 block" : "hidden", "md:mt-0 md:block")}>{blocks}</div>
+    </div>
   );
 }
 
@@ -153,16 +153,12 @@ function KpiBlock({
   return (
     <section className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-card" data-testid={testId} aria-label={title}>
       <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/70 px-4 py-2">
-        <h2 className="flex min-w-0 items-center gap-1.5 font-mono text-2xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        <h2 className="order-1 flex min-w-0 items-center gap-1.5 font-mono text-2xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
           <span className="truncate">{title}</span>
           {info && <InfoDot text={info} />}
         </h2>
-        {(control || aside) && (
-          <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-2 sm:ml-auto sm:w-auto">
-            {control}
-            {aside}
-          </div>
-        )}
+        {aside && <div className="order-2 ml-auto flex items-center sm:order-3 sm:ml-0">{aside}</div>}
+        {control && <div className="order-3 flex w-full items-center sm:order-2 sm:ml-auto sm:w-auto">{control}</div>}
       </header>
       <div className={cn("grid grid-cols-2 gap-px bg-border/70", n === 3 ? "sm:grid-cols-3" : n >= 4 ? "sm:grid-cols-4" : "")}>
         {loading
@@ -199,7 +195,7 @@ function KpiCell({ kpi, size, strip, wide }: { kpi: Kpi; size: "md" | "sm"; stri
       aria-describedby={descId}
       className={cn(
         "group relative flex h-full w-full flex-col items-start bg-card text-left transition-colors hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-teal",
-        size === "sm" ? "px-3.5 py-2.5 sm:px-4" : "px-4 py-3 sm:py-3.5",
+        size === "sm" ? "px-3.5 py-2.5 sm:px-4" : "px-3.5 py-2.5 sm:px-4 sm:py-3.5",
         wide && "col-span-2 sm:col-span-1",
         open && "bg-muted/20",
       )}
@@ -217,9 +213,9 @@ function KpiCell({ kpi, size, strip, wide }: { kpi: Kpi; size: "md" | "sm"; stri
         )}
         data-testid={`kpi-${kpi.id}-value`}
       >
-        {kpi.display}
+        <KpiDisplay text={kpi.display} />
       </span>
-      <span className={cn("mt-1.5 line-clamp-2 min-h-[1rem] text-[11px] leading-snug text-muted-foreground sm:text-xs")} data-testid={`kpi-${kpi.id}-sub`}>
+      <span className="mt-1.5 line-clamp-2 min-h-[1rem] text-[11px] leading-snug text-muted-foreground sm:text-xs" data-testid={`kpi-${kpi.id}-sub`}>
         {kpi.sub ?? " "}
       </span>
       <span id={descId} className="sr-only">{kpi.explain}</span>
@@ -242,6 +238,19 @@ function KpiCell({ kpi, size, strip, wide }: { kpi: Kpi; size: "md" | "sm"; stri
         <KpiPopover kpi={kpi} strip={strip} onDone={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
+  );
+}
+
+/** "13 of 13": the numbers in mono, the word in the text face (mono spacing makes " of " look odd). */
+export function KpiDisplay({ text }: { text: string }) {
+  const m = /^(\S+) of (\S+)$/.exec(text);
+  if (!m) return <>{text}</>;
+  return (
+    <>
+      {m[1]}
+      <span className="mx-1 font-sans text-[0.55em] font-normal text-muted-foreground">of</span>
+      {m[2]}
+    </>
   );
 }
 

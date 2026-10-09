@@ -6,7 +6,7 @@
  * fade, and the active tab scrolls into view. An optional `right` slot holds
  * controls that belong to the bar (the deal tab's filters).
  */
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import * as TabsPrimitive from "@radix-ui/react-tabs";
 import { cn } from "@/lib/utils";
 
@@ -37,6 +37,18 @@ export function DashboardTabBar({
   className?: string;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
+  // The edge fade shows only when the tabs don't fit (never dims a tab that does).
+  const [overflow, setOverflow] = useState(false);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const check = () => setOverflow(list.scrollWidth > list.clientWidth + 1);
+    check();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(check);
+    ro.observe(list);
+    return () => ro.disconnect();
+  }, [tabs.length]);
   useEffect(() => {
     const el = listRef.current?.querySelector<HTMLElement>('[data-state="active"]');
     el?.scrollIntoView?.({ inline: "nearest", block: "nearest" });
@@ -53,7 +65,10 @@ export function DashboardTabBar({
           <TabsPrimitive.List
             ref={listRef}
             aria-label={ariaLabel}
-            className="-mb-px flex min-w-0 items-end gap-1 overflow-x-auto [mask-image:linear-gradient(to_right,transparent,#000_12px,#000_calc(100%-16px),transparent)] [scrollbar-width:none] sm:[mask-image:none] [&::-webkit-scrollbar]:hidden"
+            className={cn(
+              "-mb-px flex min-w-0 items-end gap-0.5 overflow-x-auto sm:gap-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+              overflow && "[mask-image:linear-gradient(to_right,#000_calc(100%-20px),transparent)]",
+            )}
             data-testid="dashboard-tabs"
           >
             {tabs.map((t) => (
@@ -61,7 +76,7 @@ export function DashboardTabBar({
                 key={t.key}
                 value={t.key}
                 className={cn(
-                  "group inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 border-transparent px-2.5 py-2.5 text-sm font-medium text-muted-foreground transition-colors first:pl-0.5 sm:px-3",
+                  "group inline-flex shrink-0 items-center gap-1 whitespace-nowrap border-b-2 border-transparent px-1.5 py-2.5 text-[13px] font-medium text-muted-foreground transition-colors first:pl-0.5 sm:gap-1.5 sm:px-3 sm:text-sm",
                   "hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-teal",
                   "data-[state=active]:border-teal data-[state=active]:text-teal",
                 )}
@@ -78,7 +93,7 @@ export function DashboardTabBar({
                 {t.count != null && (
                   <span
                     className={cn(
-                      "rounded-full bg-muted px-1.5 text-[11px] leading-[18px] tabular-nums text-muted-foreground",
+                      "rounded-full bg-muted px-1 text-[11px] leading-[18px] tabular-nums text-muted-foreground sm:px-1.5",
                       "group-data-[state=active]:bg-teal/15 group-data-[state=active]:text-teal",
                     )}
                   >

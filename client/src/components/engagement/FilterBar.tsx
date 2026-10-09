@@ -401,7 +401,7 @@ function FilterSheet({ open, onClose, filters, people, types, renditions, show }
             </SheetGroup>
           )}
         </div>
-        <div className="mt-5 flex gap-2">
+        <div className="sticky -bottom-6 -mx-4 mt-5 flex gap-2 border-t border-border bg-background px-4 pb-6 pt-3">
           <Button variant="outline" className="flex-1" onClick={() => { setDraft({ ...DEFAULT_ENGAGEMENT_FILTERS }); setPickOne(false); }}>Clear</Button>
           <Button className="flex-1" onClick={() => onClose(draft)} data-testid="filters-apply">Show results</Button>
         </div>

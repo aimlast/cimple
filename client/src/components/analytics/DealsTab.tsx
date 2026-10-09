@@ -101,7 +101,7 @@ export function DealsTable({ rows, range, sort, onSort }: {
   const teaser = rows.some((r) => r.teaser);
   const readHead = range === "all" ? "Read it" : `Read · ${rangeLabel(range, true)}`;
   const cols: Array<{ key: SortKey; label: string; className?: string }> = [
-    { key: "deal", label: "Deal", className: "min-w-[220px] pl-4" },
+    { key: "deal", label: "Deal", className: "min-w-[180px] pl-4" },
     { key: "opened", label: "Opened" },
     { key: "read", label: readHead },
     { key: "time", label: "Time per buyer" },
@@ -119,9 +119,9 @@ export function DealsTable({ rows, range, sort, onSort }: {
           <thead>
             <tr className="border-b border-border bg-muted/30 text-left text-xs text-muted-foreground">
               {cols.map((c) => (
-                <th key={c.key} className={cn("whitespace-nowrap px-3 py-2.5 font-medium", c.className)} aria-sort={sort.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}>
-                  <span className="inline-flex items-center gap-1">
-                    <button type="button" onClick={() => onSort(c.key)} className={cn("inline-flex items-center gap-1 hover:text-foreground", sort.key === c.key && "text-foreground")}>
+                <th key={c.key} className={cn("px-2.5 py-2.5 align-bottom font-medium", c.className)} aria-sort={sort.key === c.key ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}>
+                  <span className="inline-flex items-end gap-1">
+                    <button type="button" onClick={() => onSort(c.key)} className={cn("inline-flex items-end gap-1 text-left hover:text-foreground", sort.key === c.key && "text-foreground")}>
                       {c.label}
                       {sort.key === c.key && (sort.dir === "desc" ? <ArrowDown className="h-3 w-3" /> : <ArrowUp className="h-3 w-3" />)}
                     </button>
@@ -129,7 +129,7 @@ export function DealsTable({ rows, range, sort, onSort }: {
                   </span>
                 </th>
               ))}
-              <th className="px-3 py-2.5"><span className="sr-only">Heat map</span></th>
+              <th className="px-2.5 py-2.5"><span className="sr-only">Heat map</span></th>
             </tr>
           </thead>
           <tbody>
@@ -142,21 +142,19 @@ export function DealsTable({ rows, range, sort, onSort }: {
                   onClick={() => setLocation(`/deal/${r.dealId}/engagement`)}
                   data-testid={`deal-row-${r.dealId}`}
                 >
-                  <td className="max-w-[300px] px-3 py-3 pl-4">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <span className="truncate font-medium text-foreground" title={r.dealName}>{r.dealName}</span>
-                      <DealChips live={r.live} demo={r.demo} showLive />
-                    </div>
+                  <td className="max-w-[240px] px-2.5 py-2.5 pl-4">
+                    <span className="block truncate font-medium text-foreground" title={r.dealName}>{r.dealName}</span>
+                    <span className="mt-1 flex items-center gap-1.5"><DealChips live={r.live} demo={r.demo} showLive /></span>
                   </td>
-                  <td className="whitespace-nowrap px-3 py-3 tabular-nums" title={`${r.opened} of ${r.granted} buyers opened their link`}>{f.opened}</td>
-                  <td className="px-3 py-3 tabular-nums">{f.read}</td>
-                  <td className="whitespace-nowrap px-3 py-3 tabular-nums" title={r.medianReadingMs != null ? `Median of ${r.opened} buyers' active reading time` : undefined}>{f.time}</td>
-                  <td className="whitespace-nowrap px-3 py-3 tabular-nums" title={r.medianPagesReached != null ? `Median furthest page of ${r.opened} buyers` : undefined}>{f.far}</td>
-                  <td className="whitespace-nowrap px-3 py-3 tabular-nums">{f.nda}</td>
-                  {teaser && <td className="whitespace-nowrap px-3 py-3 tabular-nums">{f.teaser}</td>}
-                  <td className={cn("px-3 py-3 tabular-nums", r.waiting > 0 && "font-medium text-teal")}>{f.waiting}</td>
-                  <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted-foreground">{f.last}</td>
-                  <td className="whitespace-nowrap px-3 py-3 text-right">
+                  <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums" title={`${r.opened} of ${r.granted} buyers opened their link`}>{f.opened}</td>
+                  <td className="px-2.5 py-2.5 tabular-nums">{f.read}</td>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums" title={r.medianReadingMs != null ? `Median of ${r.opened} buyers' active reading time` : undefined}>{f.time}</td>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums" title={r.medianPagesReached != null ? `Median furthest page of ${r.opened} buyers` : undefined}>{f.far}</td>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums">{f.nda}</td>
+                  {teaser && <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums">{f.teaser}</td>}
+                  <td className={cn("px-2.5 py-2.5 tabular-nums", r.waiting > 0 && "font-medium text-teal")}>{f.waiting}</td>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums text-muted-foreground">{f.last}</td>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 pr-4 text-right">
                     <HeatMapLink dealId={r.dealId} />
                   </td>
                 </tr>

@@ -42,7 +42,7 @@ const { ActivityList, ReadingNowLine, dayHeading } = await import("../../client/
 const { DashboardTabBar } = await import("../../client/src/components/analytics/DashboardTabBar");
 const { AttentionPanels, ATTENTION_COPY } = await import("../../client/src/components/analytics/AttentionTab");
 const { HeadsUp } = await import("../../client/src/components/analytics/HeadsUp");
-const { BuyerList } = await import("../../client/src/components/engagement/buyers/BuyerList");
+const { BuyerList, defaultSelection } = await import("../../client/src/components/engagement/buyers/BuyerList");
 const { BuyerListHead, OLDER_VISITS_CHIP } = await import("../../client/src/components/engagement/buyers/BuyersView");
 const { PulseTop, pulseStats } = await import("../../client/src/components/engagement/BuyerPulseCard");
 const { analyticsKeys } = await import("../../client/src/hooks/useAnalyticsDashboard");
@@ -352,6 +352,22 @@ await test("callable buyers under Worth a call, declined ones folded, quiet ones
   const all = render(h(BuyerList, { ...props, range: "all" }));
   assert.doesNotMatch(text(all), /No reading in this period/, "only under a date filter");
   assert.match(text(all), /Worth a call \(1\)/);
+});
+
+await test("the default selection is the best lead, never a folded row; empty groups other than Worth a call are hidden", () => {
+  const empty: BuyerGroups = { worthACall: [], reading: [], quietInRange: [], declined: [], revoked: [], notOpened: [] };
+  assert.equal(defaultSelection({ ...empty, worthACall: [grow("a1", "A")], reading: [grow("a2", "B")] })?.accessId, "a1");
+  assert.equal(defaultSelection({ ...empty, reading: [grow("a2", "B")] })?.accessId, "a2");
+  assert.equal(defaultSelection({ ...empty, quietInRange: [grow("a5", "Q")], declined: [grow("a3", "D")] }), null, "a quiet or declined buyer is never picked by default");
+  const quietOnly: BuyerGroups = { ...empty, quietInRange: [grow("a5", "Quiet Quinn", { lastSeenAt: "2026-09-12T15:00:00Z", hasCard: false })] };
+  const html = render(h(BuyerList, {
+    groups: quietOnly, cards: new Map(), range: "7d", selected: null, onSelect() {}, maxMs: 1, titles: new Map(), blindTitles: new Map(),
+    live: true, nudgeMode: () => null, onNudge() {},
+  }));
+  assert.match(text(html), /Nobody in this period/);
+  assert.match(html, /data-testid="list-row-a5"/, "with nobody reading in the period, the quiet group opens");
+  assert.doesNotMatch(text(html), /Not opened yet/, "an empty Not opened group is hidden");
+  assert.match(text(html), /Last read 12 Sept/);
 });
 
 console.log("Tab bar");

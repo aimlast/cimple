@@ -11,7 +11,7 @@
  */
 import { useMemo } from "react";
 import { formatReadingTime, type BuyerEngagementCard } from "@shared/analytics-v2";
-import type { BuyerGroups } from "@shared/analytics-dashboard";
+import { dayMonth, type BuyerGroups } from "@shared/analytics-dashboard";
 import { useEngagementBuyers } from "@/hooks/useEngagement";
 import { titleMaps, useEngagementPageTitles } from "@/hooks/useAnalyticsDashboard";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -21,8 +21,9 @@ import { Copy, Link2, Mail } from "lucide-react";
 import { InfoDot } from "@/components/analytics/Explain";
 import { useMinWidth } from "@/components/analytics/media";
 import { BuyerCard } from "./BuyerCard";
-import { BuyerList, listOrder } from "./BuyerList";
-import { agoText, stripScale } from "./parts";
+import { BuyerList, defaultSelection, listOrder } from "./BuyerList";
+import { stripScale } from "./parts";
+import { whenText } from "@/components/analytics/parts";
 import { useBuyerCardActions, type BuyerCardActions } from "./useBuyerCardActions";
 import type { EngagementViewProps } from "../types";
 
@@ -113,10 +114,11 @@ export function BuyersView(props: BuyersViewProps) {
   }
 
   const order = listOrder(groups, filters.range);
-  const selectedId = props.selected ?? (wide ? order[0]?.accessId ?? null : null);
+  const selectedId = props.selected ?? (wide ? defaultSelection(groups)?.accessId ?? null : null);
   const row = order.find((r) => r.accessId === selectedId) ?? null;
   const totalMs = data.buyers.reduce((s, b) => s + b.activeMs, 0);
   const anyOpened = order.some((r) => !groups.notOpened.includes(r));
+  const lastQuiet = groups.quietInRange.reduce<string | null>((m, r) => (r.lastSeenAt && (!m || r.lastSeenAt > m) ? r.lastSeenAt : m), null);
 
   const detail = row ? (
     <BuyerDetail
@@ -132,7 +134,17 @@ export function BuyersView(props: BuyersViewProps) {
       actions={actions}
       onAllTime={() => props.onFiltersChange({ ...filters, range: "all" })}
     />
-  ) : anyOpened ? null : <EmptyReading published={props.published} />;
+  ) : !anyOpened ? (
+    <EmptyReading published={props.published} />
+  ) : filters.range !== "all" && groups.worthACall.length + groups.reading.length === 0 ? (
+    <div className="rounded-xl border border-dashed border-border bg-card px-5 py-8 text-center" data-testid="detail-quiet-period">
+      <p className="text-sm font-medium text-foreground">Nobody read the CIM in the {filters.range === "7d" ? "last 7 days" : "last 30 days"}.</p>
+      {lastQuiet && <p className="mt-1 text-xs text-muted-foreground">The last reading was on {dayMonth(lastQuiet)}.</p>}
+      <Button size="sm" variant="outline" className="mt-4 h-8 text-xs" onClick={() => props.onFiltersChange({ ...filters, range: "all" })}>Show all time</Button>
+    </div>
+  ) : (
+    <p className="rounded-xl border border-dashed border-border px-5 py-8 text-center text-sm text-muted-foreground">Pick a buyer on the left to see their reading.</p>
+  );
 
   return (
     <div className="grid gap-5 lg:grid-cols-[380px_minmax(0,1fr)]" data-testid="engagement-buyers">
@@ -154,8 +166,8 @@ export function BuyersView(props: BuyersViewProps) {
         <div className="min-w-0 lg:sticky lg:top-4 lg:self-start" data-testid="buyer-detail">{detail}</div>
       ) : (
         <Sheet open={!!row} onOpenChange={(o) => { if (!o) props.onSelect(null); }}>
-          <SheetContent side="bottom" className="h-[92vh] overflow-y-auto rounded-t-xl px-4 pb-8 pt-5" data-testid="buyer-sheet">
-            <SheetHeader className="mb-3 text-left"><SheetTitle className="pr-8 text-base">{row?.name}</SheetTitle></SheetHeader>
+          <SheetContent side="bottom" className="h-[92vh] overflow-y-auto rounded-t-xl px-4 pb-8 pt-12" data-testid="buyer-sheet">
+            <SheetHeader className="sr-only"><SheetTitle>{row?.name}</SheetTitle></SheetHeader>
             {detail}
           </SheetContent>
         </Sheet>
@@ -183,7 +195,7 @@ function BuyerDetail({ card, row, notOpened, quiet, published, titles, blindTitl
     return (
       <div className="rounded-xl border border-dashed border-border bg-card px-5 py-8 text-center" data-testid="detail-not-opened">
         <p className="text-sm font-medium text-foreground">{row.name} hasn't opened the CIM yet.</p>
-        <p className="mt-1 text-xs text-muted-foreground">Access given {agoText(row.grantedAt)}.{published ? "" : " The CIM isn't live, so they can't open it yet."}</p>
+        <p className="mt-1 text-xs text-muted-foreground">Access given {whenText(row.grantedAt)}.{published ? "" : " The CIM isn't live, so they can't open it yet."}</p>
         {published && (
           <div className="mt-4 flex flex-wrap justify-center gap-2">
             {mode && (
@@ -208,7 +220,7 @@ function BuyerDetail({ card, row, notOpened, quiet, published, titles, blindTitl
           {quiet ? `${row.name} didn't read in this period.` : `No reading from ${row.name} with these filters.`}
         </p>
         <p className="mt-1 text-xs text-muted-foreground">
-          {row.lastSeenAt ? `Last read ${agoText(row.lastSeenAt)}.` : "Change the filters to see their reading."}
+          {row.lastSeenAt ? `Last read ${whenText(row.lastSeenAt)}.` : "Change the filters to see their reading."}
         </p>
         {quiet && <Button size="sm" variant="outline" className="mt-4 h-8 text-xs" onClick={onAllTime}>Show all time</Button>}
       </div>

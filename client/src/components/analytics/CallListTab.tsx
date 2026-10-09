@@ -20,12 +20,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { PanelError } from "@/components/deal/PanelError";
 import { BuyerCard } from "@/components/engagement/buyers/BuyerCard";
-import { StatusChip, agoText, stripScale } from "@/components/engagement/buyers/parts";
+import { StatusChip, stripScale } from "@/components/engagement/buyers/parts";
 import { useBuyerCardActions } from "@/components/engagement/buyers/useBuyerCardActions";
 import type { EngagementNav } from "@/components/engagement/types";
 import { cn } from "@/lib/utils";
 import { analyticsSearch } from "./url";
-import { DealChips } from "./parts";
+import { DealChips, whenText } from "./parts";
 import { TabEmpty } from "./EmptyStates";
 import { useMinWidth } from "./media";
 
@@ -134,9 +134,9 @@ export function CallListTab({
         </div>
       ) : (
         <Sheet open={!!current} onOpenChange={(o) => { if (!o) onSelect(null); }}>
-          <SheetContent side="bottom" className="h-[92vh] overflow-y-auto rounded-t-xl px-4 pb-8 pt-5" data-testid="call-sheet">
-            <SheetHeader className="mb-3 text-left">
-              <SheetTitle className="pr-8 text-base">{current?.name}</SheetTitle>
+          <SheetContent side="bottom" className="h-[92vh] overflow-y-auto rounded-t-xl px-4 pb-8 pt-12" data-testid="call-sheet">
+            <SheetHeader className="sr-only">
+              <SheetTitle className="sr-only">{current?.name}</SheetTitle>
             </SheetHeader>
             {current && <CallDetail entry={current} flags={flags.get(current.dealId)} />}
           </SheetContent>
@@ -167,17 +167,17 @@ function CallRow({ entry: e, rank, flags, selected, onClick, onHover }: {
     >
       <span className="mt-0.5 w-5 shrink-0 font-mono text-xs tabular-nums text-teal">{rank}</span>
       <span className="min-w-0 flex-1">
-        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="text-sm font-medium text-foreground">{e.name}</span>
-          {e.company && <span className="truncate text-xs text-muted-foreground">{e.company}</span>}
+        <span className="flex items-baseline gap-2">
+          <span className="shrink-0 text-sm font-medium text-foreground">{e.name}</span>
+          {e.company && <span className="min-w-0 truncate text-xs text-muted-foreground">{e.company}</span>}
+          {e.lastSeenAt && <span className="ml-auto shrink-0 whitespace-nowrap text-2xs tabular-nums text-muted-foreground">{whenText(e.lastSeenAt)}</span>}
+        </span>
+        <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
           <StatusChip status={e.status} label={e.statusLabel} />
-        </span>
-        <span className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-          <span className="max-w-[14rem] truncate">{e.dealName}</span>
+          <span className="min-w-0 truncate">{e.dealName}</span>
           {flags && <DealChips live={flags.live} demo={flags.demo} />}
-          {e.lastSeenAt && <span className="whitespace-nowrap">· {agoText(e.lastSeenAt)}</span>}
         </span>
-        <span className="mt-1.5 block text-xs leading-relaxed text-foreground/85 line-clamp-1 lg:line-clamp-2">{e.why}</span>
+        <span className="mt-1.5 text-xs leading-relaxed text-foreground/85 line-clamp-2">{e.why}</span>
       </span>
     </button>
   );

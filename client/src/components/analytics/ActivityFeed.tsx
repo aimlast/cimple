@@ -268,7 +268,9 @@ export function ActivityFeed(props: ActivityFeedProps) {
             )}
             <OptionGroup<ActivityKindFilter> title="What happened" value={kind} onChange={setKind} options={kinds.map((k) => ({ value: k.key, label: k.label }))} />
           </div>
-          <Button className="mt-5 w-full" onClick={() => setSheet(false)}>Show activity</Button>
+          <div className="sticky -bottom-6 -mx-4 mt-5 border-t border-border bg-background px-4 pb-6 pt-3">
+            <Button className="w-full" onClick={() => setSheet(false)}>Show activity</Button>
+          </div>
         </SheetContent>
       </Sheet>
     </>

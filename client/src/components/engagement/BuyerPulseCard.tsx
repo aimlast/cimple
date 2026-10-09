@@ -21,6 +21,7 @@ import { useDealKpis, useDealReadingNow } from "@/hooks/useAnalyticsDashboard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { InfoDot } from "@/components/analytics/Explain";
+import { KpiDisplay } from "@/components/analytics/KpiStrip";
 import { Chip } from "@/components/analytics/parts";
 import { cn } from "@/lib/utils";
 import { StatusChip } from "./buyers/parts";
@@ -122,7 +123,7 @@ export function PulseTop({ dealId, data, readingNow }: { dealId: string; data: D
             )}
             data-testid={`pulse-${s.key}`}
           >
-            {s.value && <span className={cn("mr-1 font-mono tabular-nums text-foreground", s.key === "waiting" && "text-teal")}>{s.value}</span>}
+            {s.value && <span className={cn("mr-1 font-mono tabular-nums text-foreground", s.key === "waiting" && "text-teal")}><KpiDisplay text={s.value} /></span>}
             <span>{s.words}</span>
             {i < stats.length - 1 && <span className="ml-2 hidden text-muted-foreground/60 md:inline">·</span>}
           </button>
@@ -162,7 +163,7 @@ export function PulseTop({ dealId, data, readingNow }: { dealId: string; data: D
                       {e.company && <span className="text-xs text-muted-foreground">{e.company}</span>}
                       <StatusChip status={e.status} label={e.statusLabel} />
                     </span>
-                    <span className="mt-0.5 block min-w-0 text-xs leading-relaxed text-muted-foreground line-clamp-2 md:mt-0 md:line-clamp-1">{e.why}</span>
+                    <span className="mt-0.5 min-w-0 text-xs leading-relaxed text-muted-foreground line-clamp-2 md:mt-0 md:line-clamp-1">{e.why}</span>
                   </span>
                   <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/60 group-hover:text-teal" />
                 </button>

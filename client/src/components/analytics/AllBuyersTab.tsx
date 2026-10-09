@@ -214,10 +214,11 @@ export function AllBuyersTab({ examples, state, update }: {
         </div>
       </div>
 
-      <p className="text-xs text-muted-foreground" data-testid="buyers-count">
-        {Math.min(shown, rows.length)} of {rows.length} buyer{rows.length === 1 ? "" : "s"}
-        {chip && chipIds && ` · exactly the ${chipIds.length} counted in "${kpiChipWords(chip.id, chip.range)}"`}
-      </p>
+      {rows.length > 0 && (
+        <p className="text-xs text-muted-foreground" data-testid="buyers-count">
+          {Math.min(shown, rows.length)} of {rows.length} buyer{rows.length === 1 ? "" : "s"}
+        </p>
+      )}
 
       {rows.length === 0 ? (
         <TabEmpty
@@ -246,9 +247,11 @@ export function AllBuyersTab({ examples, state, update }: {
             <OptionGroup<BuyerSort> title="Sort" value={state.sort} onChange={(v) => update({ sort: v })}
               options={BUYER_SORTS.map((s) => ({ value: s.key, label: s.label }))} />
           </div>
-          <Button className="mt-5 w-full" onClick={() => setSheet(false)} data-testid="buyers-filters-apply">
-            Show {rows.length} buyer{rows.length === 1 ? "" : "s"}
-          </Button>
+          <div className="sticky -bottom-6 -mx-4 mt-5 border-t border-border bg-background px-4 pb-6 pt-3">
+            <Button className="w-full" onClick={() => setSheet(false)} data-testid="buyers-filters-apply">
+              Show {rows.length} buyer{rows.length === 1 ? "" : "s"}
+            </Button>
+          </div>
         </SheetContent>
       </Sheet>
     </div>
@@ -258,8 +261,8 @@ export function AllBuyersTab({ examples, state, update }: {
 export function BuyersTable({ rows, hideDeal, onNudge }: { rows: BuyerDashboardRow[]; hideDeal?: boolean; onNudge(r: BuyerDashboardRow): void }) {
   const [, setLocation] = useLocation();
   const head = (label: string, info?: string, className?: string) => (
-    <th className={cn("whitespace-nowrap px-3 py-2.5 font-medium", className)}>
-      <span className="inline-flex items-center gap-1">{label}{info && <InfoDot text={info} />}</span>
+    <th className={cn("px-2.5 py-2.5 align-bottom font-medium", className)}>
+      <span className="inline-flex items-end gap-1">{label}{info && <InfoDot text={info} />}</span>
     </th>
   );
   return (
@@ -277,7 +280,7 @@ export function BuyersTable({ rows, hideDeal, onNudge }: { rows: BuyerDashboardR
               {head("Pages read", BUYER_COLUMN_INFO.pages)}
               {head("NDA")}
               {head("Last active")}
-              <th className="px-3 py-2.5"><span className="sr-only">Action</span></th>
+              <th className="px-2.5 py-2.5"><span className="sr-only">Action</span></th>
             </tr>
           </thead>
           <tbody>
@@ -285,7 +288,7 @@ export function BuyersTable({ rows, hideDeal, onNudge }: { rows: BuyerDashboardR
               const teaser = r.document !== "cim";
               return (
                 <tr key={r.accessId} className="cursor-pointer border-b border-border last:border-0 hover:bg-muted/20" onClick={() => setLocation(rowHref(r))} data-testid={`buyer-row-${r.accessId}`}>
-                  <td className="max-w-[240px] px-3 py-2.5 pl-4">
+                  <td className="max-w-[220px] px-2.5 py-2.5 pl-4">
                     <div className="flex items-center gap-1.5">
                       <span className="truncate font-medium text-foreground">{r.name}</span>
                       {r.buyerUserId && (
@@ -297,21 +300,19 @@ export function BuyersTable({ rows, hideDeal, onNudge }: { rows: BuyerDashboardR
                     <p className="truncate text-xs text-muted-foreground">{r.company || r.email}</p>
                   </td>
                   {!hideDeal && (
-                    <td className="max-w-[220px] px-3 py-2.5">
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        <span className="truncate text-foreground/90" title={r.dealName}>{r.dealName}</span>
-                        <DealChips live={r.live} demo={r.demo} />
-                      </div>
+                    <td className="max-w-[200px] px-2.5 py-2.5">
+                      <span className="block truncate text-foreground/90" title={r.dealName}>{r.dealName}</span>
+                      {(r.demo || !r.live) && <span className="mt-1 flex items-center gap-1.5"><DealChips live={r.live} demo={r.demo} /></span>}
                     </td>
                   )}
-                  <td className="whitespace-nowrap px-3 py-2.5 text-foreground/90">{r.accessLabel}</td>
-                  <td className="px-3 py-2.5"><BuyerStatusCell row={r} /></td>
-                  <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{r.fitText ?? "—"}</td>
-                  <td className="whitespace-nowrap px-3 py-2.5 tabular-nums" title={teaser ? TEASER_READING_TIP : undefined}>{teaser ? "—" : r.readingMs ? formatReadingTime(r.readingMs) : "—"}</td>
-                  <td className="whitespace-nowrap px-3 py-2.5 tabular-nums" title={teaser ? TEASER_READING_TIP : undefined}>{!teaser && r.pagesRead != null && r.contentPages ? `${r.pagesRead} of ${r.contentPages}` : "—"}</td>
-                  <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">{r.ndaSignedAt ? <span className="text-foreground/90">✓ {dayMonth(r.ndaSignedAt)}</span> : "—"}</td>
-                  <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-muted-foreground">{r.lastSeenAt ? dayMonth(r.lastSeenAt) : teaser ? "—" : "Not opened"}</td>
-                  <td className="whitespace-nowrap px-3 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 text-foreground/90">{r.accessLabel}</td>
+                  <td className="px-2.5 py-2.5"><BuyerStatusCell row={r} /></td>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums">{r.fitText ?? "—"}</td>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums" title={teaser ? TEASER_READING_TIP : undefined}>{teaser ? "—" : r.readingMs ? formatReadingTime(r.readingMs) : "—"}</td>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums" title={teaser ? TEASER_READING_TIP : undefined}>{!teaser && r.pagesRead != null && r.contentPages ? `${r.pagesRead} of ${r.contentPages}` : "—"}</td>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums">{r.ndaSignedAt ? <span className="text-foreground/90">✓ {dayMonth(r.ndaSignedAt)}</span> : "—"}</td>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums text-muted-foreground">{r.lastSeenAt ? dayMonth(r.lastSeenAt) : teaser ? "—" : "Not opened"}</td>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 pr-4 text-right" onClick={(e) => e.stopPropagation()}>
                     <NudgeCell row={r} onNudge={onNudge} />
                   </td>
                 </tr>

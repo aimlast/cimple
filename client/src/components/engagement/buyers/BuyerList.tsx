@@ -14,7 +14,8 @@ import { dayMonth, rangeLabel, type BuyerGroups, type GroupRow } from "@shared/a
 import { accessLevelLabel } from "@shared/access-levels";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { PageStrip, StatusChip, agoText } from "./parts";
+import { PageStrip, StatusChip } from "./parts";
+import { whenText } from "@/components/analytics/parts";
 
 export type GroupKey = keyof BuyerGroups;
 
@@ -34,9 +35,20 @@ export function groupTitle(key: GroupKey, range: EngagementRange): string {
 
 const FOLDED: Record<GroupKey, boolean> = { worthACall: false, reading: false, quietInRange: true, declined: true, revoked: true, notOpened: false };
 
-/** Every row in list order (the default selection is the first; ↑/↓ walk this). */
+/** Every row in list order (↑/↓ walk this). */
 export function listOrder(groups: BuyerGroups, range: EngagementRange): GroupRow[] {
   return GROUP_ORDER.filter((k) => k !== "quietInRange" || range !== "all").flatMap((k) => groups[k]);
+}
+
+/** The buyer selected when none is chosen: the best lead, else the first still reading (never a folded group's row). */
+export function defaultSelection(groups: BuyerGroups): GroupRow | null {
+  return groups.worthACall[0] ?? groups.reading[0] ?? null;
+}
+
+/** Whether a group starts folded: the quiet group opens when nobody read in the period. */
+function foldedByDefault(key: GroupKey, groups: BuyerGroups): boolean {
+  if (key === "quietInRange") return groups.worthACall.length + groups.reading.length > 0;
+  return FOLDED[key];
 }
 
 export interface BuyerListProps {
@@ -78,9 +90,9 @@ export function BuyerList(props: BuyerListProps) {
       {GROUP_ORDER.map((key) => {
         const rows = groups[key];
         if (key === "quietInRange" && range === "all") return null;
-        if (rows.length === 0 && key !== "worthACall" && key !== "notOpened") return null;
+        if (rows.length === 0 && key !== "worthACall") return null;
         if (rows.length === 0 && key === "worthACall" && order.length === 0) return null;
-        const folded = open[key] === undefined ? FOLDED[key] : !open[key];
+        const folded = open[key] === undefined ? foldedByDefault(key, groups) : !open[key];
         const ranked = key === "worthACall" || key === "reading";
         return (
           <section key={key} data-testid={`group-${key}`}>
@@ -97,7 +109,7 @@ export function BuyerList(props: BuyerListProps) {
             </button>
             {!folded && (
               rows.length === 0 ? (
-                <p className="px-1 py-2 text-xs text-muted-foreground">{key === "worthACall" ? "Nobody right now. Buyers show up here when they read closely, ask a question or say they're interested." : "Nobody."}</p>
+                <p className="px-1 py-2 text-xs text-muted-foreground">{range === "all" ? "Nobody right now. Buyers show up here when they read closely, ask a question or say they're interested." : "Nobody in this period."}</p>
               ) : (
                 <ol className="mt-1.5 space-y-1">
                   {rows.map((r) => {
@@ -139,14 +151,15 @@ export function BuyerListRow({ row, group, rank, card, selected, onSelect, list 
   const mode = group === "notOpened" ? list.nudgeMode(row.accessId) : null;
   return (
     <div
+      onClick={onSelect}
       className={cn(
-        "group relative rounded-lg border border-transparent transition-colors",
+        "group relative cursor-pointer rounded-lg border border-transparent transition-colors",
         selected ? "border-l-2 border-l-teal bg-teal/10" : "hover:bg-muted/30",
       )}
     >
       <button
         type="button"
-        onClick={onSelect}
+        onClick={(e) => { e.stopPropagation(); onSelect(); }}
         aria-current={selected || undefined}
         data-access={row.accessId}
         className="flex w-full items-start gap-2.5 px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-teal"
@@ -158,14 +171,14 @@ export function BuyerListRow({ row, group, rank, card, selected, onSelect, list 
             <span className="min-w-0 truncate text-sm font-medium text-foreground">{row.name}</span>
             {card && group !== "notOpened" && (
               <span className="ml-auto shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground">
-                {formatReadingTime(card.activeMs)}{card.lastSeenAt ? ` · ${agoText(card.lastSeenAt)}` : ""}
+                {formatReadingTime(card.activeMs)}{card.lastSeenAt ? ` · ${whenText(card.lastSeenAt)}` : ""}
               </span>
             )}
           </span>
           {row.company && <span className="block truncate text-xs text-muted-foreground">{row.company}</span>}
           {group === "notOpened" ? (
             <span className="mt-0.5 block text-xs text-muted-foreground">
-              Access given {agoText(row.grantedAt)} · {row.ndaSigned ? "NDA signed" : "NDA not signed yet"}
+              Access given {whenText(row.grantedAt)} · {row.ndaSigned ? "NDA signed" : "NDA not signed yet"}
             </span>
           ) : group === "quietInRange" ? (
             <span className="mt-0.5 block text-xs text-muted-foreground">{row.lastSeenAt ? `Last read ${dayMonth(row.lastSeenAt)}` : "No reading recorded"}</span>
@@ -177,18 +190,20 @@ export function BuyerListRow({ row, group, rank, card, selected, onSelect, list 
               <span className="text-2xs text-muted-foreground">{accessLevelLabel(row.accessLevel)}</span>
             </span>
           )}
-          {!plain && card && card.pageStrip.length > 0 && (
-            <PageStrip
-              cells={card.pageStrip}
-              titles={card.mode === "blind" ? list.blindTitles : list.titles}
-              maxMs={list.maxMs}
-              size="sm"
-              caption={false}
-              className="pointer-events-none mt-1.5"
-            />
-          )}
         </span>
       </button>
+      {!plain && card && card.pageStrip.length > 0 && (
+        // Outside the button (the strip has its own buttons); clicks pass through to the row.
+        <div className="pointer-events-none px-2.5 pb-2 pl-9" aria-hidden>
+          <PageStrip
+            cells={card.pageStrip}
+            titles={card.mode === "blind" ? list.blindTitles : list.titles}
+            maxMs={list.maxMs}
+            size="sm"
+            caption={false}
+          />
+        </div>
+      )}
       {group === "notOpened" && (
         <div className="px-2.5 pb-2 pl-9">
           {!list.live ? (
@@ -196,7 +211,7 @@ export function BuyerListRow({ row, group, rank, card, selected, onSelect, list 
           ) : mode ? (
             <Button
               size="sm" variant="outline" className="h-7 text-xs"
-              onClick={() => list.onNudge(row.accessId)}
+              onClick={(e) => { e.stopPropagation(); list.onNudge(row.accessId); }}
               title={mode === "copy" ? "Copies their email: they don't have a Cimple profile yet" : "Write them a short email (you send it)"}
               data-testid={`nudge-${row.accessId}`}
             >

@@ -1,5 +1,6 @@
 /** Small shared pieces of the analytics dashboards: deal chips, the tab description line. */
 import type { ReactNode } from "react";
+import { dayMonth } from "@shared/analytics-dashboard";
 import { cn } from "@/lib/utils";
 import { InfoDot } from "./Explain";
 
@@ -90,4 +91,19 @@ export function FilterChip({ children, onRemove, testId }: { children: ReactNode
       </button>
     </span>
   );
+}
+
+/** "just now", "3 h ago", "yesterday", "4 days ago", then "23 Sept" (the dashboards' one date style). */
+export function whenText(iso: string | null | undefined, now = Date.now()): string {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (!t) return "";
+  const s = Math.max(0, (now - t) / 1000);
+  if (s < 90) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 20 * 3600) return `${Math.round(s / 3600)} h ago`;
+  const days = Math.round(s / 86400);
+  if (days <= 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  return dayMonth(iso);
 }

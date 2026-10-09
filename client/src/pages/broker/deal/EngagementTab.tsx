@@ -128,9 +128,8 @@ export function EngagementTab() {
     return { label: "Open the Buyers list", onClick: () => go({ view: "buyers" }) };
   };
 
-  const buyersCount = k
-    ? filters.range === "all" ? opened?.value ?? 0 : k.groups.worthACall.length + k.groups.reading.length
-    : "loading" as const;
+  // "Buyers 13": everyone who opened (all time); under a date filter the list says the rest.
+  const buyersCount = k ? (filters.range === "all" ? opened?.value ?? 0 : undefined) : "loading" as const;
   const tabs: DashboardTab[] = [
     ...(noCimBuyers ? [{ key: "buyers", label: "Buyers" }] : [
       { key: "buyers", label: "Buyers", count: buyersCount },
