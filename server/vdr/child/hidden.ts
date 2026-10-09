@@ -48,8 +48,9 @@ export function visibleChars(s: string): number {
  * ("______") or a dotted leader sits below the band the check measures, so a
  * run of punctuation is never checked (it would always look "invisible").
  */
+const WORD_CHAR = new RegExp("[\\p{L}\\p{N}]", "gu"); // (constructor form: the tsconfig target predates the u flag literal)
 export function wordChars(s: string): number {
-  return (s.match(/[\p{L}\p{N}]/gu) ?? []).length;
+  return (s.match(WORD_CHAR) ?? []).length;
 }
 
 /**
