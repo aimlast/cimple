@@ -20,7 +20,7 @@
  *    request, so there is no window.
  */
 import { DD_ACCESS_LEVEL } from "@shared/access-levels";
-import { isLedgerDoc, isRoomMaterial, type VdrAction } from "@shared/vdr";
+import { isLedgerDoc, isRoomMaterial, presetFolder, type VdrAction } from "@shared/vdr";
 import type { Document, InsertVdrActivity, VdrItem } from "@shared/schema";
 import { dbVdrStore, logVdrQuietly, type VdrStore } from "./store";
 import { planAutoFile, presetFolderRows, presetFor } from "./auto-file";
@@ -128,11 +128,22 @@ export async function fileDocumentIntoRoom(
   const live = rows.find((r) => !r.removedAt);
   if (live) return live;
   if (rows.length > 0 && !opts.explicit) return null;
-  const folders = await ensurePresetFolders(dealId, deps);
+  // The broker's own index is respected: a preset folder they deleted is not
+  // re-created; the document goes to its preset's parent, else "Other documents"
+  // (created only if there is nowhere else to put it).
+  let folders = await deps.store.listFolders(dealId);
   let folderId = opts.folderId && folders.some((f) => f.id === opts.folderId) ? opts.folderId : null;
   if (!folderId) {
     const key = presetFor(doc).key;
-    folderId = folders.find((f) => f.presetKey === key)?.id ?? folders.find((f) => f.presetKey === "other")?.id ?? null;
+    const parentKey = presetFolder(key)?.parent ?? null;
+    const pick = () => folders.find((f) => f.presetKey === key)?.id ?? (parentKey ? folders.find((f) => f.presetKey === parentKey)?.id : undefined) ?? folders.find((f) => f.presetKey === "other")?.id ?? null;
+    folderId = pick();
+    if (!folderId) {
+      const other = presetFolderRows().find((r) => r.presetKey === "other")!;
+      await deps.store.insertFolder({ dealId, parentId: null, name: other.name, position: other.position, presetKey: "other" });
+      folders = await deps.store.listFolders(dealId);
+      folderId = pick();
+    }
   }
   if (!folderId) return null;
   const items = await deps.store.listItems(dealId);

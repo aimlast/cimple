@@ -162,6 +162,17 @@ assert.ok(put && !put.removedAt && put.id !== t24.id);
 assert.equal(await setup.fileDocumentIntoRoom(D, "crm", "broker", { explicit: true }, deps), null, "broker-only can never go in");
 assert.equal(await setup.fileDocumentIntoRoom(D, "other-deal", "broker", { explicit: true }, deps), null, "another deal's document");
 
+// ── The broker's own index is respected: a deleted preset folder isn't re-created ──
+{
+  const bankFolder = f.folders.find((x) => x.presetKey === "financial.bank");
+  f.folders.splice(f.folders.indexOf(bankFolder), 1); // the broker deleted the (empty) folder
+  f.documents.push({ id: "bank-25", dealId: D, name: "Bank statements 2025", originalName: "bank25.pdf", category: "financials", fileUrl: "/uploads/docs/doc_b25.pdf", createdAt: clock, uploadedBy: "broker", sourceKind: "document", visibility: "shared", subcategory: null });
+  const placedBank = await setup.autoFileIfRoom("bank-25", deps);
+  assert.ok(placedBank);
+  assert.equal(f.folders.find((x) => x.id === placedBank!.folderId).presetKey, "financial", "goes to the preset's parent");
+  assert.equal(f.folders.some((x) => x.presetKey === "financial.bank"), false, "not re-created");
+}
+
 // ── gl: a ledger status change re-queues the item ──
 queued.length = 0;
 await setup.onLedgerStatusChanged("t2-24", deps);
