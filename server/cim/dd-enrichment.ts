@@ -2,10 +2,15 @@
  * DD (Due Diligence) CIM Enrichment Engine
  *
  * Enriches normal CIM sections with previously withheld sensitive information:
- * - Customer names revealed in charts (replacing "Customer A" etc.)
- * - Addback verification details shown inline
- * - Financial comparison against bank statements / T2s
- * - Revenue verification commentary
+ * customer, supplier and lessor names revealed (replacing "Customer A" etc.).
+ *
+ * It no longer writes "verification notes" (dd spec D15): how the figures
+ * check out against the tax returns and other records is shown separately,
+ * from the documents themselves (server/cim/figures/*, the DD figure layer —
+ * comparisons, citations, "How the figures check out"), never as prose the
+ * writer is asked to add. With reveal gating on (DD_REVEAL_GATING=on, P2),
+ * only sections that hold an anonymised reference go to the model; the
+ * others keep their named version at no cost.
  *
  * The DD version uses the same layout/format but highlights what's new:
  * newly revealed or newly added spans inside FREE-TEXT fields are wrapped in
@@ -1018,6 +1023,56 @@ export function sanitizeDdOutput(layoutData: any, contentOverride: string): { la
   };
 }
 
+// ── Reveal gating (spec D15, §9.8; P2) ─────────────────────────────────────
+
+/**
+ * Wording that stands in for a name the DD version may reveal: "Customer A",
+ * "Supplier 2", "our largest customer", "a regional grocery distributor",
+ * "a national retailer", "the landlord", "Top 5 customers", "an undisclosed
+ * client". Case matters for the letter in "Customer A" (never "customer a").
+ */
+const ANON_PATTERNS: RegExp[] = [
+  /\b(?:[Cc]ustomer|[Cc]lient|[Ss]upplier|[Vv]endor|[Aa]ccount|[Pp]ayer|[Cc]arrier|[Cc]ontractor|[Ss]ubcontractor|[Dd]istributor|[Ww]holesaler|[Mm]anufacturer|[Pp]artner|[Ll]andlord|[Ll]essor|[Ii]nsurer|[Tt]enant|[Ss]hipper)s?\s+(?:[A-Z]|\d{1,2}|#\d{1,2})\b/,
+  /\b(?:largest|biggest|top|key|major|main|primary|principal|anchor|second[- ]largest|third[- ]largest|leading|single)\s+(?:[a-z-]+\s+){0,2}?(?:customers?|clients?|accounts?|suppliers?|vendors?|payers?|contracts?|distributors?|partners?|carriers?|wholesalers?)\b/i,
+  /\b(?:a|an|one|two|three|four|five|several|its|their)\s+(?:large|major|national|regional|provincial|local|leading|global|international|multinational|publicly[- ]traded|well[- ]known|tier[- ]one|fortune\s*\d+|canadian|american|u\.?s\.?|big[- ]box|blue[- ]chip)\s+(?:[a-z&-]+\s+){0,3}?(?:compan(?:y|ies)|retailers?|chains?|distributors?|grocers?|operators?|manufacturers?|hospitals?|insurers?|networks?|groups?|customers?|clients?|suppliers?|carriers?|brands?|universit(?:y|ies)|municipalit(?:y|ies)|agenc(?:y|ies)|governments?|developers?|builders?|homebuilders?|contractors?|firms?|banks?|lenders?|landlords?|reits?|health authorit(?:y|ies)|school boards?|residences?|homes?|facilit(?:y|ies))\b/i,
+  /\b(?:undisclosed|unnamed|confidential|anonymi[sz]ed)\s+(?:[a-z-]+\s+){0,2}?(?:customers?|clients?|accounts?|suppliers?|vendors?|partners?|landlord|lessor|parties|party|buyers?|tenants?)\b/i,
+  /\b(?:the|our|its|their)\s+(?:landlord|lessor|property owner)\b/i,
+  /\btop\s+\d{1,2}\s+(?:customers?|clients?|accounts?|suppliers?|payers?)\b/i,
+];
+
+/** Every string in a section (layout data and its prose). */
+function sectionStrings(section: Pick<CimSection, "layoutData" | "aiDraftContent" | "brokerEditedContent">): string[] {
+  const out: string[] = [];
+  const walk = (v: unknown, depth: number) => {
+    if (depth > 8 || v == null) return;
+    if (typeof v === "string") { out.push(v); return; }
+    if (Array.isArray(v)) { for (const x of v) walk(x, depth + 1); return; }
+    if (typeof v === "object") for (const x of Object.values(v as Record<string, unknown>)) walk(x, depth + 1);
+  };
+  walk(section.layoutData, 0);
+  if (section.brokerEditedContent) out.push(section.brokerEditedContent);
+  else if (section.aiDraftContent) out.push(section.aiDraftContent);
+  return out;
+}
+
+/** True when the section holds wording the DD version may replace with a real name. */
+export function holdsAnonymisedReferences(section: Pick<CimSection, "layoutData" | "aiDraftContent" | "brokerEditedContent">): boolean {
+  return sectionStrings(section).some((t) => ANON_PATTERNS.some((re) => re.test(t)));
+}
+
+/**
+ * Reveal gating is off until the founder's live comparison (dd spec §15:
+ * the DD reveal pass with and without gating on a Beacon copy) shows it keeps
+ * every reveal. Turn on with DD_REVEAL_GATING=on.
+ */
+let gatingOverride: boolean | null = null;
+export function ddRevealGatingOn(): boolean {
+  return gatingOverride ?? /^(?:on|1|true|yes)$/i.test(process.env.DD_REVEAL_GATING ?? "");
+}
+export function _setDdRevealGatingForTests(on: boolean | null): void {
+  gatingOverride = on;
+}
+
 /** Swappable for tests. */
 type DdClient = { messages: { create: (body: any) => Promise<any> } };
 let ddClient: DdClient = anthropic as unknown as DdClient;
@@ -1044,6 +1099,10 @@ export async function enrichSection(
   if (section.layoutType === "cover_page" || section.layoutType === "divider" || isMediaLayout(section.layoutType)) {
     return keep();
   }
+  // P2 reveal gating (D15): nothing anonymised in it → nothing to reveal → no model call.
+  if (ddRevealGatingOn() && !holdsAnonymisedReferences(section)) {
+    return keep();
+  }
 
   let parsed: { layoutData?: unknown; contentOverride?: unknown } | null = null;
   try {
@@ -1055,11 +1114,11 @@ export async function enrichSection(
       messages: [
         {
           role: "user",
-          content: `You are writing the Due Diligence version of one CIM section. The buyer reading it has signed an LOI; the DD version reveals previously withheld detail and adds verification notes.
+          content: `You are writing the Due Diligence version of one CIM section. The buyer reading it is in due diligence; this version reveals detail the earlier versions withheld.
 
 ## What to do
 1. If this section contains anonymized references (Customer A, Supplier A, a regional grocery distributor, etc.), replace them with the real names — ONLY names listed in the DD context below. If the context doesn't give the name, keep the anonymized wording.
-2. If this section is financial and the DD context has verification data (verified financials, add-back verification, supporting documents), add a short inline note on how the figures were verified.
+2. Do not add notes on how figures were checked; that is shown separately.
 3. MARK WHAT IS NEW. Wrap every newly revealed or newly added span of text in ${DD_OPEN} and ${DD_CLOSE}, e.g. "Revenue is concentrated with ${DD_OPEN}Acme Logistics (31%)${DD_CLOSE}."
    - Markers ONLY inside free-text fields: body, description, caption, footnote(s), notes, pullQuote, highlights, summary, and the content text.
    - NEVER put markers in labels, values, names, titles, chart data, table cells or metric values — reveal those plainly.
