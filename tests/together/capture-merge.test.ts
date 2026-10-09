@@ -140,6 +140,38 @@ async function main() {
     assert.equal(counters.modelCalls, 0, "nothing was read with a model");
   });
 
+  await test("Undo, then the seller says it again: the new answer stands in the row, survives a later part and a deal-wide re-read", async () => {
+    // A retry of the part that was undone changes nothing — not the facts, not the row, not the Undo list.
+    const retry = await applyCapture({ sitting: await sit(), chunk: chunk1, guarded: guarded() as any, sellerLabel: "Tony Moretti (seller)" });
+    assert.equal(retry.filed.length, 0);
+    assert.equal(facts().seasonality, undefined);
+    assert.equal(w.documents.find((d) => d.sourceMeta?.recordType === "together_sitting")!.extractedData.seasonality, undefined, "a retry never brings an undone value back into the row");
+    assert.deepEqual(((await sit()).captureState as any).undone.map((u: any) => u.key), ["seasonality", "annualRevenue"]);
+    const refile = await store.insertChunk({ sittingId: sitting.id, dealId: "D1", seqFrom: 2, seqTo: 2, reason: "pause", status: "applying", attempts: 1 });
+    const again = { ...guarded().spoken[0], value: "Busy July and August", quote: "July and August are busy", excerpt: "July and August are busy." };
+    const r1 = await applyCapture({ sitting: await sit(), chunk: refile, guarded: guarded({ spoken: [again] }) as any, sellerLabel: "Tony Moretti (seller)" });
+    await store.updateChunk(refile.id, { result: r1 as any, status: "done" });
+    assert.equal(facts().seasonality, "Busy July and August");
+    const row = () => w.documents.find((d) => d.sourceMeta?.recordType === "together_sitting")!;
+    assert.equal(row().extractedData.seasonality, "Busy July and August", "the row asserts the new answer");
+    assert.ok(!((await sit()).captureState as any).undone.some((u: any) => u.key === "seasonality"), "the earlier Undo no longer applies to the key");
+    // A later part about something else leaves it alone.
+    const later = await store.insertChunk({ sittingId: sitting.id, dealId: "D1", seqFrom: 3, seqTo: 3, reason: "pause", status: "applying", attempts: 1 });
+    const other = { key: "ownerInvolvement", itemId: "employees:ownerInvolvement", value: "In three days a week", quote: "three days a week", excerpt: "I'm in three days a week.", lines: [3], speaker: "seller" as const, confidence: "confirmed" as const };
+    const r2 = await applyCapture({ sitting: await sit(), chunk: later, guarded: guarded({ spoken: [other] }) as any, sellerLabel: "Tony Moretti (seller)" });
+    await store.updateChunk(later.id, { result: r2 as any, status: "done" });
+    assert.equal(row().extractedData.seasonality, "Busy July and August", "a later part doesn't drop it");
+    // "Read all again" replays the row: the seller's corrected answer stays.
+    const { reprocessDealDocuments } = await import("../../server/documents/reprocess");
+    await reprocessDealDocuments("D1");
+    assert.equal(facts().seasonality, "Busy July and August");
+    assert.equal(facts().ownerInvolvement, "In three days a week");
+    assert.equal(counters.modelCalls, 0);
+    // The pure rule: what was undone leaves first; a key this part says again stands.
+    assert.equal(cumulativeExtraction({ seasonality: "old", _excerpts: { seasonality: "x" } }, { seasonality: "new", _excerpts: { seasonality: "y" } }, ["seasonality"]).seasonality, "new");
+    assert.deepEqual((cumulativeExtraction({ seasonality: "old", _excerpts: { seasonality: "x" } }, { seasonality: "new", _excerpts: { seasonality: "y" } }, ["seasonality"]) as any)._excerpts, { seasonality: "y" });
+  });
+
   await test("a change since → 'This was changed since — use Edit.'", async () => {
     const chunk3 = await store.insertChunk({ sittingId: sitting.id, dealId: "D1", seqFrom: 2, seqTo: 2, reason: "pause", status: "applying", attempts: 1 });
     const res = await applyCapture({ sitting: await sit(), chunk: chunk3, guarded: guarded({ spoken: [guarded().spoken[0]] }) as any, sellerLabel: "Tony Moretti (seller)" });

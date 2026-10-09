@@ -307,9 +307,20 @@ export interface ChunkResult {
 /** The meta maps a call transcript's extraction carries per key. */
 const META_MAPS = ["_speakers", "_confidence", "_excerpts", "_verify"] as const;
 
-/** The transcript row's extraction: every applied part's delta (latest value per key) minus what was undone. Pure. */
+/**
+ * The transcript row's extraction: every applied part's delta (latest value
+ * per key) minus what was undone. What was undone leaves FIRST, then this
+ * part's delta is applied — so a key the seller says again after an Undo
+ * stands in the row (a deal-wide "Read all again" replays the row and must
+ * keep it). Pure.
+ */
 export function cumulativeExtraction(prev: Record<string, unknown> | null | undefined, delta: Record<string, unknown>, undone: string[] = []): Record<string, unknown> {
   const out: Record<string, unknown> = { ...(prev ?? {}) };
+  for (const m of META_MAPS) if (out[m] && typeof out[m] === "object") out[m] = { ...(out[m] as Record<string, unknown>) };
+  for (const key of undone) {
+    delete out[key];
+    for (const m of META_MAPS) if (out[m] && typeof out[m] === "object") delete (out[m] as Record<string, unknown>)[key];
+  }
   for (const [k, v] of Object.entries(delta)) {
     if (k === "_privateNotes") {
       const list = Array.isArray(out._privateNotes) ? (out._privateNotes as string[]) : [];
@@ -319,10 +330,6 @@ export function cumulativeExtraction(prev: Record<string, unknown> | null | unde
     } else if (!k.startsWith("_")) {
       out[k] = v;
     }
-  }
-  for (const key of undone) {
-    delete out[key];
-    for (const m of META_MAPS) if (out[m] && typeof out[m] === "object") delete (out[m] as Record<string, unknown>)[key];
   }
   if (!out.summary) out.summary = "Answers filed live during Interview together.";
   return out;
@@ -398,13 +405,18 @@ export async function applyCapture(args: ApplyArgs): Promise<ChunkResult> {
       if (guarded.privateNotes.length > 0) delta._privateNotes = guarded.privateNotes.map((n) => n.note);
       const touched = new Set<string>([...spoken.map((a) => a.key), ...guarded.retractions.map((r) => r.field)]);
       const kindOf = new Map(spoken.map((a) => [a.key, a] as const));
+      // (A part already applied — a retry — leaves the row as that application wrote it.)
+      let alreadyApplied = false;
       const { mergeExtractionIntoDeal } = await import("../documents/ingest");
       await mergeExtractionIntoDeal(doc, delta as never, {
         keepOut: guarded.keepOut,
         retractions: guarded.retractions,
         reviewNotes: process.env.ANTHROPIC_API_KEY !== "disabled",
         beforeSave: (merged, before) => {
-          if (isApplied(before, sitting.id, chunk.chunkNo)) return "skip";
+          if (isApplied(before, sitting.id, chunk.chunkNo)) {
+            alreadyApplied = true;
+            return "skip";
+          }
           for (const key of Array.from(touched)) {
             const beforeSnap = snapshotKey(before, key);
             const src = getFieldSources(merged)[key];
@@ -420,14 +432,16 @@ export async function applyCapture(args: ApplyArgs): Promise<ChunkResult> {
         },
       });
       // The transcript row's extraction: the union of every applied part (minus what was undone —
-      // a key filed again after its Undo stands again).
-      const fresh = await storage.getDocument(doc.id);
+      // a key the seller says again after its Undo stands again, whether or not it changed the
+      // deal's value: kept beside a stronger one, it is still what the row asserts).
+      const fresh = alreadyApplied ? undefined : await storage.getDocument(doc.id);
       if (fresh) {
         const s = (await togetherStore().getSitting(sitting.id)) ?? sitting;
         const state = (s.captureState ?? {}) as { undone?: Array<{ chunkId: string; key: string }> };
-        const refiled = (state.undone ?? []).filter((u) => u.key in delta && result.filed.some((f) => f.key === u.key));
-        const undone = (state.undone ?? []).filter((u) => !refiled.includes(u));
-        if (refiled.length > 0) await togetherStore().mergeCaptureState(s.id, { undone });
+        const said = new Set(spoken.map((a) => a.key));
+        const reasserted = (state.undone ?? []).filter((u) => said.has(u.key));
+        const undone = (state.undone ?? []).filter((u) => !reasserted.includes(u));
+        if (reasserted.length > 0) await togetherStore().mergeCaptureState(s.id, { undone });
         await storage.updateDocument(doc.id, { extractedData: cumulativeExtraction(fresh.extractedData as Record<string, unknown>, delta, undone.map((u) => u.key)) } as never);
       }
       // "Also noted" facts become checklist items (after the filing — never nested in its lock).
