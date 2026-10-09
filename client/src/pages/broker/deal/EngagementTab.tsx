@@ -129,7 +129,7 @@ export function EngagementTab() {
   };
 
   // "Buyers 13": everyone who opened (all time); under a date filter the list says the rest.
-  const buyersCount = k ? (filters.range === "all" ? opened?.value ?? 0 : undefined) : "loading" as const;
+  const buyersCount = k ? (filters.range === "all" ? opened?.value ?? 0 : undefined) : kpisQ.isError ? undefined : ("loading" as const);
   const tabs: DashboardTab[] = [
     ...(noCimBuyers ? [{ key: "buyers", label: "Buyers" }] : [
       { key: "buyers", label: "Buyers", count: buyersCount },

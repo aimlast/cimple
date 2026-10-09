@@ -114,13 +114,15 @@ export default function Analytics() {
     ) : null
   ) : null;
 
+  // Counts: "·" while the numbers load; none if they couldn't load (the tabs still work).
+  const pending = overview.isError ? undefined : ("loading" as const);
   const tabs: DashboardTab[] = TAB_ORDER.map((k) => ({
     key: k,
     label: ANALYTICS_TAB_LABELS[k].label,
     shortLabel: ANALYTICS_TAB_LABELS[k].short,
-    count: k === "call" ? (o ? o.counts.call : "loading")
-      : k === "deals" ? (o ? o.counts.dealsWithBuyers : "loading")
-      : k === "buyers" ? (o ? o.counts.buyers : "loading")
+    count: k === "call" ? (o ? o.counts.call : pending)
+      : k === "deals" ? (o ? o.counts.dealsWithBuyers : pending)
+      : k === "buyers" ? (o ? o.counts.buyers : pending)
       : undefined,
   }));
 
