@@ -88,7 +88,7 @@ import { ensurePrepared, enqueuePrepare } from "../vdr/prepare";
 import { cleanCopyPath, cleanCopyRelPath, newPrivateName, removeCleanCopy, removeItemCache } from "../vdr/files";
 import { decisionFor, docHtml, docText, kickPrepare, manifestFor, pageImage, ServeError, sheetRows, defaultServeDeps, type ServeDeps } from "../vdr/serve";
 import { brokerChecks, documentCimLinks, documentFacts, documentQuestions, keyFigureRank, privateMattersByDocument, sectionText } from "../vdr/analysis";
-import { ddCitedDocumentIds, ddDocumentChecks } from "../vdr/dd-adapter";
+import { ddCitedDocumentIds, ddCitedSections, ddDocumentChecks } from "../vdr/dd-adapter";
 import { parseDocumentIds, replacementsFor, resolveForBroker } from "../vdr/resolve";
 import { locateInItem } from "../vdr/locate";
 import { askSeller, brokerRequestRows, declineRequests, markShared, parseNeededBy, type RequestDeps } from "../vdr/requests";
@@ -1892,7 +1892,7 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       const out: ItemNotesPayload = {
         keyFigures,
         cimLinks: links.map((l) => ({ sectionId: l.sectionId, title: l.title })),
-        ddCitedIn: [],
+        ddCitedIn: item.documentId ? await ddCitedSections(deal.id, item.documentId).catch(() => []) : [],
         checks,
         questions: documentQuestions(questions, item.id, labelFor),
         summary: { remainingToday: left, capped: left === 0, running: item.buyerSummaryStatus === "pending", note },

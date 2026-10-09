@@ -209,6 +209,16 @@ function NotesBody({ dealId, n, loading, error, onRetry }: { dealId: string; n: 
         )}
       </section>
 
+      {n.ddCitedIn.length > 0 && (
+        <section data-testid="drawer-dd-cited">
+          <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Cited by the DD CIM</h4>
+          <div className="flex flex-wrap gap-1.5">
+            {n.ddCitedIn.map((l) => <Link key={l.sectionId} href={`/deal/${dealId}/cim?section=${encodeURIComponent(l.sectionId)}`} className="rounded-full border border-teal/40 px-2.5 py-0.5 text-xs text-teal hover:border-teal">{l.title}{l.page ? ` · p. ${l.page}` : ""}</Link>)}
+          </div>
+          <p className="mt-1 text-[11px] text-muted-foreground">Due diligence buyers who can't open this document see "This document isn't in your data room yet" on those pages.</p>
+        </section>
+      )}
+
       <section>
         <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Checked against other documents</h4>
         {n.checks.length === 0 ? (

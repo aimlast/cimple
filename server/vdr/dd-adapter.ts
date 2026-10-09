@@ -99,3 +99,30 @@ export type DdDocumentCheck = {
 export async function ddDocumentChecks(_dealId: string, _documentId: string): Promise<DdDocumentCheck[] | null> {
   return null;
 }
+
+/**
+ * The DD CIM pages that point to one document ("Cited by the DD CIM" in the
+ * broker's drawer). ┌ INTEGRATOR, at the dd merge: from dd's registry —
+ *   (await ddCitedDocuments(dealId)).filter((r) => r.documentId === documentId)
+ *     .map((r) => ({ sectionId: r.sectionId, title: <section title>, page: r.page ?? null }))
+ * └ Until then: the same fact tracing over the DD version (page unknown → null).
+ */
+export async function ddCitedSections(dealId: string, documentId: string, depsIn?: FactTracingDeps): Promise<Array<{ sectionId: string; title: string; page: number | null }>> {
+  try {
+    const deps = depsIn ?? (await defaultTracingDeps());
+    const [deal, overrides, sections, docs] = await Promise.all([deps.getDeal(dealId), deps.ddOverrides(dealId), deps.sections(dealId), deps.documents(dealId)]);
+    const doc = docs.find((d) => d.id === documentId);
+    if (!deal || !doc || !citableDocument(doc) || overrides.length === 0) return [];
+    const { documentCimLinks, documentFacts, sectionText } = await import("./analysis");
+    const byId = new Map(sections.map((s) => [s.id, s]));
+    const texts = overrides
+      .map((o) => {
+        const s = byId.get(o.cimSectionId);
+        return s && s.isVisible !== false ? sectionText({ id: s.id, sectionTitle: s.sectionTitle, brokerEditedContent: o.contentOverride ?? null, aiDraftContent: null, layoutData: o.layoutData ?? null }) : null;
+      })
+      .filter((x): x is NonNullable<typeof x> => !!x);
+    return documentCimLinks(documentFacts((deal.extractedInfo ?? {}) as Record<string, unknown>, documentId), texts).links.map((l) => ({ sectionId: l.sectionId, title: l.title, page: null }));
+  } catch {
+    return [];
+  }
+}
