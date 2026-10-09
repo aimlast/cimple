@@ -52,11 +52,14 @@ export async function recoverLiveSittings(opts: { now?: number } = {}): Promise<
     const facts = ((deal?.extractedInfo ?? {}) as Record<string, unknown>);
     const chunks = await store.listChunks(s.id);
     for (const c of chunks) {
-      if (c.status !== "applying" && c.status !== "running") continue;
+      // (A held answer's ✓ File it is saved "held" with its delta just before it is filed.)
+      const heldWithDelta = c.status === "held" && !!c.delta;
+      if (c.status !== "applying" && c.status !== "running" && !heldWithDelta) continue;
       if (isApplied(facts, s.id, c.chunkNo)) {
         await store.updateChunk(c.id, { status: "done", appliedAt: c.appliedAt ?? new Date(now) });
         report.markedDone++;
-      } else if (c.status === "applying" && c.delta) {
+      } else if ((c.status === "applying" || heldWithDelta) && c.delta) {
+        if (heldWithDelta) await store.updateChunk(c.id, { status: "applying" });
         report.reapplied++; // (kick files it from the saved delta — no AI)
       } else {
         await store.updateChunk(c.id, { status: "queued" });

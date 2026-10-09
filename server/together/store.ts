@@ -244,7 +244,7 @@ const dbStore: TogetherStore = {
     const waiting = await db
       .selectDistinct({ sittingId: togetherChunks.sittingId })
       .from(togetherChunks)
-      .where(inArray(togetherChunks.status, ["queued", "running", "applying", "waiting", "failed"]));
+      .where(inArray(togetherChunks.status, ["queued", "running", "applying", "waiting", "failed", "held"]));
     const ids = waiting.map((w) => w.sittingId).filter((id) => !open.some((s) => s.id === id));
     const ended = ids.length
       ? await db.select().from(togetherSittings).where(and(eq(togetherSittings.captureEnv, env), inArray(togetherSittings.id, ids)))
@@ -441,7 +441,7 @@ export function memoryTogetherStore(): TogetherStore & { sittings: TogetherSitti
       if (s && s.captureOwner === owner) { s.captureOwner = null; s.captureLeaseUntil = null; }
     },
     async sittingsToRecover(env) {
-      const pending = new Set(chunks.filter((c) => ["queued", "running", "applying", "waiting", "failed"].includes(c.status)).map((c) => c.sittingId));
+      const pending = new Set(chunks.filter((c) => ["queued", "running", "applying", "waiting", "failed", "held"].includes(c.status)).map((c) => c.sittingId));
       return clone(sittings.filter((s) => s.captureEnv === env && (s.status !== "ended" || pending.has(s.id))));
     },
   };

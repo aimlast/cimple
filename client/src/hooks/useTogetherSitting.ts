@@ -159,7 +159,8 @@ export function useTogetherSitting(dealId: string, via: TogetherVia, opts: { ena
           queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-readiness"] });
           queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "interview-outline"] });
         }
-        setFiling((f) => ({ active: f.active && f.active.chunkId !== (ev.chunkId ?? null) ? f.active : null, last: { filed: ev.filedCount, nothing: !!ev.nothing, at: Date.now(), chunkId: ev.chunkId ?? null } }));
+        // (Parts read together are filed by one call: any filing ends "Filing…" — a later part says so again.)
+        setFiling(() => ({ active: null, last: { filed: ev.filedCount, nothing: !!ev.nothing, at: Date.now(), chunkId: ev.chunkId ?? null } }));
         if (ev.brokerUnconfirmed && ev.brokerUnconfirmed.length > 0) setBrokerUnconfirmed((prev) => [...prev, ...ev.brokerUnconfirmed!].slice(-20));
         if (ev.hints) setHints(ev.hints);
         break;

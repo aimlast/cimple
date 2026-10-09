@@ -71,7 +71,7 @@ async function advanceTo(target: number) {
   await drain();
 }
 
-async function runReplay(opts: { downFrom?: number; downTo?: number } = {}) {
+async function runReplay(opts: { downFrom?: number; downTo?: number; restartAt?: number } = {}) {
   const w = worldFor();
   const dealId = Object.keys(w.deals)[0];
   const store = await install(w);
@@ -115,8 +115,14 @@ async function runReplay(opts: { downFrom?: number; downTo?: number } = {}) {
   };
   let seq = 0;
   const heldBeforeTap: string[] = [];
+  let restarted = false;
   for (const ev of sittingFx.lines as any[]) {
     await advanceTo(t0 + ev.t * 1000);
+    if (opts.restartAt !== undefined && !restarted && ev.t >= opts.restartAt) {
+      // (The server restarts: the open part in memory is gone.)
+      restarted = true;
+      _resetPipelineForTests();
+    }
     if (opts.downTo !== undefined && !outage && ev.t >= (opts.downTo - 20)) {
       // (A snapshot during the outage: what the page shows.)
       const { sittingView } = await import("../../server/together/sittings");
@@ -174,6 +180,8 @@ async function main() {
     assert.equal(facts.peakPeriods, "June through August, and December to February");
     assert.equal(facts._fieldSources.peakPeriods.source, "call");
     assert.ok(!(st.held ?? []).some((h: any) => h.memberKey === "peakPeriods"), "no longer held");
+    const promoted = chunks.find((c) => c.reason === "promote");
+    assert.ok(((promoted?.result as any)?.filed ?? []).some((f: any) => f.key === "peakPeriods"), "the promoted part keeps its filed rows (Undo works on them)");
   });
 
   check("14 named items end where they should", () => {
@@ -271,6 +279,15 @@ async function main() {
   check("the board ends identical to the run without the outage", () => {
     const s2 = board2.sections.flatMap((s) => s.items).map((i) => `${i.id}=${i.status}|${i.value ?? ""}`).join("\n");
     assert.equal(s2, finalStatuses);
+  });
+
+  console.log("replay with a restart in the middle of an open part (the lease line, unanswered)");
+  const r3 = await runReplay({ restartAt: 180 });
+  const st3 = ((await r3.store.getSitting(r3.sitting.id))!.captureState ?? {}) as any;
+  const board3 = await buildCoverageBoard(r3.w.deals[r3.dealId], { audience: "broker" });
+  check("nothing said before a restart is skipped: the unread lines are read with the next part", () => {
+    assert.ok((st3.brokerUnconfirmed ?? []).some((b: any) => b.key === "leaseExpiry"), "the broker's unanswered lease line is still read");
+    assert.equal(board3.sections.flatMap((s) => s.items).map((i) => `${i.id}=${i.status}|${i.value ?? ""}`).join("\n"), finalStatuses);
   });
 
   console.log(`\n${passed} replay checks passed (${r.calls} recorded calls, ${chunks.length} parts)`);

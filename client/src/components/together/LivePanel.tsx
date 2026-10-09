@@ -215,7 +215,7 @@ export function LivePanel({
                 : listenCopy("idle")
           }
         />
-        <FilingLine sitting={sitting} filing={filing} filed={filed} now={now} ended={ended} onFileNow={onFileNow ? () => act(onFileNow, "Couldn't file that now") : undefined} />
+        <FilingLine sitting={sitting} filing={filing} filed={filed} now={now} ended={ended} held={board.sections.reduce((n, s) => n + s.items.filter((i) => i.suggestion).length, 0)} onFileNow={onFileNow ? () => act(onFileNow, "Couldn't file that now") : undefined} />
       </section>
 
       {brokerUnconfirmed.length > 0 && !sitting.sellerSeesScreen && (
@@ -296,7 +296,7 @@ export function suggestContext(board: CoverageBoard, hints: CaptureHints | undef
  * → "Filed 2 answers · 4 s ago" / "Nothing to file from that part", and a
  * quiet "Save this answer now" that files the open part at once.
  */
-function FilingLine({ sitting, filing, filed, now, ended, onFileNow }: { sitting: TogetherSittingView; filing?: FilingState; filed: Array<CoverageItem & { sectionTitle: string }>; now: number; ended?: boolean; onFileNow?: () => void }) {
+function FilingLine({ sitting, filing, filed, now, ended, held = 0, onFileNow }: { sitting: TogetherSittingView; filing?: FilingState; filed: Array<CoverageItem & { sectionTitle: string }>; now: number; ended?: boolean; held?: number; onFileNow?: () => void }) {
   const [, tick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => tick((n) => n + 1), 2_000);
@@ -312,8 +312,10 @@ function FilingLine({ sitting, filing, filed, now, ended, onFileNow }: { sitting
     body = <>Live filing isn't running here — tick ✓ Answered and type what the seller said.</>;
   } else if (sitting.waiting > 0) {
     body = <><Loader2 className="h-3 w-3 animate-spin" /> {sitting.waiting} {sitting.waiting === 1 ? "part" : "parts"} of the conversation waiting to be filed — nothing is lost.</>;
-  } else if (filing?.active && t - filing.active.at < 30_000) {
+  } else if (filing?.active && t - filing.active.at < 120_000) {
     body = <><Loader2 className="h-3 w-3 animate-spin text-teal" /> Filing what the seller said{filing.active.sectionTitle ? ` about ${filing.active.sectionTitle}` : ""}…</>;
+  } else if (held > 0) {
+    body = <>{held === 1 ? "1 possible answer is" : `${held} possible answers are`} waiting — tap which speaker is you, or ✓ File it on the item.</>;
   } else if (filing?.last && t - filing.last.at < 5 * 60_000) {
     body = filing.last.filed > 0 ? <>Filed {filing.last.filed} {filing.last.filed === 1 ? "answer" : "answers"} · {ago2(filing.last.at)}</> : <>Nothing to file from that part · {ago2(filing.last.at)}</>;
   } else if (filed[0]) {
@@ -324,7 +326,7 @@ function FilingLine({ sitting, filing, filed, now, ended, onFileNow }: { sitting
   return (
     <div className="mt-2 flex items-center justify-between gap-2" data-testid="filing-status">
       <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 min-w-0">{body}</p>
-      {!ended && sitting.filingOn && onFileNow && (
+      {!ended && sitting.filingOn && onFileNow && sitting.lineSeq > 0 && !(filing?.active && t - filing.active.at < 120_000) && (
         <button type="button" onClick={onFileNow} className="shrink-0 text-[11px] text-teal hover:underline underline-offset-2" data-testid="button-save-answer-now">
           Save this answer now
         </button>

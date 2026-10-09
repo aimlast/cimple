@@ -16,7 +16,7 @@
  * (default: its quote), as the real model cites what it read.
  */
 import fs from "fs";
-import type { CaptureLine, CaptureModel } from "./capture";
+import { CaptureError, type CaptureLine, type CaptureModel } from "./capture";
 
 export interface StubEntry {
   match: string;
@@ -26,6 +26,8 @@ export interface StubEntry {
 
 export interface StubFixture {
   latencyMs?: number;
+  /** Every call fails as an unavailable AI does (the "Cimple can't file answers right now" state). */
+  failAll?: boolean;
   entries: StubEntry[];
 }
 
@@ -52,6 +54,7 @@ export function stubModel(fixture: StubFixture, opts: { sleep?: (ms: number) => 
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   return async (req) => {
     if (fixture.latencyMs) await sleep(fixture.latencyMs);
+    if (fixture.failAll) throw new CaptureError("The recorded model is set to be unavailable", "unavailable");
     const merged = { answers: [] as unknown[], notKnown: [] as unknown[], brokerUnconfirmed: [] as unknown[], private: [] as unknown[], withdrawn: [] as unknown[], otherFacts: [] as unknown[], followUp: null as unknown, topicSections: [] as string[] };
     const newText = req.lines.map((l) => norm(l.text));
     fixture.entries.forEach((e, idx) => {

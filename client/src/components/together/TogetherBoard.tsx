@@ -412,14 +412,25 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
   const [endOpen, setEndOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const now = useNow(5_000);
+  // "Just filed" lasts a minute from when THIS page saw the filing (a slow
+  // filing still glows for the broker); filings already on the board when
+  // the page opened glow only if they are under a minute old.
+  const seenFiled = useRef<Map<string, number> | null>(null);
   const justFiled = useMemo(() => {
     const out = new Set<string>();
     if (!board || !sitting) return out;
+    const firstLoad = seenFiled.current === null;
+    const seen = (seenFiled.current ??= new Map());
+    const t = Date.now();
     for (const s of board.sections) for (const i of s.items) {
-      if (i.filedInSittingId === sitting.id && i.filedAt && now - new Date(i.filedAt).getTime() < JUST_FILED_MS) out.add(i.id);
+      if (i.filedInSittingId !== sitting.id || !i.filedAt) continue;
+      const mark = `${i.id}@${i.filedByChunkId ?? i.filedAt}`;
+      if (!seen.has(mark)) seen.set(mark, firstLoad ? new Date(i.filedAt).getTime() : t);
+      if (t - (seen.get(mark) ?? 0) < JUST_FILED_MS) out.add(i.id);
     }
     return out;
-  }, [board, sitting, now]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [board, sitting?.id, now]);
   const filedCount = useMemo(() => filedThisSession(board, sitting?.id).length, [board, sitting?.id]);
 
   const back = () => setLocation(`/deal/${dealId}/overview`);
@@ -623,7 +634,7 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
     );
   } else if (isPhone) {
     const counts = viewCounts(board, sitting.id);
-    const active = sit.filing.active && Date.now() - sit.filing.active.at < 30_000;
+    const active = sit.filing.active && Date.now() - sit.filing.active.at < 120_000;
     const filingText = listenIsProblem(listening.state)
       ? listenCopy(listening.state)
       : sitting.aiDown

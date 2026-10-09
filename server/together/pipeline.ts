@@ -200,14 +200,35 @@ async function apply(r: Runner, s: TogetherSitting, decision: ReturnType<typeof 
   return ids;
 }
 
-/** New lines arrived (appendLines). Never awaited inside the sitting queue. */
+/** New lines arrived (appendLines). */
 export async function onLines(sitting: TogetherSitting, lines: TogetherLine[]): Promise<void> {
   if (!filingOn(sitting) || sitting.status === "ended" || lines.length === 0) return;
+  const fresh = !runners.has(sitting.id);
   const r = runnerFor(sitting);
+  // A new runner (this process just started, or the session was idle): lines
+  // said since the last part that were never read go in the open part first —
+  // nothing said before a restart is skipped.
+  if (fresh) await seedOpenPart(sitting, r, lines[0].seq);
   const speakers = (sitting.speakers ?? {}) as SpeakerMap;
   for (const l of lines) {
     const d = decideChunk(r.state, { type: "line", line: roleLine(speakers, l) }, deps.now());
     await apply(r, sitting, d);
+  }
+}
+
+async function seedOpenPart(sitting: TogetherSitting, r: Runner, firstNewSeq: number): Promise<void> {
+  try {
+    const chunks = await togetherStore().listChunks(sitting.id);
+    const lastRead = chunks.reduce((m, c) => Math.max(m, c.seqTo), 0);
+    if (firstNewSeq - 1 <= lastRead) return;
+    const speakers = (sitting.speakers ?? {}) as SpeakerMap;
+    const unread = (await togetherStore().linesBetween(sitting.id, lastRead + 1, firstNewSeq - 1)).slice(-60);
+    for (const l of unread) {
+      const d = decideChunk(r.state, { type: "line", line: roleLine(speakers, l) }, deps.now());
+      await apply(r, sitting, d);
+    }
+  } catch (err) {
+    console.warn(`[together] couldn't pick up the unread lines (${sitting.id}):`, (err as Error).message);
   }
 }
 
@@ -398,6 +419,12 @@ export async function kick(sittingId: string, opts: { probe?: boolean } = {}): P
         break;
       }
       if (next.status === "applying" && next.delta) {
+        // (Being filed right now by another path — a held answer's ✓ File it: wait for it.)
+        if (applyingNow.has(next.id)) {
+          if (r.waitTimer) deps.clearTimer(r.waitTimer);
+          r.waitTimer = deps.setTimer(() => { r.waitTimer = null; void kick(sittingId); }, 500);
+          break;
+        }
         // (Saved before the merge — filed from it, never read again.)
         await applyFromDelta(s, next);
         continue;
@@ -669,6 +696,9 @@ async function applyFromDelta(s: TogetherSitting, chunk: TogetherChunk): Promise
   await finishChunk(s, r, chunk, d.guarded, d.sellerLabel ?? "The owner (seller)", null, null);
 }
 
+/** Parts being filed by this process right now (the queue never files one twice at once). */
+const applyingNow = new Set<string>();
+
 /** Merge, then the chunk's result, the sitting's bookkeeping and the push. */
 async function finishChunk(
   s: TogetherSitting,
@@ -680,18 +710,26 @@ async function finishChunk(
   usage: CaptureUsage | null,
 ): Promise<void> {
   const store = togetherStore();
-  let result: ChunkResult;
+  if (applyingNow.has(chunk.id)) return;
+  applyingNow.add(chunk.id);
   try {
-    result = await applyCapture({ sitting: s, chunk, guarded, sellerLabel });
-  } catch (err) {
-    console.error(`[together] filing part ${chunk.chunkNo} of ${s.id} failed:`, (err as Error).message);
-    await store.updateChunk(chunk.id, { status: "failed", error: "apply_failed" });
-    return;
+    // (Already filed — a second path reached it: its stored result stands.)
+    if ((await store.getChunk(chunk.id))?.status === "done") return;
+    let result: ChunkResult;
+    try {
+      result = await applyCapture({ sitting: s, chunk, guarded, sellerLabel });
+    } catch (err) {
+      console.error(`[together] filing part ${chunk.chunkNo} of ${s.id} failed:`, (err as Error).message);
+      await store.updateChunk(chunk.id, { status: "failed", error: "apply_failed" });
+      return;
+    }
+    const now = new Date(deps.now());
+    await store.updateChunk(chunk.id, { status: "done", result: result as never, appliedAt: now, doneAt: now });
+    await recordOnSitting(s, chunk, result, guarded, catalogue, usage);
+    await publishFiled(s, r, chunk, result);
+  } finally {
+    applyingNow.delete(chunk.id);
   }
-  const now = new Date(deps.now());
-  await store.updateChunk(chunk.id, { status: "done", result: result as never, appliedAt: now, doneAt: now });
-  await recordOnSitting(s, chunk, result, guarded, catalogue, usage);
-  await publishFiled(s, r, chunk, result);
 }
 
 async function recordOnSitting(s: TogetherSitting, chunk: TogetherChunk, result: ChunkResult, guarded: GuardedCapture, catalogue: CaptureCatalogue | null, usage: CaptureUsage | null): Promise<void> {
@@ -770,15 +808,19 @@ export function withHeldAnswers(board: CoverageBoard, sitting: Pick<TogetherSitt
   if (board.audience !== "broker" || sitting.status === "ended") return board;
   const held = captureStateOf(sitting).held ?? [];
   if (held.length === 0) return board;
-  const byItem = new Map(held.map((h) => [h.itemId, h] as const));
+  // (Several possible answers for one item — "busy months" and "quiet months" — show together, from the newest part.)
+  const byItem = new Map<string, HeldEntry[]>();
+  for (const h of held) byItem.set(h.itemId, [...(byItem.get(h.itemId) ?? []).filter((x) => x.chunkId === h.chunkId), h]);
   return {
     ...board,
     sections: board.sections.map((sec) => ({
       ...sec,
       items: sec.items.map((i): CoverageItem => {
-        const h = byItem.get(i.id);
-        if (!h || i.status === "on_file") return i;
-        return { ...i, suggestion: { value: h.value, quote: h.quote, chunkId: h.chunkId, memberKey: h.memberKey } };
+        const hs = byItem.get(i.id);
+        if (!hs || hs.length === 0 || i.status === "on_file") return i;
+        const h = hs[0];
+        const quote = hs.map((x) => x.quote).join(" … ");
+        return { ...i, suggestion: { value: hs.map((x) => x.value).join("; "), quote, chunkId: h.chunkId, memberKey: h.memberKey } };
       }),
     })),
   };
@@ -850,9 +892,12 @@ export async function promoteHeldAnswers(sitting: TogetherSitting, opts: { only?
     const guarded = guardCaptured(output, { newLines, catalogue, sellerFacts: inputs.sellerFacts, keepOut: getSellerKeepOut(inputs.brokerFacts), onFileText: onFileTextOf(inputs.sellerFacts) });
     const first = Math.min(...newLines.map((l) => l.seq));
     const last = Math.max(...newLines.map((l) => l.seq));
-    const chunk = await store.insertChunk({ sittingId: s.id, dealId: s.dealId, seqFrom: first, seqTo: last, reason: "promote", status: "applying", attempts: 0, createdAt: new Date(deps.now()), delta: { guarded, sellerLabel: `${Object.values(speakers).find((x) => x.role === "seller" && x.name)?.name || "The owner"} (seller)` } as never });
+    // (Inserted as "held" — the queue never picks it up — then filed here at once; a restart
+    // before that leaves a held part with its saved delta, which recovery files.)
+    const chunk = await store.insertChunk({ sittingId: s.id, dealId: s.dealId, seqFrom: first, seqTo: last, reason: "promote", status: "held", attempts: 0, createdAt: new Date(deps.now()), delta: { guarded, sellerLabel: `${Object.values(speakers).find((x) => x.role === "seller" && x.name)?.name || "The owner"} (seller)` } as never });
     const r = runnerFor(s);
-    await finishChunk(s, r, chunk, guarded, (chunk.delta as { sellerLabel: string }).sellerLabel, catalogue, null);
+    await store.updateChunk(chunk.id, { status: "applying" });
+    await finishChunk(s, r, { ...chunk, status: "applying" }, guarded, (chunk.delta as { sellerLabel: string }).sellerLabel, catalogue, null);
     filed = guarded.spoken.length;
   }
   const done = new Set([...split.file, ...split.brokerUnconfirmed]);
