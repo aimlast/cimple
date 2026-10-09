@@ -35,6 +35,7 @@ import { compareFiltersText } from "../../client/src/components/engagement/docum
 import { BlockDetails, PageCanvas } from "../../client/src/components/engagement/document/PageCanvas";
 import { PagePanel, updateNote } from "../../client/src/components/engagement/document/PagePanel";
 import { HeatLegend, PageLegend } from "../../client/src/components/engagement/document/Legends";
+import { axisLabelShown } from "../../client/src/components/engagement/document/ReachChart";
 
 (globalThis as any).window ??= { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) };
 
@@ -526,6 +527,12 @@ test("parts and sections in a narrower view never say 'Nobody' (HM2-1)", () => {
   assert.match(renderToStaticMarkup(React.createElement(BlockDetails, { block: b, page: pg, expectedMs: null })), /Nobody read this part/);
   assert.match(renderToStaticMarkup(React.createElement(BlockDetails, { block: b, page: pg, expectedMs: null, viewScope: "some" })), /No buyer in this view read this part/);
   assert.match(renderToStaticMarkup(React.createElement(BlockDetails, { block: b, page: pg, expectedMs: null, viewScope: "one" })), /This buyer didn(&#x27;|')t read this part/);
+});
+test("phones: the open page's number never crowds its neighbours on the axis", () => {
+  const shown = (sel: number, compact: boolean) => Array.from({ length: 29 }, (_, i) => i).filter((i) => axisLabelShown(i, sel, 29, 2, compact)).map((i) => i + 1);
+  assert.deepEqual(shown(15, true).filter((n) => n >= 13 && n <= 19), [13, 16, 19], "page 16 open: 15 and 17 give way");
+  assert.deepEqual(shown(15, false).filter((n) => n >= 13 && n <= 19), [13, 15, 16, 17, 19], "wide screens unchanged");
+  assert.ok(shown(-1, true).includes(29), "the last page is always labelled");
 });
 test("the update note on a kept copy: renamed in the update, or nothing carries it on", () => {
   const kept = { versionNote: { kind: "kept_copy", since: "x" } } as any;

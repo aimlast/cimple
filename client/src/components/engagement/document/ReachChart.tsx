@@ -21,6 +21,16 @@ import { cn } from "@/lib/utils";
 import { heatChrome } from "../heat";
 import { heatIntensity, reachCountsLine, reachFallback, recordedDrop, recordedReach } from "./viewer-model";
 
+/**
+ * Which page numbers the axis prints: every Nth, the last, and the open page.
+ * On phones the open page's neighbours give way to it (no "151617" crowding).
+ */
+export function axisLabelShown(i: number, selected: number, n: number, every: number, compact: boolean): boolean {
+  if (i === selected) return true;
+  if (compact && selected >= 0 && Math.abs(i - selected) < every) return false;
+  return i % every === 0 || i === n - 1;
+}
+
 const HATCH = "repeating-linear-gradient(135deg, hsl(var(--muted-foreground) / 0.25) 0 2px, transparent 2px 5px)";
 
 export function ReachChart({
@@ -136,7 +146,7 @@ export function ReachChart({
               key={`${r.pageId}#${r.part}`}
               className={cn("min-w-0 flex-1 text-center text-[9px] tabular-nums", i === selectedIndex ? "font-semibold text-teal" : "text-muted-foreground/70")}
             >
-              {i % showEvery === 0 || i === selectedIndex || i === reach.length - 1 ? r.label : ""}
+              {axisLabelShown(i, selectedIndex, reach.length, showEvery, compact) ? r.label : ""}
             </span>
           ))}
         </div>
