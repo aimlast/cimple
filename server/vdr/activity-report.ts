@@ -137,8 +137,6 @@ export function activityByDocument(views: ReadonlyArray<VdrView>, ctx: ReportCon
 
 // ── The log in plain sentences ─────────────────────────────────────────────
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
 const ACTION_LABEL: Record<string, string> = {
   buyer_opened_room: "Opened the data room",
   buyer_opened_item: "Opened a document",
@@ -172,11 +170,6 @@ export const LOG_ACTION_FILTERS: ReadonlyArray<{ key: string; label: string }> =
   "buyer_opened_room", "buyer_opened_item", "buyer_downloaded", "buyer_requested", "buyer_asked", "buyer_denied", "index_downloaded",
   "shared", "plan_applied", "checked_by_broker", "request_resolved", "seller_emailed", "told_buyer", "buyers_emailed",
 ].map((key) => ({ key, label: actionLabel(key) }));
-
-function timeLabel(at: Date | string): string {
-  const d = new Date(at);
-  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
-}
 
 /** One log row as a sentence (§5.9): "Priya Shah for Northgate Pharmacy Group opened 1.2.2 T2 … (from the DD CIM)". */
 export function logSentence(row: Pick<VdrActivity, "action" | "actorKind" | "actorId" | "itemId" | "buyerEmail" | "detail">, ctx: Pick<ReportContext, "items" | "numbers" | "accessRows" | "team">): { text: string; person: string | null } {
@@ -263,7 +256,8 @@ export function activityLog(rows: ReadonlyArray<VdrActivity>, ctx: Pick<ReportCo
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
     .map((r) => {
       const s = logSentence(r, ctx);
-      return { id: r.id, at: new Date(r.at).toISOString(), action: r.action, actorKind: r.actorKind, text: `${timeLabel(r.at)} · ${s.text}`, buyerKey: r.buyerEmail ?? null, itemId: r.itemId ?? null, person: s.person };
+      // The time is shown by the broker's browser, in their own time zone.
+      return { id: r.id, at: new Date(r.at).toISOString(), action: r.action, actorKind: r.actorKind, text: s.text, buyerKey: r.buyerEmail ?? null, itemId: r.itemId ?? null, person: s.person };
     });
 }
 
@@ -272,8 +266,7 @@ export function activityCsv(rows: ReadonlyArray<ActivityLogRow>, ctx: Pick<Repor
   const head = ["When (UTC)", "What happened", "Buyer", "Buyer email", "Person", "Document number", "Document"].map(csvCell).join(",");
   const lines = rows.map((r) => {
     const item = r.itemId ? ctx.items.find((i) => i.id === r.itemId) : null;
-    const text = r.text.replace(/^[A-Z][a-z]{2} \d{1,2} \d{2}:\d{2} · /, "");
-    return [r.at.slice(0, 16).replace("T", " "), text, r.buyerKey ? labelForKey(r.buyerKey, ctx.accessRows) : "", r.buyerKey ?? "", r.person ?? "", item ? ctx.numbers.get(item.id) ?? "" : "", item?.title ?? ""].map(csvCell).join(",");
+    return [r.at.slice(0, 16).replace("T", " "), r.text, r.buyerKey ? labelForKey(r.buyerKey, ctx.accessRows) : "", r.buyerKey ?? "", r.person ?? "", item ? ctx.numbers.get(item.id) ?? "" : "", item?.title ?? ""].map(csvCell).join(",");
   });
   return "﻿" + [head, ...lines].join("\r\n") + "\r\n";
 }

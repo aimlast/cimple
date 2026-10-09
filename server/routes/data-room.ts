@@ -84,7 +84,7 @@ import { fileDocumentIntoRoom, restoreItem, setUpRoom, shareLikeReplaced, defaul
 import { ensurePrepared, enqueuePrepare } from "../vdr/prepare";
 import { cleanCopyPath, cleanCopyRelPath, newPrivateName, removeCleanCopy, removeItemCache } from "../vdr/files";
 import { decisionFor, docHtml, docText, kickPrepare, manifestFor, pageImage, ServeError, sheetRows, defaultServeDeps, type ServeDeps } from "../vdr/serve";
-import { brokerChecks, documentCimLinks, documentFacts, documentQuestions, privateMattersByDocument, sectionText } from "../vdr/analysis";
+import { brokerChecks, documentCimLinks, documentFacts, documentQuestions, keyFigureRank, privateMattersByDocument, sectionText } from "../vdr/analysis";
 import { ddCitedDocumentIds, ddDocumentChecks } from "../vdr/dd-adapter";
 import { askSeller, brokerRequestRows, declineRequests, markShared, parseNeededBy, type RequestDeps } from "../vdr/requests";
 import { askerLabel } from "../vdr/todo";
@@ -1745,8 +1745,7 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       const facts = doc ? documentFacts((deal.extractedInfo ?? {}) as Record<string, unknown>, doc.id) : [];
       const visibleSections = sections.filter((s) => s.isVisible !== false).map((s) => sectionText(s));
       const { links, inCim } = documentCimLinks(facts, visibleSections);
-      const rank = (f: { text: string }) => (/\$\s?\d/.test(f.text) ? 0 : /\d/.test(f.text) ? 1 : 2);
-      const keyFigures = facts.slice().sort((a, b) => rank(a) - rank(b)).slice(0, 12).map((f) => ({ key: f.key, label: f.label, value: f.text.length > 160 ? `${f.text.slice(0, 159)}…` : f.text, inCim: inCim.has(f.key) }));
+      const keyFigures = facts.slice().sort((a, b) => keyFigureRank(a) - keyFigureRank(b)).slice(0, 12).map((f) => ({ key: f.key, label: f.label, value: f.text.length > 160 ? `${f.text.slice(0, 159)}…` : f.text, inCim: inCim.has(f.key) }));
       let checks: ItemNotesPayload["checks"] = [];
       if (doc) {
         const dd = await ddDocumentChecks(deal.id, doc.id).catch(() => null);

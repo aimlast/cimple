@@ -108,8 +108,10 @@ export function RequestsView({ dealId, data, onOpenItem, onBuyer }: { dealId: st
                   disabled={openRows.length === 0}
                   aria-label="Select every open request in this list"
                 />
-                <span className="font-medium">{l.buyerLabel} sent a list of {l.count} requests</span>
-                <span className="text-xs text-muted-foreground">· {shortDate(l.createdAt)}{l.open < l.count ? ` · ${l.open} open` : ""}</span>
+                <span className="min-w-0">
+                  <span className="font-medium">{l.buyerLabel} sent a list of {l.count} requests</span>{" "}
+                  <span className="whitespace-nowrap text-xs text-muted-foreground">· {shortDate(l.createdAt)}{l.open < l.count ? ` · ${l.open} open` : ""}</span>
+                </span>
               </label>
               <div className="flex shrink-0 flex-wrap gap-2">
                 <Button size="sm" variant="outline" disabled={picked.length === 0} onClick={() => setAsk(picked)}>Ask the seller for the selected{picked.length ? ` (${picked.length})` : ""}</Button>

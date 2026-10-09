@@ -116,7 +116,8 @@ export function waitingItems(i: WaitingInput): WaitingItem[] {
   const hinted = newInHintedFolder(i.folders, i.rawItems, i.shares);
   for (const h of hinted) {
     const it = live.find((x) => x.id === h.itemId);
-    if (!it || it.newVersion || i.dismissed.has(`hint:${h.itemId}`)) continue;
+    // A file that needs the broker's check shows as that check first (sharing it would wait for the tick anyway).
+    if (!it || it.newVersion || it.unchecked.length > 0 || i.dismissed.has(`hint:${h.itemId}`)) continue;
     const f = i.folders.find((x) => x.id === h.folderId);
     out.push({ key: `hint:${h.itemId}`, kind: "hinted", text: `New in ${f ? `${f.number} ${f.name}` : "a shared folder"}: '${it.title}'. Share it like the rest?`, at: iso(it.addedAt), itemId: it.id, levels: h.levels });
   }

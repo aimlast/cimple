@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { queryClient } from "@/lib/queryClient";
 import type { BrokerRoomPayload, EmailDraft, WaitingItem } from "@shared/vdr-api";
-import { invalidateRoom, roomBase, useRoomBuyers, useTodo, vdrFetch } from "@/hooks/useDataRoom";
+import { invalidateRoom, roomBase, useRequests, useRoomBuyers, useTodo, vdrFetch } from "@/hooks/useDataRoom";
 import { SellerChecklistCard, checklistKey } from "@/components/deal/SellerChecklistCard";
 import { PanelError } from "@/components/deal/PanelError";
 import { flagLabel } from "./parts";
@@ -34,12 +34,14 @@ export function TodoView({ dealId, data, segment, onSegment, onOpenItem, onBuyer
   onBuyer: (accessId: string) => void;
   onDocuments: (filter: string) => void;
 }) {
+  const requests = useRequests(dealId);
+  const openRequests = (requests.data?.requests ?? []).filter((r) => r.status === "open" || r.status === "ready_to_share").length;
   return (
     <div className="space-y-4">
       <div className="flex max-w-full overflow-x-auto rounded-md border border-border p-0.5 text-xs sm:inline-flex" role="tablist" aria-label="To do">
         {(["waiting", "requests", "checklist"] as TodoSegment[]).map((s) => (
           <button key={s} role="tab" aria-selected={segment === s} onClick={() => onSegment(s)} className={cn("shrink-0 rounded-[5px] px-3 py-1.5", segment === s ? "bg-teal/15 text-teal" : "text-muted-foreground hover:text-foreground")} data-testid={`todo-seg-${s}`}>
-            {s === "waiting" ? `Waiting on you (${data.kpis.waiting})` : s === "requests" ? "Buyer requests" : `Seller checklist${data.kpis.missingRequired ? ` (${data.kpis.missingRequired} missing)` : ""}`}
+            {s === "waiting" ? `Waiting on you (${data.kpis.waiting})` : s === "requests" ? `Buyer requests${openRequests ? ` (${openRequests} open)` : ""}` : `Seller checklist${data.kpis.missingRequired ? ` (${data.kpis.missingRequired} missing)` : ""}`}
           </button>
         ))}
       </div>

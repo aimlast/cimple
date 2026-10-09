@@ -81,6 +81,11 @@ assert.deepEqual(links.links.map((l) => l.sectionId), ["s-fin"], "a stray percen
 assert.ok(links.inCim.has("revenueByYear") && links.inCim.has("netIncome"));
 assert.ok(!links.inCim.has("taxableIncome"));
 
+// A round amount alone ($200,000) or an identifier (a business number) never links a page or "matches".
+const idFacts = [{ key: "businessNumber", label: "Business number", value: "123456789", text: "123456789" }, { key: "longTermDebt", label: "Long term debt", value: "$200,000", text: "$200,000" }];
+assert.deepEqual(documentCimLinks(idFacts as any, [sectionText({ id: "s-x", sectionTitle: "Transaction", aiDraftContent: "Debt of $200,000 is repaid at closing. BN 123456789." })]).links, []);
+assert.deepEqual(brokerChecks({ id: "t2-2023", name: "T2" }, idFacts as any, [], [{ id: "o", name: "Other", visibility: "shared", extractedData: { businessNumber: "123456789" } }] as any), []);
+
 // ── Checks ──
 const discrepancies: any[] = [
   { id: "x1", dealId: "D", field: "netIncome", factKey: "netIncome", factYear: "2023", documentId: "t2-2023", documentValue: "$665,915", interviewValue: "$701,200", status: "resolved", resolvedAt: new Date("2026-07-02T00:00:00Z"), brokerNotes: "Tax adjustments for capital cost allowance", sideSources: null },

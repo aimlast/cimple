@@ -61,7 +61,7 @@ export function RequestDialog({ source, open, onOpenChange, prefill }: { source:
         {mode === "one" ? (
           <div>
             <label className="text-xs font-medium text-muted-foreground" htmlFor="vdr-request">Which document?</label>
-            <Input id="vdr-request" value={text} onChange={(e) => setText(e.target.value)} maxLength={500} placeholder="For example: the most recent accounts receivable aging" className="mt-1" autoFocus />
+            <Input id="vdr-request" value={text} onChange={(e) => setText(e.target.value)} maxLength={500} placeholder="For example: AR aging, June 2026" className="mt-1" autoFocus />
           </div>
         ) : (
           <div>

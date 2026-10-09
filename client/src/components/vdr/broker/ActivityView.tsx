@@ -201,7 +201,7 @@ function Log({ dealId, buyer, onBuyer, onOpenItem }: { dealId: string; buyer: st
       >
         <Fingerprint className="hidden h-4 w-4 shrink-0 text-muted-foreground sm:block" />
         <label className="text-sm font-medium sm:w-56" htmlFor="vdr-trace">Find who a page belongs to</label>
-        <Input id="vdr-trace" value={traceInput} onChange={(e) => setTraceInput(e.target.value.slice(0, 12))} placeholder="The 6-letter code on a page, e.g. 7F3K2Q" className="font-mono sm:max-w-[260px]" data-testid="trace-input" />
+        <Input id="vdr-trace" value={traceInput} onChange={(e) => setTraceInput(e.target.value.slice(0, 12))} placeholder="6-letter code, e.g. 7F3K2Q" className="font-mono sm:max-w-[260px]" data-testid="trace-input" />
         <Button type="submit" size="sm" variant="outline"><Search className="mr-1.5 h-3.5 w-3.5" /> Find</Button>
         {trace && <Button type="button" size="sm" variant="ghost" onClick={() => { setTrace(null); setTraceInput(""); }}><X className="mr-1 h-3.5 w-3.5" /> Clear</Button>}
       </form>
@@ -217,7 +217,7 @@ function Log({ dealId, buyer, onBuyer, onOpenItem }: { dealId: string; buyer: st
 
       <div className="flex flex-wrap items-center gap-2">
         <FilterSelect label="All buyers" value={buyer} options={filters?.buyers.map((b) => ({ value: b.key, label: b.label })) ?? []} onChange={onBuyer} />
-        <FilterSelect label="Everyone on their team" value={person} options={filters?.people.map((p) => ({ value: p.id, label: p.label })) ?? []} onChange={setPerson} />
+        <FilterSelect label="Every person" value={person} options={filters?.people.map((p) => ({ value: p.id, label: p.label })) ?? []} onChange={setPerson} />
         <FilterSelect label="All documents" value={item} options={filters?.items.map((p) => ({ value: p.id, label: p.label })) ?? []} onChange={setItem} />
         <FilterSelect label="Everything" value={action} options={filters?.actions.map((p) => ({ value: p.key, label: p.label })) ?? []} onChange={setAction} />
         <label className="flex items-center gap-1 text-xs text-muted-foreground">From <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 w-[140px]" /></label>
@@ -232,6 +232,7 @@ function Log({ dealId, buyer, onBuyer, onOpenItem }: { dealId: string; buyer: st
         <div className="overflow-hidden rounded-lg border border-border bg-card" data-testid="activity-log">
           {q.data.log.map((r) => (
             <div key={r.id} className={cn("border-b border-border px-4 py-2 text-sm last:border-0", r.actorKind === "buyer" || r.actorKind === "team" ? "" : "text-muted-foreground")}>
+              <span className="mr-1.5 tabular-nums text-muted-foreground">{dateTime(r.at)} ·</span>
               {r.itemId ? <button className="text-left hover:underline" onClick={() => onOpenItem(r.itemId!)}>{r.text}</button> : r.text}
             </div>
           ))}

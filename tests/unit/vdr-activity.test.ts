@@ -86,10 +86,10 @@ const log: any[] = [
   { id: "a5", dealId: "D", at: new Date("2026-10-04T10:00:00Z"), actorKind: "broker", actorId: "b1", action: "seller_emailed", itemId: null, buyerEmail: null, detail: { count: 3, demo: true } },
 ];
 const all = activityLog(log, ctx);
-assert.equal(all[0].text, "Oct 8 14:02 · Priya Shah for Northgate Pharmacy Group opened 1.2.2 T2 corporate tax return 2023 (from the DD CIM)");
-assert.equal(all[1].text, "Oct 7 10:00 · You shared 1.2.2 T2 corporate tax return 2023: Not shared → Due diligence buyers");
-assert.equal(all[2].text, "Oct 6 10:00 · Northgate Pharmacy Group tried to open a document not shared with them");
-assert.equal(all[3].text, "Oct 5 10:00 · Northgate Pharmacy Group asked for 34 documents");
+assert.equal(all[0].text, "Priya Shah for Northgate Pharmacy Group opened 1.2.2 T2 corporate tax return 2023 (from the DD CIM)");
+assert.equal(all[1].text, "You shared 1.2.2 T2 corporate tax return 2023: Not shared → Due diligence buyers");
+assert.equal(all[2].text, "Northgate Pharmacy Group tried to open a document not shared with them");
+assert.equal(all[3].text, "Northgate Pharmacy Group asked for 34 documents");
 assert.match(all[4].text, /emailed the seller about 3 documents \(example deal: recorded, not sent\)/);
 assert.equal(all[0].person, "Priya Shah");
 assert.deepEqual(activityLog(log, ctx, { person: "tm1" }).map((r) => r.id), ["a1"]);

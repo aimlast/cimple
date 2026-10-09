@@ -150,13 +150,26 @@ function strongFigures(text: string): Figure[] {
 
 const hasFigure = (text: string) => strongFigures(text).length > 0 || /\b\d[\d,.]*\b/.test(text);
 
-/** Money and counts first; then the rest. */
-function figureRank(f: DocFact): number {
-  if (/\$\s?\d/.test(f.text)) return 0;
-  if (strongFigures(f.text).length > 0) return 1;
-  if (/\d/.test(f.text)) return 2;
-  return 3;
+/** Identifiers that look like numbers (a business number, a NAICS code, a phone) are never "figures". */
+const IDENTIFIER_KEY = /number|code|naics|phone|postal|zip|fax|licen[cs]e|registration|account|sin\b|bn\b|\bid$/i;
+
+/** 29,180,000 → 4 ("2918"); 200,000 → 1; 56,023 → 5. */
+function significantDigits(v: number): number {
+  return String(Math.round(Math.abs(v))).replace(/0+$/, "").length;
 }
+
+const HEADLINE = [/revenue|sales/i, /net income|net earnings|profit/i, /ebitda|sde|earnings/i, /gross (profit|margin)/i, /taxable income/i, /total assets|equity/i, /cash/i, /debt|loan/i];
+/** Headline figures first (revenue, net income, EBITDA…), then other money, then counts, then the rest. */
+export function keyFigureRank(f: { key: string; text: string }): number {
+  const h = HEADLINE.findIndex((re) => re.test(f.key.replace(/([a-z])([A-Z])/g, "$1 $2")));
+  const money = /\$\s?\d/.test(f.text);
+  if (h >= 0 && money) return h;
+  if (money) return 20;
+  if (strongFigures(f.text).length > 0) return 30;
+  if (/\d/.test(f.text)) return 40;
+  return 50;
+}
+const figureRank = keyFigureRank;
 
 /** The names a buyer-facing text must never mention: held parties and staff with a private matter. */
 export function heldNamesFor(deal: Pick<Deal, "id" | "extractedInfo" | "cimGeneration">): string[] {
@@ -235,11 +248,12 @@ export function sectionText(s: { id: string; sectionTitle: string; brokerEditedC
 
 /**
  * CIM pages that print one of this document's figures (§9.6): up to 4,
- * most matches first; a page needs a money figure of $10,000+ or two
- * matching figures, so a stray "45%" never links a page.
+ * most matches first; a page needs a distinctive amount ($56,023 — not a
+ * round $200,000) or two of the document's facts, so a stray "45%" or a
+ * round number never links a page.
  */
 export function documentCimLinks(facts: ReadonlyArray<DocFact>, sections: ReadonlyArray<SectionText>): { links: Array<{ sectionId: string; title: string; matches: number }>; inCim: Set<string> } {
-  const byFact = facts.map((f) => ({ key: f.key, figures: strongFigures(f.text) })).filter((x) => x.figures.length > 0);
+  const byFact = facts.filter((f) => !IDENTIFIER_KEY.test(f.key)).map((f) => ({ key: f.key, figures: strongFigures(f.text) })).filter((x) => x.figures.length > 0);
   const inCim = new Set<string>();
   const links: Array<{ sectionId: string; title: string; matches: number }> = [];
   if (byFact.length === 0) return { links, inCim };
@@ -250,9 +264,11 @@ export function documentCimLinks(facts: ReadonlyArray<DocFact>, sections: Readon
     for (const f of byFact) {
       const hit = f.figures.filter((fig) => isKnownFigure(fig, known));
       if (hit.length > 0) {
-        matches += hit.length;
+        // Percentages and round amounts are common on any page: they never link a page on their own.
+        if (hit.some((h) => h.kind !== "percent")) matches += 1;
         inCim.add(f.key);
-        if (hit.some((h) => h.kind !== "percent" && Math.abs(h.value) >= 10_000)) big = true;
+        // A distinctive amount ($56,023 — not a round $200,000 that any page might print) links on its own.
+        if (hit.some((h) => h.kind !== "percent" && Math.abs(h.value) >= 10_000 && significantDigits(h.value) >= 3)) big = true;
       }
     }
     if (big || matches >= 2) links.push({ sectionId: s.id, title: s.title, matches });
@@ -305,7 +321,8 @@ export function brokerChecks(
   let matches = 0;
   for (const f of facts) {
     if (matches >= 4) break;
-    const figs = strongFigures(f.text).filter((x) => x.kind !== "percent" && Math.abs(x.value) >= 1000);
+    if (IDENTIFIER_KEY.test(f.key)) continue;
+    const figs = strongFigures(f.text).filter((x) => x.kind === "money" || (x.kind === "plain" && x.text.includes(",") && Math.abs(x.value) >= 1000));
     if (figs.length === 0) continue;
     for (const other of otherDocs) {
       if (other.id === doc.id || other.visibility === "broker_only") continue;
