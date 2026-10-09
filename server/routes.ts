@@ -57,6 +57,7 @@ import { loadMediaAssets } from "./cim/media-store.js";
 import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
 import { registerEngagementRoutes } from "./routes/engagement.js";
 import { registerEngagementInsightRoutes } from "./routes/engagement-insights.js";
+import { registerDataRoomRoutes } from "./routes/data-room.js";
 import { registerReadingRoutes } from "./routes/reading.js";
 import { recordRendition, variantForAccessLevel } from "./analytics/renditions.js";
 import { viewRoomStamp } from "./analytics/reading-ingest.js";
@@ -7930,6 +7931,8 @@ Return JSON only.`,
   registerReadingRoutes(app);
   registerEngagementRoutes(app);
   registerEngagementInsightRoutes(app);
+  // Data room (vdr). Wave 0: only the renderer canary, GET /api/vdr/health.
+  registerDataRoomRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;
