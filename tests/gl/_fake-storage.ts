@@ -76,6 +76,10 @@ export function fakeWorld(): FakeWorld {
     w.requirements.push(row);
     return row;
   };
+  s.deleteDocumentRequirement = async (rid: string) => {
+    const i = w.requirements.findIndex((x) => x.id === rid);
+    if (i >= 0) w.requirements.splice(i, 1);
+  };
   s.updateDocumentRequirement = async (rid: string, patch: Partial<DealDocumentRequirement>) => {
     const r = w.requirements.find((x) => x.id === rid);
     if (!r) return undefined;

@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { test, done, fixture } from "./_harness";
 import { fakeWorld, fakeDeal, cleanup } from "./_fake-storage";
 import {
-  ensureGlRequirement, findMatchingRequirement, GL_REQUIREMENT_NAME, GL_REQUIREMENT_SOURCE, isGlRequirement,
+  dedupeGlRequirements, ensureGlRequirement, findMatchingRequirement, GL_REQUIREMENT_NAME, GL_REQUIREMENT_SOURCE, isGlRequirement,
   linkUploadToRequirement, populateDocumentRequirements, replacementDocumentFor, releaseRequirementsFor,
 } from "../../server/documents/requirements";
 import { ingestDocument } from "../../server/documents/ingest";
@@ -67,6 +67,37 @@ await test("the crediting ledger: ready, seller-visible, the main ledger before 
   const l = (id: string, documentId: string, role: string, status: string, at: number) => ({ id, documentId, role, status, createdAt: new Date(at) }) as any;
   assert.equal(creditingLedger([l("1", "a", "adjustments", "ready", 3), l("2", "b", "ledger", "ready", 1), l("3", "c", "ledger", "ready", 5)], docs as any)?.ledger.id, "2");
   assert.equal(creditingLedger([l("1", "a", "ledger", "reading", 3)], docs as any), null);
+});
+
+// ── Fixer round 1 (GL-R1-04): pages loading together never add the row twice ──
+
+await test("GL-R1-04: 20 loads at once on a deal without the row → exactly one row (the seller's pages and the broker's panel open together)", async () => {
+  const d2 = fakeDeal(w);
+  const results = await Promise.all(Array.from({ length: 20 }, () => ensureGlRequirement(d2.id)));
+  const rows = w.requirements.filter((r) => r.dealId === d2.id && isGlRequirement(r));
+  assert.equal(rows.length, 1);
+  assert.equal(results.filter(Boolean).length, 1, "only one call reports that it added it");
+  // And again later: nothing added.
+  assert.equal(await ensureGlRequirement(d2.id), false);
+  assert.equal(w.requirements.filter((r) => r.dealId === d2.id && isGlRequirement(r)).length, 1);
+});
+
+await test("GL-R1-04: duplicates already on file (the checker's 6 rows, or two server processes) fold into one — the one the seller acted on", async () => {
+  const d3 = fakeDeal(w);
+  const mk = (over: object, at: number) => w.requirements.push({ id: `dup-${at}`, dealId: d3.id, documentName: GL_REQUIREMENT_NAME, category: "financial", isRequired: true, source: GL_REQUIREMENT_SOURCE, status: "missing", notes: null, uploadedFileId: null, uploadedBy: null, uploadedAt: null, sortOrder: 5, createdAt: new Date(2025, 0, at), ...over } as any);
+  for (let i = 1; i <= 5; i++) mk({}, i);
+  mk({ status: "unavailable", notes: "Seller: I don't have this" }, 6);
+  assert.equal(await ensureGlRequirement(d3.id), false);
+  const rows = w.requirements.filter((r) => r.dealId === d3.id && isGlRequirement(r));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, "dup-6", "the row the seller acted on is kept");
+  // Two processes tidying the same rows keep the same one.
+  for (let i = 1; i <= 3; i++) mk({}, 10 + i);
+  const snapshot = w.requirements.filter((r) => r.dealId === d3.id).map((r) => ({ ...r }));
+  const [a, b] = await Promise.all([dedupeGlRequirements(d3.id, snapshot), dedupeGlRequirements(d3.id, snapshot)]);
+  assert.equal(a.keptId, "dup-6");
+  assert.equal(b.keptId, "dup-6");
+  assert.equal(w.requirements.filter((r) => r.dealId === d3.id && isGlRequirement(r)).length, 1);
 });
 
 cleanup(w);

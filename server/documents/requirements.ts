@@ -439,10 +439,30 @@ export function isGlRequirement(row: { source?: string | null } | null | undefin
   return !!row && row.source === GL_REQUIREMENT_SOURCE;
 }
 
-/** Adds the general-ledger row to a deal once (idempotent). Resolves true when it was added. Never throws. */
-export async function ensureGlRequirement(dealId: string): Promise<boolean> {
+/**
+ * Adds the general-ledger row to a deal once (idempotent). Resolves true when
+ * this call added it. Never throws. It runs on every load of the broker's and
+ * the seller's GL pages, so pages opening together must not each add one:
+ * calls for the same deal take turns in this process (a second caller waits
+ * for the first and adds nothing), and any duplicates — two server processes
+ * at once, or rows left by the earlier check-then-insert — are folded into
+ * one (dedupeGlRequirements), the same row kept whoever does it.
+ */
+const glRequirementRuns = new Map<string, Promise<boolean>>();
+export function ensureGlRequirement(dealId: string): Promise<boolean> {
+  const running = glRequirementRuns.get(dealId);
+  if (running) return running.then(() => false, () => false);
+  const run: Promise<boolean> = ensureGlRequirementOnce(dealId).finally(() => {
+    if (glRequirementRuns.get(dealId) === run) glRequirementRuns.delete(dealId);
+  });
+  glRequirementRuns.set(dealId, run);
+  return run;
+}
+
+async function ensureGlRequirementOnce(dealId: string): Promise<boolean> {
   try {
     const existing = await storage.getDocumentRequirementsByDeal(dealId);
+    if (existing.filter((r) => isGlRequirement(r)).length > 1) await dedupeGlRequirements(dealId, existing);
     if (existing.some((r) => isGlRequirement(r) || r.documentName === GL_REQUIREMENT_NAME)) return false;
     await storage.createDocumentRequirement({
       dealId,
@@ -453,13 +473,39 @@ export async function ensureGlRequirement(dealId: string): Promise<boolean> {
       status: "missing",
       sortOrder: GL_REQUIREMENT_SORT,
     } as any);
+    // Another server process may have added one at the same moment: keep one.
+    const kept = await dedupeGlRequirements(dealId);
     // A ledger already read on the deal credits it at once.
     const { syncGlRequirement } = await import("../gl/requirement");
     await syncGlRequirement(dealId).catch(() => undefined);
-    return true;
+    return kept.removed === 0;
   } catch (err) {
     console.warn(`[requirements] couldn't add the general-ledger request on deal ${dealId}:`, err);
     return false;
+  }
+}
+
+/**
+ * Folds a deal's general-ledger rows into one. The row kept is the same
+ * whoever runs it: one the ledger credits, else one the seller acted on
+ * ("I don't have this"), else the oldest (then the lowest id). Never throws.
+ */
+export async function dedupeGlRequirements(
+  dealId: string,
+  rows?: ReadonlyArray<{ id: string; source?: string | null; uploadedFileId?: string | null; status?: string | null; createdAt?: Date | string | null }>,
+): Promise<{ keptId: string | null; removed: number }> {
+  try {
+    const all = (rows ?? (await storage.getDocumentRequirementsByDeal(dealId))).filter((r) => isGlRequirement(r));
+    if (all.length <= 1) return { keptId: all[0]?.id ?? null, removed: 0 };
+    const rank = (r: (typeof all)[number]) => (r.uploadedFileId ? 0 : r.status && r.status !== "missing" ? 1 : 2);
+    const at = (r: (typeof all)[number]) => (r.createdAt ? new Date(r.createdAt).getTime() : 0);
+    const sorted = [...all].sort((a, b) => rank(a) - rank(b) || at(a) - at(b) || a.id.localeCompare(b.id));
+    for (const r of sorted.slice(1)) await storage.deleteDocumentRequirement(r.id);
+    console.log(`[requirements] deal ${dealId}: ${sorted.length - 1} duplicate general-ledger request(s) removed`);
+    return { keptId: sorted[0].id, removed: sorted.length - 1 };
+  } catch (err) {
+    console.warn(`[requirements] couldn't tidy the general-ledger requests on deal ${dealId}:`, err);
+    return { keptId: null, removed: 0 };
   }
 }
 
