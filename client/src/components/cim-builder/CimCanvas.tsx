@@ -26,6 +26,10 @@ import { cimModeForAccessLevel } from "@shared/cim-layouts";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TASK_LABEL, type BuilderSection } from "./api";
+import { FigureLayerProvider } from "@/components/cim/figures/FigureLayerContext";
+import { DdBanner } from "@/components/cim/figures/DdBanner";
+import { DdPreviewBar } from "@/components/cim/figures/DdPreviewBar";
+import { usePreviewFigureLayer, withPreviewExtras } from "@/components/cim/figures/usePreviewFigureLayer";
 
 export type PreviewAs = "editor" | "teaser" | "full" | "loi" | "due_diligence";
 
@@ -189,8 +193,11 @@ function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId
     // The price as buyers see it (the view room applies the listed price at view time).
     ...(askingPrice !== undefined ? { askingPrice } : {}),
   });
+  // Notes on the figures (+ DD checks) as this buyer would see them, with the
+  // broker's marks on what buyers don't see yet (dd, D21).
+  const fig = usePreviewFigureLayer(deal.id, previewAs);
   if (view.preparing) return null; // the page shows the "not generated yet" banner
-  const shown = view.sections as unknown as CimSection[];
+  const shown = withPreviewExtras(view.sections, fig.data?.extraSections) as unknown as CimSection[];
   // This buyer's version of the design (Blind: no business branding), with
   // chapter numbers following what this buyer actually sees.
   const design = buildCimDesign(designPayload, cimModeForAccessLevel(previewAs));
@@ -204,9 +211,21 @@ function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId
       </CimDesignProvider>
     );
   }
+  const figureMode = cimModeForAccessLevel(previewAs);
   return (
     <CimDesignProvider design={design} sections={shown}>
+      <DdPreviewBar
+        mode={figureMode}
+        layer={fig.data?.layer ?? null}
+        loading={fig.loading}
+        failed={fig.failed}
+        refreshing={!!fig.data?.refreshing}
+        hasOtherRecords={fig.data?.hasOtherRecords}
+        dropped={fig.data?.dropped ?? null}
+      />
+      <FigureLayerProvider layer={fig.data?.layer ?? null} broker={{ dealId: deal.id }}>
       <CimSheet className="px-4 py-6 sm:px-10 sm:py-12">
+        {!shown.some((s) => s.layoutType === "cover_page") && <DdBanner />}
         {withBrokeragePages(shown, flags).map((item) =>
           item.kind !== "section" ? (
             item.kind === "disclaimer" ? <CimDisclaimerPage key={item.key} /> : <CimContactPage key={item.key} />
@@ -221,10 +240,12 @@ function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId
                 <ExpandableSection section={item.section} branding={branding} brokerMode={false} />
                 <ConnectedContent section={item.section} allSections={shown} />
               </SectionBoundary>
+              {item.section.layoutType === "cover_page" && <DdBanner />}
             </div>
           ),
         )}
       </CimSheet>
+      </FigureLayerProvider>
     </CimDesignProvider>
   );
 }

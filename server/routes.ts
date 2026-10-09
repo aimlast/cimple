@@ -57,6 +57,8 @@ import { loadMediaAssets } from "./cim/media-store.js";
 import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
 import { registerEngagementRoutes } from "./routes/engagement.js";
 import { registerEngagementInsightRoutes } from "./routes/engagement-insights.js";
+import { registerFigureRoutes } from "./routes/figures.js";
+import { buyerCimExtras } from "./cim/buyer-extras.js";
 import { registerDataRoomRoutes } from "./routes/data-room.js";
 import { registerReadingRoutes } from "./routes/reading.js";
 import { recordRendition, variantForAccessLevel } from "./analytics/renditions.js";
@@ -4978,7 +4980,14 @@ Return JSON only.`,
       // — [] after a failed read, so nothing unapproved is served). The kept
       // copy of an update under review is already what buyers were served
       // (published: null).
-      const buyerCim = buildBuyerCim({ deal: servedDeal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published });
+      // The extra layers (dd's figure notes / checks; gl's evidence page) come
+      // only through buyerCimExtras — the same helper servedCimFor uses.
+      const extras = await buyerCimExtras(servedDeal, access.accessLevel, access.id);
+      const buyerCim = buildBuyerCim({ deal: servedDeal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published, figures: extras.figures });
+      // A Blind CIM figure layer that still named something is dropped (fail
+      // closed) — logged for the broker, never treated as a leaked section
+      // (that would schedule a paid re-redaction on every view).
+      if (buyerCim.figureLayerDropped) console.warn(`[view] figure notes withheld on deal ${deal.id}: ${buyerCim.figureLayerDropped}`);
       if (buyerCim.preparing) {
         // No redacted version exists yet. Do NOT serve the real, un-redacted
         // sections — that would leak identity to the first viewer. Serve a
@@ -5030,6 +5039,7 @@ Return JSON only.`,
         design,
         cimMode,
         ...(reading ? { reading } : {}),
+        figureLayer: buyerCim.figureLayer,
       });
     } catch (error: any) {
       console.error("Error fetching buyer access:", error);
@@ -7495,6 +7505,11 @@ Return JSON only.`,
       let held = cimHeldFromBuyers(deal);
       let chatBaseSections: Array<{ updatedAt?: Date | string | null }> = [];
       let chatSections: ReturnType<typeof buildBuyerCim>["sections"] = [];
+      // A question asked from a figure's note (dd, D18): the figure's opaque
+      // id, resolved below against this buyer's own version — a blind buyer
+      // can't probe the named figures. It goes straight to the broker.
+      const figureId = typeof req.body?.figureId === "string" && /^f_[0-9a-f]{10}$/.test(req.body.figureId) ? req.body.figureId : null;
+      let chatLayer: ReturnType<typeof buildBuyerCim>["figureLayer"] = null;
       if (!held) {
         const { buyerCimRows, servedBlindCodename } = await import("./cim/published-snapshot");
         const [chatRows, chatMedia, chatCodename] = await Promise.all([
@@ -7506,8 +7521,38 @@ Return JSON only.`,
           held = true;
         } else {
           chatBaseSections = chatRows.sections;
-          chatSections = buildBuyerCim({ deal: chatCodename ? { ...deal, blindCodename: chatCodename } : deal, accessLevel: access.accessLevel, sections: chatRows.sections, overrides: chatRows.overrides, media: chatMedia, askingPrice: listedAskingPrice(deal), published: chatRows.published }).sections;
+          const chatDeal = chatCodename ? { ...deal, blindCodename: chatCodename } : deal;
+          const figExtras = figureId ? await buyerCimExtras(chatDeal, access.accessLevel, access.id) : null;
+          const chatCim = buildBuyerCim({ deal: chatDeal, accessLevel: access.accessLevel, sections: chatRows.sections, overrides: chatRows.overrides, media: chatMedia, askingPrice: listedAskingPrice(deal), published: chatRows.published, ...(figExtras ? { figures: figExtras.figures } : {}) });
+          chatSections = chatCim.sections.filter((s) => s.layoutType !== "dd_source_check");
+          chatLayer = chatCim.figureLayer;
         }
+      }
+      const askedFigure = figureId && chatLayer ? chatLayer.figures[figureId] ?? null : null;
+      if (askedFigure && chatLayer) {
+        // No AI: the broker answers, privately to this buyer (as today).
+        const anchor = chatLayer.anchors.find((a) => a.fig === figureId && a.pageId !== "dd-source-check") ?? chatLayer.anchors.find((a) => a.fig === figureId);
+        const pageNo = anchor ? chatSections.findIndex((s) => s.id === anchor.pageId) + 1 : 0;
+        const prefix = chatLayer.mode === "blind" || !askedFigure.label
+          ? `About a figure on page ${pageNo > 0 ? pageNo : "?"}: `
+          : `About ${askedFigure.label}, FY${askedFigure.year}: `;
+        const body = question.trim().replace(/^About [^:\n]{1,160}:\s*/, "");
+        const text = `${prefix}${body}`.slice(0, MAX_BUYER_QUESTION_CHARS);
+        const saved = await storage.createBuyerQuestion({
+          dealId, buyerAccessId, question: text, aiAnswer: null, status: "pending_broker", isPublished: false,
+          publishedAnswer: null, addedToKnowledgeBase: false, answerScope: scope, ...askedOn,
+        } as any);
+        storage.createAnalyticsEvent({
+          dealId, buyerAccessId, eventType: "question_asked", sectionKey: null, pageId: askedOn.sectionId,
+          eventData: { question: text.slice(0, 200), figure: true },
+        } as any).catch(() => {});
+        notify(dealId, "buyer_question", {
+          title: "New buyer question needs your response",
+          body: `A buyer asked: &ldquo;${escapeHtml(text.slice(0, 100))}${text.length > 100 ? "..." : ""}&rdquo;`,
+          actionUrl: `/deal/${dealId}`,
+          businessName: deal.businessName,
+        }).catch(() => {});
+        return res.json({ id: saved.id, answer: null, status: "pending_broker", message: "Sent to the broker. The answer will appear in Questions." });
       }
       const answerSections: AnswerSection[] = chatSections
         .filter(s => !s.locked)
@@ -7933,6 +7978,8 @@ Return JSON only.`,
   registerEngagementInsightRoutes(app);
   // Data room (vdr). Wave 0: only the renderer canary, GET /api/vdr/health.
   registerDataRoomRoutes(app);
+  // Notes on the CIM's figures + the due-diligence checks (dd).
+  registerFigureRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;

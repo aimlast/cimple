@@ -67,6 +67,17 @@ export function CimBlockScope({
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>;
 }
 
+/**
+ * Where a renderer sits: its page id, its two-column prefix and the table
+ * view (row / nrow). The figure layer (figures/FigureLayerContext.tsx) looks
+ * figures up by (pageId, prefix/blockKey, cell); available in every host,
+ * with or without block attributes.
+ */
+export function useBlockScope(): { pageId: string | null; prefix: string; rowKind: "row" | "nrow" } {
+  const scope = useContext(ScopeContext);
+  return { pageId: scope.pageId, prefix: scope.prefix, rowKind: scope.rowKind };
+}
+
 /** True when block attributes are being written here. */
 export function useBlocksEnabled(): boolean {
   const host = useContext(HostContext);

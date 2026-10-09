@@ -16,6 +16,7 @@ import { comparisonTableView } from "@shared/cim-chart-values";
 import { ProseFallback } from "../richText";
 import { BlockTitle } from "./BlockTitle";
 import { useBlockAttrs } from "../blocks";
+import { FigureValue } from "../figures/FigureValue";
 
 interface ComparisonRow {
   label: string;
@@ -109,7 +110,7 @@ export function ComparisonTableRenderer({ layoutData, content }: RendererProps) 
                         : "text-foreground/80"
                     )}
                   >
-                    {cell}
+                    <FigureValue block={`row:${i}`} cell={j}>{cell}</FigureValue>
                   </td>
                 ))}
               </tr>

@@ -463,3 +463,13 @@
 /* ─────────────────────────────────────────────
    SIDEBAR — hover-to-expand, content pushes over
 ───────────────────────────────────────────── */
+
+/* ── dd: notes on the CIM's figures + due-diligence checks ──────────────────
+   (client/src/components/cim/figures/*). Colours are literal hexes in the
+   components (shared/figure-states.ts) — the paper is theme-locked. */
+.cim-doc .fig-trigger { cursor: help; }
+.cim-doc .fig-trigger:hover > span > span:first-child { text-decoration-color: #46423B; }
+@media print {
+  .cim-doc .fig-trigger { pointer-events: none; }
+  .fig-popover, .fig-sheet { display: none !important; }
+}

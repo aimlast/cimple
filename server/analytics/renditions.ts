@@ -223,6 +223,7 @@ export function _resetRenditionCache(): void {
 export async function servedCimFor(
   deal: import("@shared/schema").Deal,
   accessLevel: string,
+  opts: { accessId?: string | null } = {},
 ): Promise<(RenditionInput & { accessLevel: string }) | null> {
   const [{ buildBuyerCim, cimHeldFromBuyers }, { designPayload }, { loadMediaAssets }, { listedAskingPrice }, { cimModeForAccessLevel }, { buyerCimRows, servedBlindCodename }] = await Promise.all([
     import("@shared/cim-buyer-view"),
@@ -241,7 +242,11 @@ export async function servedCimFor(
   ]);
   if (rows.missing) return null;
   const servedDeal = keptCodename ? { ...deal, blindCodename: keptCodename } : deal;
-  const cim = buildBuyerCim({ deal: servedDeal, accessLevel, sections: rows.sections, overrides: rows.overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published });
+  // The same extras as the view room (INTEGRATION §2.2), so the pages here —
+  // the DD "How the figures check out" page included — are the ones buyers got.
+  const { buyerCimExtras } = await import("../cim/buyer-extras");
+  const extras = await buyerCimExtras(servedDeal, accessLevel, opts.accessId ?? null);
+  const cim = buildBuyerCim({ deal: servedDeal, accessLevel, sections: rows.sections, overrides: rows.overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published, figures: extras.figures });
   if (cim.preparing || cim.sections.length === 0) return null;
   const design = await designPayload(deal, mode);
   return {

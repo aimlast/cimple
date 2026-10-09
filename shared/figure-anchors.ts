@@ -19,7 +19,7 @@ import { normalizeFinancialTable } from "./financial-table";
 import { comparisonTableView } from "./cim-chart-values";
 import { resolveTwoColumnColumn } from "./cim-layouts";
 import { fiscalYearKey } from "./fiscal-year";
-import { cleanRowLabel, figureKey, lineForLabel, lineSlug, standardLine, type LineId } from "./figure-lines";
+import { AS_ISSUED, cleanRowLabel, figureKey, lineForLabel, lineSlug, standardLine, type LineId } from "./figure-lines";
 
 /** A figure the registry knows: the CIM's value for a line in a year. */
 export interface RegistryFigure {
@@ -153,7 +153,9 @@ function yearsOf(registry: FigureRegistry, line: LineId): string[] {
 }
 
 function find(registry: FigureRegistry, lines: LineId[], year: string | null, shown: ShownAmount, fallbackLatest: boolean): RegistryFigure | null {
-  for (const line of lines) {
+  // A standard line also matches its statements-as-issued variant (a table copied from the statements).
+  const expanded: LineId[] = lines.flatMap((l) => (standardLine(l) ? [l, `${l}${AS_ISSUED}` as LineId] : [l]));
+  for (const line of expanded) {
     if (year) {
       const f = registry[figureKey(line, year)];
       if (f && matches(shown, f)) return f;

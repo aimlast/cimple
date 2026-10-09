@@ -84,7 +84,23 @@ export function blindBasisLabel(basis: NoteBasis): string {
 
 // ── Worked-out notes (§4.6) ───────────────────────────────────────────────
 
-const lowerFirst = (s: string) => (/^[A-Z][a-z]/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s);
+/**
+ * A label as it reads mid-sentence: "Dry van truckload" → "dry van truckload",
+ * but a name stays as written ("Comfort Club memberships", "Port of Vancouver
+ * drayage", "HVAC service").
+ */
+export function lowerFirst(s: string): string {
+  if (!/^[A-Z][a-z]/.test(s)) return s;
+  const rest = s.split(/\s+/).slice(1);
+  if (rest.some((w) => /^[A-Z][a-z]/.test(w))) return s;
+  return s.charAt(0).toLowerCase() + s.slice(1);
+}
+
+/** A line label without its asides: "Direct labour (incl. benefits & payroll burden)" → "Direct labour". */
+export function shortLabel(s: string): string {
+  const cut = s.replace(/\s*\([^)]*\)/g, "").replace(/\s+/g, " ").trim();
+  return cut.length >= 3 ? cut : s;
+}
 
 /** "a", "a and b", "a, b and c". */
 export function listJoin(items: string[]): string {
@@ -137,7 +153,7 @@ export function restatedText(input: { year: string; lineWord: string; earlier: n
 /** D7: "Up $1,378,500 (33%) from FY2022, mostly facility rent (+$1,120,500)." */
 export function movementText(input: { from: number; to: number; fromYear: string; parts: Array<{ label: string; delta: number }> }): string {
   const head = changeLine(input.from, input.to, input.fromYear);
-  const parts = input.parts.map((p) => `${lowerFirst(p.label)} (${signedDollars(p.delta)})`);
+  const parts = input.parts.map((p) => `${lowerFirst(shortLabel(p.label))} (${signedDollars(p.delta)})`);
   return parts.length > 0 ? `${head}, mostly ${listJoin(parts)}.` : `${head}.`;
 }
 

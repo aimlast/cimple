@@ -42,6 +42,9 @@ import { ImageGalleryRenderer }       from "./renderers/ImageGallery";
 import { VideoRenderer }              from "./renderers/Video";
 import { LocationMapRenderer }        from "./renderers/LocationMap";
 import { LockedSectionBody }          from "./renderers/LockedSection";
+import { DdSourceCheckRenderer }      from "./renderers/DdSourceCheck";
+import { FigureNotesList }            from "./figures/FigureNotesList";
+import { DdKeyTerms, DdSectionSources } from "./figures/DdPageExtras";
 import { ProseFallback, sanitizeLayoutData } from "./richText";
 
 interface CimSectionRendererProps {
@@ -80,6 +83,7 @@ const RENDERERS = {
   image_gallery: ImageGalleryRenderer,
   video: VideoRenderer,
   location_map: LocationMapRenderer,
+  dd_source_check: DdSourceCheckRenderer,
 } satisfies Record<CimLayoutKey, ComponentType<any>>;
 
 /** Layouts without their own heading (they are headings themselves). */
@@ -181,7 +185,18 @@ export function CimSectionRenderer({ section, branding, brokerMode = false, hide
           ) : undefined}
         />
       )}
-      <CimBlockScope pageId={section.id}>{inner}</CimBlockScope>
+      <CimBlockScope pageId={section.id}>
+        {inner}
+        {/* Notes on this page's figures, and (due diligence) the documents
+            behind it — drawn only inside a figure-layer host. */}
+        {!locked && (
+          <>
+            <FigureNotesList pageId={section.id} />
+            <DdKeyTerms pageId={section.id} />
+            <DdSectionSources pageId={section.id} />
+          </>
+        )}
+      </CimBlockScope>
     </div>
   );
 }

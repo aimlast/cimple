@@ -10,7 +10,11 @@ import { ProseFallback, renderInline } from "../richText";
 import { financialLabelHeader, normalizeFinancialTable } from "@shared/financial-table";
 import { BlockTitle } from "./BlockTitle";
 import { useCimTheme } from "../CimDesignContext";
-import { useBlockAttrs } from "../blocks";
+import { useBlockAttrs, useBlockScope, useCimInteraction } from "../blocks";
+import { FigureValue } from "../figures/FigureValue";
+import { useFigureLayer, useFigureLookup } from "../figures/FigureLayerContext";
+import { DdCompareTable } from "../figures/DdCompareTable";
+import { COMPARE_CIM_ONLY, COMPARE_SIDE_BY_SIDE } from "@shared/figure-copy";
 
 /** A hex colour at low opacity ("#9e752e" → "#9e752e1f"); other colour forms are left as they are. */
 export function tint(color: string, alpha = 0.12): string {
@@ -72,6 +76,14 @@ export function FinancialTableRenderer({ layoutData, content, branding, section 
   const scroller = useHiddenRight();
   const theme = useCimTheme();
   const ba = useBlockAttrs();
+  // Due diligence: the CIM beside the tax returns (figures/DdCompareTable),
+  // only in the As Reported view (a Normalized view's rows are never checked).
+  const figures = useFigureLayer();
+  const lookup = useFigureLookup();
+  const scope = useBlockScope();
+  const interaction = useCimInteraction();
+  const [compare, setCompare] = useState<"side_by_side" | "cim_only">("side_by_side");
+  const [onlyDifferences, setOnlyDifferences] = useState(false);
 
   // One shared reading of headers vs. values (see shared/financial-table.ts):
   // the leading header names the label column, so each figure sits under its
@@ -87,10 +99,44 @@ export function FinancialTableRenderer({ layoutData, content, branding, section 
   const colCount = columns.length + 1;
   const labelHeader = financialLabelHeader(table.labelHeader, data.currency);
   const showHeader = columns.some((c) => c) || !!labelHeader;
+  const ddCompare = figures?.layer.mode === "dd" && scope.rowKind === "row"
+    && rows.some((r, i) => r.cells.some((_c, j) => (lookup(`row:${i}`, j)?.checks?.length ?? 0) > 0));
+  const switchCompare = (next: "side_by_side" | "cim_only") => {
+    setCompare(next);
+    interaction("figure_compare", undefined, next);
+  };
 
   return (
     <div>
       <BlockTitle title={data.caption} intro={(data as { intro?: unknown }).intro} />
+      {ddCompare && (
+        <div role="group" aria-label="How to show the figures" className="mb-2 inline-flex rounded-lg border border-[hsl(var(--cim-line))] bg-[hsl(var(--cim-stripe))] p-0.5 print:hidden">
+          {(["cim_only", "side_by_side"] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              aria-pressed={compare === k}
+              onClick={() => switchCompare(k)}
+              className={cn(
+                "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+                compare === k ? "bg-[hsl(var(--cim-card))] text-[hsl(var(--cim-ink))] shadow-sm" : "text-[hsl(var(--cim-ink-muted))] hover:text-[hsl(var(--cim-ink))]",
+              )}
+            >
+              {k === "cim_only" ? COMPARE_CIM_ONLY : COMPARE_SIDE_BY_SIDE}
+            </button>
+          ))}
+        </div>
+      )}
+      {ddCompare && compare === "side_by_side" ? (
+        <DdCompareTable
+          table={table}
+          labelHeader={labelHeader}
+          lookup={lookup}
+          onlyDifferences={onlyDifferences}
+          onToggleOnlyDifferences={() => setOnlyDifferences((v) => !v)}
+        />
+      ) : (
+      <>
       <div className="relative">
       <div
         ref={scroller.ref}
@@ -171,7 +217,7 @@ export function FinancialTableRenderer({ layoutData, content, branding, section 
                       )}
                     >
                       {/* No figure for this column — a quiet dash, never a shifted value */}
-                      {val ?? <span aria-label="not available">—</span>}
+                      {val === null ? <span aria-label="not available">—</span> : <FigureValue block={`row:${i}`} cell={j}>{val}</FigureValue>}
                     </td>
                   ))}
                 </tr>
@@ -193,6 +239,8 @@ export function FinancialTableRenderer({ layoutData, content, branding, section 
         <p className="mt-1.5 text-right text-2xs text-muted-foreground">
           {columns.length > 1 ? `Swipe for ${columns[columns.length - 1] || "more"} →` : "Swipe for more →"}
         </p>
+      )}
+      </>
       )}
 
       {/* Footnotes */}

@@ -14,8 +14,16 @@ export type StandardLineId =
   | "revenue" | "costOfSales" | "grossProfit" | "operatingExpenses" | "nonRecurring" | "ebitda"
   | "otherIncome" | "amortization" | "interest" | "incomeBeforeTax" | "incomeTaxes" | "netIncome";
 
-/** A standard line id, or an analysis line "line:<slug>". */
-export type LineId = StandardLineId | `line:${string}`;
+/**
+ * A standard line id, the statements-as-issued variant of one
+ * ("operatingExpenses@statements": the figure as the financial statements
+ * print it, when the analysis reclassified it — a CIM table copied from the
+ * statements shows that one), or an analysis line "line:<slug>".
+ */
+export type LineId = StandardLineId | `${StandardLineId}@statements` | `line:${string}`;
+
+/** The suffix of a statements-as-issued variant. */
+export const AS_ISSUED = "@statements";
 
 export interface FigureLine {
   id: StandardLineId;
@@ -169,13 +177,23 @@ export function parseFigureKey(key: string): { line: LineId; year: string } | nu
   const line = key.slice(0, i);
   const year = key.slice(i + 1);
   if (!/^\d{4}$/.test(year)) return null;
-  if (!BY_ID.has(line) && !/^line:[a-z0-9-]{1,60}$/.test(line)) return null;
+  if (!BY_ID.has(baseLineOf(line)) && !/^line:[a-z0-9-]{1,64}$/.test(line)) return null;
   return { line: line as LineId, year };
 }
 
-/** Is it one of the standard lines (not an analysis line)? */
+/** Is it one of the standard lines (not an analysis line, not a variant)? */
 export function isStandardLine(line: string): line is StandardLineId {
   return BY_ID.has(line);
+}
+
+/** The standard line of a line or its as-issued variant ("operatingExpenses@statements" → "operatingExpenses"). */
+export function baseLineOf(line: string): string {
+  return line.endsWith(AS_ISSUED) ? line.slice(0, -AS_ISSUED.length) : line;
+}
+
+/** The standard line definition behind a line id (variants included), or null for an analysis line. */
+export function standardLineOf(line: string): FigureLine | null {
+  return standardLine(baseLineOf(line));
 }
 
 /**
@@ -184,7 +202,7 @@ export function isStandardLine(line: string): line is StandardLineId {
  * meaningful words plus the synonyms of the family it reads like.
  */
 export function lineWords(line: LineId, label?: string | null): string[] {
-  const std = standardLine(line);
+  const std = standardLineOf(line);
   if (std) return std.synonyms;
   const words = String(label ?? line.replace(/^line:/, "").replace(/-/g, " "))
     .toLowerCase()

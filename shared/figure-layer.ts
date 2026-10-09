@@ -30,7 +30,7 @@ import { anchorFigures, type Anchor, type FigureRegistry, type RegistryFigure } 
 import { agrees, dollars, percentOf, signedDollars, type DiffSize } from "./figure-compare";
 import { checkState, type CheckState } from "./figure-states";
 import { blindBasisLabel, changeLine, differsBy, SOURCE_CHECK_TITLE, type NoteBasis } from "./figure-copy";
-import { FIGURE_LINES, figureKey, parseFigureKey, standardLine } from "./figure-lines";
+import { AS_ISSUED, FIGURE_LINES, baseLineOf, figureKey, parseFigureKey, standardLine } from "./figure-lines";
 import { pageRole } from "./cim-page-role";
 import { keyTermFamilyFor, type KeyTermFamily } from "./dd-key-terms";
 import { screenBuyerStrings, type StringScreen } from "./figure-strings";
@@ -491,14 +491,18 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
   let sourceCheck: FigureLayer["sourceCheck"] = null;
   const pageAnchors: FigureLayer["anchors"] = [];
   if (dd) {
-    const visible = Object.entries(figures).filter(([, v]) => (v.checks ?? []).some((c) => broker || !c.preview));
-    const lineIds = FIGURE_LINES.map((l) => l.id as string).filter((id) => visible.some(([k]) => parseFigureKey(k)?.line === id));
+    const shows = (v: FigureView | undefined) => !!v && (v.checks ?? []).some((c) => broker || !c.preview);
+    const visible = Object.entries(figures).filter(([, v]) => shows(v));
+    const baseOf = (k: string) => { const p = parseFigureKey(k); return p ? baseLineOf(p.line) : null; };
+    const lineIds = FIGURE_LINES.map((l) => l.id as string).filter((id) => visible.some(([k]) => baseOf(k) === id));
     const years = Array.from(new Set(visible.map(([k]) => parseFigureKey(k)?.year).filter((y): y is string => !!y))).sort();
     if (lineIds.length > 0 && years.length > 0) {
       sourceCheck = { lines: lineIds, years };
       lineIds.forEach((line, i) => years.forEach((y, j) => {
-        const v = figures[figureKey(line as never, y)];
-        if (v && (v.checks ?? []).some((c) => broker || !c.preview)) pageAnchors.push({ pageId: DD_SOURCE_CHECK_PAGE_ID, block: `row:${i}`, cell: j, fig: v.id });
+        // The figure the CIM shows for that line and year: the analysis's, else the statements-as-issued one.
+        const own = figures[`${line}|${y}`];
+        const v = shows(own) ? own : figures[`${line}${AS_ISSUED}|${y}`];
+        if (shows(v)) pageAnchors.push({ pageId: DD_SOURCE_CHECK_PAGE_ID, block: `row:${i}`, cell: j, fig: v!.id });
       }));
     }
   }

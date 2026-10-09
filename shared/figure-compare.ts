@@ -150,6 +150,11 @@ function spellings(value: number): string[] {
   return grouped === plain ? [plain] : [grouped, plain];
 }
 
+/** Text ending in a complete comma-grouped number ("…debt41,000"). */
+const GLUED_BEFORE = /(?:^|[^\d,.])\d{1,3}(?:,\d{3})+$/;
+/** Text starting with a complete comma-grouped number ("1,931,000\n"). */
+const GLUED_AFTER = /^\d{1,3}(?:,\d{3})+(?![\d,]|\.\d)/;
+
 /**
  * Where `value` is printed in `text`, with digit boundaries: "98,000" is
  * never found inside "1,398,000" or "98,0001", but "…charges86,000" and
@@ -163,12 +168,18 @@ export function locatedIn(text: string | null | undefined, value: number): Locat
       const i = text.indexOf(needle, from);
       if (i < 0) break;
       from = i + 1;
-      const before = text.slice(Math.max(0, i - 2), i);
-      const after = text.slice(i + needle.length, i + needle.length + 3);
-      // Part of a longer number on the left: "1,398,000" / "1398000" / "1.398".
-      if (/\d$/.test(before) || /\d[,.]$/.test(before)) continue;
+      const grouped = needle.includes(",");
+      const before = text.slice(Math.max(0, i - 24), i);
+      const after = text.slice(i + needle.length, i + needle.length + 24);
+      // Part of a longer number on the left: "1,398,000" / "1398000" / "1.398". A
+      // whole grouped figure glued before it (a statement's other column,
+      // "…debt41,00029,000") is a separate number.
+      if (/\d[,.]$/.test(before)) continue;
+      if (/\d$/.test(before) && !(grouped && GLUED_BEFORE.test(before))) continue;
       // Part of a longer number on the right: "98,0001", "98,000,000", "98,000.5"; ".00" cents are fine.
-      if (/^\d/.test(after) || /^,\d/.test(after)) continue;
+      // A whole grouped figure glued after it ("2,048,0001,931,000") is the next column.
+      if (/^,\d/.test(after)) continue;
+      if (/^\d/.test(after) && !(grouped && GLUED_AFTER.test(after))) continue;
       if (/^\.\d/.test(after) && !/^\.00?(?!\d)/.test(after)) continue;
       return { index: i, page: pageAt(text, i), sourceLabel: sourceLabelAt(text, i) };
     }

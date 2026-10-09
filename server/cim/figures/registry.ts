@@ -9,7 +9,7 @@
  */
 import type { CimFinancials } from "../cim-financials";
 import type { FigureRegistry, RegistryFigure } from "@shared/figure-anchors";
-import { FIGURE_LINES, figureKey, lineSlug, standardLine, type LineId, type StandardLineId } from "@shared/figure-lines";
+import { AS_ISSUED, FIGURE_LINES, figureKey, lineSlug, standardLine, type LineId, type StandardLineId } from "@shared/figure-lines";
 import { parseShownAmount } from "@shared/figure-anchors";
 
 /** Analysis categories → the total they make up. */
@@ -36,7 +36,18 @@ const DERIVED: Partial<Record<StandardLineId, Array<[string, 1 | -1]>>> = {
   ],
 };
 
-export function figureRegistry(fin: CimFinancials | null | undefined, facts?: Record<string, unknown> | null): FigureRegistry {
+/**
+ * `statements` (optional): the statements-as-issued values per fiscal year
+ * (sources.ts statementValuesByYear). Where the analysis reclassified a line
+ * (one-time items shown on their own), the statements' own figure is added as
+ * the line's "@statements" variant, so a CIM table copied from the
+ * statements anchors too.
+ */
+export function figureRegistry(
+  fin: CimFinancials | null | undefined,
+  facts?: Record<string, unknown> | null,
+  statements?: Record<string, Partial<Record<StandardLineId, number>>> | null,
+): FigureRegistry {
   const reg: FigureRegistry = {};
   const put = (f: RegistryFigure) => {
     if (!Number.isFinite(f.value)) return;
@@ -96,6 +107,26 @@ export function figureRegistry(fin: CimFinancials | null | undefined, facts?: Re
     add("incomeBeforeTax", p.incomeBeforeTaxes, { skipZero: true });
     add("incomeTaxes", p.taxes, { skipZero: true });
     add("netIncome", p.netIncomeReported ?? p.netIncomeFromRows);
+  }
+
+  // Statements-as-issued variants of the analysis's reclassified totals.
+  for (const [year, values] of Object.entries(statements ?? {})) {
+    for (const [lineId, value] of Object.entries(values ?? {}) as Array<[StandardLineId, number]>) {
+      const base = reg[figureKey(lineId, year)];
+      const def = standardLine(lineId);
+      if (!base || !def || typeof value !== "number" || Math.abs(Math.abs(base.value) - Math.abs(value)) <= 1) continue;
+      const comps = base.components ?? [];
+      const sumOf = (cs: Array<{ key: string; sign: 1 | -1 }>) => cs.reduce((t, c) => t + c.sign * Math.abs(reg[c.key]?.value ?? 0), 0);
+      const oneTime = atomicIn("Non-Recurring", year).map((key) => ({ key, sign: (def.expense ? 1 : -1) as 1 | -1 }));
+      const withOneTime = [...comps, ...oneTime];
+      const components = comps.length > 0 && Math.abs(Math.abs(sumOf(withOneTime)) - Math.abs(value)) <= 1 ? withOneTime
+        : comps.length > 0 && Math.abs(Math.abs(sumOf(comps)) - Math.abs(value)) <= 1 ? comps : undefined;
+      const line = `${lineId}${AS_ISSUED}` as LineId;
+      put({
+        key: figureKey(line, year), line, lineLabel: def.label, year, value: def.expense ? Math.abs(value) : value,
+        total: !!components && components.length > 1, ...(components ? { components } : {}), expense: def.expense,
+      });
+    }
   }
 
   // Lines the analysis lacks, from the deal's facts (by-year maps).

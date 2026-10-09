@@ -8,7 +8,7 @@
  *
  * Falls back to legacy cimContent text if no AI sections exist yet.
  */
-import { useState, useEffect, useRef } from "react";
+import { Fragment, useState, useEffect, useMemo, useRef } from "react";
 import { useParams } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +36,10 @@ import { BuyerDecisionPanel } from "@/components/buyer/BuyerDecisionPanel";
 import { NdaBuyerProfileGate } from "@/components/buyer/NdaBuyerProfileGate";
 import { CimBlockScope, CimBlocksProvider } from "@/components/cim/blocks";
 import { READING_SHEET_ATTR, useCimReading } from "@/lib/cim-reading";
+import { FigureLayerProvider, type FigureBuyerHooks } from "@/components/cim/figures/FigureLayerContext";
+import { DdBanner } from "@/components/cim/figures/DdBanner";
+import { DD_BADGE } from "@shared/figure-copy";
+import type { FigureLayer } from "@shared/figure-layer";
 import type { ViewRoomReading } from "@shared/analytics-v2";
 
 type BuyerDecision = "under_review" | "interested" | "not_interested" | "lapsed";
@@ -83,6 +87,8 @@ interface ViewData {
   pendingSections?: number;
   /** Reading analytics: the served version's opaque id + page order (content branch only). */
   reading?: ViewRoomReading;
+  /** Notes on the figures and (due diligence) the figure checks for this version (content branch only). */
+  figureLayer?: FigureLayer | null;
 }
 
 /** A section the buyer's access level doesn't open yet (server sends title only). */
@@ -161,6 +167,21 @@ export default function BuyerViewRoom() {
     reading: data?.reading ?? null,
     enabled: hasContent && !data?.ndaGate && !data?.preparing && !data?.updating,
   });
+
+  // A question about one figure goes straight to the broker (no AI), from its note.
+  const dealIdForAsk = data?.deal?.id;
+  const figureBuyer = useMemo<FigureBuyerHooks>(() => ({
+    onAsk: async (figureId: string, text: string) => {
+      if (!dealIdForAsk || !token) throw new Error("not ready");
+      const res = await fetch(`/api/deals/${dealIdForAsk}/questions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: text, accessToken: token, figureId, sectionId: tracker.currentPageId() ?? undefined, renditionId: tracker.renditionId() ?? undefined }),
+      });
+      if (!res.ok) throw new Error("not sent");
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealIdForAsk, "questions", "published", token] });
+    },
+  }), [dealIdForAsk, token, tracker, queryClient]);
 
   // Timer
   useEffect(() => {
@@ -301,6 +322,11 @@ export default function BuyerViewRoom() {
               <h1 className="font-semibold text-sm leading-tight">{deal.businessName}</h1>
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
                 Confidential Information Memorandum
+                {cimMode === "dd" && (
+                  <span className="ml-2 inline-flex items-center rounded-full border border-teal/40 px-1.5 py-px text-[9px] font-semibold normal-case tracking-normal text-teal" data-testid="dd-badge">
+                    {DD_BADGE}
+                  </span>
+                )}
               </p>
             </div>
           </div>
@@ -391,7 +417,10 @@ export default function BuyerViewRoom() {
               <CimDesignProvider design={design} sections={visibleSections}>
               {/* Reading analytics: every page and part carries its id inside this provider. */}
               <CimBlocksProvider host={tracker}>
+              {/* Notes on the figures (and, due diligence, the checks) — whitelisted by the server. */}
+              <FigureLayerProvider layer={data.figureLayer ?? null} buyer={figureBuyer}>
               <CimSheet className="px-5 py-6 sm:px-10 sm:py-12" {...{ [READING_SHEET_ATTR]: "" }}>
+                {!visibleSections.some((s) => s.layoutType === "cover_page") && <DdBanner />}
                 {withBrokeragePages(visibleSections, {
                   disclaimer: design.brokerage.showDisclaimerPage !== false,
                   contact: design.brokerage.showContactPage !== false,
@@ -403,7 +432,8 @@ export default function BuyerViewRoom() {
                   /* scroll-mt clears the sticky header + section strip so
                      nav clicks, "See …" links and TOC anchors land the
                      heading below the chrome instead of under it. */
-                  <div key={section.id} id={`section-${section.id}`} data-cim-page={section.id} className="scroll-mt-24">
+                  <Fragment key={section.id}>
+                  <div id={`section-${section.id}`} data-cim-page={section.id} className="scroll-mt-24">
                     {/* The page scope: interactions reported at the section's top level (expand/collapse) know their page. */}
                     <CimBlockScope pageId={section.id}>
                     <SectionBoundary sectionTitle={section.sectionTitle}>
@@ -423,8 +453,12 @@ export default function BuyerViewRoom() {
                     </SectionBoundary>
                     </CimBlockScope>
                   </div>
+                  {/* The due-diligence key sits under the cover page: inside the paper, outside any page (the reading tracker is unaffected). */}
+                  {section.layoutType === "cover_page" && <DdBanner />}
+                  </Fragment>
                 ); })())}
               </CimSheet>
+              </FigureLayerProvider>
               </CimBlocksProvider>
               </CimDesignProvider>
               </CimMediaProvider>
