@@ -59,6 +59,7 @@ import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
 import { registerEngagementRoutes } from "./routes/engagement.js";
 import { registerEngagementInsightRoutes } from "./routes/engagement-insights.js";
 import { registerAnalyticsDashboardRoutes } from "./routes/analytics-dashboard.js";
+import { registerAnalyticsExtraSources } from "./routes/analytics-extra-sources.js";
 import { questionWaitingOn } from "@shared/analytics-dashboard";
 import { registerTeaserRoutes } from "./routes/teaser.js";
 import { registerDataRoomRoutes } from "./routes/data-room.js";
@@ -8228,6 +8229,7 @@ Return JSON only.`,
   registerEngagementRoutes(app);
   registerEngagementInsightRoutes(app);
   registerAnalyticsDashboardRoutes(app);
+  registerAnalyticsExtraSources(); // teaser's (and later vdr's) activity + heads-up lines, INTEGRATION §2.9
   registerTeaserRoutes(app, { grant: (request, deal, baseUrl, review, opts) => grantApprovedBuyer(request as any, deal, baseUrl, review, opts) });
   // Data room (vdr). Wave 0: only the renderer canary, GET /api/vdr/health.
   registerDataRoomRoutes(app);

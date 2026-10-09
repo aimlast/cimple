@@ -86,14 +86,16 @@ assert.equal(decOf("p")[0].tone, "negative");
   assert.ok(it?.detail?.startsWith("wants a site visit"), "next step from the event's own data first");
 }
 
-// ── Next-step words match the buyer profile's ──
+// ── One next-step map for every screen (INTEGRATION §9.2, deduped at the analytics merge) ──
 {
-  const src = readFileSync(fileURLToPath(new URL("../../server/buyers/profile-view.ts", import.meta.url)), "utf8");
-  const block = /const NEXT_STEP_TEXT[^{]*\{([\s\S]*?)\};/.exec(src)?.[1] ?? "";
-  const words: Record<string, string> = {};
-  for (const m of Array.from(block.matchAll(/(\w+):\s*"([^"]+)"/g))) words[m[1]] = m[2];
-  assert.ok(Object.keys(words).length >= 6, "found the profile's next-step words");
-  assert.deepEqual(NEXT_STEP_WORDS, words, "shared/buyer-next-steps.ts = profile-view.ts NEXT_STEP_TEXT");
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+  assert.equal(NEXT_STEP_WORDS.loi, "wants to make an offer (LOI)", "the buyer's offer step, never an access level");
+  for (const rel of ["../../server/buyers/profile-view.ts", "../../client/src/components/deal/buyers/HaveCimStage.tsx"]) {
+    const src = read(rel);
+    assert.match(src, /from "@shared\/buyer-next-steps"/, `${rel} reads the shared map`);
+    assert.doesNotMatch(src, /const NEXT_STEP_(TEXT|WORDS)\b/, `${rel} keeps no private copy`);
+    assert.doesNotMatch(src, /ready to submit an LOI|seller_call:\s*"/, `${rel} has no next-step words of its own`);
+  }
 }
 
 // ── Broker actions ──

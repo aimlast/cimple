@@ -1,19 +1,21 @@
 /**
  * The words for a buyer's chosen next step (buyer_access.decision_next_step,
  * BUYER_NEXT_STEPS values) when the broker reads about it: "chose
- * Interested — wants a call with the seller".
+ * Interested · wants a call with the seller", "Next: wants to make an offer
+ * (LOI)".
  *
- * Same words as server/buyers/profile-view.ts's private NEXT_STEP_TEXT
- * (that file is left alone in this batch; deduping is an integrator
- * follow-up — tests/unit/analytics-activity.test.ts pins the two together).
+ * The ONE map (INTEGRATION §9.2, deduped at the analytics merge): the
+ * Analytics dashboards, the deal's Buyers tab (HaveCimStage) and the buyer
+ * profile timeline (server/buyers/profile-view.ts) all read it. "LOI" here
+ * is the buyer's own step (an offer), never an access level.
  */
 export const NEXT_STEP_WORDS: Readonly<Record<string, string>> = {
   seller_call: "wants a call with the seller",
   management_meeting: "wants a management meeting",
   site_visit: "wants a site visit",
-  loi: "ready to submit an LOI",
+  loi: "wants to make an offer (LOI)",
   more_info: "wants more information",
-  other: "other next step",
+  other: "another next step",
 };
 
 /** The words for a next-step value, or null when there is none. Unknown values are shown as given. */

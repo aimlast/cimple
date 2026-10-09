@@ -395,6 +395,14 @@ export interface HeadsUp {
   ids?: string[] | null;
 }
 
+/**
+ * The teaser stream's heads-up line (registered at the analytics merge,
+ * server/routes/analytics-extra-sources.ts): "{n} buyers read the teaser but
+ * didn't ask for the CIM: <deals>" — one line over every deal, so it never
+ * takes both slots.
+ */
+export const TEASER_HEADS_UP_ID = "teaser_worth";
+
 /** The built-in heads-up lines, as a Buyers-tab chip (`?tab=buyers&notice=<id>`). */
 export type NoticeId = "expiring" | "not_opened";
 export const NOTICE_IDS: readonly NoticeId[] = ["expiring", "not_opened"];
@@ -591,13 +599,16 @@ export function matchesBuyerStatus(row: BuyerDashboardRow, filter: BuyerStatusFi
 
 export type ActivityKind =
   | "opened" | "returned" | "teaser_opened" | "nda_signed" | "cim_requested" | "interested" | "not_interested"
-  | "more_time" | "lapsed" | "question" | "granted" | "level_changed" | "extended" | "contacted" | "revoked" | "link_expired" | "data_room";
+  | "more_time" | "lapsed" | "question" | "granted" | "level_changed" | "extended" | "contacted" | "revoked" | "link_expired" | "data_room"
+  /** "said the teaser isn't for them" (teaser stream's activity source). */
+  | "teaser_passed";
 export type ActivityGroup = "reading" | "nda" | "decision" | "question" | "broker" | "data_room";
 
 export const ACTIVITY_GROUP_OF: Record<ActivityKind, ActivityGroup> = {
   opened: "reading", returned: "reading", teaser_opened: "reading",
   nda_signed: "nda",
   cim_requested: "decision", interested: "decision", not_interested: "decision", more_time: "decision", lapsed: "decision",
+  teaser_passed: "decision",
   question: "question",
   granted: "broker", level_changed: "broker", extended: "broker", contacted: "broker", revoked: "broker", link_expired: "broker",
   data_room: "data_room",

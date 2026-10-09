@@ -32,23 +32,16 @@ import {
 import type { AccessFit } from "@shared/buyer-fit";
 import { invalidateBuyerPipeline } from "@/lib/buyer-pipeline";
 import { seesCim } from "@shared/access-levels";
+import { nextStepWords as sharedNextStepWords } from "@shared/buyer-next-steps";
 import { BuyerFitDialog, FitChip } from "./BuyerFit";
 
 /**
  * The buyer's own next step after "Interested", in words ("Next: wants to make
  * an offer (LOI)") — never the raw value. LOI here is the buyer's step, not an
- * access level.
+ * access level. One map for every screen: shared/buyer-next-steps.ts.
  */
-const NEXT_STEP_WORDS: Record<string, string> = {
-  seller_call: "wants a call with the seller",
-  management_meeting: "wants a management meeting",
-  site_visit: "wants a site visit",
-  loi: "wants to make an offer (LOI)",
-  more_info: "wants more information",
-  other: "another next step",
-};
 export function nextStepWords(step: string): string {
-  return NEXT_STEP_WORDS[step] ?? step.replace(/_/g, " ");
+  return sharedNextStepWords(step) ?? "";
 }
 
 /** Read the server's JSON error body, falling back to a readable default. */

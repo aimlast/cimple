@@ -50,7 +50,7 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trim
 const TONE: Record<ActivityKind, ActivityItem["tone"]> = {
   opened: "neutral", returned: "neutral", teaser_opened: "neutral",
   nda_signed: "positive", cim_requested: "positive", interested: "positive",
-  not_interested: "negative", more_time: "neutral", lapsed: "negative",
+  not_interested: "negative", more_time: "neutral", lapsed: "negative", teaser_passed: "negative",
   question: "neutral",
   granted: "neutral", level_changed: "neutral", extended: "neutral", contacted: "neutral", revoked: "negative", link_expired: "negative",
   data_room: "neutral",

@@ -49,6 +49,7 @@ import {
 } from "@shared/analytics-v2";
 import { KIND_GROUPS, kindGroupOf, type KindGroup } from "@shared/cim-blocks";
 import { groupReadLabel, pageReadLabel } from "@shared/cim-reading-model";
+import { hasReadCim } from "@shared/analytics-dashboard";
 import { buyerInsight, journeyMoments, pageHeadline, pulseSentence, rankBuyers, reachHeadline, type InsightContext } from "./insights";
 
 /** Optional extras the aggregation adds (server/engagement/facts.ts CaptureFacts). */
@@ -99,8 +100,8 @@ const opened = (b: BuyerReadingFacts) => b.visits.length > 0;
  * only buyers with a visit in view count (firstViewCounts).
  */
 export const openedForCounts = (b: BuyerReadingFacts, filters: Pick<DealReadingFacts["filters"], "range" | "device">) => opened(b) || (firstViewCounts(filters) && !!b.firstViewedAt);
-/** The reader rule (C11): a visit with at least READING_RULES.readerMinMs active. */
-export const withReading = (b: BuyerReadingFacts) => b.visits.some((v) => v.activeMs >= READING_RULES.readerMinMs);
+/** The reader rule (C11): a visit with at least READING_RULES.readerMinMs active — the ONE rule, hasReadCim. */
+export const withReading = (b: BuyerReadingFacts) => hasReadCim(b);
 
 /**
  * How a page's reading is known (heat-map spec §5.4): none under a second;

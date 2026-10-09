@@ -14,6 +14,7 @@ import {
   type PageStripCell,
 } from "@shared/analytics-v2";
 import { cn } from "@/lib/utils";
+import { whenWords } from "@shared/analytics-dashboard";
 import { heatChrome } from "../heat";
 import { PhoneCall } from "lucide-react";
 
@@ -159,19 +160,14 @@ export function StripLegend({ className }: { className?: string }) {
 
 // ── Words ────────────────────────────────────────────────────────────────
 
-/** "just now", "12 min ago", "3 h ago", "yesterday", "4 days ago", "12 Sep". */
+/**
+ * "just now", "12 min ago", "3 h ago", "yesterday", "4 days ago", then "23 Sept"
+ * — the one date rule of the engagement and analytics screens (the broker's
+ * calendar, Toronto; shared/analytics-dashboard.ts whenWords), so a card and
+ * the list beside it never say "Sep 24" and "24 Sept" for the same visit.
+ */
 export function agoText(iso: string | null | undefined, now = Date.now()): string {
-  if (!iso) return "";
-  const t = Date.parse(iso);
-  if (!t) return "";
-  const s = Math.max(0, (now - t) / 1000);
-  if (s < 90) return "just now";
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  if (s < 20 * 3600) return `${Math.round(s / 3600)} h ago`;
-  const days = Math.round(s / 86400);
-  if (days <= 1) return "yesterday";
-  if (days < 7) return `${days} days ago`;
-  return new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return whenWords(iso, now);
 }
 
 const TYPE_WORDS: Record<string, string> = {

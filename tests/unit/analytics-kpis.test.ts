@@ -23,8 +23,8 @@ import {
   type KpiId,
 } from "../../shared/analytics-dashboard";
 import { buildCallList } from "../../server/routes/engagement-insights";
-import { buildSummaryResponse } from "../../server/engagement/responses";
-import { computeKpis, headsUp, lastActivity, linkRanOut, noticeIds } from "../../server/analytics-dashboard/kpis";
+import { buildBuyersResponse, buildDocumentResponse, buildSummaryResponse } from "../../server/engagement/responses";
+import { cimOnly, computeKpis, headsUp, lastActivity, linkRanOut, noticeIds } from "../../server/analytics-dashboard/kpis";
 import { buyerRows } from "../../server/analytics-dashboard/buyers";
 import { kpiFactsFilters } from "../../server/analytics-dashboard/load";
 import { activityResponse, callListResponse, dealKpisResponse, overviewResponse } from "../../server/analytics-dashboard/responses";
@@ -118,7 +118,7 @@ assert.deepEqual(ids(kpi(d7, "interested")), ["t1"], "decision in the window");
 assert.deepEqual(ids(kpi(d30, "interested")), ["g1", "t1"]);
 assert.deepEqual(ids(kpi(all, "interested")), ["dd", "g1", "t1"], "Quinn said no after all: not counted");
 assert.equal(kpi(all, "interested").sub, "1 in due diligence", "due-diligence links not removed, all time");
-assert.equal(kpi(d30, "interested").who.find((w) => w.accessId === "g1")?.note, "ready to submit an LOI", "next-step words");
+assert.equal(kpi(d30, "interested").who.find((w) => w.accessId === "g1")?.note, "wants to make an offer (LOI)", "next-step words (shared/buyer-next-steps.ts)");
 {
   const MT: DealSpec = { id: "mt", name: "More Time", links: [{ id: "m1", name: "Mo", firstViewedDaysAgo: 3, decision: "interested", decisionDaysAgo: 2 }, { id: "m2", name: "Mia", firstViewedDaysAgo: 3 }],
     visits: [{ id: "mv", access: "m1", daysAgo: 3, activeMs: 100_000 }, { id: "mw", access: "m2", daysAgo: 3, activeMs: 100_000 }] };
@@ -239,6 +239,17 @@ for (const scope of ["broker", "deal"] as const) {
   const readers = factsOf(D1).buyers.filter((b) => hasReadCim(b) && b.accessLevel !== undefined).filter((b) => b.accessId !== "tz").length;
   assert.equal(kpi(resp.kpis, "reading").value, readers);
   assert.equal(resp.readersAll, readers);
+  // …and across the screens (INTEGRATION C11/§2.9, checked at the analytics merge): the heat
+  // map's Document view ("13 opened it · 12 with reading recorded") and the Buyers list head
+  // say the same as the strip. The facts loader serves CIM links only (seesCim), as cimOnly does.
+  const cimFacts = cimOnly(factsOf(D1));
+  const doc = buildDocumentResponse(cimFacts);
+  const list = buildBuyersResponse(cimFacts);
+  assert.equal(doc.openedTotal, kpi(resp.kpis, "opened").value, "document 'opened it' = the strip's Opened");
+  assert.equal(doc.openedBy, resp.readersAll, "document 'with reading recorded' = Buyers who read");
+  assert.equal(list.counts.withReading, resp.readersAll, "the Buyers list head = Buyers who read");
+  assert.equal(list.counts.opened, doc.openedTotal, "the Buyers view's opened = the document's opened");
+  assert.ok(resp.readersAll > 0 && resp.readersAll < kpi(resp.kpis, "opened").value, "the fixture separates readers from openers");
 }
 
 // ── Device and version never change a number ──

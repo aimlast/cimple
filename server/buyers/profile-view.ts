@@ -27,6 +27,7 @@ import {
 } from "@shared/nda-buyer-profile";
 import { BLIND_ACCESS_LEVEL, accessChangePhrase, accessGrantPhrase, accessLevelLabel, isTeaserOnly, normalizeAccessLevel } from "@shared/access-levels";
 import { TEASER_PASS_REASON_WORDS, type TeaserPassReason } from "@shared/teaser";
+import { nextStepWords } from "@shared/buyer-next-steps";
 import { teaserEngagement, wasTeaserLink } from "../teaser/engagement";
 import { storage } from "../storage";
 import { calculateQualifiedLeadScore } from "../scoring/buyer-score";
@@ -356,10 +357,6 @@ const DECISION_TEXT: Record<string, { title: string; tone: TimelineEvent["tone"]
   need_more_time: { title: "Asked for more time", tone: "neutral" },
   lapsed: { title: "Decision lapsed (no response)", tone: "negative" },
 };
-const NEXT_STEP_TEXT: Record<string, string> = {
-  seller_call: "wants a call with the seller", management_meeting: "wants a management meeting", site_visit: "wants a site visit",
-  loi: "ready to submit an LOI", more_info: "wants more information", other: "other next step",
-};
 const FIELD_LABEL: Record<string, string> = {
   name: "Name", phone: "Phone", company: "Company", title: "Title", linkedinUrl: "LinkedIn", buyerType: "Buyer type",
   background: "Background", liquidFunds: "Liquid funds", hasProofOfFunds: "Proof of funds",
@@ -464,14 +461,14 @@ export async function buildBuyerTimeline(brokerId: string, buyerId: string): Pro
     const t = DECISION_TEXT[data.decision] ?? { title: humanize(data.decision), tone: "neutral" as const };
     const reason = data.decision !== "need_more_time" && a.decision === data.decision ? a.decisionReason : null;
     push({ id: `dec-${a.id}-${i}`, at: e.createdAt, kind: "decision", title: t.title, tone: t.tone,
-      detail: [data.nextStep ? NEXT_STEP_TEXT[data.nextStep] ?? data.nextStep : null, reason ? `“${reason.slice(0, 240)}”` : null].filter(Boolean).join(" · ") || null,
+      detail: [data.nextStep ? nextStepWords(data.nextStep) : null, reason ? `“${reason.slice(0, 240)}”` : null].filter(Boolean).join(" · ") || null,
       dealId: a.dealId, dealName: dealName(a.dealId) });
   });
   for (const a of ctx.accesses) {
     if (seenDecisionAccess.has(a.id) || !a.decisionAt || !a.decision || a.decision === "under_review") continue;
     const t = DECISION_TEXT[a.decision] ?? { title: humanize(a.decision), tone: "neutral" as const };
     push({ id: `dec-${a.id}`, at: a.decisionAt, kind: "decision", title: t.title, tone: t.tone,
-      detail: [a.decisionNextStep ? NEXT_STEP_TEXT[a.decisionNextStep] ?? a.decisionNextStep : null, a.decisionReason ? `“${a.decisionReason.slice(0, 240)}”` : null].filter(Boolean).join(" · ") || null,
+      detail: [a.decisionNextStep ? nextStepWords(a.decisionNextStep) : null, a.decisionReason ? `“${a.decisionReason.slice(0, 240)}”` : null].filter(Boolean).join(" · ") || null,
       dealId: a.dealId, dealName: dealName(a.dealId) });
   }
 

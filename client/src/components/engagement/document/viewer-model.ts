@@ -270,6 +270,7 @@ const INTERACTION_WORDS: Partial<Record<ReadingInteractionType, [string, string]
   print_attempt: ["Tried to print", "Tried to print"],
   download_attempt: ["Tried to download", "Tried to download"],
   chat_open: ["Opened the question box", "Opened the question box"],
+  vdr_open: ["Opened a data-room document", "Opened data-room documents"],
 };
 
 /** "Switched a table to Normalized · 3 times", most frequent first; media_progress folds into plays. */

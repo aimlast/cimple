@@ -12,13 +12,14 @@
  */
 import { Link } from "wouter";
 import { ChevronRight, Flag } from "lucide-react";
-import { HEADS_UP_MAX, type HeadsUp as HeadsUpLine } from "@shared/analytics-dashboard";
+import { HEADS_UP_MAX, TEASER_HEADS_UP_ID, type HeadsUp as HeadsUpLine } from "@shared/analytics-dashboard";
 
 /** The phone's words when a line has the row to itself (the full sentence shows on a computer). */
 export function headsUpShort(h: HeadsUpLine): string {
   const n = h.count;
   if (h.id === "expiring") return `${n} link${n === 1 ? " runs" : "s run"} out this week`;
   if (h.id === "not_opened") return `${n} buyer${n === 1 ? " hasn't" : "s haven't"} opened after 3 days`;
+  if (h.id === TEASER_HEADS_UP_ID) return `${n} read the teaser but didn't ask`;
   return h.text;
 }
 
@@ -27,6 +28,7 @@ export function headsUpTiny(h: HeadsUpLine): string {
   const n = h.count;
   if (h.id === "expiring") return `${n} link${n === 1 ? " runs" : "s run"} out`;
   if (h.id === "not_opened") return `${n} not opened`;
+  if (h.id === TEASER_HEADS_UP_ID) return `${n} teaser, no ask`;
   return h.text;
 }
 
