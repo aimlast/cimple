@@ -346,11 +346,12 @@ export function followUpEmail(args: {
   const html = [
     `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#1a1815">`,
     `<p>${hi}</p>`,
-    `<p>Thanks for the time today. A few things are still needed to finish your business overview${args.brokerName ? ` — ${esc(args.brokerName)}` : ""}.</p>`,
+    `<p>Thanks for the time today. A few things are still needed to finish your business overview.</p>`,
     args.asks.length ? `<p style="margin-bottom:4px"><strong>Questions to think about</strong></p><ul>${args.asks.map((a) => `<li>${esc(a)}</li>`).join("")}</ul>` : "",
     args.asks.length && args.interviewLink ? button(args.interviewLink, "Answer them in your interview") : "",
     args.documents.length ? `<p style="margin-bottom:4px"><strong>Documents to send</strong></p><ul>${args.documents.map((d) => `<li>${esc(d)}</li>`).join("")}</ul>` : "",
     args.documents.length && args.documentsLink ? button(args.documentsLink, "Upload your documents") : "",
+    args.brokerName ? `<p>${esc(args.brokerName)}</p>` : "",
     `<p style="color:#6b655c;font-size:13px">Reply to this email if anything is unclear.</p>`,
     `</div>`,
   ].join("");
@@ -362,6 +363,7 @@ export function followUpEmail(args: {
     ...(args.asks.length && args.interviewLink ? ["", `Answer them in your interview: ${args.interviewLink}`] : []),
     ...(args.documents.length ? ["", "Documents to send:", ...args.documents.map((d) => `- ${d}`)] : []),
     ...(args.documents.length && args.documentsLink ? ["", `Upload your documents: ${args.documentsLink}`] : []),
+    ...(args.brokerName ? ["", args.brokerName] : []),
   ].join("\n");
   return { subject, html, text, asks: args.asks, documents: args.documents };
 }

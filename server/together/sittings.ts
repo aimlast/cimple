@@ -165,7 +165,9 @@ export async function startOrResumeSitting(
       throw new BoardActionError("Someone else is running Interview together on this deal right now.", 409, "in_use");
     }
   }
-  const mine = open.find((s) => s.brokerId === brokerId && now - lastActiveAt(s) < TOGETHER_LIMITS.resumeWithinMs);
+  // (A different way of running it — the broker switched from in person to a
+  // Zoom call — is a new session; the earlier one ends with its summary.)
+  const mine = open.find((s) => s.brokerId === brokerId && s.via === via && now - lastActiveAt(s) < TOGETHER_LIMITS.resumeWithinMs);
   const ended: TogetherSitting[] = [];
   for (const s of open) {
     if (s === mine) continue;
@@ -179,9 +181,6 @@ export async function startOrResumeSitting(
   if (mine) {
     const patch: Partial<TogetherSitting> = {};
     if (mine.status === "paused") Object.assign(patch, { status: "live", pausedAt: null });
-    // (A different way of running it on the same day continues the same
-    // sitting — its transcript keeps the kind it started with.)
-    if (mine.via !== via && !mine.transcriptDocumentId) patch.via = via;
     const row = Object.keys(patch).length ? (await store.updateSitting(mine.id, patch)) ?? mine : mine;
     hub.touch(row.id, brokerId);
     if (Object.keys(patch).length) hub.publish(row.id, { type: "sitting", sitting: sittingView(row) });

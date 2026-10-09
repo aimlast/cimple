@@ -41,7 +41,7 @@ export function ListeningPill({ state, startedAt, compact }: { state: ListenStat
       aria-live="polite"
     >
       <span className={`h-2 w-2 rounded-full ${problem ? "tg-warn-dot" : active ? "bg-teal tg-pulse" : "bg-muted-foreground/50"}`} aria-hidden />
-      {compact ? (timer && active ? timer : label) : <>{label}{timer && (active || state === "paused") ? ` · ${timer}` : ""}</>}
+      {compact ? (timer && active ? timer : <span className="sr-only">{label}</span>) : <>{label}{timer && (active || state === "paused") ? ` · ${timer}` : ""}</>}
     </span>
   );
 }
@@ -49,7 +49,7 @@ export function ListeningPill({ state, startedAt, compact }: { state: ListenStat
 function Problem({ state, detail, action }: { state: ListenState; detail?: string | null; action?: React.ReactNode }) {
   return (
     <div className="rounded-md border tg-warn-border tg-warn-bg px-3 py-2.5 text-xs space-y-2" role="alert" data-testid={`listen-problem-${state}`}>
-      <p className="flex items-start gap-2"><AlertTriangle className="h-3.5 w-3.5 mt-px shrink-0 tg-warn-text" /><span>{listenCopy(state)}</span></p>
+      <p className="flex items-start gap-2"><AlertTriangle className="h-3.5 w-3.5 mt-px shrink-0 tg-warn-text" /><span>{state === "unavailable" && detail ? detail : listenCopy(state)}</span></p>
       {detail && state === "stopped" && <p className="text-[11px] text-muted-foreground pl-5">{detail}</p>}
       {action && <div className="pl-5">{action}</div>}
     </div>

@@ -560,6 +560,7 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
       onTyped={(text) => sit.postLine({ speaker: "typed:broker", text, source: "typed" })}
       onShowItem={showItem}
       ended={ended}
+      hideSuggest={isPhone}
     />
   );
 

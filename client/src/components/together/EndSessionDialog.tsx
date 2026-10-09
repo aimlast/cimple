@@ -11,13 +11,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { StatusIcon } from "@/components/coverage/StatusIcon";
 import { summaryLine, type SittingSummary, type TogetherSittingView } from "@shared/together";
+
+const DOCS_SHOWN = 6;
 
 interface EmailPreview { to: string | null; subject: string; html: string; text: string; asks: string[]; documents: string[]; sent: boolean; recorded: boolean }
 
@@ -52,6 +54,7 @@ export function EndSessionDialog({
   const [askError, setAskError] = useState<{ itemId: string; message: string } | null>(null);
   const [preview, setPreview] = useState<EmailPreview | null>(null);
   const [emailBusy, setEmailBusy] = useState<"preview" | "send" | null>(null);
+  const [allDocs, setAllDocs] = useState(false);
 
   const ended = sitting.status === "ended";
   const loadRef = useRef(loadSummary);
@@ -197,10 +200,11 @@ export function EndSessionDialog({
                               {r.critical && <span className="text-[9.5px] font-semibold uppercase tracking-[0.08em] text-teal">Critical</span>}
                             </p>
                             {ticked[r.itemId] && (
-                              <Input
+                              <Textarea
                                 value={asks[r.itemId] ?? r.ask}
-                                onChange={(e) => { setAsks((p) => ({ ...p, [r.itemId]: e.target.value.slice(0, 300) })); if (askError?.itemId === r.itemId) setAskError(null); }}
-                                className={`h-8 text-xs ${askError?.itemId === r.itemId ? "border-destructive" : ""}`}
+                                onChange={(e) => { setAsks((p) => ({ ...p, [r.itemId]: e.target.value.replace(/\n/g, " ").slice(0, 300) })); if (askError?.itemId === r.itemId) setAskError(null); }}
+                                rows={2}
+                                className={`min-h-0 resize-none py-1.5 text-xs ${askError?.itemId === r.itemId ? "border-destructive" : ""}`}
                                 aria-label={`Question for ${r.label}`}
                               />
                             )}
@@ -221,7 +225,7 @@ export function EndSessionDialog({
               <p className="text-xs text-muted-foreground">No documents outstanding.</p>
             ) : (
               <ul className="space-y-1.5">
-                {summary.documents.map((d) => (
+                {(allDocs ? summary.documents : summary.documents.slice(0, DOCS_SHOWN)).map((d) => (
                   <li key={d.requirementId} className="flex items-center gap-2.5">
                     <Checkbox checked={!!docs[d.requirementId]} onCheckedChange={(v) => setDocs((p) => ({ ...p, [d.requirementId]: v === true }))} aria-label={`Ask for ${d.name}`} />
                     <span className="text-sm">{d.name}</span>
@@ -229,6 +233,13 @@ export function EndSessionDialog({
                     {d.required && !d.promised && <span className="text-[10px] text-muted-foreground">Required</span>}
                   </li>
                 ))}
+                {!allDocs && summary.documents.length > DOCS_SHOWN && (
+                  <li>
+                    <button type="button" className="text-xs text-teal hover:underline underline-offset-2" onClick={() => setAllDocs(true)} data-testid="button-show-all-docs">
+                      Show all {summary.documents.length} ({tickedDocs.length} ticked)
+                    </button>
+                  </li>
+                )}
               </ul>
             )}
           </section>
@@ -283,18 +294,21 @@ export function EndSessionDialog({
 
   const previewDialog = (
     <Dialog open={!!preview} onOpenChange={(o) => { if (!o) setPreview(null); }}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto grid-cols-1 [&>*]:min-w-0" data-testid="email-preview">
-        <DialogHeader>
+      <DialogContent className="max-w-lg max-h-[85vh] p-0 gap-0 flex flex-col overflow-hidden [&>*]:min-w-0" data-testid="email-preview">
+        <DialogHeader className="px-6 pt-6 pb-3 shrink-0">
           <DialogTitle>Email the seller</DialogTitle>
           <DialogDescription>{preview?.to ? `To ${preview.to}` : "There's no email address for the seller on this deal yet."}</DialogDescription>
         </DialogHeader>
         {preview && (
-          <div className="rounded-md border border-border bg-[#FBF9F4] text-[#201D18] p-4 text-sm">
-            <p className="text-xs text-[#6b655c] mb-2">Subject: {preview.subject}</p>
-            <div className="[&_ul]:list-disc [&_ul]:pl-5 [&_p]:my-2" dangerouslySetInnerHTML={{ __html: preview.html }} />
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-4">
+            <div className="rounded-md border border-border bg-[#FBF9F4] text-[#201D18] p-4 text-sm">
+              <p className="text-xs text-[#6b655c] mb-2">Subject: {preview.subject}</p>
+              <div className="[&_ul]:list-disc [&_ul]:pl-5 [&_p]:my-2" dangerouslySetInnerHTML={{ __html: preview.html }} />
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">Nothing is sent until you click Send.</p>
           </div>
         )}
-        <DialogFooter>
+        <DialogFooter className="shrink-0 border-t border-border px-6 py-3">
           <Button variant="ghost" onClick={() => setPreview(null)}>Cancel</Button>
           <Button className="bg-teal text-teal-foreground hover:bg-teal/90" disabled={!preview?.to || emailBusy !== null} onClick={() => void email(true)} data-testid="button-email-send">
             {emailBusy === "send" && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}Send
@@ -324,13 +338,13 @@ export function EndSessionDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto grid-cols-1 [&>*]:min-w-0">
-          <DialogHeader>
+        <DialogContent className="max-w-2xl max-h-[88vh] p-0 gap-0 flex flex-col overflow-hidden [&>*]:min-w-0">
+          <DialogHeader className="px-6 pt-6 pb-3 shrink-0">
             <DialogTitle>Session summary</DialogTitle>
             <DialogDescription className="sr-only">What was filed, what's still to get, and what goes back to the seller.</DialogDescription>
           </DialogHeader>
-          {body}
-          <DialogFooter className="sticky bottom-0 bg-background pt-3">{actions}</DialogFooter>
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-5">{body}</div>
+          <DialogFooter className="shrink-0 border-t border-border px-6 py-3 bg-background">{actions}</DialogFooter>
         </DialogContent>
       </Dialog>
       {previewDialog}

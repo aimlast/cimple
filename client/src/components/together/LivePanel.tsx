@@ -115,6 +115,7 @@ export function LivePanel({
   onTyped,
   onShowItem,
   ended,
+  hideSuggest,
 }: {
   dealId: string;
   sitting: TogetherSittingView;
@@ -126,6 +127,8 @@ export function LivePanel({
   onTyped: (text: string) => void;
   onShowItem: (itemId: string, sectionKey?: string) => void;
   ended?: boolean;
+  /** On a phone, Suggest next lives in the bottom bar. */
+  hideSuggest?: boolean;
 }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -157,7 +160,18 @@ export function LivePanel({
 
       <section>
         {heading("Live transcript")}
-        <TranscriptView lines={lines} speakers={sitting.speakers} interim={listening.interim} emptyText={listenCopy("idle")} />
+        <TranscriptView
+          lines={lines}
+          speakers={sitting.speakers}
+          interim={listening.interim}
+          emptyText={
+            sitting.via === "cimple"
+              ? "Nothing heard yet. Start the call, or type what the seller says below."
+              : notetaker
+                ? "Nothing heard yet. Send the notetaker, or type what the seller says below."
+                : listenCopy("idle")
+          }
+        />
         <p className="mt-2 text-[11px] text-muted-foreground flex items-center gap-1.5" data-testid="filing-status">
           {sitting.waiting > 0 ? (
             <><Loader2 className="h-3 w-3 animate-spin" /> {sitting.waiting} {sitting.waiting === 1 ? "part" : "parts"} of the conversation waiting to be filed</>
@@ -169,7 +183,7 @@ export function LivePanel({
         </p>
       </section>
 
-      <SuggestNext board={board} onShow={onShowItem} />
+      {!hideSuggest && <SuggestNext board={board} onShow={onShowItem} />}
 
       <section>
         {heading("Filed this session", <span className="text-xs tabular-nums text-muted-foreground">{filed.length}</span>)}

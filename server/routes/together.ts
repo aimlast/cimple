@@ -89,10 +89,10 @@ async function brokerDisplayName(brokerId: string): Promise<string> {
   return String((u as { name?: string | null } | undefined)?.name ?? "").trim().toLowerCase();
 }
 
-/** The open items' suggested questions — the room's broker is whoever reads one aloud. */
+/** Every item's suggested question (on file ones too — the broker may check them) — the room's broker is whoever reads one aloud. */
 async function openAsks(deal: Deal): Promise<string[]> {
   const board = await buildCoverageBoard(deal, { audience: "broker" });
-  return board.sections.flatMap((s) => s.items.filter((i) => i.status !== "on_file" && i.ask).map((i) => i.ask)).slice(0, 120);
+  return board.sections.flatMap((s) => s.items.filter((i) => i.ask).map((i) => i.ask)).slice(0, 200);
 }
 
 function fail(res: Response, err: unknown, fallback: string) {

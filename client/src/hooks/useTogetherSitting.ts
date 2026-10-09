@@ -175,7 +175,11 @@ export function useTogetherSitting(dealId: string, via: TogetherVia, opts: { ena
     let failures = 0;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     let closed = false;
+    let inFlight = false;
     const poll = async () => {
+      // (One poll at a time — a slow answer never piles requests up.)
+      if (inFlight) return;
+      inFlight = true;
       try {
         const r = await fetch(`${url}/state?after=${eventSeq.current}`, { credentials: "include" });
         const data = await json<{ eventSeq: number; events: SeqEvent[]; reset: boolean; sitting?: TogetherSittingView; board?: CoverageBoard; lines?: TogetherLineView[] }>(r, "");
@@ -191,6 +195,8 @@ export function useTogetherSitting(dealId: string, via: TogetherVia, opts: { ena
         }
       } catch {
         if (!closed) setConnection("offline");
+      } finally {
+        inFlight = false;
       }
     };
     const startPolling = () => {
@@ -198,7 +204,9 @@ export function useTogetherSitting(dealId: string, via: TogetherVia, opts: { ena
       void poll();
       pollTimer = setInterval(poll, POLL_MS);
     };
-    if (typeof EventSource === "undefined") {
+    // (?events=poll forces the fallback — for a proxy that blocks streams, and for testing it.)
+    const forcePoll = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("events") === "poll";
+    if (typeof EventSource === "undefined" || forcePoll) {
       startPolling();
     } else {
       es = new EventSource(`${url}/events`, { withCredentials: true });

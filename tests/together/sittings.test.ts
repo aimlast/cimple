@@ -449,6 +449,17 @@ async function main() {
     assert.equal(await liveSittingFor("D1"), null, "a sitting quiet for 30 minutes doesn't lock");
     assert.equal(modelCalls, 0, "no model call anywhere");
     ok("seller lockout: a live sitting returns together_live; paused or quiet for 30 min doesn't lock");
+
+    // Another way of running it is another session (the earlier one ends, with its summary).
+    s.lastLineAt = new Date();
+    const personId = live.json.sitting.id;
+    const viaZoom = await call("POST", "/api/deals/D1/together/sittings", { via: "zoom" });
+    assert.notEqual(viaZoom.json.sitting.id, personId);
+    assert.equal(viaZoom.json.sitting.via, "zoom");
+    const old = mem.sittings.find((x) => x.id === personId)!;
+    assert.equal(old.status, "ended");
+    assert.ok(old.summary, "the ended one keeps its summary");
+    ok("switching from in person to Zoom starts a new session and ends the earlier one with its summary");
   } finally {
     server.close();
     fs.rmSync(process.env.UPLOADS_DIR!, { recursive: true, force: true });
