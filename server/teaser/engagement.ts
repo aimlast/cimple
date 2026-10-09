@@ -137,6 +137,8 @@ export function computeTeaserEngagement(input: ComputeInput): TeaserEngagement {
     return best;
   };
 
+  // A fresh-link request is answered once the same address has a usable link on the deal again.
+  const usableEmails = new Set(input.links.filter((a) => !viewLinkProblem(a, now)).map((a) => a.buyerEmail.trim().toLowerCase()));
   const buyers: TeaserEngagementBuyer[] = links.map((a) => {
     const visits = byAccess.get(a.id) ?? [];
     const events = (a.accessEvents as BuyerAccessEvent[] | null) ?? [];
@@ -174,7 +176,7 @@ export function computeTeaserEngagement(input: ComputeInput): TeaserEngagement {
         requestId: reqRow?.id ?? null,
       },
       passed: pass,
-      freshLinkRequestedAt: fresh?.at ?? null,
+      freshLinkRequestedAt: fresh && !usableEmails.has(a.buyerEmail.trim().toLowerCase()) ? fresh.at : null,
       worthACall,
       active,
       expired: problem === "expired",

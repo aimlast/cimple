@@ -184,6 +184,14 @@ async function main() {
     assert.equal(e.openedToday, 1);
     assert.ok(!e.buyers.some((b) => b.accessId === "L-e"), "never a teaser link");
     assert.deepEqual(e.blocks.map((b) => [b.readers, b.attentionMs, b.avgMs]), [[2, 40_000, 20_000]]);
+    // A fresh-link request shows until the broker gives that address a new link.
+    const expired = { ...mkAccess({ buyerEmail: "late@x.invalid", expiresAt: new Date(now - DAY), accessEvents: [{ type: "granted", at: new Date(now - 40 * DAY).toISOString(), accessLevel: "teaser_only" }, { type: "fresh_link_requested", at: new Date(now - 3600_000).toISOString() }] }), id: "L-late" };
+    const asked = computeTeaserEngagement({ links: [expired] as never, requests: [], visits: [], blockSums: [], pageIndexes: new Map(), now });
+    assert.ok(asked.buyers[0].freshLinkRequestedAt);
+    assert.equal(asked.buyers[0].expired, true);
+    const renewed = { ...mkAccess({ buyerEmail: "late@x.invalid" }), id: "L-late2" };
+    const answered = computeTeaserEngagement({ links: [expired, renewed] as never, requests: [], visits: [], blockSums: [], pageIndexes: new Map(), now });
+    assert.equal(answered.buyers.find((b) => b.accessId === "L-late")!.freshLinkRequestedAt, null);
   });
 
   await h.close();

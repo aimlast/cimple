@@ -2244,7 +2244,10 @@ Return JSON only.`,
         }
 
         // Fresh teaser links asked for (expired teaser links; the broker decides).
+        // (Answered once the same address has a usable link on the deal again.)
+        const usable = new Set(access.filter((a) => !viewLinkProblem(a)).map((a) => a.buyerEmail.trim().toLowerCase()));
         const freshAsks = access.filter((a) => isTeaserOnly(a.accessLevel) && !a.revokedAt && a.expiresAt && new Date(a.expiresAt) < new Date()
+          && !usable.has(a.buyerEmail.trim().toLowerCase())
           && (((a as any).accessEvents as BuyerAccessEvent[] | null) ?? []).some((e) => e.type === "fresh_link_requested"));
         if (freshAsks.length > 0) {
           teaserAttention.push({ dealId: deal.id, dealName: deal.businessName, kind: "fresh_link", title: freshAsks.length === 1 ? "A buyer asked for a fresh teaser link" : `${freshAsks.length} buyers asked for a fresh teaser link`, detail: null, count: freshAsks.length });
