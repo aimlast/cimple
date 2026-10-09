@@ -145,6 +145,11 @@ async function main() {
     const own = await call("GET", `/api/view/${link.accessToken}`, undefined, broker);
     assert.equal(own.status, 200);
     assert.ok(!("reading" in own.json), "the owner's preview records nothing");
+    // The print preview (broker-only) carries the broker's own email as the printed contact's fallback; the buyer's page never does.
+    assert.ok(!("brokerEmail" in v.json), "buyers never get the broker's sign-in email field");
+    const pv = await call("GET", "/api/deals/D-PAC/teaser/preview", undefined, broker);
+    assert.equal(pv.status, 200, pv.text);
+    assert.equal(pv.json.brokerEmail, "morgan@brassline.invalid");
   });
 
   await check("an expired teaser link → {code:'expired', teaser:true, firm}; a revoked one → the generic 403", async () => {

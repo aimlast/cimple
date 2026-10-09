@@ -736,9 +736,12 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
       const row = await requireRow(deal);
       const draft = req.query.draft === "1" || !row.published;
       const built = await buyerTeaserFor(deal, row, { draft });
+      // The broker's own email: the printed teaser's contact when the brand has no email or phone (this route is broker-only).
+      const owner = deal.brokerId ? await storage.getUser(deal.brokerId).catch(() => undefined) : undefined;
       res.json({
         document: "teaser",
         preview: true,
+        brokerEmail: owner?.email ?? null,
         draft,
         deal: { id: deal.id, businessName: built.codename, industry: deal.industry },
         teaser: { header: built.teaser.header, blocks: built.teaser.blocks, pageSize: row.pageSize },

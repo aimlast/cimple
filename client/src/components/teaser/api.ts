@@ -121,6 +121,8 @@ export interface TeaserPreviewPayload extends TeaserPayload {
   preview: true;
   draft: boolean;
   heldBack: Array<{ blockId: string; reason: string }>;
+  /** The deal's broker's own (sign-in) email — the print preview's contact when the brand has no email or phone. Broker-only. */
+  brokerEmail?: string | null;
 }
 
 export const teaserKey = (dealId: string) => ["/api/deals", dealId, "teaser"] as const;

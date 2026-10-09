@@ -20,7 +20,7 @@ import { attentionNoteGroups, groupSummary } from "../../client/src/components/c
 import { classifyGenerationWarnings } from "../../shared/cim-generation-warnings";
 import { publishButtonState } from "../../client/src/components/teaser/TeaserPublishDialog";
 import { sampleTeaser } from "../../client/src/components/teaser/samples";
-import { printFooterText, sectionsForPaper } from "../../client/src/pages/TeaserPrintPreview";
+import { paperContact, paperContactNote, printFooterText, sectionsForPaper } from "../../client/src/pages/TeaserPrintPreview";
 import { chipsBesideTagline, fillTeaserTokens, teaserFill } from "../../shared/teaser-view";
 import { tileLinesFor, CIM_TAB_VIEWS, EXTRA_CIM_TAB_VIEWS, useViewBadge } from "../../client/src/pages/broker/deal/cim-tab-slots";
 import { blindTileDesc } from "../../client/src/pages/broker/deal/CimTab";
@@ -162,26 +162,50 @@ test("the Teaser tab's summary: the green tick only when nothing is held and the
   }
 });
 
-test("on paper the 'ask from this page' step names the firm and its contact; the Questions line goes", () => {
+test("on paper the 'ask from this page' step names the firm and its contact; the online step becomes the NDA by post; the Questions line goes", () => {
   const sec = { id: "n", dealId: "D", sectionKey: "s_n", sectionTitle: "Interested?", order: 0, layoutType: "numbered_list", aiDraftContent: null, brokerEditedContent: null, isVisible: true,
     layoutData: { ordered: true, items: [{ title: "Ask for the CIM from this page" }, { title: "Confirm your email, tell us about you and sign the NDA online" }, { title: "Brassline reviews your request and opens the CIM for you" }], note: "Questions? Morgan Ellis · morgan@brassline.invalid" } } as never;
+  const titles = (x: { layoutData: unknown }) => ((x.layoutData as { items: Array<{ title: string }> }).items).map((it) => it.title);
   const [p] = sectionsForPaper([sec], { firm: "Brassline Advisory Partners", name: "Morgan Ellis", email: "morgan@brassline.invalid", phone: null });
-  const d = p.layoutData as { items: Array<{ title: string }>; note?: string };
-  assert.equal(d.items[0].title, "Ask Brassline Advisory Partners for the CIM: Morgan Ellis · morgan@brassline.invalid");
-  assert.equal(d.items.length, 3);
-  assert.equal(d.note, undefined, "the contact is in the step now");
-  // No contact on file: the firm only, and the Questions line stays as it was.
-  const [q] = sectionsForPaper([sec], { firm: "Brassline Advisory Partners", name: null, email: null, phone: null });
-  assert.equal((q.layoutData as { items: Array<{ title: string }> }).items[0].title, "Ask Brassline Advisory Partners for the CIM");
-  assert.equal((q.layoutData as { note?: string }).note, "Questions? Morgan Ellis · morgan@brassline.invalid");
+  assert.deepEqual(titles(p), [
+    "Ask Brassline Advisory Partners for the CIM: Morgan Ellis · morgan@brassline.invalid",
+    "Brassline Advisory Partners sends you a short NDA to sign",
+    "Brassline reviews your request and opens the CIM for you",
+  ]);
+  assert.equal((p.layoutData as { note?: string }).note, undefined, "the contact is in the step now");
+  assert.ok(!/online|confirm your email|this page/i.test(JSON.stringify(p.layoutData)), "nothing a paper reader can't do");
+  // A deal without an NDA: the paper step asks about the buyer instead.
+  const [noNda] = sectionsForPaper([sec], { firm: "Brassline Advisory Partners", name: null, email: "deals@brassline.invalid", phone: null }, { ndaRequired: false });
+  assert.equal(titles(noNda)[1], "Brassline Advisory Partners asks a little about you and what you're looking for");
   // No firm name: ask the broker by name.
   const [r] = sectionsForPaper([sec], { firm: null, name: "Morgan Ellis", email: "morgan@brassline.invalid", phone: null });
-  assert.equal((r.layoutData as { items: Array<{ title: string }> }).items[0].title, "Ask Morgan Ellis for the CIM: morgan@brassline.invalid");
-  const [n] = sectionsForPaper([sec], { firm: null, name: "Morgan Ellis", email: null, phone: null });
-  assert.equal((n.layoutData as { items: Array<{ title: string }> }).items[0].title, "Ask Morgan Ellis for the CIM");
+  assert.deepEqual(titles(r).slice(0, 2), ["Ask Morgan Ellis for the CIM: morgan@brassline.invalid", "Morgan Ellis sends you a short NDA to sign"]);
+  // The broker's own wording with two online lines → one paper step (never two NDA lines).
+  const own = { ...(sec as object), layoutData: { ordered: true, items: [{ title: "Ask for the CIM from this page" }, { title: "Confirm your email online" }, { title: "Sign the NDA online" }, { title: "We call you within a day" }] } } as never;
+  assert.deepEqual(titles(sectionsForPaper([own], { firm: "Brassline", name: null, email: "d@b.invalid", phone: null })[0]), ["Ask Brassline for the CIM: d@b.invalid", "Brassline sends you a short NDA to sign", "We call you within a day"]);
   // Other lists are untouched.
   const other = { ...(sec as object), layoutData: { items: [{ title: "Add a second terminal" }] } } as never;
   assert.equal(sectionsForPaper([other], { firm: "X", name: null, email: null, phone: null })[0], other);
+});
+
+test("on paper a contact is always printed: the brand's email or phone, else the broker's own email; with none, the header says so", () => {
+  const brand = { firm: "QA CIM Generation", name: null, email: "deals@qa.invalid", phone: null };
+  assert.deepEqual(paperContact(brand, "me@qa.invalid"), { contact: brand, source: "brand" });
+  const phoneOnly = { firm: "QA CIM Generation", name: null, email: null, phone: "416-555-0100" };
+  assert.equal(paperContact(phoneOnly, "me@qa.invalid").source, "brand");
+  const bare = { firm: "QA CIM Generation", name: null, email: null, phone: null };
+  const acct = paperContact(bare, "me@qa.invalid");
+  assert.deepEqual(acct, { contact: { ...bare, email: "me@qa.invalid" }, source: "account" });
+  // The checker's case: the step now carries a way to reach the broker.
+  const sec = { id: "n", dealId: "D", sectionKey: "s_n", sectionTitle: "Interested?", order: 0, layoutType: "numbered_list", aiDraftContent: null, brokerEditedContent: null, isVisible: true,
+    layoutData: { ordered: true, items: [{ title: "Ask for the CIM from this page" }, { title: "Confirm your email, tell us about you and sign the NDA online" }], note: "Questions? QA CIM Generation" } } as never;
+  const [p] = sectionsForPaper([sec], acct.contact);
+  assert.equal((p.layoutData as { items: Array<{ title: string }> }).items[0].title, "Ask QA CIM Generation for the CIM: me@qa.invalid");
+  assert.match(paperContactNote("account", "me@qa.invalid"), /gives your own email \(me@qa\.invalid\)/);
+  const none = paperContact(bare, null);
+  assert.equal(none.source, "none");
+  assert.match(paperContactNote("none", null), /no way for a buyer to reach you/);
+  assert.equal(paperContactNote("brand", "x"), "");
 });
 
 test("the header: a chip that only repeats the one-line description is dropped", () => {
