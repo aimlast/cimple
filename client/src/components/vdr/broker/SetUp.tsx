@@ -70,7 +70,7 @@ export function SetUpCard({ dealId, data, onSetUp }: { dealId: string; data: Bro
             {data.documents.map((d) => (
               <div key={d.id} className="flex items-center gap-3 border-b border-border px-3 py-2.5 text-sm last:border-0">
                 <span className="min-w-0 flex-1 truncate">{d.name}</span>
-                <span className="hidden text-xs text-muted-foreground sm:inline">{d.typeLabel}</span>
+                <span className="hidden max-w-[220px] truncate text-xs text-muted-foreground sm:inline" title={d.typeLabel}>{d.typeLabel}</span>
                 <span className="text-xs text-muted-foreground">{d.uploadedBy === "seller" ? "Seller" : "You"} · {shortDate(d.createdAt)}</span>
               </div>
             ))}

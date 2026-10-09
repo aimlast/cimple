@@ -99,7 +99,7 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
     return (
       <div className={cn("min-h-screen bg-background", embedded && "min-h-0")}>
         {/* Phones: the viewer is full screen (its own top bar); desktop keeps the header. */}
-        {!embedded && <div className="hidden lg:block">{header}</div>}
+        {!embedded && <div className="sticky top-0 z-40 hidden lg:block">{header}</div>}
         <DocumentScreen
           key={nav.doc}
           embedded={embedded}
@@ -138,6 +138,11 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
                 {data.expiresAt ? ` Your access ends ${new Date(data.expiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}.` : ""}
               </p>
             </div>
+            {canSearch && !empty && (
+              <Button asChild size="sm" variant="ghost" className="hidden shrink-0 lg:inline-flex">
+                <a href={vdrUrls(source).index} data-testid="room-index-csv"><Download className="mr-1.5 h-3.5 w-3.5" /> Index (CSV)</a>
+              </Button>
+            )}
           </div>
           {/* Phones: search + new + where you are */}
           <div className="mb-4 space-y-2 lg:hidden">
@@ -275,7 +280,8 @@ function DocumentScreen({ source, data, itemId, initialPage, onBack, onOpen, emb
   const downloadHref = source.kind === "buyer" && download.allowed ? vdrUrls(source).download(itemId, viewId) : null;
   return (
     <div className={cn("flex flex-col", !embedded && "min-h-screen lg:min-h-[calc(100vh-57px)]")}>
-      <div className={cn("sticky z-30 border-b border-border bg-background/95 backdrop-blur-sm", embedded ? "top-0" : "top-0 lg:top-[57px]")}>
+      {/* Sticky under the header (57 px) or the preview banner (45 px); the viewer's page bar sticks under this (49 px). */}
+      <div className={cn("sticky z-30 border-b border-border bg-background/95 backdrop-blur-sm", embedded ? "top-[45px]" : "top-0 lg:top-[57px]")}>
         <div className="mx-auto flex max-w-[1400px] items-center gap-2 px-3 py-2 sm:px-6">
           <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={onBack} aria-label="Back to the data room"><ArrowLeft className="h-4 w-4" /></Button>
           <nav className="hidden min-w-0 flex-1 items-center gap-1 truncate text-xs text-muted-foreground md:flex" aria-label="Where this is">
@@ -290,10 +296,10 @@ function DocumentScreen({ source, data, itemId, initialPage, onBack, onOpen, emb
       </div>
       <div className="mx-auto flex w-full max-w-[1400px] flex-1 gap-0 lg:gap-6 lg:px-6 lg:py-4">
         <div className="min-w-0 flex-1">
-          <ViewerWithView source={source} itemId={itemId} about={a ?? null} loading={about.isLoading} reader={{ name: data.reader.name, email: data.reader.email }} initialPage={initialPage} onView={setViewId} />
+          <ViewerWithView source={source} itemId={itemId} about={a ?? null} loading={about.isLoading} reader={{ name: data.reader.name, email: data.reader.email }} initialPage={initialPage} onView={setViewId} barTop={embedded ? "top-[94px]" : "top-[49px] lg:top-[106px]"} />
         </div>
         <aside className="hidden w-[320px] shrink-0 lg:block">
-          <div className={cn("sticky rounded-lg border border-border bg-card p-4", embedded ? "top-16" : "top-[120px]")}>{a ? <AboutPanel about={a} /> : <Skeleton className="h-32 w-full" />}</div>
+          <div className={cn("sticky rounded-lg border border-border bg-card p-4", embedded ? "top-[110px]" : "top-[122px]")}>{a ? <AboutPanel about={a} /> : <Skeleton className="h-32 w-full" />}</div>
         </aside>
       </div>
       <p className="px-4 py-3 text-center text-[11px] text-muted-foreground/80">
@@ -302,7 +308,7 @@ function DocumentScreen({ source, data, itemId, initialPage, onBack, onOpen, emb
       {/* Phones: About + Download at the bottom */}
       <div className="sticky bottom-0 z-30 flex items-center justify-between gap-2 border-t border-border bg-background/95 px-3 py-2 backdrop-blur-sm lg:hidden">
         <Button variant="outline" size="sm" onClick={() => setAboutOpen(true)} disabled={!a}><Info className="mr-1.5 h-3.5 w-3.5" /> About</Button>
-        {a && <DownloadControl allowed={download.allowed} label={download.allowed ? "Download" : "View only"} href={downloadHref} compact />}
+        {a && <DownloadControl allowed={download.allowed} label={download.allowed ? "Download" : "View only"} href={downloadHref} />}
       </div>
       <Sheet open={aboutOpen} onOpenChange={setAboutOpen}>
         <SheetContent side="bottom" className="max-h-[80vh] overflow-y-auto">
@@ -315,9 +321,10 @@ function DocumentScreen({ source, data, itemId, initialPage, onBack, onOpen, emb
 }
 
 /** The viewer, plus the download link once the buyer's view exists (its trace goes on the download). */
-function ViewerWithView({ source, itemId, about, loading, reader, initialPage, onView }: { source: VdrSource; itemId: string; about: BuyerItemAbout | null; loading: boolean; reader: { name: string | null; email: string }; initialPage: number | null; onView: (id: string) => void }) {
+function ViewerWithView({ source, itemId, about, loading, reader, initialPage, onView, barTop }: { source: VdrSource; itemId: string; about: BuyerItemAbout | null; loading: boolean; reader: { name: string | null; email: string }; initialPage: number | null; onView: (id: string) => void; barTop: string }) {
   return (
     <VdrViewer
+      barTop={barTop}
       onView={onView}
       source={source}
       itemId={itemId}

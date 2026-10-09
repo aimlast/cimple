@@ -814,8 +814,9 @@ export function periodEndLabel(raw: unknown): string | null {
 /** A document's type in plain words, from the extraction (`_documentType`) or its name. */
 export function documentTypeLabel(doc: { name?: string | null; extractedData?: unknown } | null): string | null {
   const ed = (doc?.extractedData ?? null) as Record<string, unknown> | null;
-  const t = typeof ed?._documentType === "string" ? ed._documentType.trim() : "";
-  if (t) return (t.charAt(0).toUpperCase() + t.slice(1)).slice(0, 80);
+  let t = typeof ed?._documentType === "string" ? ed._documentType.replace(/\s*\([^)]*\)?\s*$/g, "").replace(/\s+/g, " ").trim() : "";
+  if (t.length > 60) t = t.slice(0, 60).replace(/[\s,;:&-]+\S*$/, "");
+  if (t) return t.charAt(0).toUpperCase() + t.slice(1);
   const name = String(doc?.name ?? "");
   for (const [re, words] of DOC_TYPE_WORDS) if (re.test(name)) return words;
   return null;

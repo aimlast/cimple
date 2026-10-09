@@ -58,6 +58,8 @@ export type VdrViewerProps = {
   onPageChange?: (page: number) => void;
   /** A buyer's view started (its id goes on the download link, so the copy carries the same trace). */
   onView?: (viewId: string) => void;
+  /** Where the page bar sticks (Tailwind top-* classes), under the host's own sticky bars. */
+  barTop?: string;
 };
 
 function Overlay({ reader }: { reader: { name: string | null; email: string } | null | undefined }) {
@@ -143,6 +145,7 @@ export function VdrViewer(props: VdrViewerProps) {
           viewId={viewId}
           initialPage={props.initialPage ?? null}
           className={props.className}
+          barTop={props.barTop}
           onPage={(n) => { currentPage.current = String(n); props.onPageChange?.(n); }}
         />
       );
@@ -185,6 +188,7 @@ function PagesView(props: {
   viewId: string | null;
   initialPage: number | null;
   className?: string;
+  barTop?: string;
   onPage: (n: number) => void;
 }) {
   const { pages } = props;
@@ -229,7 +233,7 @@ function PagesView(props: {
 
   return (
     <ViewerFrame className={props.className}>
-      <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-black/5 bg-[#EDEBE6]/95 px-3 py-1.5 text-xs text-[#46423B] backdrop-blur dark:border-white/5 dark:bg-[#2A2724]/95 dark:text-[#D9D3C7]">
+      <div className={cn("sticky z-10 flex items-center justify-between gap-2 border-b border-black/5 bg-[#EDEBE6]/95 px-3 py-1.5 text-xs text-[#46423B] backdrop-blur dark:border-white/5 dark:bg-[#2A2724]/95 dark:text-[#D9D3C7]", props.barTop ?? "top-0")} data-vdr-pagebar>
         <span data-testid="vdr-page-counter">Page {page} of {pages.length}</span>
         <label className="flex items-center gap-1.5">
           <span className="sr-only">Zoom</span>

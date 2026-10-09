@@ -89,9 +89,9 @@ export function ItemRow({ item, onOpen }: { item: BuyerRoomItem; onOpen: (id: st
       className="group flex w-full items-center gap-3 border-b border-border px-3 py-3 text-left transition-colors last:border-0 hover:bg-muted/40"
       data-testid={`room-item-${item.id}`}
     >
-      <span className="w-12 shrink-0 font-mono text-[11px] text-muted-foreground">{item.number}</span>
+      <span className="w-10 shrink-0 font-mono text-[11px] text-muted-foreground sm:w-12">{item.number}</span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium text-foreground group-hover:text-teal">{item.title}</span>
+        <span className="line-clamp-2 block text-sm font-medium text-foreground group-hover:text-teal sm:line-clamp-1">{item.title}</span>
         <span className="mt-0.5 block text-xs text-muted-foreground">{item.ready ? item.sizeLabel : "Getting it ready…"}</span>
       </span>
       {item.isNew && <span className="shrink-0 rounded bg-teal/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal">New</span>}

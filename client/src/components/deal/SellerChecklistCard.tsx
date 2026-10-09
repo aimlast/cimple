@@ -93,7 +93,7 @@ export function SellerChecklistCard({ dealId, variant = "card", roomItems, onOpe
   });
   const roomLine = (r: DealDocumentRequirement) => {
     if (!room) return null;
-    if (!r.uploadedFileId) return <span className="text-[11px] text-muted-foreground">Data room: missing</span>;
+    if (!r.uploadedFileId) return r.isRequired && r.status !== "unavailable" ? <span className="text-[11px] text-muted-foreground">Data room: missing</span> : null;
     const item = roomByDoc.get(r.uploadedFileId);
     if (!item) return (
       <span className="text-[11px] text-muted-foreground">Data room: uploaded, not in the room · <button className="text-teal underline-offset-2 hover:underline" disabled={place.isPending} onClick={() => place.mutate(r.uploadedFileId!)}>Put in the room</button></span>
@@ -254,7 +254,7 @@ export function SellerChecklistCard({ dealId, variant = "card", roomItems, onOpe
                               {room && r.source === "buyer_request" && (
                                 <p className="text-[11px] text-teal mt-0.5">Asked for by a buyer{r.neededBy ? ` · needed by ${new Date(r.neededBy).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</p>
                               )}
-                              {room && <p className="mt-0.5">{roomLine(r)}</p>}
+                              {room && roomLine(r) && <p className="mt-0.5">{roomLine(r)}</p>}
                               {reason !== null && (
                                 <p className="text-xs text-amber-600 mt-1 break-words">Seller: “{reason || "I don't have this"}”</p>
                               )}
