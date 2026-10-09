@@ -67,9 +67,9 @@ async function main() {
     assert.match(u, /emrRating \| WSIB EMR rating \| Employee Overview/);
   });
 
-  await test("the fallback until it runs: 'Can you tell me about …?'", () => {
+  await test("the fallback until it runs: the template ask", () => {
     assert.equal(planItemAsk(deal.interviewPlan, "comfortClubRenewalRate", "Comfort Club renewal rate", "").ask, templateAsk("Comfort Club renewal rate"));
-    assert.equal(templateAsk("WSIB EMR rating"), "Can you tell me about WSIB EMR rating?");
+    assert.equal(templateAsk("WSIB EMR rating"), "What's your WSIB EMR rating?");
   });
 
   await test("never with the key off, or schedulers off (local servers)", async () => {
