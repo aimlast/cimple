@@ -193,7 +193,7 @@ export function CimSectionRenderer({ section, branding, brokerMode = false, hide
           <>
             <FigureNotesList pageId={section.id} />
             <DdKeyTerms pageId={section.id} />
-            <DdSectionSources pageId={section.id} />
+            <DdSectionSources pageId={section.id} layoutType={section.layoutType} />
           </>
         )}
       </CimBlockScope>

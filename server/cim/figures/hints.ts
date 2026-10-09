@@ -78,12 +78,17 @@ function mentions(sentence: string, label: string, synonyms: string[]): boolean 
 
 /**
  * A recital of figures, not a reason: a formula ("Reported EBITDA (net
- * income + income taxes + interest + amortization): FY2022 $489,325; …") or a
- * list of three or more amounts. Offering it as "Cimple's analysis suggests"
+ * income + income taxes + interest + amortization): FY2022 $489,325; …"), a
+ * trend line ("EBITDA margin trend: 13.2% (2022) → 11.3% (2023) → 12.6%
+ * (2024)") or a list of three or more amounts. Offering it as "Cimple's analysis suggests"
  * for why income taxes moved would read as nonsense to a broker.
  */
 export function isRecital(sentence: string): boolean {
-  if (/\+|=/.test(sentence)) return true;
+  // A formula, a trend line ("13.2% (2022) → 11.3% (2023) → 12.6% (2024)"), or a list of figures.
+  if (/\+|=|→|->/.test(sentence)) return true;
+  // A rule about what is or isn't an add-back says nothing about why a figure moved.
+  if (/\b(?:is|are) not (?:an? )?add-?backs?\b|distributions? of (?:after-tax )?profit/i.test(sentence)) return true;
+  if ((sentence.match(/\d(?:\.\d+)?\s?%/g) ?? []).length >= 3) return true;
   return (sentence.match(/\$\s?\d/g) ?? []).length >= 3;
 }
 

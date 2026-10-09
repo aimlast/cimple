@@ -62,6 +62,12 @@ function Kpi({ label, value, sub, onClick, testId, className }: { label: string;
   );
 }
 
+/** The group the checks tab opens on: the first with something in it (an empty "Differences (0)" told the broker nothing). */
+function defaultCheckGroup(checks: Array<{ group: CheckGroup }>): CheckGroup {
+  for (const g of ["difference", "needs_checking", "regrouped", "match", "left_out"] as CheckGroup[]) if (checks.some((c) => c.group === g)) return g;
+  return "difference";
+}
+
 export function NumbersWorkspace() {
   const { dealId, deal } = useDeal();
   const [, navigate] = useLocation();
@@ -70,7 +76,7 @@ export function NumbersWorkspace() {
   const tab = (["moves", "checks", "questions"].includes(params.get("tab") ?? "") ? params.get("tab") : "moves") as TabKey;
   const noteId = params.get("note");
   const moveFilter = (MOVE_FILTERS.includes(params.get("filter") as MoveFilter) ? params.get("filter") : "all") as MoveFilter;
-  const checkGroup = (CHECK_GROUPS.includes(params.get("group") as CheckGroup) ? params.get("group") : "difference") as CheckGroup;
+  const groupParam = CHECK_GROUPS.includes(params.get("group") as CheckGroup) ? (params.get("group") as CheckGroup) : null;
   const setParams = (next: Record<string, string | null>) => {
     const p = new URLSearchParams(search);
     p.set("view", "numbers");
@@ -277,7 +283,7 @@ export function NumbersWorkspace() {
 
       <div role="tabpanel" aria-label={tabTitle(tab)}>
         {tab === "moves" && <MovesTab moves={data.moves} filter={moveFilter} onFilter={(f) => setParams({ filter: f === "all" ? null : f })} actions={moveActions} />}
-        {tab === "checks" && <ChecksTab checks={data.checks} group={checkGroup} onGroup={(g) => setParams({ group: g })} actions={checkActions} hasOtherRecords={data.status.hasOtherRecords} />}
+        {tab === "checks" && <ChecksTab checks={data.checks} group={groupParam ?? defaultCheckGroup(data.checks)} onGroup={(g) => setParams({ group: g })} actions={checkActions} hasOtherRecords={data.status.hasOtherRecords} />}
         {tab === "questions" && <QuestionsTab questions={data.questions} autoAsk={data.status.autoAsk} interviewDone={interviewDone} actions={questionActions} />}
       </div>
 

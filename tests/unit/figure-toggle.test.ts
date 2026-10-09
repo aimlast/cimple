@@ -56,6 +56,16 @@ test("DD, As Reported: the compare switch and the side-by-side table; Normalized
   assert.ok(!nrow.includes("data-fig"), "Normalized rows are never anchored");
 });
 
+test("DD: under a side-by-side table the statements and tax returns are listed once, not again as 'Sources for this page'", async () => {
+  const { fx, raw } = await fixtureRaw("lakeshore", { ddShownAt: new Date() });
+  const layer = buildFigureLayer(fx.sections as any, figureInputsFor(raw, { audience: "buyer", mode: "dd" }), "dd")!;
+  const s = { ...fx.sections.find((x) => x.sectionKey === "financial_performance")!, isVisible: true };
+  assert.ok((layer.pageSources?.[s.id]?.length ?? 0) > 0, "the page has sources");
+  const html = render(s, layer);
+  assert.ok(html.includes("Tax returns:"));
+  assert.ok(!html.includes("Sources for this page"), "no duplicate chip row");
+});
+
 test("Full CIM: a figure with an approved note gets a trigger; others stay plain", async () => {
   const note = noteRow({ figureKey: "revenue|2023", kind: "movement", compareKey: "2022", text: "Up $660,000 (11%) from FY2022, mostly HVAC equipment.", blindText: null, valuesSnapshot: { year: "2023", value: 6840000, fromYear: "2022", fromValue: 6180000 } });
   const { fx, raw } = await fixtureRaw("lakeshore", { notes: [note] });

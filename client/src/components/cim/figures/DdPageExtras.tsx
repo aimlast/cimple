@@ -6,7 +6,7 @@
  * (dashed, "Not shown to buyers yet").
  */
 import { BROKER_NOT_SHOWN, KEY_TERMS_TITLE, MORE_COUNT, PAGE_SOURCES_TITLE } from "@shared/figure-copy";
-import { useFigureLayer } from "./FigureLayerContext";
+import { useFigureLayer, usePageFigures } from "./FigureLayerContext";
 import { FigureCitation } from "./FigureCitation";
 
 function useDdExtras() {
@@ -41,9 +41,27 @@ export function DdKeyTerms({ pageId }: { pageId: string }) {
   );
 }
 
-export function DdSectionSources({ pageId }: { pageId: string }) {
+/** Tables whose side-by-side view already lists their statements and tax returns under the table. */
+const COMPARE_TABLES = new Set(["financial_table", "comparison_table"]);
+
+export function DdSectionSources({ pageId, layoutType }: { pageId: string; layoutType?: string }) {
   const x = useDdExtras();
-  const refs = x?.layer.pageSources?.[pageId] ?? [];
+  const figures = usePageFigures(pageId);
+  const all = x?.layer.pageSources?.[pageId] ?? [];
+  // Under a side-by-side table the statements and tax returns are already listed right above
+  // ("Statements: … Tax returns: …"): list only what else the page cites, never the same chips twice.
+  const inTable = new Set<string>();
+  if (layoutType && COMPARE_TABLES.has(layoutType)) {
+    for (const f of figures) {
+      if (!(f.checks?.length)) continue;
+      for (const r of f.citations ?? []) inTable.add(r.documentId);
+      for (const c of f.checks ?? []) {
+        if (c.citation) inTable.add(c.citation.documentId);
+        if (c.baseCitation) inTable.add(c.baseCitation.documentId);
+      }
+    }
+  }
+  const refs = all.filter((r) => !inTable.has(r.documentId));
   if (!x || refs.length === 0) return null;
   const shown = refs.slice(0, 6);
   return (

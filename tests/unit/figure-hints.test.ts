@@ -25,6 +25,8 @@ test("a recital of figures is never a hint (Beacon income taxes ← 'Reported EB
   const hints = hintsFor(keys, raw.registry, sentences);
   assert.deepEqual(hints, {});
   assert.equal(isRecital("Reported EBITDA (net income + income taxes + interest + amortization): FY2022 $489,325; FY2023 $550,000."), true);
+  assert.equal(isRecital("Dividends ($500K in 2022, $300K in 2023 and 2024) are distributions of after-tax profit and are not addbacks to EBITDA."), true);
+  assert.equal(isRecital("EBITDA margin trend: 13.2% (2022) → 11.3% (2023) → 12.6% (2024)."), true);
   assert.equal(isRecital("Warehouse lease commenced October 1, 2022, explaining the increase in facility rent from $1,217,000 to $2,337,500."), false);
 });
 
