@@ -4485,6 +4485,7 @@ Return JSON only.`,
       // Uploaded documents — broker-only sources (CRM notes, private emails)
       // never reach the seller.
       const allDocs = kbDocuments.filter((d) => (d as any).visibility !== "broker_only");
+      const sellerRoomDocs = await (await import("./vdr/seller-chips")).sellerRoomDocumentIds(deal.id);
 
       // Buyer questions waiting on the seller's approval — each with its own
       // review link, on every step (the approval email can land in spam).
@@ -4555,6 +4556,9 @@ Return JSON only.`,
               uploadedFileName: linked?.name ?? null,
               uploadedBy: r.uploadedBy ?? null,
               uploadedAt: r.uploadedAt ?? null,
+              // vdr §7: shared with buyers who signed an NDA (never who, never activity); the broker's "needed by".
+              inDataRoom: !!linked && sellerRoomDocs.has(linked.id),
+              neededBy: (r as any).neededBy ?? null,
             };
           }),
         },

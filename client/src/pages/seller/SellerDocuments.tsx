@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { sellerUnavailableReason, withoutSellerUnavailableNote } from "@shared/seller-portal";
+import { SellerRoomChips } from "@/components/vdr/SellerChips";
 
 interface DocRequirement {
   id: string;
@@ -38,6 +39,9 @@ interface DocRequirement {
   uploadedFileName?: string | null;
   uploadedBy?: "broker" | "seller" | null;
   uploadedAt?: string | null;
+  /** vdr §7: shared with buyers who signed an NDA; the broker's "needed by" date. */
+  inDataRoom?: boolean;
+  neededBy?: string | null;
 }
 
 interface UploadedDoc {
@@ -586,6 +590,7 @@ export default function SellerDocuments() {
                               {brokerNote && (
                                 <p className="text-xs text-muted-foreground mt-0.5 break-words">{brokerNote}</p>
                               )}
+                              <SellerRoomChips inDataRoom={req.inDataRoom} neededBy={req.neededBy} missing={req.status === "missing"} />
                             </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-8 sm:pl-0 sm:shrink-0">

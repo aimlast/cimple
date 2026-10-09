@@ -167,7 +167,7 @@ export async function buyerRoomPayload(
  * answers the broker shared with the document's readers.
  */
 export async function buyerAboutExtras(
-  deps: { questionsForDeal: (dealId: string) => Promise<BuyerQuestion[]>; servedSections?: typeof servedSectionsFor },
+  deps: { questionsForDeal: (dealId: string) => Promise<BuyerQuestion[]>; servedSections?: typeof servedSectionsFor; ddChecks?: typeof ddDocumentChecks },
   gate: VdrGate,
   snap: RoomSnapshot,
   decided: ReadonlyArray<ReaderItem>,
@@ -186,7 +186,7 @@ export async function buyerAboutExtras(
   }
   let checks: Array<{ ok: boolean; text: string }> = [];
   if (doc && gate.mode === "dd") {
-    const dd = await ddDocumentChecks(gate.deal.id, doc.id).catch(() => null);
+    const dd = await (deps.ddChecks ?? ddDocumentChecks)(gate.deal.id, doc.id).catch(() => null);
     if (dd) {
       const visibleDocs = new Map(decided.filter((x) => x.visibility.visible && x.item.documentId).map((x) => [x.item.documentId!, x.item.title]));
       checks = dd.map((c) => {

@@ -41,6 +41,8 @@ export type VdrLinkApi = {
 };
 
 const Ctx = createContext<VdrLinkApi | null>(null);
+/** The raw context (tests render a chip against fixed answers with it). */
+export const VdrLinkContext = Ctx;
 
 export function useVdrLinks(): VdrLinkApi | null {
   return useContext(Ctx);
