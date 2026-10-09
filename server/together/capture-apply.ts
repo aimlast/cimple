@@ -302,6 +302,8 @@ export interface ChunkResult {
   privateNotes: number;
   /** Nothing in this part answered anything. */
   nothing: boolean;
+  /** The seller's look-up to-dos this part answered (closed; its Undo reopens them). */
+  tasksClosed?: Array<{ key: string; taskId: string }>;
 }
 
 /** The meta maps a call transcript's extraction carries per key. */
@@ -512,6 +514,11 @@ async function undoCaptureNow(args: { sitting: TogetherSitting; chunk: TogetherC
   if (row.kind === "noted") {
     const { removeNotedItem } = await import("../interview/outline");
     await removeNotedItem(sitting.dealId, key);
+  }
+  // The look-up to-dos this filing closed are open again.
+  if (res.tasksClosed?.some((t) => t.key === key)) {
+    const { reopenLookups } = await import("./tasks");
+    await reopenLookups(res.tasksClosed, key);
   }
   return { key };
 }

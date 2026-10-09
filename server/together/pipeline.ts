@@ -724,6 +724,13 @@ async function finishChunk(
       await store.updateChunk(chunk.id, { status: "failed", error: "apply_failed" });
       return;
     }
+    // The seller's look-up to-dos this part answered are done (the interview's own rule).
+    if (result.filed.some((f) => f.kind !== "typed")) {
+      const { closeAnsweredLookups } = await import("./tasks");
+      const readKeysOf = (itemId: string) => catalogue?.items.find((i) => i.itemId === itemId)?.members.map((m) => m.key) ?? [];
+      const closed = await closeAnsweredLookups(s.dealId, result.filed, readKeysOf);
+      if (closed.length > 0) result = { ...result, tasksClosed: closed };
+    }
     const now = new Date(deps.now());
     await store.updateChunk(chunk.id, { status: "done", result: result as never, appliedAt: now, doneAt: now });
     await recordOnSitting(s, chunk, result, guarded, catalogue, usage);

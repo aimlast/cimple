@@ -35,10 +35,11 @@ export interface World {
   invites: any[];
   requirements: any[];
   sessions: any[];
+  tasks: any[];
 }
 
 export function newWorld(): World {
-  return { deals: {}, documents: [], discrepancies: [], marks: [], users: { B1: { id: "B1", name: "Morgan Ellis", email: "morgan@brokerage.invalid" } }, invites: [], requirements: [], sessions: [] };
+  return { deals: {}, documents: [], discrepancies: [], marks: [], users: { B1: { id: "B1", name: "Morgan Ellis", email: "morgan@brokerage.invalid" } }, invites: [], requirements: [], sessions: [], tasks: [] };
 }
 
 /** Installs the world into storage, db, the marks store and the together store. Returns the together store. */
@@ -63,7 +64,9 @@ export async function install(w: World) {
     getDocumentRequirementsByDeal: async (id: string) => w.requirements.filter((r) => r.dealId === id),
     getDocumentsByDeal: async (id: string) => structuredClone(w.documents.filter((d) => d.dealId === id)),
     getDocumentsByFileUrl: async (u: string) => structuredClone(w.documents.filter((d) => d.fileUrl === u)),
-    getTasksByDeal: async () => [],
+    getTasksByDeal: async (id: string) => structuredClone((w.tasks ?? []).filter((t) => t.dealId === id)),
+    getTask: async (id: string) => structuredClone((w.tasks ?? []).find((t) => t.id === id)),
+    updateTask: async (id: string, patch: any) => { const t = (w.tasks ?? []).find((x) => x.id === id); if (t) Object.assign(t, structuredClone(patch)); return t ? structuredClone(t) : undefined; },
     createTask: async (t: any) => t,
     createDocument: async (d: any) => { const row = { id: `DOC${++docId}`, createdAt: new Date(), updatedAt: new Date(), ...d }; w.documents.push(row); return structuredClone(row); },
     getDocument: async (id: string) => structuredClone(w.documents.find((d) => d.id === id)),
