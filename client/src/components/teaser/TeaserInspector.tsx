@@ -213,7 +213,6 @@ export function editableData(b: Pick<TeaserBlock, "layoutType" | "layoutData">):
   if (hasCells) {
     delete d.metrics;
     delete d.stats;
-    if (b.layoutType === "two_column") delete d.right;
   }
   if (b.layoutType === "prose_highlight") delete d.body;
   for (const k of KEPT_KEYS) delete d[k];
