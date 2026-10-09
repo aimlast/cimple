@@ -118,7 +118,7 @@ export function useTeamAction(dealId: string) {
       if (action === "decline") toast({ title: `Declined: ${m.name}` });
       else if (action === "remove") toast({ title: `${m.name} can't open the data room any more`, description: "Their link stopped working." });
       else if (r.link && r.emailed) {
-        if (r.emailed.sent && action !== "new_link") toast({ title: `Link sent to ${m.name}`, description: "The old link stopped working." });
+        if (r.emailed.sent && action !== "new_link") toast({ title: `Link sent to ${m.name}`, description: action === "resend" ? "The link you sent before stopped working." : "They'll confirm confidentiality when they first open it." });
         else setResult({ r: { link: r.link, emailed: r.emailed }, who: m.name });
       }
     } catch (e: any) {
