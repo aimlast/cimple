@@ -53,3 +53,34 @@ export function otherRecordCheck(fig: FigureView | null | undefined): FigureChec
 export function asIssuedCheck(fig: FigureView | null | undefined): FigureCheckView | null {
   return (fig?.checks ?? []).find((c) => c.kindLabel === "Financial statements as issued") ?? null;
 }
+
+/**
+ * The other record's figure written the way the CIM cell beside it is
+ * ("($268,000)" → "($301,000)", "$28,640,000" → "$28,640,000", "28,640,000"
+ * → "28,640,000", "$28.6M" → "$28.6M") — one money format per table
+ * (checker r1 F5). Falls back to the value as served.
+ */
+export function formatLike(cimText: string | null | undefined, value: string): string {
+  const n = Number(String(value).replace(/[^0-9.\-]/g, ""));
+  if (!Number.isFinite(n) || !/\d/.test(value)) return value;
+  const t = String(cimText ?? "").trim();
+  if (!/\d/.test(t)) return value;
+  const paren = /^\(.*\)$/.test(t);
+  const minus = /^[-−–]/.test(t);
+  const prefix = (t.replace(/^[(\-−–\s]+/, "").match(/^(C\$|CA\$|US\$|\$)/i)?.[1]) ?? "";
+  const abs = Math.abs(n);
+  const scaled = t.match(/(\d[\d,]*(?:\.(\d+))?)\s*([KMB])\b/i);
+  let body: string;
+  if (scaled) {
+    const unit = scaled[3].toUpperCase();
+    const div = unit === "K" ? 1e3 : unit === "M" ? 1e6 : 1e9;
+    body = `${(abs / div).toFixed(scaled[2]?.length ?? 0)}${scaled[3]}`;
+  } else {
+    const decimals = t.match(/\.(\d+)\)?\s*$/)?.[1]?.length ?? 0;
+    body = abs.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  }
+  const text = `${prefix}${body}`;
+  if (paren) return `(${text})`;
+  if (minus || n < 0) return `−${text}`;
+  return text;
+}

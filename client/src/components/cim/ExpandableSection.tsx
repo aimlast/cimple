@@ -8,7 +8,7 @@
  * Analytics events fire on every expand/collapse.
  * In print mode, all sections auto-expand.
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import type { CimSection } from "@shared/schema";
 import type { CimBranding } from "./CimBrandingContext";
@@ -18,6 +18,7 @@ import { renderInline, stripMarkup } from "./richText";
 import { useCimTheme, useSectionNumber, useThemeStyle } from "./CimDesignContext";
 import { CimSectionHeading } from "./CimSectionHeading";
 import { CimBlockScope, useBlockAttrs, useCimInteraction, usePageAttrs } from "./blocks";
+import { useDdOpensExpanded } from "./figures/FigureLayerContext";
 
 interface ExpandableSectionProps {
   section: CimSection;
@@ -108,8 +109,15 @@ export function ExpandableSection({
   onExpandedChange,
 }: ExpandableSectionProps) {
   const config = getExpandableConfig(section);
-  const [expandedState, setExpanded] = useState(!config.isExpandable);
+  // dd: a due-diligence page with served figure checks opens expanded (its differences are the point).
+  const ddOpen = useDdOpensExpanded(section.id);
+  const [expandedState, setExpanded] = useState(!config.isExpandable || ddOpen);
   const expanded = expandedProp ?? expandedState;
+  const toggledByReader = useRef(false);
+  useEffect(() => {
+    // The figure layer can arrive after the section (the builder's preview fetches it): open then, unless the reader chose.
+    if (ddOpen && !toggledByReader.current) setExpanded(true);
+  }, [ddOpen]);
   const themeVars = useThemeStyle();
   const number = useSectionNumber(section.id);
   // Reading analytics (blocks.tsx): the page wrapper, the collapsed summary
@@ -153,6 +161,7 @@ export function ExpandableSection({
   }
 
   const toggle = () => {
+    toggledByReader.current = true;
     const next = !expanded;
     if (expandedProp === undefined) setExpanded(next);
     onExpandedChange?.(next);

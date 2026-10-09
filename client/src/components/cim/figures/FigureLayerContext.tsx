@@ -114,6 +114,21 @@ export function usePageFigures(pageId: string | null | undefined): FigureView[] 
   return (ctx.byPage.get(pageId) ?? []).map((id) => ctx.layer.figures[id]).filter((f): f is FigureView => !!f);
 }
 
+/**
+ * Due diligence: a page whose figures carry checks the reader is served
+ * (buyers: once the checks are on; the broker's preview: always) opens
+ * expanded, so a coloured difference is visible without a click — a
+ * collapsed preview of the first rows looked like the normal CIM with blank
+ * cells (checker r1 F4). Everywhere else (no layer, Full / Blind, teaser
+ * pages) it is false and sections behave as before.
+ */
+export function useDdOpensExpanded(pageId: string | null | undefined): boolean {
+  const ctx = useContext(FigureCtx);
+  if (!ctx || !pageId || ctx.layer.mode !== "dd") return false;
+  if (ctx.layer.audience !== "broker" && !ctx.layer.ddChecksOn) return false;
+  return (ctx.byPage.get(pageId) ?? []).some((id) => (ctx.layer.figures[id]?.checks ?? []).some((c) => ctx.layer.audience === "broker" || !c.preview));
+}
+
 /** The first anchor of a figure on a page (to scroll to it from the notes list). */
 export function anchorOf(layer: FigureLayer, figId: string, pageId: string): { block: string; cell: number | null } | null {
   const a = layer.anchors.find((x) => x.fig === figId && x.pageId === pageId);

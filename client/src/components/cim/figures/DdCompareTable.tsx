@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 import { useBlockAttrs } from "../blocks";
 import { FigureTrigger } from "./FigureValue";
 import { FigureCitation } from "./FigureCitation";
-import { asIssuedCheck, otherRecordCheck, StateIcon } from "./figurePaint";
+import { asIssuedCheck, formatLike, otherRecordCheck, StateIcon } from "./figurePaint";
 
 type Layout = "wide" | "medium" | "narrow";
 
@@ -66,14 +66,14 @@ function shortOther(kindLabel: string): string {
   return "Tax";
 }
 
-function OtherCell({ fig, check, compact, prefix }: { fig: FigureView; check: FigureCheckView; compact?: boolean; prefix?: boolean }) {
+function OtherCell({ fig, check, compact, prefix, like }: { fig: FigureView; check: FigureCheckView; compact?: boolean; prefix?: boolean; like: string | null }) {
   const differs = check.state !== "match";
   return (
     <FigureTrigger fig={fig} showState={false}>
       <span className={cn("inline-flex flex-col items-end", compact && "items-end")}>
         <span className={cn("inline-flex items-center gap-1 tabular-nums", compact && "flex-wrap justify-end gap-x-0.5")}>
           {prefix && <span className="text-[10px] text-[hsl(var(--cim-ink-faint))]">{shortOther(check.kindLabel)}</span>}
-          {check.value.replace(/^\$/, "")}
+          {formatLike(like, check.value)}
           <StateIcon state={check.state} />
         </span>
         {differs && check.difference && (
@@ -208,7 +208,7 @@ export function DdCompareTable({ table, labelHeader, lookup, onlyDifferences, on
                   <tr key={i} {...ba.row(i)} className={cn("border-b border-border/50 last:border-0", row.isTotal && "bg-muted/40 font-semibold")}>
                     <td className="break-words px-2 py-2 text-foreground/80" style={{ paddingLeft: row.indent * 10 + 8 }}>{row.label}</td>
                     <td className="px-1.5 py-2 text-right text-[11px] tabular-nums"><CimCell fig={fig} text={row.cells[j]} /></td>
-                    <td className="px-1.5 py-2 text-right text-[11px] tabular-nums" style={cellTint(check)}>{fig && check ? <OtherCell fig={fig} check={check} compact /> : null}</td>
+                    <td className="px-1.5 py-2 text-right text-[11px] tabular-nums" style={cellTint(check)}>{fig && check ? <OtherCell fig={fig} check={check} compact like={row.cells[j]} /> : null}</td>
                   </tr>
                 );
               })}
@@ -249,7 +249,7 @@ export function DdCompareTable({ table, labelHeader, lookup, onlyDifferences, on
                           <CimCell fig={fig} text={val} />
                           {fig && check && (
                             <span className="mt-0.5 block text-[11px] text-[hsl(var(--cim-ink-muted))]">
-                              <OtherCell fig={fig} check={check} prefix />
+                              <OtherCell fig={fig} check={check} prefix like={val} />
                             </span>
                           )}
                         </td>
@@ -303,7 +303,7 @@ export function DdCompareTable({ table, labelHeader, lookup, onlyDifferences, on
                     return [
                       <td key={`${j}c`} className="whitespace-nowrap border-l border-border/50 px-2 py-2.5 text-right text-xs tabular-nums"><CimCell fig={fig} text={val} /></td>,
                       <td key={`${j}o`} className="whitespace-nowrap px-2 py-2.5 text-right text-xs tabular-nums" style={cellTint(check)}>
-                        {fig && check ? <OtherCell fig={fig} check={check} /> : null}
+                        {fig && check ? <OtherCell fig={fig} check={check} like={val} /> : null}
                       </td>,
                     ];
                   })}
