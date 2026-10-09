@@ -63,6 +63,38 @@ async function main() {
     assert.equal(p.json.teaser.publishedRev, 1);
   });
 
+  await check("publish needs the confidentiality check now (or the broker's confirmation); a held name is refused", async () => {
+    const keepOut = await import("../../server/cim/keep-out");
+    const nothingHeld = { messages: { create: (async () => ({ content: [{ type: "tool_use", id: "x", name: "keep_out_review", input: { holds: [] } }] })) as never } } as never;
+    keepOut._setKeepOutModelForTests({ messages: { create: (async () => { throw Object.assign(new Error("overloaded"), { status: 529 }); }) as never } } as never);
+    const st = await call("GET", "/api/deals/D-PAC/teaser", undefined, broker);
+    const r1 = await call("POST", "/api/deals/D-PAC/teaser/publish", { rev: st.json.teaser.draftRev }, broker);
+    assert.equal(r1.status, 409);
+    assert.ok(r1.json.problems.some((p: string) => /confidentiality check couldn't run/.test(p)), JSON.stringify(r1.json));
+    const c = await call("POST", "/api/deals/D-PAC/teaser/confirm-review", { rev: st.json.teaser.draftRev }, broker);
+    assert.equal(c.status, 200, c.text);
+    assert.ok(c.json.teaser.reviewConfirmed?.at);
+    const r2 = await call("POST", "/api/deals/D-PAC/teaser/publish", { rev: c.json.teaser.draftRev }, broker);
+    assert.equal(r2.status, 200, r2.text);
+    keepOut._setKeepOutModelForTests(nothingHeld);
+    const ok = await call("POST", "/api/deals/D-PAC/teaser/confirm-review", { rev: r2.json.teaser.draftRev }, broker);
+    assert.equal(ok.status, 409, "the check runs again: nothing to confirm");
+    assert.equal(ok.json.code, "review_ok");
+    // A party the review holds (not otherwise identifying) mentioned by the broker: refused at publish.
+    const gen = await import("../../server/teaser/generate");
+    const { dbBriefDeps } = await import("../../server/teaser/brief");
+    gen._setTeaserBriefDepsForTests({ ...dbBriefDeps, keepOut: async () => ({ clauses: [], names: ["Northwind Grocers"], pairs: [], by: "ai" as const }) });
+    const over = r2.json.teaser.draft.blocks.find((b: { slot: string }) => b.slot === "overview");
+    const e = await call("PATCH", `/api/deals/D-PAC/teaser/blocks/${over.id}`, { rev: r2.json.teaser.draftRev, body: "A carrier bidding on the Northwind Grocers contract." }, broker);
+    assert.equal(e.status, 200, e.text);
+    const r3 = await call("POST", "/api/deals/D-PAC/teaser/publish", { rev: e.json.teaser.draftRev }, broker);
+    assert.equal(r3.status, 409);
+    assert.ok(r3.json.problems.some((p: string) => /Northwind Grocers.*keep confidential/.test(p)), JSON.stringify(r3.json.problems));
+    gen._setTeaserBriefDepsForTests(dbBriefDeps);
+    const u = await call("POST", "/api/deals/D-PAC/teaser/undo", { rev: e.json.teaser.draftRev }, broker);
+    assert.equal(u.status, 200, u.text);
+  });
+
   await check("the view GET serves the whitelisted teaser payload; firstViewedAt untouched; reading recorded", async () => {
     const v = await call("GET", `/api/view/${link.accessToken}`);
     assert.equal(v.status, 200, v.text);

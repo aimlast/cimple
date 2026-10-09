@@ -570,8 +570,10 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
     try {
       const body = z.object({ rev }).strict().parse(req.body ?? {});
       const row0 = await requireRow(deal);
-      if (!row0.generation?.reviewFailed) return res.status(409).json({ error: "The confidentiality check ran — there's nothing to confirm.", code: "review_ok" });
       if (row0.draftRev !== body.rev) throw new TeaserConflict("stale", "This teaser changed in another tab — showing the latest.");
+      // Only when the check can't run (now): a check that runs needs no confirmation.
+      const k = await teaserBriefDeps().keepOut(deal.id, await teaserBriefDeps().facts(deal));
+      if (!(k.by === "rules" && !!k.warning)) return res.status(409).json({ error: "The confidentiality check ran — there's nothing to confirm.", code: "review_ok" });
       const row = await teaserStore().update(deal.id, () => ({ reviewConfirmed: { by: (req.session as { brokerId?: string }).brokerId ?? null, at: new Date().toISOString() } }));
       res.json(await stateOf(deal, row!));
     } catch (err) {
@@ -598,23 +600,32 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
       const h = draft.header;
       const headerProblem = h && !guardTeaserText([h.label, h.tagline, ...h.chips], terms).ok ? "The header names the business — reword the one-line description or a chip." : null;
       const { codenameProblem } = await import("../cim/codenames");
-      // The confidentiality review must have run (or run now), or the broker confirmed.
-      let reviewOk = !row0.generation?.reviewFailed || !!row0.reviewConfirmed;
-      let reviewRanNow = false;
-      if (!reviewOk) {
-        const info = await teaserBriefDeps().facts(deal);
-        const k = await teaserBriefDeps().keepOut(deal.id, info);
-        reviewOk = !(k.by === "rules" && !!k.warning);
-        reviewRanNow = reviewOk;
+      // The confidentiality review must succeed now (cached per content; one
+      // call after a restart) — or the broker confirmed they checked it. A
+      // visible block naming something the review holds (an unannounced
+      // bid's customer…) is refused like a block naming the business.
+      const info = await teaserBriefDeps().facts(deal);
+      const k = await teaserBriefDeps().keepOut(deal.id, info);
+      const reviewRanNow = !(k.by === "rules" && !!k.warning);
+      const reviewOk = reviewRanNow || !!row0.reviewConfirmed;
+      const { mentionsHeldName } = await import("../cim/sensitive-facts");
+      const { collectStrings } = await import("@shared/blind-guard");
+      const heldNameProblems: string[] = [];
+      if (k.names.length > 0) {
+        for (const b of draft.blocks.filter((x) => !x.hidden)) {
+          const hit = mentionsHeldName(collectStrings([b.title, b.body ?? "", b.layoutData]).join("\n"), k.names);
+          if (hit) heldNameProblems.push(`${b.title || "A block"}: it mentions “${hit}”, which the seller asked to keep confidential. Reword it.`);
+        }
+        if (h && mentionsHeldName([h.tagline, ...h.chips].join("\n"), k.names)) heldNameProblems.push("The header mentions something the seller asked to keep confidential. Reword it.");
       }
       const discrepancies = discrepancyGateFor((await storage.getDiscrepanciesByDeal(deal.id).catch(() => [])) as never, row0.numbers);
-      const problems = publishProblems(draft, {
+      const problems = [...publishProblems(draft, {
         codenameProblem: codenameProblem(deal as never, current),
         checks,
         headerProblem,
         reviewOk,
         discrepancyReasons: discrepancies.reasons,
-      });
+      }), ...heldNameProblems];
       if (problems.length > 0) return res.status(409).json({ error: problems[0], problems, code: "cant_publish" });
       let conflict: TeaserConflict | null = null;
       const row = await teaserStore().update(deal.id, (r) => {
@@ -629,7 +640,7 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
           publishedRev: r.publishedRev + 1,
           publishedAt: new Date(),
           unpublishedAt: null,
-          ...(reviewRanNow && r.generation ? { generation: { ...r.generation, reviewFailed: false } } : {}),
+          ...(reviewRanNow && r.generation?.reviewFailed ? { generation: { ...r.generation, reviewFailed: false } } : {}),
         };
       });
       if (conflict) throw conflict;
