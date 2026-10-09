@@ -62,7 +62,12 @@ function clampQuality(q: unknown): number {
 }
 
 function send(msg: ChildMessage) {
-  if (process.connected) process.send!(msg);
+  if (!process.connected) return;
+  try {
+    process.send!(msg, undefined, undefined, (err) => { if (err) process.exit(0); });
+  } catch {
+    process.exit(0);
+  }
 }
 
 if (!process.send) {
@@ -101,4 +106,10 @@ process.on("message", async (raw: unknown) => {
   }
 });
 process.on("disconnect", () => process.exit(0));
+// The web process may kill or drop the channel while an answer is on its way
+// (a timeout): that write fails with EPIPE / channel closed — exit quietly.
+process.on("error", (err: NodeJS.ErrnoException) => {
+  if (err?.code === "EPIPE" || err?.code === "ERR_IPC_CHANNEL_CLOSED") process.exit(0);
+  throw err;
+});
 send({ type: "ready", pid: process.pid });
