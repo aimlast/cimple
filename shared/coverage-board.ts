@@ -46,7 +46,8 @@ export type CoverageMarkKind = "verify_later" | "note" | "asked" | "not_known" |
 export interface CoverageItemMark { kind: CoverageMarkKind; note?: string; at: string }
 
 export type CoverageReason =
-  | { code: "lead"; leadKind: "crm" | "website" | "social" }
+  /** leadKind is absent in the screen audience (it would say the broker keeps CRM notes). */
+  | { code: "lead"; leadKind?: "crm" | "website" | "social" }
   | { code: "estimate" }
   | { code: "conflict"; a?: string; aSource?: string; b?: string; bSource?: string; privateSide: boolean }
   | { code: "marked" }
@@ -348,7 +349,7 @@ export function reasonText(reason: CoverageReason | null, audience: CoverageAudi
   const screen = audience !== "broker";
   switch (reason.code) {
     case "lead":
-      return screen ? "To verify — confirm with the seller." : `To verify — only in ${LEAD_WORDS[reason.leadKind]} so far.`;
+      return screen ? "To verify — confirm with the seller." : `To verify — only in ${LEAD_WORDS[reason.leadKind ?? "crm"]} so far.`;
     case "estimate":
       return "To verify — the seller's estimate.";
     case "conflict": {

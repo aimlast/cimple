@@ -200,8 +200,10 @@ async function main() {
     assert.equal(missing.json.code, "needs_answer");
     const est = await call("POST", "/api/deals/D1/coverage-board/items/financials:annualRevenue/confirm", {});
     assert.equal(est.status, 200);
-    assert.equal(itemOf(est.json.board, "financials:annualRevenue").status, "on_file");
-    assert.equal(itemOf(est.json.board, "financials:annualRevenue").confirmedByYou, true);
+    assert.equal(est.json.board, undefined, "no board in the reply (the page reads its own, in its own audience)");
+    const afterEst = (await call("GET", "/api/deals/D1/coverage-board")).json;
+    assert.equal(itemOf(afterEst, "financials:annualRevenue").status, "on_file");
+    assert.equal(itemOf(afterEst, "financials:annualRevenue").confirmedByYou, true);
     // A lead the broker confirms: its source is vouched for (acceptedByBroker), no text copied.
     const before2 = JSON.stringify(deals.D1.extractedInfo.idealBuyer);
     const lead = await call("POST", "/api/deals/D1/coverage-board/items/buyer_profile:idealBuyer/confirm", {});
@@ -209,7 +211,7 @@ async function main() {
     assert.equal(deals.D1.extractedInfo._fieldSources.idealBuyer.acceptedByBroker, true);
     assert.equal(deals.D1.extractedInfo._fieldSources.idealBuyer.source, "crm", "the lead keeps its real kind");
     assert.equal(JSON.stringify(deals.D1.extractedInfo.idealBuyer), before2, "no text copied");
-    assert.equal(itemOf(lead.json.board, "buyer_profile:idealBuyer").status, "on_file");
+    assert.equal(itemOf((await call("GET", "/api/deals/D1/coverage-board")).json, "buyer_profile:idealBuyer").status, "on_file");
     assert.equal(modelCalls, before, "no model call anywhere");
     ok("✓ Confirmed: an estimate → on file (confirmed by you); a lead → its source vouched for, no text copied; a conflict → 409 resolve; nothing on file → 409");
 

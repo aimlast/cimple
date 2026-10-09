@@ -170,13 +170,15 @@ export function registerTogetherRoutes(app: Express): void {
       if (kind === "note" && !note?.trim()) return res.status(400).json({ error: "Write the note first" });
       if (note && note.length > MARK_NOTE_MAX) return res.status(400).json({ error: "That note is too long" });
       const sectionKey = itemId.includes(":") && !/^(doc|routed):/.test(itemId) ? itemId.split(":")[0] : null;
+      // (A session is recorded only when it is this deal's own.)
+      const askedSitting = typeof req.body?.sittingId === "string" && req.body.sittingId ? await sittingForDeal(req.params.dealId, req.body.sittingId.slice(0, 64)) : null;
       await setMark({
         dealId: req.params.dealId,
         itemId,
         kind,
         sectionKey,
         note: kind === "note" ? note : null,
-        sittingId: typeof req.body?.sittingId === "string" ? req.body.sittingId.slice(0, 64) : null,
+        sittingId: askedSitting?.id ?? null,
         createdBy: String(req.session.brokerId),
       });
       res.json({ ok: true });
@@ -221,12 +223,14 @@ export function registerTogetherRoutes(app: Express): void {
           if (!part) return res.status(202).json({ ok: true, pending: true, chunkId });
         }
       }
-      const board = await confirmItem(deal, itemId, String(req.session.brokerId), {
+      await confirmItem(deal, itemId, String(req.session.brokerId), {
         sittingId,
         reload: async () => (await storage.getDeal(deal.id)) ?? deal,
       });
       if (sitting) void publishBoard(deal.id, sitting.id);
-      res.json({ ok: true, board });
+      // No board in the reply: the page reads its own (in the audience it shows —
+      // "Seller can see this screen" never gets the broker's values this way).
+      res.json({ ok: true, confirmed: true });
     } catch (err) {
       fail(res, err, "Couldn't confirm that");
     }
@@ -272,9 +276,12 @@ export function registerTogetherRoutes(app: Express): void {
       const result = await writeBrokerCallNotes(deal.id, [{ key: memberKey, value }], { sittingId: sitting.id });
       hub.touch(sitting.id, String(req.session.brokerId));
       void publishBoard(deal.id, sitting.id);
-      if (result.written.includes(memberKey)) return res.json({ ok: true, filed: true, result });
+      // (Never the Undo snapshots: they hold the replaced value, its source and
+      // every alternate — the broker's CRM and private values — and the page may
+      // be the seller's screen.)
+      if (result.written.includes(memberKey)) return res.json({ ok: true, filed: true });
       if (result.keptBeside.includes(memberKey)) {
-        return res.json({ ok: true, filed: false, keptBeside: true, result, message: "Kept beside what's on file — the seller's own words, a document or your edit stands." });
+        return res.json({ ok: true, filed: false, keptBeside: true, message: "Kept beside what's on file — the seller's own words, a document or your edit stands." });
       }
       const code = result.dropped.find((d) => d.key === memberKey)?.code ?? "dropped";
       const message =
@@ -282,7 +289,7 @@ export function registerTogetherRoutes(app: Express): void {
           : code === "keep_out" ? "That mentions something the seller asked to keep out of the book — it's held back."
             : code === "staff_private" ? "That's a staff member's private matter — it went to your private notes, not the CIM."
               : "Nothing was filed.";
-      return res.status(422).json({ error: message, code, result });
+      return res.status(422).json({ error: message, code });
     } catch (err) {
       fail(res, err, "Couldn't save that");
     }

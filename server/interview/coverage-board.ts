@@ -780,6 +780,10 @@ function screenReason(reason: CoverageReason | null, sellerValue: string | null)
     }
     case "in_source":
       return { code: "in_source", sourceLabel: "", private: true };
+    // (Which private source holds it — the broker's CRM or own notes — isn't the seller's to see.)
+    case "lead":
+    case "broker_notes":
+      return { code: "lead" };
     default:
       return reason;
   }

@@ -123,7 +123,8 @@ async function main() {
     assert.equal(mine.status, 200, JSON.stringify(mine.json));
     assert.notEqual(mine.json.filed, true);
     assert.equal(stubCalls, callsBefore, "no lines → no capture");
-    assert.equal(items(mine.json.board).find((i: any) => i.id === "revenue_sources:customerConcentration").status, "on_file");
+    assert.equal(mine.json.board, undefined, "no board in the reply");
+    assert.equal(items((await call("GET", `/api/deals/D2/coverage-board?sittingId=${sid3}`, undefined, "B2")).json).find((i: any) => i.id === "revenue_sources:customerConcentration").status, "on_file");
     assert.equal((await call("POST", `/api/deals/D1/coverage-board/items/revenue_sources:customerConcentration/confirm`, { sittingId: sid3 }, "B2")).status, 404, "another brokerage");
     await call("POST", `/api/deals/D2/together/sittings/${sid3}/end`, { completeInterview: false, followUps: [], documents: [], addToNextSession: false }, "B2");
     ok("live ✓ Confirmed files the seller's own words when they just said it; otherwise confirmed by you (no AI)");
