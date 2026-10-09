@@ -10,7 +10,7 @@
  * and each buyer version's own (Blind never shows business branding).
  * The brokerage pages (disclaimer, contact) appear where buyers see them.
  */
-import { Check, EyeOff, Loader2, Lock, Pencil, Plus, Sparkles, X } from "lucide-react";
+import { Check, EyeOff, Loader2, Pencil, Plus, Sparkles, X } from "lucide-react";
 import type { CimSection, CimSectionOverride } from "@shared/schema";
 import type { MediaAssetRef } from "@shared/cim-media";
 import { buildBuyerCim } from "@shared/cim-buyer-view";
@@ -22,12 +22,32 @@ import { CimDesignProvider, buildCimDesign, type CimDesignPayload } from "@/comp
 import { CimSheet } from "@/components/cim/CimSheet";
 import { CimSectionHeading } from "@/components/cim/CimSectionHeading";
 import { CimContactPage, CimDisclaimerPage, useBrokeragePageFlags, withBrokeragePages } from "@/components/cim/CimFrontBackPages";
-import { cimModeForAccessLevel } from "@shared/cim-layouts";
+import { BLIND_ACCESS_LEVEL, DD_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, cimModeForAccessLevel, parseAccessLevelInput, seesCim } from "@shared/access-levels";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TASK_LABEL, type BuilderSection } from "./api";
 
-export type PreviewAs = "editor" | "teaser" | "full" | "loi" | "due_diligence";
+/** "Editing", or a CIM buyer's version (shared/access-levels.ts keys; the teaser has its own preview). */
+export type PreviewAs = "editor" | typeof BLIND_ACCESS_LEVEL | typeof NAMED_ACCESS_LEVEL | typeof DD_ACCESS_LEVEL;
+
+/** The builder's ?preview= value for each buyer version: blind | full-cim | due-diligence. */
+export const PREVIEW_PARAM: Record<Exclude<PreviewAs, "editor">, string> = {
+  [BLIND_ACCESS_LEVEL]: "blind",
+  [NAMED_ACCESS_LEVEL]: "full-cim",
+  [DD_ACCESS_LEVEL]: "due-diligence",
+};
+
+/**
+ * ?preview= → the version to preview. Old links keep working: teaser / full
+ * (both the Blind CIM), loi (the Full CIM) and the level keys themselves.
+ * The teaser isn't a CIM version (it has its own preview) → editing.
+ */
+export function previewFromParam(p: string | null | undefined): PreviewAs {
+  if (p === PREVIEW_PARAM[NAMED_ACCESS_LEVEL]) return NAMED_ACCESS_LEVEL;
+  if (p === PREVIEW_PARAM[DD_ACCESS_LEVEL]) return DD_ACCESS_LEVEL;
+  const level = parseAccessLevelInput(p);
+  return level && seesCim(level) ? (level as Exclude<PreviewAs, "editor">) : "editor";
+}
 
 interface Props {
   sections: BuilderSection[];
@@ -125,11 +145,10 @@ function EditorSheetBody({ sections, branding, selectedId, onSelect, onAddAfter,
               data-testid={`canvas-section-${s.id}`}
             >
               {/* Broker chips — app chrome over the paper, never part of the CIM */}
-              {(hidden || s.accessTier === "full" || proposal || drafted) && (
+              {(hidden || proposal || drafted) && (
                 <div className="absolute -top-3 right-2 z-20 flex flex-wrap justify-end gap-1">
                   {drafted && <Chip tone="brass"><Pencil className="h-3 w-3" /> Unsaved changes</Chip>}
                   {proposal && <Chip tone="brass"><Sparkles className="h-3 w-3" /> Proposed rewrite — not applied yet</Chip>}
-                  {s.accessTier === "full" && <Chip><Lock className="h-3 w-3" /> Full access only</Chip>}
                   {hidden && <Chip><EyeOff className="h-3 w-3" /> Hidden from buyers</Chip>}
                 </div>
               )}

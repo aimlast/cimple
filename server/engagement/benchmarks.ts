@@ -127,7 +127,7 @@ export async function computeDealBenchmarks(dealId: string): Promise<DealBenchma
     SELECT r.rendition_id, r.page_id, r.block_key, r.buyer_access_id AS access_id, SUM(r.attention_ms)::bigint AS att
     FROM reading_rollups r
     JOIN buyer_visits v ON v.id = r.visit_id
-    WHERE r.deal_id = ${dealId} AND v.self_view = false AND v.clamped = false AND v.legacy = false
+    WHERE r.deal_id = ${dealId} AND v.self_view = false AND v.clamped = false AND v.legacy = false AND v.mode IS DISTINCT FROM 'teaser'
     GROUP BY r.rendition_id, r.page_id, r.block_key, r.buyer_access_id
   `);
   const rollups: BenchmarkRollupRow[] = Array.from(rows as unknown as Array<Record<string, unknown>>).map((r) => ({

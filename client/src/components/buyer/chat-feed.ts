@@ -6,8 +6,8 @@
  *
  * "Answered" is NOT the same as "published to the shared feed". The server
  * keeps some answers private to the buyer who asked (server/qa/cim-context.ts
- * buildBuyerQuestionFeed): answers drawn from the named CIM for LOI / DD
- * buyers, and blind-buyer answers whose question or answer names the
+ * buildBuyerQuestionFeed): answers drawn from the named CIM for Full CIM /
+ * DD buyers, and blind-buyer answers whose question or answer names the
  * business. Those arrive as `isMine: true, status: "published",
  * isPublished: false` with the answer text — the asker must see them as
  * answered, never as "awaiting your broker".

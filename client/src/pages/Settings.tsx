@@ -32,6 +32,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { BrandingSettings } from "@shared/schema";
 import { BrandSettingsCard } from "@/components/cim-design/BrandSettingsCard";
 import { TemplateGallery } from "@/components/cim-design/TemplateGallery";
+import { TeaserBrandCard } from "@/components/teaser/TeaserBrandCard";
 
 /**
  * Broker email preferences. Every switch here controls real events — the
@@ -104,6 +105,10 @@ export default function Settings() {
   const [initialTab] = useState(() => {
     const t = new URLSearchParams(window.location.search).get("tab");
     return t && SETTINGS_TABS.includes(t) ? t : "account";
+  });
+  const [initialBrandSection] = useState(() => {
+    const t = new URLSearchParams(window.location.search).get("section");
+    return t === "templates" || t === "teaser" ? t : "brand";
   });
 
   const {
@@ -526,12 +531,28 @@ export default function Settings() {
             the templates themselves. The business-for-sale's branding is
             per deal (CIM builder → Design). */}
         <TabsContent value="brand" className="mt-6 space-y-6">
-          <BrandSettingsCard
-            branding={brandingSettings}
-            account={{ firmName, firmEmail, firmPhone }}
-            contactName={(me?.user as { name?: string | null } | undefined)?.name ?? null}
-          />
-          <TemplateGallery />
+          {/* One job at a time: the brand, the CIM templates, the teaser wording (?section=teaser links straight there). */}
+          <Tabs defaultValue={initialBrandSection} className="w-full">
+            <TabsList className="h-9" data-testid="tabs-brand-sections">
+              <TabsTrigger value="brand" className="px-3 text-xs sm:text-sm">Your brand</TabsTrigger>
+              <TabsTrigger value="templates" className="px-3 text-xs sm:text-sm">CIM templates</TabsTrigger>
+              <TabsTrigger value="teaser" className="px-3 text-xs sm:text-sm" data-testid="tab-brand-teaser">Teaser</TabsTrigger>
+            </TabsList>
+            {/* forceMount keeps an unsaved edit when the broker looks at another section. */}
+            <TabsContent value="brand" forceMount className="mt-4 data-[state=inactive]:hidden">
+              <BrandSettingsCard
+                branding={brandingSettings}
+                account={{ firmName, firmEmail, firmPhone }}
+                contactName={(me?.user as { name?: string | null } | undefined)?.name ?? null}
+              />
+            </TabsContent>
+            <TabsContent value="templates" forceMount className="mt-4 data-[state=inactive]:hidden">
+              <TemplateGallery />
+            </TabsContent>
+            <TabsContent value="teaser" forceMount className="mt-4 data-[state=inactive]:hidden">
+              <TeaserBrandCard />
+            </TabsContent>
+          </Tabs>
         </TabsContent>
 
         <TabsContent value="defaults" className="mt-6 space-y-6">

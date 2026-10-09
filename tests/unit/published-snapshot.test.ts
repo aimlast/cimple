@@ -55,13 +55,14 @@ assert.ok(servesPublishedSnapshot(deal));
 assert.equal(cimHeldFromBuyers(deal), false, "no 'being updated' notice");
 
 // 2. Every access level reads the kept copy, never the draft.
-for (const level of ["teaser", "full", "loi", "due_diligence"]) {
+// (New keys and the legacy values they alias: teaser/full = blind, loi = named.)
+for (const level of ["teaser", "full", "blind", "loi", "named", "due_diligence"]) {
   const rows = await buyerCimRows(deal, level);
   assert.equal(rows.fromSnapshot, true);
   const cim = buildBuyerCim({ deal, accessLevel: level, sections: rows.sections as any, overrides: rows.overrides as any, media: [] });
   const text = JSON.stringify(cim.sections);
   assert.doesNotMatch(text, /UNREVIEWED DRAFT/, `${level}: never the draft`);
-  if (level === "teaser" || level === "full") {
+  if (level === "teaser" || level === "full" || level === "blind") {
     // Blind: identity guard and freshness still apply to the kept copy.
     assert.doesNotMatch(text, /Beacon|Helen|Ottawa/, `${level}: nothing identifying`);
     assert.equal(cim.sections.length, 2, `${level}: the stale blind section is held back`);
@@ -71,10 +72,15 @@ for (const level of ["teaser", "full", "loi", "due_diligence"]) {
     assert.match(text, /T2 ties/, "the DD buyer keeps the due-diligence version");
     assert.equal(cim.sections.length, 3);
   } else {
-    assert.match(text, /Beacon Specialty Pharmacy serves/, "LOI: the named CIM as published");
+    assert.match(text, /Beacon Specialty Pharmacy serves/, "Full CIM: the named CIM as published");
   }
 }
-console.log("  ✓ every buyer version reads the kept copy (Blind guarded, DD kept)");
+{
+  // A Teaser link reads no CIM at all, kept copy or not.
+  const rows = await buyerCimRows(deal, "teaser_only");
+  assert.deepEqual(buildBuyerCim({ deal, accessLevel: "teaser_only", sections: rows.sections as any, overrides: rows.overrides as any, media: [] }).sections, []);
+}
+console.log("  ✓ every buyer version reads the kept copy (Blind guarded, DD kept); a Teaser link reads none");
 
 // 3. The NDA gate is the same rule, before anything.
 assert.ok(ndaBlocksBuyer(deal, { ndaSigned: false }));

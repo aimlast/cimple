@@ -20,7 +20,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Deal, CimSection } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
-import { buyerAccessLabel } from "@shared/cim-layouts";
+import { buyerFacingLevelLabel } from "@shared/access-levels";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { CimDesignProvider, buildCimDesign, type CimDesignPayload } from "@/components/cim/CimDesignContext";
 import { CimSheet } from "@/components/cim/CimSheet";
@@ -35,6 +35,7 @@ import { BuyerChatbot, type BuyerQuestionFeedItem } from "@/components/buyer/Buy
 import { BuyerDecisionPanel } from "@/components/buyer/BuyerDecisionPanel";
 import { NdaBuyerProfileGate } from "@/components/buyer/NdaBuyerProfileGate";
 import { CimBlockScope, CimBlocksProvider } from "@/components/cim/blocks";
+import { ExpiredTeaserCard, TeaserNotAvailable, TeaserView, type TeaserViewData } from "@/components/buyer/TeaserView";
 import { READING_SHEET_ATTR, useCimReading } from "@/lib/cim-reading";
 import type { ViewRoomReading } from "@shared/analytics-v2";
 
@@ -89,13 +90,13 @@ interface ViewData {
 const isLocked = (s: CimSection) => (s as CimSection & { locked?: boolean }).locked === true;
 
 /** Parse an error body defensively — proxies return HTML during deploys. */
-async function readErrorBody(res: Response): Promise<{ error?: string; code?: string }> {
+async function readErrorBody(res: Response): Promise<{ error?: string; code?: string; teaser?: boolean; firm?: string | null }> {
   return res.json().catch(() => ({}));
 }
 
-/** A load failure that carries the server's reason code (e.g. not_published). */
+/** A load failure that carries the server's reason code (e.g. not_published) — and whether it's a teaser link. */
 class ViewRoomError extends Error {
-  constructor(message: string, readonly code?: string) {
+  constructor(message: string, readonly code?: string, readonly teaser = false, readonly firm: string | null = null) {
     super(message);
   }
 }
@@ -130,14 +131,14 @@ export default function BuyerViewRoom() {
   const [localDecision, setLocalDecision] = useState<BuyerDecision | null>(null);
   const startTimeRef = useRef(Date.now());
 
-  const { data, isLoading, error } = useQuery<ViewData>({
+  const { data, isLoading, error } = useQuery<ViewData & Partial<Pick<TeaserViewData, "document">>>({
     queryKey: ["/api/view", token],
     enabled: !!token,
     queryFn: async () => {
       const res = await fetch(`/api/view/${token}`);
       if (!res.ok) {
         const body = await readErrorBody(res);
-        throw new ViewRoomError(body.error || "Access denied", body.code);
+        throw new ViewRoomError(body.error || "Access denied", body.code, body.teaser === true, body.firm ?? null);
       }
       return res.json();
     },
@@ -180,6 +181,24 @@ export default function BuyerViewRoom() {
         <Skeleton className="h-12 w-48" />
         <Skeleton className="h-[500px] w-full" />
       </div>
+    );
+  }
+
+  // A teaser link (INTEGRATION §2.4, before every CIM branch): an expired
+  // link asks the broker for a fresh one; a teaser that's offline says so.
+  if (error instanceof ViewRoomError && error.teaser && error.code === "expired") {
+    return <ExpiredTeaserCard token={token!} firm={error.firm} />;
+  }
+  if (error instanceof ViewRoomError && error.teaser && error.code === "not_published") {
+    return <TeaserNotAvailable />;
+  }
+  if (data?.document === "teaser") {
+    return (
+      <TeaserView
+        token={token!}
+        data={data as unknown as TeaserViewData}
+        onChanged={() => queryClient.invalidateQueries({ queryKey: ["/api/view", token], exact: true })}
+      />
     );
   }
 
@@ -362,7 +381,7 @@ export default function BuyerViewRoom() {
               <div className="px-1 space-y-1.5 text-xs">
                 <div className="flex justify-between text-muted-foreground">
                   <span>Access</span>
-                  <Badge variant="outline" className="text-[9px] h-4">{buyerAccessLabel(access.accessLevel)}</Badge>
+                  <Badge variant="outline" className="text-[9px] h-4">{buyerFacingLevelLabel(access.accessLevel)}</Badge>
                 </div>
                 {access.canDownload === false && (
                   <div className="flex items-center gap-1 text-muted-foreground/60">

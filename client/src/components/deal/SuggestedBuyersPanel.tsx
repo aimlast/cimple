@@ -40,6 +40,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useLocation } from "wouter";
+import { Link2 } from "lucide-react";
+import { useTeaserSummary, teaserIsPublished } from "@/components/teaser/useTeaserSummary";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Tier = "hot" | "warm" | "cool" | "cold";
@@ -125,6 +127,8 @@ interface Draft {
   /** False = the generic template, not written for this buyer (templateReason says why). */
   personalised?: boolean;
   templateReason?: "ai_unavailable" | "identifying_details" | "unusable_draft" | null;
+  /** The email carries the buyer's own teaser link where it says {teaser link}. */
+  teaserLink?: boolean;
 }
 
 /** Why a draft is the generic template, in the broker's words. */
@@ -182,6 +186,8 @@ function formatRelative(iso: string | null): string {
 /** `embedded`: shown as the Buyers tab's "Send it to next" stage, which already titles and explains it. */
 export function SuggestedBuyersPanel({ dealId, embedded = false }: { dealId: string; embedded?: boolean }) {
   const [, setLocation] = useLocation();
+  // A published teaser: every draft carries the buyer's own teaser link.
+  const { data: teaserSummary } = useTeaserSummary(dealId);
   const { toast } = useToast();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -370,6 +376,11 @@ export function SuggestedBuyersPanel({ dealId, embedded = false }: { dealId: str
               ? "Ranked by the AI deep check, then qualified-lead score. Cimple drafts the email — you review, edit, and send."
               : "Ranked by qualified-lead score. Cimple drafts the email — you review, edit, and send."}
           </p>
+          {teaserSummary && !teaserIsPublished(teaserSummary) && (
+            <p className="mt-1 text-xs text-muted-foreground/80" data-testid="text-publish-teaser-hint">
+              Publish a teaser and these emails will carry a link to it.
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-1.5 sm:shrink-0 sm:justify-end">
           <Button
@@ -637,6 +648,11 @@ export function SuggestedBuyersPanel({ dealId, embedded = false }: { dealId: str
                     </div>
                     <span className="text-2xs text-muted-foreground">{i + 1} / {drafts.length}</span>
                   </div>
+                  {d.teaserLink && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-teal/15 px-2 py-0.5 text-2xs font-medium text-teal" data-testid={`chip-teaser-link-${d.buyerUserId}`}>
+                      <Link2 className="h-3 w-3" /> Includes their own teaser link
+                    </span>
+                  )}
                   {d.personalised === false && (
                     <p className="text-2xs text-amber-500 leading-snug flex items-start gap-1" role="status" data-testid={`draft-template-${d.buyerUserId}`}>
                       <AlertTriangle className="h-3 w-3 mt-px shrink-0" />
@@ -660,6 +676,9 @@ export function SuggestedBuyersPanel({ dealId, embedded = false }: { dealId: str
                       className="text-xs font-mono min-h-[180px]"
                       data-testid={`textarea-body-${d.buyerUserId}`}
                     />
+                    {d.teaserLink && (
+                      <p className="text-2xs text-muted-foreground">Cimple puts each buyer's own link where it says {"{teaser link}"}.</p>
+                    )}
                   </div>
                 </CardContent>
               </Card>

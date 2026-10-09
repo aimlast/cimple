@@ -50,12 +50,17 @@ interface Props {
   currentLayout?: string | null;
   className?: string;
   columns?: 2 | 3;
+  /** Only these layouts (the teaser offers its teaser-safe subset). */
+  only?: readonly string[];
 }
 
-export function LayoutGallery({ value, onSelect, currentLayout, className, columns = 2 }: Props) {
+export function LayoutGallery({ value, onSelect, currentLayout, className, columns = 2, only }: Props) {
+  const groups = layoutsByCategory()
+    .map((g) => (only ? { ...g, layouts: g.layouts.filter((l) => only.includes(l.key)) } : g))
+    .filter((g) => g.layouts.length > 0);
   return (
     <div className={cn("space-y-5", className)} role="listbox" aria-label="Layouts">
-      {layoutsByCategory().map((group) => (
+      {groups.map((group) => (
         <div key={group.key}>
           <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">{group.label}</p>
           <div className={cn("grid gap-2", columns === 3 ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" : "grid-cols-1 sm:grid-cols-2")}>

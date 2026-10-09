@@ -3,21 +3,23 @@
  *
  * Every buyer_questions row records the scope of what fed its answer
  * (`answer_scope`), fixed at the moment it was answered:
- *   - "all"     drawn only from what EVERY buyer on the deal may see: the
- *               teaser-level Blind CIM, or an answer the broker/seller wrote
- *               and published on purpose.
- *   - "full"    drawn from the Blind CIM of a full-access buyer, which
- *               includes sections locked for teasers → readable by
- *               full-access buyers and above, never by teasers.
- *   - "private" drawn from the named CIM (LOI / due-diligence buyer) → only
- *               the buyer who asked.
+ *   - "all"     drawn only from what EVERY CIM buyer on the deal may see: the
+ *               Blind CIM, or an answer the broker/seller wrote and
+ *               published on purpose.
+ *   - "full"    (historical) drawn from a full-access buyer's Blind CIM back
+ *               when sections could be locked for teaser buyers. No section
+ *               was ever locked, so these read like "all" for CIM buyers.
+ *   - "private" drawn from the named CIM (Full CIM / due-diligence buyer) →
+ *               only the buyer who asked.
  *
- * On top of the scope, a Blind reader (teaser / full) never receives a
- * question or answer that names anything identifying (shared/blind-guard.ts)
- * — whoever typed it. Pure: used by the chatbot route, the Q&A feed and
- * the view room.
+ * Levels come from shared/access-levels.ts. A Teaser link (rank 0) reads the
+ * teaser only: it never asks and never reads Q&A.
+ *
+ * On top of the scope, a Blind reader never receives a question or answer
+ * that names anything identifying (shared/blind-guard.ts) — whoever typed it.
+ * Pure: used by the chatbot route, the Q&A feed and the view room.
  */
-import { cimModeForAccessLevel } from "./cim-layouts";
+import { accessLevelRank, cimModeForAccessLevel } from "./access-levels";
 import { findBlindLeaks, type BlindTerm } from "./blind-guard";
 
 export type AnswerScope = "all" | "full" | "private";
@@ -25,14 +27,14 @@ export type AnswerScope = "all" | "full" | "private";
 /** The longest buyer question the chatbot accepts (the route refuses longer; the box stops at it). */
 export const MAX_BUYER_QUESTION_CHARS = 1000;
 
-const LEVEL_RANK: Record<string, number> = { teaser: 0, full: 1, loi: 2, due_diligence: 3 };
-const rank = (level: string | null | undefined) => LEVEL_RANK[level ?? "teaser"] ?? 0;
-
-/** The scope of an answer drawn from the CIM this access level receives. */
+/**
+ * The scope of an answer drawn from the CIM this access level receives. A
+ * Teaser link never asks (the routes refuse it); were one ever judged here it
+ * is "private" — the narrowest.
+ */
 export function askerScope(accessLevel: string | null | undefined): AnswerScope {
-  const mode = cimModeForAccessLevel(accessLevel);
-  if (mode !== "blind") return "private";
-  return rank(accessLevel) >= 1 ? "full" : "all";
+  if (accessLevelRank(accessLevel) < 1) return "private";
+  return cimModeForAccessLevel(accessLevel) === "blind" ? "all" : "private";
 }
 
 export interface QaRowLike {
@@ -60,10 +62,12 @@ export function rowScope(row: QaRowLike, askerLevel: string | null | undefined |
 
 /** Scope alone: may this reader see the row? (Identity checks are separate.) */
 export function scopeAllows(scope: AnswerScope, row: { buyerAccessId: string | null }, reader: { id: string; accessLevel: string | null | undefined }): boolean {
+  // A Teaser reader sees no Q&A at all — not even rows from when the link
+  // was a CIM link (they would quote the CIM).
+  if (accessLevelRank(reader.accessLevel) < 1) return false;
   if (row.buyerAccessId && row.buyerAccessId === reader.id) return true;
   if (scope === "private") return false;
-  if (scope === "full") return rank(reader.accessLevel) >= 1;
-  return true;
+  return true; // "all", and historical "full" (no section was ever locked)
 }
 
 /**
@@ -94,6 +98,7 @@ export function readerMaySeeRow(
   reader: { id: string; accessLevel: string | null | undefined },
   blindTerms: BlindTerm[],
 ): boolean {
+  if (accessLevelRank(reader.accessLevel) < 1) return false;
   if (row.buyerAccessId && row.buyerAccessId === reader.id) return true;
   if (!approvedForSharing(row)) return false;
   if (!scopeAllows(scope, row, reader)) return false;

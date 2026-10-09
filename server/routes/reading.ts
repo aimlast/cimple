@@ -10,6 +10,9 @@
  *   - the token must be a usable link (not revoked/expired) on a published deal;
  *   - NDA required and not signed → 204, nothing stored (never 4xx: the
  *     tracker must not retry, and nothing is revealed);
+ *   - a Teaser link (teaser_only) instead needs a published, online teaser
+ *     (server/teaser/serve.ts linkOpenForBuyer) — no CIM or NDA gate; its
+ *     visits are stored with mode 'teaser' and never count as CIM views;
  *   - the body is text/plain JSON (a beacon) or application/json, ≤ 64 KB,
  *     validated with readingPayloadSchema → 400 when malformed.
  * Then server/analytics/reading-ingest.ts stores it: 400 for a rendition or
@@ -21,6 +24,7 @@ import express, { type Express } from "express";
 import { READING_RULES, readingPayloadSchema, type ReadingPayload } from "@shared/analytics-v2";
 import { dealPublishedForBuyers } from "@shared/buyer-publish-gate";
 import { ndaBlocksBuyer } from "@shared/cim-buyer-view";
+import { isTeaserOnly } from "@shared/access-levels";
 import { storage } from "../storage";
 import { viewLinkProblem } from "../buyers/view-access.js";
 import { dbReadingStore, ingestReading, networkKey, onReadingWritten, uaFamilyOf, type ReadingStore } from "../analytics/reading-ingest";
@@ -48,8 +52,18 @@ export function registerReadingRoutes(app: Express): void {
       const access = await storage.getBuyerAccessByToken(req.params.token);
       if (!access || viewLinkProblem(access)) return res.status(404).json({ error: "Not found" });
       const deal = await storage.getDeal(access.dealId);
-      if (!deal || !dealPublishedForBuyers(deal)) return res.status(404).json({ error: "Not found" });
-      if (ndaBlocksBuyer(deal, access)) return res.status(204).end();
+      if (!deal) return res.status(404).json({ error: "Not found" });
+      if (isTeaserOnly(access.accessLevel)) {
+        // The teaser is read before the CIM is published and before any NDA:
+        // its reading is stored while the teaser is published and online
+        // (no CIM-published gate, no NDA gate — and never a CIM view).
+        const { getDealTeaser } = await import("../teaser/store");
+        const { linkOpenForBuyer } = await import("../teaser/serve");
+        if (!linkOpenForBuyer(deal, access, await getDealTeaser(deal.id))) return res.status(404).json({ error: "Not found" });
+      } else {
+        if (!dealPublishedForBuyers(deal)) return res.status(404).json({ error: "Not found" });
+        if (ndaBlocksBuyer(deal, access)) return res.status(204).end();
+      }
 
       let raw: unknown = req.body;
       if (typeof raw === "string") {

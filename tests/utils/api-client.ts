@@ -310,10 +310,6 @@ export class ApiClient {
     return this.post(`/api/deals/${dealId}/generate-dd`);
   }
 
-  async generateTeaser(dealId: string | number): Promise<ApiResponse> {
-    return this.post(`/api/deals/${dealId}/generate-teaser`);
-  }
-
   // ── CIM sections ──────────────────────────────────────────────────────────
 
   async getCimSections(dealId: string | number): Promise<ApiResponse> {

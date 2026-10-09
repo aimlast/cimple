@@ -8,6 +8,10 @@
  *    mode supported when no CRM match.
  *  - Lead broker review (approve → routes to seller, or reject)
  *  - Status pipeline visualization
+ *  - Requests from the teaser (source "teaser_request"): who asked, their
+ *    email check and NDA, how they read the teaser, their note — with
+ *    Give access… (Blind CIM / Full CIM / Due diligence), Ask the seller
+ *    first, or Decline (a short, polite email, the broker's choice).
  */
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -36,6 +40,16 @@ import {
   CheckCircle2, XCircle, Clock, Users, AlertCircle, Sparkles, Copy,
 } from "lucide-react";
 import { BUYER_CATEGORIES } from "@shared/schema";
+import {
+  ACCESS_LEVELS, BLIND_ACCESS_LEVEL, DD_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, normalizeAccessLevel, type AccessLevel,
+} from "@shared/access-levels";
+import { autoGrantLevel, type TeaserEngagement } from "@shared/teaser";
+import { formatReadingTime } from "@shared/analytics-v2";
+import { useDeal } from "@/contexts/DealContext";
+import { LevelRadio, LEVEL_TERMS } from "@/components/deal/buyers/LevelRadio";
+import { useTeaserSummary } from "@/components/teaser/useTeaserSummary";
+import { teaserEngagementKey, teaserRequest } from "@/components/teaser/api";
+import { MessageSquareQuote, AlertTriangle, Megaphone } from "lucide-react";
 
 /** The category's own label ("Private Equity — Portfolio in Space"), never the raw value title-cased. */
 function categoryLabel(value: string | null | undefined): string {
@@ -80,12 +94,32 @@ interface ApprovalRequest {
   brokerReviewNotes?: string | null;
   createdAt: string;
   sellerReviewToken?: string | null;
+  /** "teaser_request" = the buyer asked for the CIM from the teaser. */
+  source?: string | null;
+  buyerAccessId?: string | null;
+  grantAccessLevel?: string | null;
+  grantedBy?: string | null;
+  buyerNote?: string | null;
+  teaserRequest?: { linkName: string | null; linkEmail: string; signerName: string | null; emailCheck: "code" | "account" | "demo"; mismatch: boolean } | null;
 }
+
+const fromTeaser = (r: Pick<ApprovalRequest, "source">) => r.source === "teaser_request";
+/** "the Blind CIM" / "the Full CIM" / "due-diligence access". */
+const grantNoun = (l: unknown) => ACCESS_LEVELS.find((x) => x.key === normalizeAccessLevel(l))?.grantNoun ?? "the CIM";
+const firstName = (n: string | null | undefined) => (n ?? "").trim().split(/\s+/)[0] || "the buyer";
+const CIM_LEVEL_OPTIONS = [BLIND_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, DD_ACCESS_LEVEL].map((l) => ({ level: l as AccessLevel, line: LEVEL_TERMS[l as AccessLevel] }));
+/** For a request from the teaser the NDA is already signed: just what each version shows. */
+const REQUEST_LEVEL_OPTIONS: Array<{ level: AccessLevel; line: string }> = [
+  { level: BLIND_ACCESS_LEVEL, line: "The whole CIM, anonymous — under the codename" },
+  { level: NAMED_ACCESS_LEVEL, line: "The whole CIM with the business's name, people and places" },
+  { level: DD_ACCESS_LEVEL, line: "The Full CIM plus the due-diligence detail" },
+];
 
 const STATUS_META: Record<string, { label: string; icon: any; color: string }> = {
   pending_broker_review:  { label: "Pending broker review",  icon: Clock,        color: "bg-amber-500/10 text-amber-400 border-amber-500/30" },
   pending_seller_review:  { label: "With seller",             icon: Users,        color: "bg-blue-500/10 text-blue-400 border-blue-500/30" },
-  approved_by_seller:     { label: "Approved · access at publish", icon: Clock,     color: "bg-blue-500/10 text-blue-400 border-blue-500/30" },
+  approved_by_seller:     { label: "Approved by the seller — gets it when the CIM goes live", icon: Clock, color: "bg-blue-500/10 text-blue-400 border-blue-500/30" },
+  approved_waiting_publish: { label: "Approved by you — gets it when the CIM goes live", icon: Clock, color: "bg-blue-500/10 text-blue-400 border-blue-500/30" },
   access_granted:         { label: "Access granted",          icon: CheckCircle2, color: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
   rejected:               { label: "Rejected",                icon: XCircle,      color: "bg-red-500/10 text-red-400 border-red-500/30" },
 };
@@ -107,6 +141,7 @@ export function BuyerApprovalsPanel({
   const qc = useQueryClient();
   const [submitOpen, setSubmitOpen] = useState(false);
   const [reviewing, setReviewing] = useState<ApprovalRequest | null>(null);
+  const [teaserAction, setTeaserAction] = useState<{ request: ApprovalRequest; kind: "give" | "seller" | "decline" } | null>(null);
   const [showDeclined, setShowDeclined] = useState(false);
 
   const { data: requests = [], isLoading, error: loadError, refetch } = useQuery<ApprovalRequest[]>({
@@ -120,8 +155,16 @@ export function BuyerApprovalsPanel({
 
   const pending = requests.filter(r => r.status === "pending_broker_review");
   const inProgress = requests.filter(r => r.status === "pending_seller_review" || r.status === "approved_by_broker");
-  // Seller approved while the CIM is unpublished — access goes out at publish.
-  const waitingForPublish = requests.filter(r => r.status === "approved_by_seller");
+  // Approved (by the seller, or by the broker) while the CIM is unpublished — access goes out at publish.
+  const waitingForPublish = requests.filter(r => r.status === "approved_by_seller" || r.status === "approved_waiting_publish");
+  // How each teaser requester read the teaser (only fetched when there is one).
+  const hasTeaserRequests = requests.some(fromTeaser);
+  const { data: teaserReading } = useQuery<TeaserEngagement>({
+    queryKey: teaserEngagementKey(dealId),
+    queryFn: () => teaserRequest("GET", `/api/deals/${dealId}/teaser/engagement`),
+    enabled: hasTeaserRequests,
+  });
+  const readingOf = (accessId: string | null | undefined) => (accessId ? teaserReading?.buyers.find((b) => b.accessId === accessId) ?? null : null);
   const granted = requests.filter(r => r.status === "access_granted");
   const declined = requests.filter(r => r.status === "rejected");
   const completed = [...granted, ...declined];
@@ -135,7 +178,7 @@ export function BuyerApprovalsPanel({
       <div className="flex flex-wrap items-center justify-between gap-3">
         {embedded ? (
           <p className="text-xs text-muted-foreground">
-            {waiting === 0 ? "" : `${waiting} waiting · you review first, then the seller signs off.`}
+            {waiting === 0 ? "" : `${waiting} waiting`}
           </p>
         ) : (
           <div>
@@ -164,18 +207,18 @@ export function BuyerApprovalsPanel({
               <Clock className="h-5 w-5 mx-auto text-muted-foreground/50 mb-2" />
               <p className="text-sm text-foreground">Nobody is waiting for approval</p>
               <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
-                When you want the seller to sign off on a buyer before they get the CIM, submit them here. You review first, then the seller gets a link to approve or decline.
+                Buyers who ask for the CIM from the teaser land here. To have the seller sign off on a buyer before they get the CIM, submit them here too — you review first, then the seller gets a link to approve or decline.
               </p>
             </div>
           )}
           {pending.length > 0 && (
-            <Section title="Needs your review" items={pending} onReview={setReviewing} showReviewBtn />
+            <Section title="Needs your review" items={pending} onReview={setReviewing} showReviewBtn readingOf={readingOf} onTeaserAction={(request, kind) => setTeaserAction({ request, kind })} />
           )}
           {inProgress.length > 0 && (
-            <Section title="With the seller" items={inProgress} onReview={setReviewing} />
+            <Section title="With the seller" items={inProgress} onReview={setReviewing} readingOf={readingOf} />
           )}
           {waitingForPublish.length > 0 && (
-            <Section title="Approved — they get the CIM when you publish" items={waitingForPublish} onReview={setReviewing} />
+            <Section title="Approved — they get the CIM when you publish" items={waitingForPublish} onReview={setReviewing} readingOf={readingOf} />
           )}
           {granted.length > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/10 px-3 py-2 text-xs text-muted-foreground" data-testid="approved-have-cim-note">
@@ -213,7 +256,7 @@ export function BuyerApprovalsPanel({
       ) : (
         <div className="space-y-3">
           {pending.length > 0 && (
-            <Section title="Needs your review" items={pending} onReview={setReviewing} showReviewBtn />
+            <Section title="Needs your review" items={pending} onReview={setReviewing} showReviewBtn readingOf={readingOf} onTeaserAction={(request, kind) => setTeaserAction({ request, kind })} />
           )}
           {inProgress.length > 0 && (
             <Section title="With seller" items={inProgress} onReview={setReviewing} />
@@ -237,6 +280,19 @@ export function BuyerApprovalsPanel({
         }}
       />
 
+      {teaserAction && (
+        <TeaserRequestDialog
+          dealId={dealId}
+          request={teaserAction.request}
+          kind={teaserAction.kind}
+          onClose={() => setTeaserAction(null)}
+          onDone={() => {
+            setTeaserAction(null);
+            refreshPipeline();
+          }}
+        />
+      )}
+
       {reviewing && (
         <ReviewDialog
           request={reviewing}
@@ -252,12 +308,14 @@ export function BuyerApprovalsPanel({
 }
 
 function Section({
-  title, items, onReview, showReviewBtn,
+  title, items, onReview, showReviewBtn, readingOf, onTeaserAction,
 }: {
   title: string;
   items: ApprovalRequest[];
   onReview: (r: ApprovalRequest) => void;
   showReviewBtn?: boolean;
+  readingOf?: (accessId: string | null | undefined) => TeaserEngagement["buyers"][number] | null;
+  onTeaserAction?: (r: ApprovalRequest, kind: "give" | "seller" | "decline") => void;
 }) {
   const { toast } = useToast();
   // The seller review link is emailed on approval, but the broker had no way
@@ -278,6 +336,17 @@ function Section({
         {items.map((r) => {
           const meta = STATUS_META[r.status];
           const StatusIcon = meta?.icon || Clock;
+          if (fromTeaser(r)) {
+            return (
+              <TeaserRequestCard
+                key={r.id}
+                request={r}
+                reading={readingOf?.(r.buyerAccessId) ?? null}
+                status={meta ? { label: meta.label, color: meta.color, Icon: StatusIcon } : null}
+                actions={showReviewBtn && r.status === "pending_broker_review" ? onTeaserAction : undefined}
+              />
+            );
+          }
           return (
             <Card key={r.id}>
               <CardContent className="p-4">
@@ -773,6 +842,7 @@ function ReviewDialog({
 }: { request: ApprovalRequest; onClose: () => void; onDone: () => void }) {
   const { toast } = useToast();
   const [notes, setNotes] = useState("");
+  const [level, setLevel] = useState<AccessLevel>(BLIND_ACCESS_LEVEL);
   // Rejection is terminal and notifies the deal team — confirm before firing.
   const [confirmReject, setConfirmReject] = useState(false);
 
@@ -782,7 +852,7 @@ function ReviewDialog({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ action, notes }),
+        body: JSON.stringify(action === "approve" ? { action, notes, grantLevel: level } : { action, notes }),
       });
       if (!res.ok) throw new Error(await readError(res, "Review failed"));
       return res.json();
@@ -827,6 +897,10 @@ function ReviewDialog({
           {request.background && (
             <div className="text-muted-foreground whitespace-pre-wrap">{request.background}</div>
           )}
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium">What will they get once the seller approves?</p>
+            <LevelRadio name="What will they get" columns={1} options={CIM_LEVEL_OPTIONS} value={level} onChange={setLevel} />
+          </div>
           <Textarea
             placeholder="Review notes (optional)"
             value={notes}
@@ -879,6 +953,188 @@ function ReviewDialog({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Requests from the teaser
+// ─────────────────────────────────────────────────────────────────────
+
+function emailCheckWords(c: NonNullable<ApprovalRequest["teaserRequest"]>["emailCheck"] | undefined): string {
+  if (c === "code") return "Email confirmed";
+  if (c === "account") return "Signed in with that email";
+  if (c === "demo") return "Email not confirmed (demo deal)";
+  return "Email confirmed";
+}
+
+/** The teaser request card (spec §5.6 stage 4). */
+function TeaserRequestCard({
+  request: r, reading, status, actions,
+}: {
+  request: ApprovalRequest;
+  reading: TeaserEngagement["buyers"][number] | null;
+  status: { label: string; color: string; Icon: any } | null;
+  actions?: (r: ApprovalRequest, kind: "give" | "seller" | "decline") => void;
+}) {
+  const tr = r.teaserRequest ?? null;
+  const day = new Date(r.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const facts = [
+    emailCheckWords(tr?.emailCheck),
+    tr?.signerName ? `Signed the NDA ${day}` : `Asked ${day}`,
+    reading?.firstOpenedAt ? `Read the teaser for ${formatReadingTime(reading.activeMs)}${reading.readToEnd ? ", to the end" : reading.furthestBlock ? `, to ${reading.furthestBlock}` : ""}` : null,
+  ].filter(Boolean) as string[];
+  const background = (r.background ?? "").split("\n").map((l) => l.trim().replace(/[.;]+$/, "")).filter((l) => l && !/^Background:/.test(l)).join(" · ");
+  const linkFirst = firstName(tr?.linkName);
+  const StatusIcon = status?.Icon;
+  return (
+    <Card data-testid={`teaser-request-${r.id}`}>
+      <CardContent className="space-y-2 p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge className="border-teal/30 bg-teal/10 text-[11px] text-teal"><Megaphone className="mr-1 h-3 w-3" /> Asked from the teaser</Badge>
+          <span className="font-medium">{r.buyerName}</span>
+          {r.buyerCompany && <span className="text-xs text-muted-foreground">· {r.buyerCompany}</span>}
+          <span className="text-xs text-muted-foreground">· {categoryLabel(r.category)}</span>
+          {status && r.status !== "pending_broker_review" && (
+            <Badge className={`ml-auto text-xs ${status.color}`}>{StatusIcon && <StatusIcon className="mr-1 h-3 w-3" />}{status.label}</Badge>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">{facts.join(" · ")}</p>
+        <p className="flex min-w-0 items-center gap-1 break-all text-xs text-muted-foreground/80"><Mail className="h-3 w-3 shrink-0" />{r.buyerEmail}</p>
+        {r.buyerNote && (
+          <p className="flex gap-1.5 text-sm text-foreground/90" data-testid="teaser-request-note">
+            <MessageSquareQuote className="mt-0.5 h-3.5 w-3.5 shrink-0 text-teal" />
+            <span className="break-words">“{r.buyerNote}” <span className="text-xs text-muted-foreground">(their note)</span></span>
+          </p>
+        )}
+        {background && <p className="line-clamp-3 text-xs text-muted-foreground">{background}</p>}
+        {tr?.mismatch && (
+          <p className="flex gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-xs" data-testid="teaser-request-mismatch">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+            <span>Signed by {tr.signerName} — you sent this link to {tr.linkName}. The CIM would open on {linkFirst}'s link.</span>
+          </p>
+        )}
+        {actions && (
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => actions(r, "give")} data-testid={`button-teaser-give-${r.id}`}>Give access…</Button>
+            <Button size="sm" variant="outline" onClick={() => actions(r, "seller")} data-testid={`button-teaser-seller-${r.id}`}>Ask the seller first</Button>
+            <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => actions(r, "decline")} data-testid={`button-teaser-decline-${r.id}`}>Decline</Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Give access… · Ask the seller first · Decline — for a request from the teaser. */
+function TeaserRequestDialog({
+  dealId, request, kind, onClose, onDone,
+}: {
+  dealId: string;
+  request: ApprovalRequest;
+  kind: "give" | "seller" | "decline";
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const { toast } = useToast();
+  const { deal } = useDeal();
+  const { data: teaser } = useTeaserSummary(dealId);
+  const auto = autoGrantLevel(teaser?.autoGrant);
+  const [level, setLevel] = useState<AccessLevel>(auto ?? BLIND_ACCESS_LEVEL);
+  useEffect(() => { if (auto) setLevel(auto); }, [auto]);
+  const [notify, setNotify] = useState(true);
+  const [notes, setNotes] = useState("");
+  const who = firstName(request.buyerName);
+  const live = !!deal?.isLive;
+  const codename = (deal as { blindCodename?: string | null } | undefined)?.blindCodename || "the opportunity";
+  const subject = `The CIM for ${level === BLIND_ACCESS_LEVEL ? codename : deal?.businessName ?? codename} is ready`;
+
+  const send = useMutation({
+    mutationFn: async () => {
+      const body = kind === "give"
+        ? { action: "grant", grantLevel: level, notifyBuyer: notify }
+        : kind === "seller"
+          ? { action: "approve", grantLevel: level }
+          : { action: "reject", notes: notes.trim() || null, notifyBuyer: notify };
+      const res = await fetch(`/api/buyer-approvals/${request.id}/broker-review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await readError(res, "Couldn't record that"));
+      return res.json();
+    },
+    onSuccess: () => {
+      toast(kind === "give"
+        ? { title: live ? `${who} now has ${grantNoun(level)}` : `Approved — ${who} gets ${grantNoun(level)} when you publish the CIM`, description: live ? (notify ? "Cimple emailed them that it's ready. The CIM opens on their teaser link." : "Nothing was emailed — the CIM opens on their teaser link.") : undefined }
+        : kind === "seller"
+          ? { title: "Sent to the seller", description: `When they approve, ${who} gets ${grantNoun(level)}.` }
+          : { title: "Request declined", description: notify ? `${who} gets a short, polite email.` : "Nothing was emailed." });
+      onDone();
+    },
+    onError: (e: Error) => toast({ title: "Couldn't record that", description: e.message, variant: "destructive" }),
+  });
+
+  const title = kind === "give" ? `Give ${who} the CIM` : kind === "seller" ? `Ask the seller about ${who}` : `Decline ${who}'s request?`;
+  return (
+    <Dialog open onOpenChange={(o) => !o && !send.isPending && onClose()}>
+      <DialogContent className="max-w-lg" data-testid={`teaser-request-dialog-${kind}`}>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          {request.teaserRequest?.mismatch && kind !== "decline" && (
+            <p className="flex gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-xs">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+              <span>Signed by {request.teaserRequest.signerName} — you sent this link to {request.teaserRequest.linkName}. The CIM would open on {firstName(request.teaserRequest.linkName)}'s link.</span>
+            </p>
+          )}
+          {kind !== "decline" && (
+            <LevelRadio name="What they get" columns={1} options={REQUEST_LEVEL_OPTIONS} value={level} onChange={setLevel} />
+          )}
+          {kind === "give" && (
+            <>
+              {live ? (
+                <label className="flex items-start gap-2">
+                  <Checkbox checked={notify} onCheckedChange={(v) => setNotify(v === true)} className="mt-0.5" />
+                  <span>
+                    Email {who} that it's ready (sent from Cimple for you)
+                    <span className="block text-xs text-muted-foreground">Subject: “{subject}”</span>
+                  </span>
+                </label>
+              ) : (
+                <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">The CIM isn't live yet. {who} gets it when you publish the CIM.</p>
+              )}
+              {live && <p className="text-xs text-muted-foreground">Their link will then last 30 days from today.</p>}
+            </>
+          )}
+          {kind === "seller" && (
+            <p className="text-xs text-muted-foreground">The seller gets a link to approve or decline. When they approve, {who} gets {grantNoun(level)}.</p>
+          )}
+          {kind === "decline" && (
+            <>
+              <Textarea placeholder="A private note for your records (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} />
+              <label className="flex items-start gap-2">
+                <Checkbox checked={notify} onCheckedChange={(v) => setNotify(v === true)} className="mt-0.5" />
+                <span>Let {who} know — a short, polite email, no reason given</span>
+              </label>
+            </>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={send.isPending}>Cancel</Button>
+          <Button
+            className={kind === "decline" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : "bg-teal text-teal-foreground hover:bg-teal/90"}
+            onClick={() => send.mutate()}
+            disabled={send.isPending}
+            data-testid={`button-teaser-request-confirm-${kind}`}
+          >
+            {send.isPending && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+            {kind === "give" ? (live ? "Give access" : "Approve") : kind === "seller" ? "Send to the seller" : "Decline"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

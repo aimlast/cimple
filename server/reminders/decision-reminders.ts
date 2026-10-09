@@ -30,7 +30,7 @@ import { storage } from "../storage";
 import { notify, escapeHtml as escapeEmailHtml } from "../notifications/service";
 import { ndaBlocksBuyer, cimHeldFromBuyers } from "@shared/cim-buyer-view";
 import type { BuyerAccess, BuyerAccessEvent, Deal } from "@shared/schema";
-import { cimModeForAccessLevel } from "@shared/cim-layouts";
+import { cimModeForAccessLevel, isTeaserOnly } from "@shared/access-levels";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const REMINDER_AFTER_MS = 3 * DAY_MS; // day 3
@@ -206,12 +206,12 @@ function buildBuyerEmail(opts: {
 type DealNaming = Pick<Deal, "businessName"> & { blindCodename?: string | null };
 
 /**
- * How the business is named in an email to this buyer. A buyer whose access
- * level serves the Blind CIM (teaser, full — see cimModeForAccessLevel) has
- * never been told who the business is: the email uses the deal's project
- * codename, or neutral wording when there is no codename yet — never the
- * business name. LOI and due-diligence buyers read the named CIM, so their
- * emails name the business.
+ * How the business is named in an email to this buyer. A Teaser or Blind CIM
+ * buyer (cimModeForAccessLevel → "blind"; shared/access-levels.ts) has never
+ * been told who the business is: the email uses the deal's project codename,
+ * or neutral wording when there is no codename yet — never the business name.
+ * Full CIM and due-diligence buyers read the named CIM, so their emails name
+ * the business.
  */
 export function buyerFacingDealName(deal: DealNaming, access: Pick<BuyerAccess, "accessLevel">): { blind: boolean; name: string | null } {
   if (cimModeForAccessLevel(access.accessLevel) === "blind") {
@@ -303,6 +303,9 @@ export function canSnoozeDecision(decision: string | null | undefined): boolean 
  */
 export async function processReminderForAccess(access: BuyerAccess, now: number, baseUrl: string): Promise<ReminderAction | "undeliverable"> {
   if (!access.firstViewedAt || access.revokedAt) return "none";
+  // A Teaser link has no CIM decision to make (it asks for the CIM instead):
+  // never reminded or lapsed — even if a stamp from when it was a CIM link survives.
+  if (isTeaserOnly(access.accessLevel)) return "none";
   const deal: Deal | undefined = await storage.getDeal(access.dealId);
   if (!deal) return "none";
   // A CIM taken offline: the buyer can't open it, so no nudges and no

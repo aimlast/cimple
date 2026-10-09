@@ -29,6 +29,7 @@ import { recordRendition, servedCimFor, buildPageIndex } from "../server/analyti
 import { pageRole } from "../shared/cim-page-role";
 import type { BlockCounters, PageRole, ReadingInteraction, ReadingPayload, RenditionPage } from "../shared/analytics-v2";
 import type { BuyerAccess, Deal } from "../shared/schema";
+import { BLIND_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, normalizeAccessLevel, seesCim } from "../shared/access-levels";
 
 // ── Arguments ───────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
@@ -78,17 +79,18 @@ const QUESTION_BANK: Partial<Record<PageRole, string[]>> = {
 };
 
 // ── Fictional buyers (created only with --create-buyers) ────────────────
+// Levels from shared/access-levels.ts (Blind CIM / Full CIM).
 const PEOPLE = [
-  ["Jordan Lee", "Harbor Capital Partners", "private_equity", "full", "interested"],
-  ["Priya Nair", "Northwind Dental Group", "strategic", "loi", "interested"],
-  ["Marcus Bell", null, "individual", "full", "not_interested"],
-  ["Elena Rossi", "Summit Family Office", "family_office", "teaser", "interested"],
-  ["Tom Becker", null, "individual", "teaser", "not_interested"],
-  ["Aisha Khan", "Cedar Ridge Holdings", "strategic", "full", "interested"],
-  ["Daniel Wu", "Beacon Search Fund", "search_fund", "full", "not_interested"],
-  ["Sofia Alvarez", "Granite Peak Equity", "private_equity", "loi", "interested"],
-  ["Ben Carter", null, "individual", "full", "interested"],
-  ["Hana Sato", "Pacific Rim Partners", "strategic", "teaser", "not_interested"],
+  ["Jordan Lee", "Harbor Capital Partners", "private_equity", BLIND_ACCESS_LEVEL, "interested"],
+  ["Priya Nair", "Northwind Dental Group", "strategic", NAMED_ACCESS_LEVEL, "interested"],
+  ["Marcus Bell", null, "individual", BLIND_ACCESS_LEVEL, "not_interested"],
+  ["Elena Rossi", "Summit Family Office", "family_office", BLIND_ACCESS_LEVEL, "interested"],
+  ["Tom Becker", null, "individual", BLIND_ACCESS_LEVEL, "not_interested"],
+  ["Aisha Khan", "Cedar Ridge Holdings", "strategic", BLIND_ACCESS_LEVEL, "interested"],
+  ["Daniel Wu", "Beacon Search Fund", "search_fund", BLIND_ACCESS_LEVEL, "not_interested"],
+  ["Sofia Alvarez", "Granite Peak Equity", "private_equity", NAMED_ACCESS_LEVEL, "interested"],
+  ["Ben Carter", null, "individual", BLIND_ACCESS_LEVEL, "interested"],
+  ["Hana Sato", "Pacific Rim Partners", "strategic", BLIND_ACCESS_LEVEL, "not_interested"],
 ] as const;
 
 async function createBuyers(deal: Deal, n: number): Promise<void> {
@@ -172,8 +174,9 @@ async function main() {
   }
 
   // The served version per access level (exactly what the view room would serve).
+  // (Levels normalised: a legacy "loi" link reads the same Full CIM as "named". Teaser links read no CIM.)
   const byLevel = new Map<string, { id: string; pages: RenditionPage[] } | null>();
-  for (const level of Array.from(new Set(accesses.map((a) => a.accessLevel)))) {
+  for (const level of Array.from(new Set(accesses.filter((a) => seesCim(a.accessLevel)).map((a) => normalizeAccessLevel(a.accessLevel))))) {
     const served = await servedCimFor(deal, level);
     if (!served) { byLevel.set(level, null); console.warn(`[seed] ${level}: nothing served yet (blind version preparing?) — skipped`); continue; }
     const reading = dryRun ? { renditionId: "dry-run" } : await recordRendition(served);
@@ -184,7 +187,7 @@ async function main() {
   const report: Array<Record<string, unknown>> = [];
   let q = 0;
   for (const [i, a] of accesses.entries()) {
-    const r = byLevel.get(a.accessLevel);
+    const r = byLevel.get(normalizeAccessLevel(a.accessLevel));
     if (!r) continue;
     const persona = personaOf(a, i);
     const phone = i % 6 === 2;

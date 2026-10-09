@@ -380,6 +380,7 @@ export class MemStorage implements IStorage {
       coverStyle: insertSettings.coverStyle ?? null,
       useBrandColors: insertSettings.useBrandColors ?? false,
       useBrandFonts: insertSettings.useBrandFonts ?? false,
+      teaserSettings: insertSettings.teaserSettings ?? null,
       createdAt: now,
       updatedAt: now,
     };

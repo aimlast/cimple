@@ -10,16 +10,17 @@
  *   - A live CIM serves each section as last approved (shared/cim-published.ts):
  *     a change waits for the broker's approval. A blank layout's sample
  *     data is never served.
- *   - Access level → version: teaser/full → Blind, loi → Normal,
- *     due_diligence → DD.
+ *   - Access level → version (shared/access-levels.ts): a Teaser link
+ *     (teaser_only) gets NO CIM at all — the teaser is its own document;
+ *     Blind CIM (blind; legacy teaser/full) → Blind, Full CIM (named; legacy
+ *     loi) → Normal, due_diligence → DD. Every CIM buyer gets the whole CIM
+ *     of their version: per-section "Full access only" locks are retired.
  *   - Blind: a section is served only with an up-to-date redacted override
  *     (override present AND blindStaleAt null). Anything else is held back
  *     (and the caller triggers re-redaction). No override at all for the deal
  *     → the "preparing" holding state. Layouts whose blind policy is
  *     "exclude" are never served blind.
- *   - Tiers: a teaser buyer gets sections marked "full" as locked stubs —
- *     redacted title only, no content.
- *   - Fail closed: a blind section (or stub title) that still contains
+ *   - Fail closed: a blind section that still contains
  *     anything identifying from the deal's facts — business name, a person,
  *     the city or street, contacts (shared/blind-guard.ts) — or an unfilled
  *     template placeholder ("[Province/State]") is held back and reported
@@ -40,14 +41,12 @@
  */
 import type { CimSection, CimSectionOverride } from "./schema";
 import {
-  LOCKED_LAYOUT_TYPE,
   applySectionOverride,
   hasSampleData,
   isCimFallbackSection,
-  cimModeForAccessLevel,
   getCimLayout,
-  sectionTier,
 } from "./cim-layouts";
+import { cimModeForAccessLevel, seesCim } from "./access-levels";
 import { servedVersions } from "./cim-published";
 import { blindIdentifiers, blindTitleRedactor } from "./blind-identifiers";
 import { blindLeakTerms, blindPlaceholders, collectStrings, findBlindLeaks } from "./blind-guard";
@@ -445,12 +444,16 @@ interface BuyerCimInput {
 }
 
 function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
+  // A Teaser link reads the teaser only — never a CIM section (the single
+  // authority: every buyer path builds through here). Unknown / empty levels
+  // normalise to teaser_only, so they get nothing too.
+  if (!seesCim(raw.accessLevel)) return { mode: "blind", sections: [], preparing: false, heldBack: 0, leaked: [], leakReasons: {} };
   const mode = cimModeForAccessLevel(raw.accessLevel);
   // On a live CIM, changes the broker hasn't approved yet stay off buyers:
   // the section's last approved version is served instead (cim-published).
   const served = servedVersions({ deal: raw.deal, mode, sections: raw.sections, overrides: raw.overrides, published: raw.published });
   const input: BuyerCimInput = { ...raw, sections: served.sections, overrides: served.overrides };
-  const { deal, accessLevel } = input;
+  const { deal } = input;
   // The figures as they stand now, applied to each section BEFORE the Blind
   // identity check so the check sees exactly what the buyer receives:
   // charts written before they carried their stated total get it back when
@@ -544,7 +547,6 @@ function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
   const codename = deal.blindCodename || "Confidential Opportunity";
   const redactTitle = blindTitleRedactor(deal as any, codename);
   const leakTerms = blindLeakTerms(deal as any, { codename });
-  const teaser = (accessLevel ?? "teaser") === "teaser";
 
   const out: BuyerSection[] = [];
   let heldBack = 0;
@@ -588,22 +590,6 @@ function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
     }
     const safeKey = blindSectionKey(s.id);
     const title = redactTitle((s.blindTitle || s.sectionTitle || "").trim());
-    if (teaser && sectionTier(s) === "full") {
-      serve(s, {
-        id: s.id,
-        dealId: s.dealId,
-        sectionKey: safeKey,
-        sectionTitle: title,
-        order: s.order,
-        layoutType: LOCKED_LAYOUT_TYPE,
-        layoutData: {},
-        aiDraftContent: null,
-        brokerEditedContent: null,
-        isVisible: true,
-        locked: true,
-      });
-      return;
-    }
     if (isMediaLayout(s.layoutType)) {
       // Built from the base items + the redacted words, never the AI's refs.
       const data = mediaData(s, o.layoutData);

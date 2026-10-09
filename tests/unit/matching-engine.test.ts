@@ -227,11 +227,11 @@ async function main() {
     [{ buyerUserId: "u-contacted", buyerEmail: "someone@x.invalid" }],
     [{ buyerUserId: null, buyerEmail: "Wei@X.invalid" }, { buyerUserId: "u-linked", buyerEmail: "linked@x.invalid" }],
   );
-  assert.deepEqual(reached({ id: "u-wei", email: "wei@x.invalid" }), { alreadyHasAccess: true, alreadyContacted: false, inApproval: false });
-  assert.deepEqual(reached({ id: "u-linked", email: "other@x.invalid" }), { alreadyHasAccess: true, alreadyContacted: false, inApproval: false });
-  assert.deepEqual(reached({ id: "u-contacted", email: "c@x.invalid" }), { alreadyHasAccess: false, alreadyContacted: true, inApproval: false });
-  assert.deepEqual(reached({ id: "u-new", email: "SOMEONE@x.invalid" }), { alreadyHasAccess: false, alreadyContacted: true, inApproval: false });
-  assert.deepEqual(reached({ id: "u-fresh", email: "" }), { alreadyHasAccess: false, alreadyContacted: false, inApproval: false });
+  assert.deepEqual(reached({ id: "u-wei", email: "wei@x.invalid" }), { alreadyHasAccess: true, alreadyContacted: false, inApproval: false, teaserOnly: false });
+  assert.deepEqual(reached({ id: "u-linked", email: "other@x.invalid" }), { alreadyHasAccess: true, alreadyContacted: false, inApproval: false, teaserOnly: false });
+  assert.deepEqual(reached({ id: "u-contacted", email: "c@x.invalid" }), { alreadyHasAccess: false, alreadyContacted: true, inApproval: false, teaserOnly: false });
+  assert.deepEqual(reached({ id: "u-new", email: "SOMEONE@x.invalid" }), { alreadyHasAccess: false, alreadyContacted: true, inApproval: false, teaserOnly: false });
+  assert.deepEqual(reached({ id: "u-fresh", email: "" }), { alreadyHasAccess: false, alreadyContacted: false, inApproval: false, teaserOnly: false });
 
   // ── 5. Unreadable criteria are not "tested"; "0" is not a limit ──────────
   setMatchingAiForTests(null);

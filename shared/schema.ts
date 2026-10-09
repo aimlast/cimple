@@ -792,7 +792,8 @@ export const buyerAccess = pgTable("buyer_access", {
   buyerCompany: text("buyer_company"),
   
   accessToken: text("access_token").notNull().unique(),
-  accessLevel: text("access_level").notNull().default("teaser"), // teaser, full, loi, due_diligence
+  // shared/access-levels.ts: teaser_only | blind | named | due_diligence (legacy teaser/full = blind, loi = named; the default 'teaser' = blind)
+  accessLevel: text("access_level").notNull().default("teaser"),
   
   // NDA
   ndaSigned: boolean("nda_signed").default(false),
@@ -992,6 +993,10 @@ export const brandingSettings = pgTable("branding_settings", {
   // broker switches them on (legacy rows hold untouched schema defaults).
   useBrandColors: boolean("use_brand_colors").notNull().default(false),
   useBrandFonts: boolean("use_brand_fonts").notNull().default(false),
+  // @anchor:branding-cols:teaser
+  // Brokerage-wide teaser wording (server/teaser/*): {defaultTemplate,
+  // confidentiality, nextStep}. Fixed teaser blocks use it when set.
+  teaserSettings: jsonb("teaser_settings"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1426,7 +1431,7 @@ export const dealMembers = pgTable("deal_members", {
   lastActiveAt: timestamp("last_active_at"),
 
   // Buyer-specific fields (replaces buyerAccess)
-  accessLevel: text("access_level"), // "teaser" | "full" | "loi" | "due_diligence"
+  accessLevel: text("access_level"), // buyer team only — shared/access-levels.ts (legacy values read as aliases)
   ndaSigned: boolean("nda_signed").default(false),
   ndaSignedAt: timestamp("nda_signed_at"),
   canDownload: boolean("can_download").default(false),
@@ -1809,6 +1814,21 @@ export const buyerApprovalRequests = pgTable("buyer_approval_requests", {
   grantedBuyerAccessId: varchar("granted_buyer_access_id"),
   grantedAt: timestamp("granted_at"),
 
+  // @anchor:approval-requests-cols:teaser
+  // A buyer who asked for the CIM from the teaser (server/teaser/requests.ts).
+  // 'teaser_request' | null (= put forward by the broker).
+  source: text("source"),
+  // The teaser link (buyer_access.id) an approval upgrades in place.
+  buyerAccessId: varchar("buyer_access_id"),
+  // The level the broker chose (shared/access-levels.ts; null = the Blind CIM).
+  grantAccessLevel: text("grant_access_level"),
+  // broker | seller | auto — who opened the CIM for them.
+  grantedBy: text("granted_by"),
+  // The buyer's own note to the broker (≤ 1,000 characters).
+  buyerNote: text("buyer_note"),
+  // {linkName, linkEmail, signerName, emailCheck: "code"|"account"|"demo", mismatch}
+  teaserRequest: jsonb("teaser_request"),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -2054,6 +2074,10 @@ export const dealOutreach = pgTable("deal_outreach", {
 
   // Failure tracking
   errorMessage: text("error_message"),
+
+  // @anchor:outreach-cols:teaser
+  // The teaser link (buyer_access.id) this email carried (set server-side only).
+  teaserAccessId: varchar("teaser_access_id"),
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -2309,10 +2333,23 @@ export interface BuyerAiSummary { text: string; at: string; key: string }
 export interface BuyerAccessEvent {
   // "contacted" = the broker's "Mark contacted" on the Engagement tab
   // (POST /api/deals/:dealId/engagement/buyers/:accessId/contacted).
-  type: "extended" | "level_changed" | "revoked" | "reminder_undeliverable" | "contacted";
+  // "granted" = the link was created, at `accessLevel` (shared/access-levels.ts).
+  // Teaser (server/teaser/*): "cim_requested" = asked for the CIM from the
+  // teaser; "teaser_passed" = "Not for me" (`reasons`, `note`; never the CIM
+  // decision); "fresh_link_requested" = asked for a new link after expiry.
+  type: "granted" | "extended" | "level_changed" | "revoked" | "reminder_undeliverable" | "contacted"
+    | "cim_requested" | "teaser_passed" | "fresh_link_requested";
   at: string;
   expiresAt?: string | null;
   accessLevel?: string | null;
+  /** granted: how the link was handed over ("outreach" = in an outreach email). */
+  via?: string | null;
+  /** extended: why ("upgrade" = the CIM was opened on a teaser link). */
+  by?: string | null;
+  /** teaser_passed: the buyer's reasons (size | location | industry | price | timing | other). */
+  reasons?: string[] | null;
+  /** teaser_passed: the buyer's optional note. */
+  note?: string | null;
   /** reminder_undeliverable: which email, and the email service's HTTP status. */
   stage?: "reminder" | "warning";
   status?: number | null;
@@ -2829,3 +2866,74 @@ export const readingBenchmarks = pgTable("reading_benchmarks", {
   index("reading_benchmarks_industry_idx").on(t.industry, t.pageRole),
 ]);
 export type ReadingBenchmark = typeof readingBenchmarks.$inferSelect;
+
+// @anchor:schema-tail:oct-teaser
+// ── The teaser (server/teaser/*, shared/teaser*.ts) ─────────────────────────
+// A short anonymous summary sent before the NDA. One row per deal: a draft
+// and the published snapshot (TeaserDoc JSON: a header plus blocks). Deleted
+// with the deal (DEAL_CHILD_TABLES).
+export const dealTeasers = pgTable("deal_teasers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  // A built-in key (shared/teaser-templates.ts) or "saved:<teaser_templates.id>".
+  templateKey: text("template_key").notNull().default("one_page"),
+  // null = the same look as the CIM.
+  designTemplateId: varchar("design_template_id"),
+  pageSize: text("page_size").notNull().default("letter"),          // letter | a4
+  numbers: text("numbers").notNull().default("ranges"),             // ranges | rounded
+  showAskingPrice: boolean("show_asking_price").notNull().default(true),
+  linkLifetime: text("link_lifetime").notNull().default("until_offline"), // until_offline | 30 | 90
+  autoGrant: text("auto_grant").notNull().default("off"),           // off | blind | named
+  draft: jsonb("draft").notNull().default(sql`'{"blocks":[],"header":null}'::jsonb`),
+  draftRev: integer("draft_rev").notNull().default(0),
+  history: jsonb("history").notNull().default(sql`'[]'::jsonb`),    // ≤ 20 {at, reason, doc}
+  generation: jsonb("generation"),
+  codenameUsed: text("codename_used"),
+  reviewConfirmed: jsonb("review_confirmed"),                       // {by, at}
+  sellerCheck: jsonb("seller_check"),
+  published: jsonb("published"),
+  publishedRev: integer("published_rev").notNull().default(0),
+  publishedAt: timestamp("published_at"),
+  unpublishedAt: timestamp("unpublished_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("deal_teasers_deal_uq").on(t.dealId),
+]);
+export type DealTeaser = typeof dealTeasers.$inferSelect;
+export type InsertDealTeaser = typeof dealTeasers.$inferInsert;
+
+/** A broker's saved teaser templates (no deal text: block skeletons + their own wording). */
+export const teaserTemplates = pgTable("teaser_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brokerId: varchar("broker_id").notNull(),
+  name: text("name").notNull(),
+  basedOn: text("based_on"),
+  blocks: jsonb("blocks").notNull(),
+  settings: jsonb("settings").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("teaser_templates_broker_idx").on(t.brokerId),
+]);
+export type TeaserTemplateRow = typeof teaserTemplates.$inferSelect;
+
+/**
+ * The 6-digit email check on a buyer link (server/teaser/email-check.ts):
+ * only the address the broker sent the link to can ask for the CIM. The
+ * code is stored as an HMAC, never as typed. Deleted with the deal.
+ */
+export const buyerLinkEmailChecks = pgTable("buyer_link_email_checks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  buyerAccessId: varchar("buyer_access_id").notNull(),
+  codeHash: text("code_hash").notNull(),
+  sentAt: timestamp("sent_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  verifiedAt: timestamp("verified_at"),
+  method: text("method").notNull().default("code"),                 // code | account | demo
+}, (t) => [
+  index("buyer_link_email_checks_access_idx").on(t.buyerAccessId),
+]);
+export type BuyerLinkEmailCheck = typeof buyerLinkEmailChecks.$inferSelect;

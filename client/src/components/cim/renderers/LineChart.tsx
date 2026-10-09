@@ -36,6 +36,11 @@ interface LineChartLayoutData {
   yLabel?: string;
   unit?: string;
   title?: string;
+  /**
+   * The teaser's revenue trend (shared/teaser.ts): values are an index
+   * (first year = 100), not money — no value axis, tooltips say "Index 112".
+   */
+  indexed?: boolean;
 }
 
 interface RendererProps {
@@ -51,9 +56,10 @@ interface CustomTooltipProps {
   label?: string;
   unit?: string;
   series?: SeriesConfig[];
+  indexed?: boolean;
 }
 
-function CustomTooltip({ active, payload, label, unit, series }: CustomTooltipProps) {
+function CustomTooltip({ active, payload, label, unit, series, indexed }: CustomTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
   return (
     <div className="bg-card border border-card-border rounded-md shadow-md px-3 py-2 text-xs">
@@ -63,10 +69,16 @@ function CustomTooltip({ active, payload, label, unit, series }: CustomTooltipPr
         return (
           <div key={i} className="flex items-center gap-2 mb-0.5">
             <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: p.color }} />
-            <span className="text-muted-foreground">{seriesLabel}:</span>
-            <span className="font-medium tabular-nums">
-              {formatFullValue(p.value, unit)}
-            </span>
+            {indexed ? (
+              <span className="font-medium tabular-nums">Index {Math.round(Number(p.value))}</span>
+            ) : (
+              <>
+                <span className="text-muted-foreground">{seriesLabel}:</span>
+                <span className="font-medium tabular-nums">
+                  {formatFullValue(p.value, unit)}
+                </span>
+              </>
+            )}
           </div>
         );
       })}
@@ -96,8 +108,9 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
   // CIM shares one palette (per-series colours in the data are ignored).
   const colorPalette = theme.chart;
 
-  const showLegend = series.length > 1;
-  const yAxisWidth = axisWidthFor(chartData.flatMap((d) => series.map((s) => d[s.key])), data.unit);
+  const indexed = data.indexed === true;
+  const showLegend = series.length > 1 && !indexed;
+  const yAxisWidth = indexed ? 0 : axisWidthFor(chartData.flatMap((d) => series.map((s) => d[s.key])), data.unit);
 
   return (
     <div>
@@ -132,6 +145,8 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
             label={data.xLabel ? { value: data.xLabel, position: "insideBottom", offset: -12, fontSize: 11, fill: theme.inkMuted } : undefined}
           />
           <YAxis
+            hide={indexed}
+            domain={indexed ? ["dataMin - 10", "dataMax + 10"] : undefined}
             tick={{ fontSize: 11, fill: theme.inkMuted }}
             axisLine={false}
             tickLine={false}
@@ -139,7 +154,7 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
             tickFormatter={(v) => formatAxisTick(v, data.unit)}
           />
           <Tooltip
-            content={<CustomTooltip unit={data.unit} series={series} />}
+            content={<CustomTooltip unit={data.unit} series={series} indexed={indexed} />}
             cursor={{ stroke: theme.line, strokeWidth: 1 }}
           />
           {showLegend && (
@@ -163,6 +178,8 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
               strokeWidth={2}
               dot={{ r: 3, fill: colorPalette[i % colorPalette.length], strokeWidth: 0 }}
               activeDot={{ r: 5, strokeWidth: 0 }}
+              // An index chart prints its values on the points (a printed teaser has no tooltips).
+              label={indexed ? { position: "top", fontSize: 10, fill: theme.inkMuted, formatter: (v: unknown) => (typeof v === "number" ? Math.round(v) : v) } : undefined}
             />
           ))}
         </LineChart>

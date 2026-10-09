@@ -19,7 +19,7 @@ import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { cimSections, type CimSection, type Deal, type InsertCimSection } from "@shared/schema";
-import { CIM_ACCESS_TIERS, isCimLayoutKey } from "@shared/cim-layouts";
+import { isCimLayoutKey } from "@shared/cim-layouts";
 import { recordPublishedVersions } from "./published-versions";
 import { buyersReadWorkingCopy } from "@shared/cim-buyer-view";
 import {
@@ -131,7 +131,6 @@ export function legacySectionInsert(
   const layoutType = b.layoutType === undefined ? "prose_highlight" : b.layoutType;
   if (!isCimLayoutKey(layoutType)) return { ok: false, error: "Unknown layout type" };
   const text = (v: unknown) => (typeof v === "string" && v.trim() ? v : null);
-  const tier = (CIM_ACCESS_TIERS as readonly string[]).includes(b.accessTier as string) ? (b.accessTier as string) : "teaser";
   return {
     ok: true,
     fields: {
@@ -148,7 +147,7 @@ export function legacySectionInsert(
       // A live CIM doesn't show a section nobody has approved (buyers
       // reading the kept copy of an update under review don't see the draft).
       isVisible: buyersReadWorkingCopy(deal) ? false : b.isVisible !== false,
-      accessTier: tier,
+      // (No access tier: per-section locks are retired — a body's accessTier is ignored.)
       blindStaleAt: new Date(),
     },
   };

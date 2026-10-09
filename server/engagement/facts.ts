@@ -44,7 +44,7 @@ import {
   type RenditionSummary,
   type VisitFacts,
 } from "@shared/analytics-v2";
-import { cimModeForAccessLevel } from "@shared/cim-layouts";
+import { ACCESS_LEVELS, NAMED_ACCESS_LEVEL, cimModeForAccessLevel, normalizeAccessLevel, seesCim } from "@shared/access-levels";
 import { chartOfPoint, headingKey } from "@shared/cim-blocks";
 import { pageRole } from "@shared/cim-page-role";
 import { blindSectionKey } from "@shared/cim-buyer-view";
@@ -93,10 +93,13 @@ export async function loadDealReadingFacts(
   filters: EngagementFilters,
   now: Date = new Date(),
 ): Promise<CaptureFacts> {
-  const [accesses, live] = await Promise.all([
+  const [allAccesses, live] = await Promise.all([
     storage.getBuyerAccessByDeal(deal.id),
     storage.getCimSectionsByDeal(deal.id).catch((): CimSection[] => []),
   ]);
+  // CIM reading only: a Teaser link can't open the CIM (its reading is the
+  // teaser's, reported on its own — shared/access-levels.ts seesCim).
+  const accesses = allAccesses.filter((a) => seesCim(a.accessLevel));
   const listed = accesses.filter((a) => segmentMatches(a, filters) && (filters.buyers.length === 0 || filters.buyers.includes(a.id)));
   const q = {
     dealId: deal.id,
@@ -138,7 +141,7 @@ export async function loadDealReadingFacts(
     // Document view had no version to draw on and showed no pages at all.
     const levels = accesses.filter((a) => legacyVisits.some((v) => v.accessId === a.id)).map((a) => a.accessLevel);
     const since = new Date(Math.min(...legacyVisits.map((v) => v.startedAt.getTime())));
-    const lr = (await liveRenditionOf(deal, mainAccessLevel(levels), since)) ?? (await liveRenditionOf(deal, "loi", since));
+    const lr = (await liveRenditionOf(deal, mainAccessLevel(levels), since)) ?? (await liveRenditionOf(deal, NAMED_ACCESS_LEVEL, since));
     if (lr) {
       renditions = [...renditions, lr.raw];
       chosen = lr.raw;
@@ -193,12 +196,16 @@ export function chooseRendition(renditions: RawRendition[], visits: RawVisit[], 
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const MODE_LABEL: Record<string, string> = { blind: "Blind", normal: "Named", dd: "Due diligence" };
+/** The registry's words per version: blind → "Blind CIM", normal → "Full CIM", dd → "Due diligence", teaser → "Teaser". */
+const MODE_LABEL: Record<string, string> = Object.fromEntries(ACCESS_LEVELS.map((l) => [l.cimMode ?? "teaser", l.label]));
 
-/** "Blind · published 12 Sep", "Blind teaser · published 12 Sep". */
+/**
+ * "Blind CIM · published 12 Sep". A rendition recorded as {blind, teaser}
+ * before Oct 2026 was the Blind CIM too — same words, no suffix.
+ */
 export function renditionLabel(r: { mode: string; variant: string; createdAt: Date }): string {
   const date = `${r.createdAt.getUTCDate()} ${MONTHS[r.createdAt.getUTCMonth()]}`;
-  return `${MODE_LABEL[r.mode] ?? r.mode}${r.variant === "teaser" ? " teaser" : ""} · published ${date}`;
+  return `${MODE_LABEL[r.mode] ?? r.mode} · published ${date}`;
 }
 
 function summary(r: RawRendition): RenditionSummary {
@@ -494,7 +501,7 @@ export function buyerShell(a: BuyerAccess, fit: BuyerFit | null = null): BuyerRe
     company: a.buyerCompany ?? null,
     email: a.buyerEmail,
     buyerType: a.buyerType ?? null,
-    accessLevel: a.accessLevel,
+    accessLevel: normalizeAccessLevel(a.accessLevel),
     mode: cimModeForAccessLevel(a.accessLevel) as CimMode,
     grantedAt: iso(a.createdAt)!,
     firstViewedAt: iso(a.firstViewedAt),

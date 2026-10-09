@@ -3,9 +3,9 @@
  * /broker/cim/:dealId/design).
  *
  *   Left:   the outline — drag to reorder, "+" between sections, a menu per
- *           section (rename, duplicate, move, hide, access tier, delete).
+ *           section (rename, duplicate, move, hide, delete).
  *   Centre: the paper CIM exactly as buyers see it (same wrappers as the
- *           view room); "Preview as" switches to a teaser / full / LOI / DD
+ *           view room); "Preview as" switches to a Blind CIM / Full CIM / DD
  *           buyer's view, computed with the server's own rules.
  *   Right:  the inspector — title, layout, content, AI writer, who can see
  *           it, approve / regenerate / undo / delete.
@@ -47,22 +47,22 @@ import { regenerateBuyerImpact } from "@shared/cim-generation-warnings";
 import { useAiGate } from "@/components/cim-builder/useAiGate";
 import { SectionList } from "@/components/cim-builder/SectionList";
 import { SectionInspector } from "@/components/cim-builder/SectionInspector";
-import { CimCanvas, type PreviewAs } from "@/components/cim-builder/CimCanvas";
+import { CimCanvas, previewFromParam, type PreviewAs } from "@/components/cim-builder/CimCanvas";
 import { AddSectionDialog } from "@/components/cim-builder/AddSectionDialog";
 import { ChangeLayoutDialog } from "@/components/cim-builder/ChangeLayoutDialog";
 import { builderRequest, errorText, type BuilderSection } from "@/components/cim-builder/api";
 import { useDdRun } from "@/components/cim-builder/useDdRun";
 import { useDealDesign } from "@/components/cim-design/api";
 import { DesignPanel } from "@/components/cim-design/DesignPanel";
-import { cimModeForAccessLevel, hasSampleData } from "@shared/cim-layouts";
+import { hasSampleData } from "@shared/cim-layouts";
+import { BLIND_ACCESS_LEVEL, DD_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, cimModeForAccessLevel } from "@shared/access-levels";
 import { sectionsAwaitingApproval } from "@shared/cim-approvals";
 
 const PREVIEWS: Array<{ key: PreviewAs; label: string; hint: string }> = [
   { key: "editor", label: "Editing", hint: "Everything, with your edit controls" },
-  { key: "teaser", label: "Teaser buyer", hint: "Blind CIM; “Full access” sections locked" },
-  { key: "full", label: "Full-access buyer", hint: "Blind CIM, every section" },
-  { key: "loi", label: "LOI buyer", hint: "The named CIM" },
-  { key: "due_diligence", label: "Due-diligence buyer", hint: "Named CIM + DD details" },
+  { key: BLIND_ACCESS_LEVEL, label: "Blind CIM buyer", hint: "The whole CIM under the codename" },
+  { key: NAMED_ACCESS_LEVEL, label: "Full CIM buyer", hint: "The named CIM" },
+  { key: DD_ACCESS_LEVEL, label: "Due-diligence buyer", hint: "Full CIM + DD details" },
 ];
 
 type Pane = "sections" | "page" | "edit";
@@ -80,12 +80,9 @@ export default function CIMDesigner() {
 
   // ?section=<id> opens the builder on that section (links from the CIM tab's review panel).
   const [selectedId, setSelectedId] = useState<string | null>(() => new URLSearchParams(window.location.search).get("section"));
-  // ?preview=teaser|full|loi|due_diligence opens straight into a buyer preview
-  // (the CIM tab's version cards link here).
-  const [previewAs, setPreviewAs] = useState<PreviewAs>(() => {
-    const p = new URLSearchParams(window.location.search).get("preview");
-    return PREVIEWS.some((x) => x.key === p) ? (p as PreviewAs) : "editor";
-  });
+  // ?preview=blind|full-cim|due-diligence opens straight into a buyer
+  // preview (the CIM tab links here; older teaser|full|loi links still work).
+  const [previewAs, setPreviewAs] = useState<PreviewAs>(() => previewFromParam(new URLSearchParams(window.location.search).get("preview")));
   const [pane, setPane] = useState<Pane>(() => (new URLSearchParams(window.location.search).get("design") === "1" ? "edit" : "page"));
   const [addAt, setAddAt] = useState<{ open: boolean; afterId?: string | null }>({ open: false });
   const [layoutOpen, setLayoutOpen] = useState(false);
@@ -133,7 +130,9 @@ export default function CIMDesigner() {
     : null;
   const generation = useCimGeneration(dealId);
 
-  const overrideMode = previewAs === "teaser" || previewAs === "full" ? "blind" : previewAs === "due_diligence" ? "dd" : null;
+  // The overrides the previewed version is drawn with (none for editing or the Full CIM).
+  const previewMode = previewAs === "editor" ? null : cimModeForAccessLevel(previewAs);
+  const overrideMode = previewMode === "blind" || previewMode === "dd" ? previewMode : null;
   const { data: overrides = [], isLoading: overridesLoading } = useQuery<CimSectionOverride[]>({
     queryKey: ["/api/deals", dealId, "cim-overrides", overrideMode ?? "none", state?.blind.updating ?? 0, state?.blind.held ?? 0, sections.length],
     queryFn: () => builderRequest<CimSectionOverride[]>("GET", `/api/deals/${dealId}/cim-overrides/${overrideMode}`),
@@ -152,7 +151,6 @@ export default function CIMDesigner() {
     approved: !!(deal?.contentApprovedByBroker || deal?.contentApprovedBySeller || deal?.designApprovedByBroker || deal?.designApprovedBySeller),
   });
   const hiddenCount = sections.filter((s) => s.isVisible === false).length;
-  const lockedCount = sections.filter((s) => s.accessTier === "full").length;
   const readOnly = previewAs !== "editor";
 
   // Keep the selection valid (deleted section, fresh CIM) — but not while a
@@ -247,7 +245,7 @@ export default function CIMDesigner() {
         <div>
           <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Sections</p>
           <p className="text-[10px] text-muted-foreground/70">
-            {sections.length} · {approvedCount} approved{hiddenCount ? ` · ${hiddenCount} hidden` : ""}{lockedCount ? ` · ${lockedCount} full-access` : ""}
+            {sections.length} · {approvedCount} approved{hiddenCount ? ` · ${hiddenCount} hidden` : ""}
           </p>
         </div>
         {!readOnly && (
@@ -268,7 +266,6 @@ export default function CIMDesigner() {
           onRename={(id, t) => builder.patch.mutate({ id, sectionTitle: t })}
           onDuplicate={(id) => builder.duplicate.mutate(id)}
           onToggleVisible={(s) => builder.patch.mutate({ id: s.id, isVisible: s.isVisible === false })}
-          onSetTier={(id, tier) => builder.patch.mutate({ id, accessTier: tier })}
           onDelete={(s) => setDeleteTarget(s)}
           onRedoBlind={(id) => builder.redoBlind.mutate(id)}
         />
@@ -730,19 +727,21 @@ function PreviewBanner({
   onRetryBlind: () => void;
   onBackToEditing: () => void;
 }) {
-  const blindView = previewAs === "teaser" || previewAs === "full";
+  const blindView = previewAs !== "editor" && cimModeForAccessLevel(previewAs) === "blind";
   const label = PREVIEWS.find((p) => p.key === previewAs)?.label ?? "";
+  // "a Blind CIM buyer", "a Full CIM buyer", "a due-diligence buyer" (CIM stays capitalised).
+  const who = /^[A-Z][a-z]+ CIM\b/.test(label) ? label : label.charAt(0).toLowerCase() + label.slice(1);
   return (
     <div className="space-y-2">
       <div className="rounded-lg border border-border bg-card px-3 py-2 text-xs flex flex-wrap items-center gap-x-3 gap-y-1.5">
         {blindView ? <Lock className="h-3.5 w-3.5 text-amber-500" /> : <Unlock className="h-3.5 w-3.5 text-teal" />}
-        <span><span className="font-medium">Previewing as a {label.toLowerCase()}</span> <span className="text-muted-foreground">— {hint}. Read-only.</span></span>
+        <span><span className="font-medium">Previewing as a {who}</span> <span className="text-muted-foreground">— {hint}. Read-only.</span></span>
         {loading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
         <button type="button" onClick={onBackToEditing} className="ml-auto text-teal hover:underline">Back to editing</button>
       </div>
       {blindView && !blindGenerated && (
         <Notice tone="amber" action={<Button size="sm" className="h-7 text-xs bg-amber-500 text-black hover:bg-amber-400" disabled={busy} onClick={() => onGenerate("blind")}>{busy ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}Generate blind version</Button>}>
-          No blind version yet. Buyers on teaser or full links see “Preparing your confidential view” until it exists (it's also created automatically on the first visit).
+          No blind version yet. Blind CIM buyers see “Preparing your confidential view” until it exists (it's also created automatically on the first visit).
         </Notice>
       )}
       {blindView && blindGenerated && (blindHeld > 0 || (blindUpdating > 0 && !!blindError)) && (
@@ -755,7 +754,7 @@ function PreviewBanner({
           {`${blindUpdating} section${blindUpdating === 1 ? " is" : "s are"} being redacted. Blind buyers see ${blindUpdating === 1 ? "it" : "them"} as soon as ${blindUpdating === 1 ? "it's" : "they're"} ready — never the un-redacted text.`}
         </Notice>
       )}
-      {previewAs === "due_diligence" && !ddGenerated && (
+      {previewAs === DD_ACCESS_LEVEL && !ddGenerated && (
         <Notice tone="blue" action={<Button size="sm" className="h-7 text-xs bg-blue-500 text-white hover:bg-blue-400" disabled={ddBusy} onClick={() => onGenerate("dd")} data-testid="button-generate-dd">{ddBusy ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}{ddBusy ? "Writing…" : "Generate DD version"}</Button>}>
           {ddBusy
             ? "Writing the due-diligence version — about 20 seconds a section. It keeps going if you leave this page."
@@ -767,7 +766,7 @@ function PreviewBanner({
           )}
         </Notice>
       )}
-      {previewAs === "due_diligence" && ddGenerated && ddOutOfDate > 0 && (
+      {previewAs === DD_ACCESS_LEVEL && ddGenerated && ddOutOfDate > 0 && (
         <Notice
           tone="blue"
           action={

@@ -30,11 +30,14 @@ import { CimSheet } from "@/components/cim/CimSheet";
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { CimContactPage, CimDisclaimerPage, withBrokeragePages } from "@/components/cim/CimFrontBackPages";
 
+import { BLIND_ACCESS_LEVEL, DD_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, accessLevelLabel } from "@shared/access-levels";
+
 type Version = "normal" | "blind" | "dd";
+// Each version as the buyers at that level read it (shared/access-levels.ts).
 const VERSIONS: Array<{ key: Version; label: string; accessLevel: string }> = [
-  { key: "normal", label: "Named CIM", accessLevel: "loi" },
-  { key: "blind", label: "Blind CIM", accessLevel: "full" },
-  { key: "dd", label: "Due diligence", accessLevel: "due_diligence" },
+  { key: "normal", label: accessLevelLabel(NAMED_ACCESS_LEVEL), accessLevel: NAMED_ACCESS_LEVEL },
+  { key: "blind", label: accessLevelLabel(BLIND_ACCESS_LEVEL), accessLevel: BLIND_ACCESS_LEVEL },
+  { key: "dd", label: accessLevelLabel(DD_ACCESS_LEVEL), accessLevel: DD_ACCESS_LEVEL },
 ];
 
 function Watermark({ text }: { text: string }) {

@@ -13,6 +13,7 @@ import { startReminderScheduler } from "./reminders/decision-reminders";
 import { formatRequestLogLine, scrubSentryEvent } from "./log-redact";
 import { AI_LIMIT, applyInterviewRateLimits } from "./rate-limit-scope";
 import { applyBulkRateLimits } from "./security/bulk-limits";
+import { applyTeaserRateLimits } from "./routes/teaser";
 
 // Error monitoring — activates only when SENTRY_DSN is set (free tier is
 // plenty for beta). Without it this is a no-op.
@@ -188,6 +189,10 @@ app.use("/api/deals/:dealId/buyer-fit/:accessId/ai", aiLimiter);
 // view room's reading tracker (a flush every ~15 s per tab) gets its own
 // roomy per-link ceiling, keyed by a hash of the link — never the AI limiter.
 app.use("/api/deals/:dealId/engagement/buyers/:accessId/brief", aiLimiter);
+// ── teaser limiters ──
+// The AI limiter on the model-running teaser routes only (server/routes/teaser.ts);
+// the buyer's request steps are limited per link inside those routes.
+applyTeaserRateLimits(app, aiLimiter);
 app.use("/api/view/:token/reading", rateLimit({
   windowMs: 60 * 1000,
   limit: 120,

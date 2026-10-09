@@ -21,6 +21,7 @@ import {
   cimSectionOverrides, discrepancies, dealMembers, notifications, buyerApprovalRequests, dealOutreach,
   dealDocumentRequirements, buyerEmails, dealMedia, buyerUsers, cimPublishedSnapshots,
   cimRenditions, buyerVisits, readingRollups, readingBenchmarks,
+  dealTeasers, buyerLinkEmailChecks,
 } from "@shared/schema";
 import { resolveDocumentPath } from "../documents/document-path";
 
@@ -61,6 +62,9 @@ export const DEAL_CHILD_TABLES = {
   buyer_visits: { table: buyerVisits, column: buyerVisits.dealId, mode: "delete" },
   cim_renditions: { table: cimRenditions, column: cimRenditions.dealId, mode: "delete" },
   reading_benchmarks: { table: readingBenchmarks, column: readingBenchmarks.dealId, mode: "delete" },
+  // The teaser (server/teaser/*): the deal's teaser document and its links' email checks.
+  deal_teasers: { table: dealTeasers, column: dealTeasers.dealId, mode: "delete" },
+  buyer_link_email_checks: { table: buyerLinkEmailChecks, column: buyerLinkEmailChecks.dealId, mode: "delete" },
   buyer_emails: { table: buyerEmails, column: buyerEmails.dealId, mode: "detach", field: "dealId" },
   buyer_users: { table: buyerUsers, column: buyerUsers.invitedByDeal, mode: "detach", field: "invitedByDeal" },
 } as const;

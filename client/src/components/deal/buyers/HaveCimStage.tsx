@@ -31,7 +31,25 @@ import {
 } from "lucide-react";
 import type { AccessFit } from "@shared/buyer-fit";
 import { invalidateBuyerPipeline } from "@/lib/buyer-pipeline";
+import { seesCim } from "@shared/access-levels";
 import { BuyerFitDialog, FitChip } from "./BuyerFit";
+
+/**
+ * The buyer's own next step after "Interested", in words ("Next: wants to make
+ * an offer (LOI)") — never the raw value. LOI here is the buyer's step, not an
+ * access level.
+ */
+const NEXT_STEP_WORDS: Record<string, string> = {
+  seller_call: "wants a call with the seller",
+  management_meeting: "wants a management meeting",
+  site_visit: "wants a site visit",
+  loi: "wants to make an offer (LOI)",
+  more_info: "wants more information",
+  other: "another next step",
+};
+export function nextStepWords(step: string): string {
+  return NEXT_STEP_WORDS[step] ?? step.replace(/_/g, " ");
+}
 
 /** Read the server's JSON error body, falling back to a readable default. */
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -134,7 +152,11 @@ function RevokedList({ buyers, published, onGrant }: { buyers: any[]; published:
   );
 }
 
-export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], onGrant, onGoToSend }: Props) {
+export function HaveCimStage({ dealId, published, buyers: allBuyers, revokedBuyers: allRevoked = [], onGrant, onGoToSend }: Props) {
+  // Only links that open a CIM (Blind CIM, Full CIM, due diligence) — Teaser
+  // links have their own stage (shared/access-levels.ts seesCim).
+  const buyers = useMemo(() => allBuyers.filter((b: any) => seesCim(b.accessLevel)), [allBuyers]);
+  const revokedBuyers = useMemo(() => allRevoked.filter((b: any) => seesCim(b.accessLevel)), [allRevoked]);
   const { toast } = useToast();
   const qc = useQueryClient();
   const [revokeTarget, setRevokeTarget] = useState<any | null>(null);
@@ -243,7 +265,7 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
       buyer,
       name: buyer.buyerName || buyer.buyerEmail,
       decision,
-      nextStep: buyer.decision === "interested" && buyer.decisionNextStep ? String(buyer.decisionNextStep).replace(/_/g, " ") : null,
+      nextStep: buyer.decision === "interested" && buyer.decisionNextStep ? nextStepWords(String(buyer.decisionNextStep)) : null,
       card,
       readMs: card?.activeMs ?? 0,
       activity: views === 0 && !card
@@ -331,15 +353,15 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
 
   const linkCell = (r: (typeof rows)[number]) => (
     <div className="text-xs">
-      <p className={r.buyer.ndaSigned ? "text-success-muted-foreground" : "text-muted-foreground"}>
+      <p className={`whitespace-nowrap ${r.buyer.ndaSigned ? "text-success-muted-foreground" : "text-muted-foreground"}`}>
         {r.buyer.ndaSigned ? "NDA signed" : "NDA not signed"}
       </p>
       {r.expiresAt ? (
-        <p className={r.expired ? "text-red-500" : "text-muted-foreground/80"}>
+        <p className={`whitespace-nowrap ${r.expired ? "text-red-500" : "text-muted-foreground/80"}`}>
           {r.expired ? "Link expired" : "Link expires"} {shortDate(r.expiresAt)}
         </p>
       ) : (
-        <p className="text-muted-foreground/60">Link never expires</p>
+        <p className="whitespace-nowrap text-muted-foreground/60">Link never expires</p>
       )}
     </div>
   );
@@ -373,8 +395,7 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
                   <p className="font-medium text-foreground">{r.name}</p>
                   {r.buyer.buyerCompany && <p className="text-xs text-muted-foreground mt-0.5">{r.buyer.buyerCompany}</p>}
                   {r.buyer.buyerName && <p className="text-xs text-muted-foreground/60">{r.buyer.buyerEmail}</p>}
-                  {/* Which CIM version this buyer sees (teaser → blind with locked
-                      sections, full → blind, LOI → named, DD → named + DD detail). */}
+                  {/* Which CIM version this buyer sees (Blind CIM, Full CIM or due diligence). */}
                   <div className="mt-1.5 flex items-center gap-1.5">
                     <span className="text-[11px] text-muted-foreground whitespace-nowrap">Sees</span>
                     <AccessLevelSelect dealId={dealId} buyer={r.buyer} />

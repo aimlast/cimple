@@ -1,18 +1,16 @@
 /**
  * SectionList — the builder's outline: drag to reorder (by the handle, or
  * Alt+↑/↓ on a focused row), "+" between any two sections, and a menu per
- * section (rename, duplicate, move, hide, access tier, redo its blind
- * version, delete).
+ * section (rename, duplicate, move, hide, redo its blind version, delete).
  */
 import { useEffect, useRef, useState } from "react";
 import { Reorder, useDragControls } from "framer-motion";
 import {
   AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, Copy, Eye, EyeOff, GripVertical, Loader2, Lock,
-  MoreHorizontal, Pencil, Plus, RefreshCw, Sparkles, Trash2, Users,
+  MoreHorizontal, Pencil, Plus, RefreshCw, Sparkles, Trash2,
 } from "lucide-react";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup,
-  DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { layoutLabel } from "@shared/cim-layouts";
@@ -27,7 +25,6 @@ export interface SectionListActions {
   onRename: (id: string, title: string) => void;
   onDuplicate: (id: string) => void;
   onToggleVisible: (s: BuilderSection) => void;
-  onSetTier: (id: string, tier: "teaser" | "full") => void;
   onDelete: (s: BuilderSection) => void;
   /** Redo this section's blind version (shown once the deal has a Blind CIM). */
   onRedoBlind?: (id: string) => void;
@@ -102,7 +99,7 @@ interface RowProps extends SectionListActions {
 
 function Row({
   section: s, idx, total, selected, showBlindStatus, readOnly, onDragStart, onDragEnd, onMove,
-  onSelect, onAddAfter, onRename, onDuplicate, onToggleVisible, onSetTier, onDelete, onRedoBlind,
+  onSelect, onAddAfter, onRename, onDuplicate, onToggleVisible, onDelete, onRedoBlind,
 }: RowProps) {
   const controls = useDragControls();
   const [renaming, setRenaming] = useState(false);
@@ -196,11 +193,6 @@ function Row({
           )}
           <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 mt-0.5 min-w-0 text-[10px] text-muted-foreground">
             <span className="truncate">{layoutLabel(s.layoutType)}</span>
-            {s.accessTier === "full" && (
-              <span className="inline-flex items-center gap-0.5 text-teal shrink-0" title="Full access only — locked for teaser buyers">
-                <Lock className="h-2.5 w-2.5" /> Full
-              </span>
-            )}
             {hidden && <span className="inline-flex items-center gap-0.5 shrink-0"><EyeOff className="h-2.5 w-2.5" /> Hidden</span>}
             {running && (
               <span className="inline-flex items-center gap-0.5 text-teal shrink-0">
@@ -313,16 +305,6 @@ function Row({
                 {hidden ? <Eye className="h-3.5 w-3.5 mr-2" /> : <EyeOff className="h-3.5 w-3.5 mr-2" />}
                 {hidden ? "Show to buyers" : "Hide from buyers"}
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-[11px] font-medium text-muted-foreground">Who can see it</DropdownMenuLabel>
-              <DropdownMenuRadioGroup value={s.accessTier} onValueChange={(v) => onSetTier(s.id, v as "teaser" | "full")}>
-                <DropdownMenuRadioItem value="teaser">
-                  <Users className="h-3.5 w-3.5 mr-2" /> Every buyer (teaser)
-                </DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="full">
-                  <Lock className="h-3.5 w-3.5 mr-2" /> Full access only
-                </DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
               {showBlindStatus && onRedoBlind && s.blindStatus !== "excluded" && (
                 <>
                   <DropdownMenuSeparator />

@@ -19,6 +19,13 @@ import {
 } from "lucide-react";
 import { PageStrip, StatusChip, agoText, buyerTypeWord, initials } from "./parts";
 import type { EngagementNav } from "../types";
+import { accessLevelRank } from "@shared/access-levels";
+
+/** Which CIM the buyer has, in words (shared/access-levels.ts). */
+function haveLevelText(level: string | null | undefined): string {
+  const rank = accessLevelRank(level);
+  return rank >= 3 ? "Due diligence" : rank === 2 ? "Has the Full CIM" : "Has the Blind CIM";
+}
 
 const VERDICT: Record<string, string> = { strong: "Strong fit", good: "Good fit", possible: "Possible fit", unlikely: "Unlikely fit" };
 
@@ -102,7 +109,7 @@ export function BuyerCard(props: BuyerCardProps) {
             )}
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {[type, fit, card.mode === "blind" ? "Has the blind CIM" : card.accessLevel === "due_diligence" ? "Due diligence access" : "Named CIM"].filter(Boolean).join(" · ")}
+            {[type, fit, haveLevelText(card.accessLevel)].filter(Boolean).join(" · ")}
           </p>
         </div>
         <div className="shrink-0 text-right">

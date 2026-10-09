@@ -16,6 +16,8 @@ import { resolveTwoColumnColumn, type TwoColumnColumn } from "@shared/cim-layout
 import { ProseFallback, renderInline, renderProse } from "../richText";
 import { findProseColumnIndex } from "../editableText";
 import { CimBlockScope, useBlockAttrs } from "../blocks";
+import { TEASER_COLUMN_TYPES } from "@shared/teaser";
+import { useTeaserMode } from "@/components/teaser/teaser-mode";
 
 /** Error boundary that catches render crashes in sub-renderers */
 class ColumnErrorBoundary extends Component<
@@ -172,6 +174,10 @@ function ColumnBlockInner({ col, branding, section }: { col: TwoColumnColumn; br
 
 export function TwoColumnRenderer({ layoutData, content, branding, section }: RendererProps) {
   const ba = useBlockAttrs();
+  // A teaser page: a column may hold text, a list, figures or highlights —
+  // never a chart or a table (shared/teaser.ts TEASER_COLUMN_TYPES). Anything
+  // else is left out here too (the server refuses it first).
+  const teaserMode = useTeaserMode();
   const data: TwoColumnLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
 
   if (!data.left && !data.right) {
@@ -179,8 +185,9 @@ export function TwoColumnRenderer({ layoutData, content, branding, section }: Re
     return <ProseFallback content={content} />;
   }
 
-  let left = resolveTwoColumnColumn(data.left);
-  let right = resolveTwoColumnColumn(data.right);
+  const teaserSafe = (c: TwoColumnColumn | null) => (c && teaserMode && !TEASER_COLUMN_TYPES.includes(c.layoutType || "prose") ? null : c);
+  let left = teaserSafe(resolveTwoColumnColumn(data.left));
+  let right = teaserSafe(resolveTwoColumnColumn(data.right));
 
   // A broker edit replaces the narrative column (see editableText.ts). If
   // neither column is prose, the edit is shown above the columns so it is
