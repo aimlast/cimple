@@ -164,12 +164,72 @@ const PART_NOUN: Record<string, [string, string]> = {
   "cost of sales": ["direct cost", "direct costs"],
   "operating expenses": ["expense line", "expense lines"],
 };
-/** D7, Blind CIM: "Up $660,000 (11%) from FY2022, mostly from three revenue streams." */
-export function movementBlindText(input: { from: number; to: number; fromYear: string; partCount: number; blindWord: string }): string {
+/**
+ * The generic category a cost line belongs to, for the Blind CIM ("occupancy
+ * costs", "fuel", "professional fees") — a fixed vocabulary, never the line's
+ * own label, so it can't carry a name. Null when the line fits none of them
+ * (a revenue line, owner pay, anything unusual).
+ */
+export function blindCostCategory(label: string, opts: { expense?: boolean; category?: string | null } = {}): string | null {
+  if (!opts.expense || /owner/i.test(`${label} ${opts.category ?? ""}`)) return null;
+  const l = label.toLowerCase();
+  if (/income tax/.test(l) || opts.category === "Taxes") {
+    if (/deferred|future/.test(l)) return "deferred income taxes";
+    if (/current/.test(l)) return "current income taxes";
+    return "income taxes";
+  }
+  for (const [re, word] of BLIND_COST_WORDS) if (re.test(l)) return word;
+  return null;
+}
+const BLIND_COST_WORDS: Array<[RegExp, string]> = [
+  [/wage|salar|payroll|labou?r|benefit|staff|crew|technician|driver/, "wages and benefits"],
+  [/subcontract|contractor|purchased transport|carrier|owner[- ]operator/, "subcontractors"],
+  [/rent|lease|occupancy|premises|facilit/, "occupancy costs"],
+  [/fuel|diesel|gasoline/, "fuel"],
+  [/professional|legal|accounting|audit|consult/, "professional fees"],
+  [/insurance/, "insurance"],
+  [/repair|maintenance/, "repairs and maintenance"],
+  [/advertis|marketing|promotion/, "marketing"],
+  [/bank|merchant|card (?:fees|processing)|service charge/, "bank charges"],
+  [/bad debt|write.?off|doubtful/, "bad debts"],
+  [/depreciat|amorti/, "depreciation"],
+  [/interest/, "interest"],
+  [/utilit|hydro|electricity/, "utilities"],
+  [/telephone|internet|software|subscription|computer/, "technology and communications"],
+  [/travel|vehicle|auto|mileage/, "vehicle and travel costs"],
+  [/office|postage|stationery/, "office costs"],
+  [/material|parts|inventory|supplies/, "materials and supplies"],
+  [/freight|shipping|courier/, "freight"],
+  [/licen[cs]|permit|dues|membership/, "licences and fees"],
+  [/property tax|realty tax/, "property taxes"],
+];
+
+/**
+ * D7, Blind CIM. The parts by their generic category when every part has one
+ * and they tell the change apart: "Up $1,378,500 (33%) from FY2022, mostly
+ * occupancy costs (+$1,120,500)." Otherwise the count of a total's own parts
+ * where the word means something ("…, mostly from three revenue streams."),
+ * else null — the Blind CIM then shows the figure without a note (never
+ * "mostly from two lines").
+ */
+export function movementBlindText(input: {
+  from: number; to: number; fromYear: string; partCount: number; blindWord: string;
+  parts?: Array<{ word: string | null; delta: number }>;
+}): string | null {
   const head = changeLine(input.from, input.to, input.fromYear);
   if (input.partCount <= 0) return `${head}.`;
-  const [one, many] = PART_NOUN[input.blindWord] ?? ["line", "lines"];
-  return `${head}, mostly from ${COUNT_WORDS[input.partCount] ?? input.partCount} ${input.partCount === 1 ? one : many}.`;
+  const parts = input.parts ?? [];
+  if (parts.length > 0 && parts.every((p) => !!p.word)) {
+    const merged = new Map<string, number>();
+    for (const p of parts) merged.set(p.word!, (merged.get(p.word!) ?? 0) + p.delta);
+    const words = Array.from(merged.keys());
+    if (!(words.length === 1 && words[0] === input.blindWord)) {
+      return `${head}, mostly ${listJoin(words.map((w) => `${w} (${signedDollars(merged.get(w)!)})`))}.`;
+    }
+  }
+  const noun = PART_NOUN[input.blindWord];
+  if (!noun) return null;
+  return `${head}, mostly from ${COUNT_WORDS[input.partCount] ?? input.partCount} ${input.partCount === 1 ? noun[0] : noun[1]}.`;
 }
 
 /** The column / chip label for the other record: "Tax return (T2)", "Form 1120", "Management accounts". */

@@ -15,7 +15,7 @@
 import { createHash } from "node:crypto";
 import type { FigureRegistry, RegistryFigure } from "@shared/figure-anchors";
 import { decomposeMovement } from "@shared/figure-compare";
-import { movementBlindText, movementText } from "@shared/figure-copy";
+import { blindCostCategory, movementBlindText, movementText } from "@shared/figure-copy";
 import { cimMismatchHeld, type FigureCheckInput } from "@shared/figure-layer";
 import { figureKey, parseFigureKey, standardLineOf } from "@shared/figure-lines";
 import type { MachineNote } from "./store";
@@ -91,7 +91,13 @@ export function computedNotes(input: ComputedNotesInput): MachineNote[] {
     // Each part reads as its own change ("fuel (−$660,000)"), whatever it did to the total.
     const parts = breakdown.parts.map((p) => ({ label: p.label, delta: Math.abs(p.to) - Math.abs(p.from) }));
     const text = movementText({ from: Math.abs(prev.value), to: Math.abs(fig.value), fromYear: prev.year, parts });
-    const blindText = def ? movementBlindText({ from: Math.abs(prev.value), to: Math.abs(fig.value), fromYear: prev.year, partCount: parts.length, blindWord: def.blindWord }) : null;
+    // Blind: the parts' generic categories ("occupancy costs"), else the count of a total's own
+    // parts ("three revenue streams"), else no blind wording (the figure shows plain).
+    const blindParts = breakdown.parts.map((p) => {
+      const f = reg[p.id];
+      return { word: f ? blindCostCategory(f.lineLabel, { expense: f.expense, category: f.category }) : null, delta: Math.abs(p.to) - Math.abs(p.from) };
+    });
+    const blindText = def ? movementBlindText({ from: Math.abs(prev.value), to: Math.abs(fig.value), fromYear: prev.year, partCount: parts.length, blindWord: def.blindWord, parts: blindParts }) : null;
     const components = Object.fromEntries(breakdown.parts.map((p) => [p.id, p.to]));
     out.push({
       figureKey: fig.key,
@@ -102,7 +108,8 @@ export function computedNotes(input: ComputedNotesInput): MachineNote[] {
       blindText,
       sources: [{ kind: "computed" }],
       valuesSnapshot: { year: fig.year, value: fig.value, fromYear: prev.year, fromValue: prev.value, components },
-      inputFingerprint: fingerprintOf(["movement", fig.key, fig.value, prev.value, breakdown.parts.map((p) => [p.id, p.from, p.to, p.label])]),
+      // "blind-v2": the blind wording names generic categories (no more "mostly from two lines").
+      inputFingerprint: fingerprintOf(["movement", "blind-v2", fig.key, fig.value, prev.value, breakdown.parts.map((p) => [p.id, p.from, p.to, p.label])]),
     });
   }
   for (const c of input.checks) {

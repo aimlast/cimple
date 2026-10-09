@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { fixtureRaw, run, test } from "./helpers/figure-test";
 import {
   changeLine, cimVsStatementsText, differenceComponentsBlindText, differenceComponentsText, groupingOpexText, lowerFirst,
-  movementBlindText, movementText, restatedText, shortLabel, sourceCheckSummary,
+  blindCostCategory, movementBlindText, movementText, restatedText, shortLabel, sourceCheckSummary,
 } from "../../shared/figure-copy";
 import { computedNotes, movedEnough } from "../../server/cim/figures/computed";
 import { anchorFigures } from "../../shared/figure-anchors";
@@ -66,6 +66,27 @@ test("Lakeshore: revenue FY2023 note names the three lines that moved it (D7)", 
   // Blind text never names the business.
   const terms = blindLeakTerms({ businessName: fx.deal.businessName, extractedInfo: fx.facts } as any, { codename: "Project Ember" });
   for (const n of notes) if (n.blindText) assert.deepEqual(findBlindLeaks(n.blindText, terms), [], n.blindText);
+});
+
+test("blind wording names generic categories, never 'mostly from two lines' (checker r1 F2)", async () => {
+  const { fx, raw } = await fixtureRaw("pacific");
+  const anchored = new Set(fx.sections.flatMap((s) => anchorFigures(s as any, raw.registry)).map((a) => a.figureKey));
+  const notes = computedNotes({ registry: raw.registry, checks: raw.checks.checks, anchoredKeys: anchored });
+  const tax23 = notes.find((n) => n.figureKey === "incomeTaxes|2023" && n.kind === "movement")!;
+  assert.equal(tax23.blindText, "Down $248,215 (59%) from FY2022, mostly current income taxes (−$152,095) and deferred income taxes (−$96,120).");
+  for (const n of notes) if (n.blindText) assert.doesNotMatch(n.blindText, /\bfrom (?:one|two|three|\d+) lines?\b/, n.blindText);
+  // Lakeshore cost of sales: the parts' categories, not their labels.
+  const { fx: lfx, raw: lraw } = await fixtureRaw("lakeshore");
+  const lanch = new Set(lfx.sections.flatMap((s) => anchorFigures(s as any, lraw.registry)).map((a) => a.figureKey));
+  const cos = computedNotes({ registry: lraw.registry, checks: lraw.checks.checks, anchoredKeys: lanch }).find((n) => n.figureKey === "costOfSales|2023" && n.kind === "movement")!;
+  assert.equal(cos.blindText, "Up $334,000 (10%) from FY2022, mostly materials and supplies (+$168,000) and wages and benefits (+$155,000).");
+  // No category tells the parts apart and the total has no part noun → no blind wording at all.
+  assert.equal(movementBlindText({ from: 100000, to: 150000, fromYear: "2022", partCount: 2, blindWord: "income taxes", parts: [{ word: "income taxes", delta: 30000 }, { word: "income taxes", delta: 20000 }] }), null);
+  assert.equal(movementBlindText({ from: 100000, to: 150000, fromYear: "2022", partCount: 1, blindWord: "income taxes", parts: [{ word: null, delta: 50000 }] }), null);
+  // A revenue line never gets a cost category; the count of streams stays.
+  assert.equal(blindCostCategory("Plumbing service, drains & water heaters", { expense: false, category: "Revenue" }), null);
+  assert.equal(blindCostCategory("Owner salary", { expense: true, category: "Owner Compensation" }), null);
+  assert.equal(blindCostCategory("Facility rent — 19220 Campbell Ridge Drive", { expense: true, category: "Operating Expenses" }), "occupancy costs");
 });
 
 test("changes under 8% (or $2,500) get no suggested note", () => {
