@@ -190,7 +190,9 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
             <div className="min-w-0">
               <h1 className="text-lg font-semibold">{isTeam ? `${data.reader.principalCompany ?? "The buyer"}'s data room` : "Data room"}</h1>
               <p className="mt-0.5 text-sm text-muted-foreground">
-                Documents your broker has shared with you. Everything here is covered by the NDA {isTeam ? "the buyer" : "you"} signed.
+                {isTeam
+                  ? `Documents the broker has shared with ${(data.reader.principalCompany ?? "the buyer").replace(/\.+$/, "")}. Everything here is covered by the NDA they signed and the confidentiality terms you accepted.`
+                  : "Documents your broker has shared with you. Everything here is covered by the NDA you signed."}
                 {data.expiresAt ? ` Your access ends ${new Date(data.expiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}.` : ""}
               </p>
             </div>

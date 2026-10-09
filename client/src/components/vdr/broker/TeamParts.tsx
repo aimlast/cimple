@@ -76,7 +76,7 @@ export function AddTeamMemberDialog({ dealId, accessId, buyerLabel, open, onOpen
   return (
     <>
       <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
-        <DialogContent className="max-w-md grid-cols-[minmax(0,1fr)]" data-testid="add-team-dialog">
+        <DialogContent className="max-w-lg grid-cols-[minmax(0,1fr)]" data-testid="add-team-dialog">
           <DialogHeader>
             <DialogTitle className="pr-6">Add someone from {buyerLabel}'s team</DialogTitle>
             <DialogDescription>They get their own link to {buyerLabel}'s data room: the same documents, their own name on every page. No memorandum, no decisions. Up to 5 people per buyer.</DialogDescription>

@@ -72,6 +72,10 @@ export function ShareWithBuyerDialog({ dealId, buyer, open, onOpenChange }: { de
         ) : rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">The data room is empty.</p>
         ) : (
+          <>
+          {rows.every((r) => r.has || r.why) && (
+            <p className="text-sm text-muted-foreground" data-testid="share-with-buyer-nothing">Nothing to pick right now: {label} can already open the rest, and the others need your check first.</p>
+          )}
           <div className="divide-y divide-border rounded-md border border-border">
             {rows.map(({ item, has, why }) => (
               <label key={item.id} className={`flex items-start gap-2.5 px-3 py-2 text-sm ${has || why ? "opacity-60" : "cursor-pointer hover:bg-muted/30"}`}>
@@ -88,6 +92,7 @@ export function ShareWithBuyerDialog({ dealId, buyer, open, onOpenChange }: { de
               </label>
             ))}
           </div>
+          </>
         )}
         {!saved && (
           <DialogFooter className="gap-2 sm:gap-0">
