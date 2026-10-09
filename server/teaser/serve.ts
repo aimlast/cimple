@@ -13,7 +13,7 @@
  */
 import type { Request, Response } from "express";
 import type { BuyerAccess, Deal } from "@shared/schema";
-import { TEASER_ACCESS_LEVEL, normalizeAccessLevel } from "@shared/access-levels";
+import { TEASER_ACCESS_LEVEL } from "@shared/access-levels";
 import type { ViewRoomReading } from "@shared/analytics-v2";
 import { buildBuyerTeaser, type BuyerTeaser, type TeaserContact } from "@shared/teaser-view";
 import { viewLinkProblem } from "../buyers/view-access";
@@ -69,6 +69,13 @@ export async function buyerTeaserFor(deal: Deal, row: TeaserRow, opts: { draft?:
 
 export const TEASER_NOT_PUBLISHED = { code: "not_published", error: "This summary isn't available right now." } as const;
 
+type RenditionWriterLike = import("../analytics/renditions").RenditionWriter;
+let renditionWriter: RenditionWriterLike | undefined;
+/** Tests: where teaser renditions are written (undefined restores the database). */
+export function _setTeaserRenditionWriterForTests(w: RenditionWriterLike | undefined): void {
+  renditionWriter = w;
+}
+
 /**
  * The view-room teaser branch. `ownerPreview` = the owning broker is looking
  * (no reading recorded). Returns after responding.
@@ -98,7 +105,7 @@ export async function serveTeaser(req: Request, res: Response, access: BuyerAcce
       sections: built.teaser.blocks,
       design: built.design,
       header: built.teaser.header,
-    });
+    }, renditionWriter);
   }
   const [emailCheck, requests] = await Promise.all([
     emailCheckState(access, deal, session?.buyerId ?? null),
@@ -113,7 +120,7 @@ export async function serveTeaser(req: Request, res: Response, access: BuyerAcce
       dealId: access.dealId,
       buyerEmail: access.buyerEmail,
       buyerName: access.buyerName,
-      accessLevel: normalizeAccessLevel(access.accessLevel) === TEASER_ACCESS_LEVEL ? TEASER_ACCESS_LEVEL : normalizeAccessLevel(access.accessLevel),
+      accessLevel: TEASER_ACCESS_LEVEL,
       ndaSigned: access.ndaSigned,
       ndaSignedAt: access.ndaSignedAt,
       watermarkEnabled: access.watermarkEnabled,
