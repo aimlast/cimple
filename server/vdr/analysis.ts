@@ -114,7 +114,9 @@ export function factLabel(key: string): string {
     .split(/\s+/)
     .map((w) => ACRONYMS[w] ?? (/^[a-z]\d{1,2}$/.test(w) ? w.toUpperCase() : w))
     .join(" ")
-    .replace(/\bFY (\d{2,4})\b/g, "FY$1");
+    .replace(/\bFY (\d{2,4})\b/g, "FY$1")
+    // Words a reader writes with a hyphen ("Long-term debt", "Self-pay share").
+    .replace(/\b(long|short|full|part|self|year|month) (term|time|pay|end)\b/g, (m, a: string, b: string) => (/^(long|short)$/.test(a) && b === "term") || (/^(full|part)$/.test(a) && b === "time") || (a === "self" && b === "pay") || (/^(year|month)$/.test(a) && b === "end") ? `${a}-${b}` : m);
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 

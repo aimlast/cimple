@@ -57,6 +57,10 @@ assert.equal(factLabel("adjustedEbitdaByYear"), "Adjusted EBITDA");
 assert.equal(factLabel("currentPortionLTDByYear"), "Current portion LTD");
 assert.equal(factLabel("otherCurrentAssets"), "Other current assets");
 assert.equal(factLabel("monthlyRxVolume"), "Monthly Rx volume");
+assert.equal(factLabel("longTermDebtByYear"), "Long-term debt");
+assert.equal(factLabel("selfPayShare"), "Self-pay share");
+assert.equal(factLabel("partTimeStaff"), "Part-time staff");
+assert.equal(factLabel("termLoan"), "Term loan");
 
 const beaconInfo: any = {
   netIncomeForTaxPurposes: "$464,201 (FY2023)",
@@ -93,17 +97,17 @@ assert.equal(labels.filter((l) => l.startsWith("Net income for tax purposes")).l
 assert.equal(byLabel.get("Net income for tax purposes (2023)")?.text, "$464,201");
 assert.deepEqual(byLabel.get("Net income for tax purposes (2023)")!.keys.sort(), ["netIncomeForTaxPurposes", "netIncomeForTaxPurposesByYear"]);
 // One year → "(2023)" in the label and the bare figure; several years → newest first.
-assert.equal(byLabel.get("Long term debt (2022)")?.text, "$200,000");
+assert.equal(byLabel.get("Long-term debt (2022)")?.text, "$200,000");
 assert.equal(byLabel.get("Taxable income")?.text, "2024: $569,522 · 2023: $459,201");
 // The same cash figure under three names: the fullest row stays.
 assert.equal(labels.filter((l) => /^Cash/.test(l)).join(" | "), "Cash and deposits", labels.join(" | "));
 assert.deepEqual(byLabel.get("Cash and deposits")!.keys.sort(), ["cashAndDepositsByYear", "cashByYear", "cashOnHandByYear"]);
 // Two different lines that happen to be $30,000 both stay (a round amount alone is not the same fact).
-assert.ok(byLabel.has("Current portion long term debt (2023)") && byLabel.has("Other loan (2023)"), labels.join(" | "));
+assert.ok(byLabel.has("Current portion long-term debt (2023)") && byLabel.has("Other loan (2023)"), labels.join(" | "));
 // A dollar amount is never a "share"; a percentage share and "Share capital" keep their names.
 assert.equal(byLabel.get("Compounding revenue (2024)")?.text, "$820,800");
 assert.ok(!labels.includes("Compounding revenue share") && !labels.some((l) => /revenue share/i.test(l)));
-assert.equal(byLabel.get("Self pay share")?.text, "11.2% of dispensary revenue");
+assert.equal(byLabel.get("Self-pay share")?.text, "11.2% of dispensary revenue");
 assert.ok(byLabel.has("Share capital"), "a real name that starts with 'share' is kept");
 assert.ok(byLabel.has("Shareholder loans (2023)"));
 ok("F3: labels without 'by year', the year in the label, duplicates folded, no money 'share'");
