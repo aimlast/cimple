@@ -243,7 +243,13 @@ export function NumbersWorkspace() {
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5" data-testid="figures-kpis">
         <Kpi label="Changes explained" value={`${k.changesExplained} of ${k.changesTotal}`} onClick={() => setParams({ tab: "moves", filter: "shown", note: null })} testId="kpi-changes" />
-        <Kpi label="Differences" value={`${k.differences}`} sub={`${k.differencesExplained} explained`} onClick={() => setParams({ tab: "checks", group: "difference", note: null })} testId="kpi-differences" />
+        <Kpi
+          label="Differences"
+          value={`${k.differences}`}
+          sub={k.differences === 0 ? "none found" : k.differencesExplained === k.differences ? "all explained" : `${k.differencesExplained} explained`}
+          onClick={() => setParams({ tab: "checks", group: data.checks.some((c) => c.group === "difference") ? "difference" : data.checks.some((c) => c.group === "regrouped") ? "regrouped" : "difference", note: null })}
+          testId="kpi-differences"
+        />
         <Kpi label="Waiting for your OK" value={`${k.waiting}`} onClick={() => setParams({ tab: "moves", filter: "waiting", note: null })} testId="kpi-waiting" />
         <Kpi label="With the seller" value={`${k.withSeller}`} onClick={() => setParams({ tab: "questions", note: null })} testId="kpi-seller" />
         <Kpi label="Documents cited ↗" value={`${k.documentsCited}`} sub={k.documentsShared === null ? undefined : `${k.documentsShared} shared`} onClick={() => navigate(`/deal/${dealId}/information`)} testId="kpi-documents" className="col-span-2 sm:col-span-1" />

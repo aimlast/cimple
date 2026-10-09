@@ -60,7 +60,8 @@ test("checks: interest and operating expenses are grouped differently; matches c
   const counts = checkCounts(w.checks);
   assert.equal(counts.difference + counts.regrouped + counts.needs_checking + counts.match + counts.left_out, w.checks.length);
   assert.ok(counts.match > 0 && counts.regrouped > 0);
-  assert.equal(w.kpis.differences, w.checks.filter((c) => c.group === "difference" || c.group === "needs_checking").length);
+  assert.equal(w.kpis.differences, w.checks.filter((c) => c.group === "difference" || c.group === "regrouped" || c.group === "needs_checking").length);
+  assert.equal(w.kpis.differencesExplained, w.checks.filter((c) => c.state === "explained" || c.state === "regrouped").length);
   assert.ok(w.kpis.documentsCited >= 2, "statements and tax returns are cited");
   assert.equal(w.kpis.documentsShared, null, "the data room fills this");
   assert.equal(w.status.hasOtherRecords, true);

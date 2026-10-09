@@ -269,7 +269,8 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
     .map((n) => ({ figureKey: n.figureKey, label: reg[n.figureKey].lineLabel, year: reg[n.figureKey].year, note: workspaceNote(n, raw) }));
 
   // KPIs.
-  const differing = wsChecks.filter((c) => c.group === "difference" || (c.group === "needs_checking"));
+  // Every figure whose records differ — the arithmetic-explained ones too (they're tinted for buyers).
+  const differing = wsChecks.filter((c) => c.group === "difference" || c.group === "regrouped" || c.group === "needs_checking");
   const cited = new Set<string>();
   for (const c of wsChecks) {
     if (c.baseDocument && raw.docs.get(c.baseDocument.id)?.citable) cited.add(c.baseDocument.id);
@@ -297,7 +298,7 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
       changesExplained: moves.filter((m) => m.status === "shown").length,
       changesTotal: moves.filter((m) => m.status !== "hidden").length,
       differences: differing.length,
-      differencesExplained: differing.filter((c) => c.state === "explained").length,
+      differencesExplained: differing.filter((c) => c.state === "explained" || c.state === "regrouped").length,
       waiting,
       withSeller: raw.questions.filter((q) => q.status === "ask_seller").length,
       documentsCited: cited.size,
