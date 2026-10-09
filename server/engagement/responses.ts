@@ -9,8 +9,11 @@
  *   reader of a page   a buyer with ≥ 3 s of attention on it
  *   reached            the buyer's furthest page is at or beyond it (a split
  *                      section's later parts: when any of their parts was on screen)
- *   opened             at least one tracked visit (buyers whose tracker was
- *                      blocked still count as opened in the pulse, via firstViewedAt)
+ *   opened             a tracked visit, or (all time) a stamped first view — the
+ *                      pulse's rule; the Document view's openedTotal and the
+ *                      buyers response's counts.opened (INTEGRATION §2.9)
+ *   with reading       a visit of ≥ 3 s active (the reader rule, C11) — the
+ *                      Document view's openedBy and counts.withReading
  */
 import {
   READING_RULES,
@@ -28,7 +31,10 @@ import {
   type EngagementDocumentResponse,
   type EngagementSummaryResponse,
   type FactPage,
+  type HeatBasis,
   type InteractionCounts,
+  type PageHeat,
+  type ReachBasis,
   type JourneySegment,
   type JourneyVisit,
   type KindAttention,
@@ -43,7 +49,12 @@ import { groupReadLabel, pageReadLabel } from "@shared/cim-reading-model";
 import { buyerInsight, journeyMoments, pageHeadline, pulseSentence, rankBuyers, reachHeadline, type InsightContext } from "./insights";
 
 /** Optional extras the aggregation adds (server/engagement/facts.ts CaptureFacts). */
-type Facts = DealReadingFacts & { changedReaders?: Record<string, string[]>; blockLevelPages?: string[] };
+type Facts = DealReadingFacts & {
+  changedReaders?: Record<string, string[]>;
+  blockLevelPages?: string[];
+  pageHeat?: Record<string, { partBuyers: string[]; pageOnly: Record<string, { beforeMs: number; otherMs: number }> }>;
+  versionNote?: import("@shared/analytics-v2").VersionNote | null;
+};
 
 export function insightContext(facts: DealReadingFacts): InsightContext {
   return { now: new Date(facts.now), pages: facts.pages, buyers: facts.buyers };
@@ -78,13 +89,58 @@ export function furthestViewerIndex(b: BuyerReadingFacts, pages: FactPage[]): nu
 
 const attentionOn = (b: BuyerReadingFacts, p: FactPage) => b.pages[viewerPageKey(p.pageId, p.part)]?.attentionMs ?? 0;
 const opened = (b: BuyerReadingFacts) => b.visits.length > 0;
+/** The pulse's "opened": a visit, or (all time) a stamped first view (tracker blocked). */
+export const openedForCounts = (b: BuyerReadingFacts, range: DealReadingFacts["filters"]["range"]) => opened(b) || (range === "all" && !!b.firstViewedAt);
+/** The reader rule (C11): a visit with at least READING_RULES.readerMinMs active. */
+export const withReading = (b: BuyerReadingFacts) => b.visits.some((v) => v.activeMs >= READING_RULES.readerMinMs);
+
+/**
+ * How a page's reading is known (heat-map spec §5.4): none under a second;
+ * page when no buyer has part rows; parts when page-only time is under 5 %;
+ * mixed otherwise. Pure.
+ */
+export function heatBasisOf(attentionMs: number, partBuyers: number, pageOnlyMs: number): HeatBasis {
+  if (attentionMs < 1000) return "none";
+  if (partBuyers === 0) return "page";
+  return pageOnlyMs < 0.05 * attentionMs ? "parts" : "mixed";
+}
+
+/** One viewer page's heat facts (facts.ts pageHeat) → PageHeat, over the buyers in this view. */
+function pageHeatOf(
+  acc: { partBuyers: string[]; pageOnly: Record<string, { beforeMs: number; otherMs: number }> } | undefined,
+  attentionMs: number,
+  listed: ReadonlySet<string>,
+): { heat: PageHeat; pageOnlyIds: string[] } {
+  const partSet = new Set((acc?.partBuyers ?? []).filter((id) => listed.has(id)));
+  let before = 0;
+  let other = 0;
+  const pageOnlyIds: string[] = [];
+  for (const [id, x] of Object.entries(acc?.pageOnly ?? {})) {
+    if (!listed.has(id)) continue;
+    before += x.beforeMs;
+    other += x.otherMs;
+    if (x.beforeMs + x.otherMs >= 1 && !partSet.has(id)) pageOnlyIds.push(id);
+  }
+  const pageOnlyMs = Math.round(before + other);
+  const basis = heatBasisOf(attentionMs, partSet.size, pageOnlyMs);
+  return {
+    heat: {
+      basis,
+      partBuyers: partSet.size,
+      pageOnlyBuyers: pageOnlyIds.length,
+      pageOnlyMs,
+      reason: pageOnlyMs >= 1 ? (before >= other ? "before_part_tracking" : "other_layout") : null,
+    },
+    pageOnlyIds,
+  };
+}
 const lastSeenMs = (b: BuyerReadingFacts) => b.visits.reduce((m, v) => Math.max(m, Date.parse(v.lastSeenAt) || 0), 0);
 
 // ── Buyers (call list) ─────────────────────────────────────────────────────
 
 export function buildBuyersResponse(facts: DealReadingFacts): EngagementBuyersResponse {
   const ctx = insightContext(facts);
-  const shown = facts.buyers.filter((b) => opened(b) || (facts.filters.range === "all" && !!b.firstViewedAt));
+  const shown = facts.buyers.filter((b) => openedForCounts(b, facts.filters.range));
   const ranked = rankBuyers(shown.map((f) => ({ facts: f, insight: buyerInsight(f, ctx) })));
   const buyers: BuyerEngagementCard[] = ranked.map(({ facts: b, insight }, rank) => {
     const furthest = furthestViewerIndex(b, facts.pages);
@@ -140,6 +196,8 @@ export function buildBuyersResponse(facts: DealReadingFacts): EngagementBuyersRe
     notOpened,
     pages: facts.pages.map(({ pageId, part, index, label }) => ({ pageId, part, index, label })),
     legacyOnly: facts.legacyOnly,
+    sampleReading: !!facts.sampleReading,
+    counts: { opened: shown.length, withReading: facts.buyers.filter(withReading).length },
   };
 }
 
@@ -150,18 +208,22 @@ const GROUP_LABEL = new Map<KindGroup, string>(KIND_GROUPS.map((g) => [g.key, g.
 export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocumentResponse {
   const f = facts as Facts;
   const readersOf = facts.buyers.filter(opened);
-  const openedBy = readersOf.length;
+  // "13 opened it · 12 with reading recorded": the pulse's opened, and the reader rule (INTEGRATION §2.9).
+  const openedBy = facts.buyers.filter(withReading).length;
+  const openedTotal = facts.buyers.filter((b) => openedForCounts(b, facts.filters.range)).length;
   const furthest = new Map(readersOf.map((b) => [b.accessId, furthestViewerIndex(b, facts.pages)]));
-  const blockLevel = new Set(f.blockLevelPages ?? []);
+  const listed = new Set(facts.buyers.map((b) => b.accessId));
 
   const pages: DocumentPage[] = facts.pages.map((p) => {
     const reachedBuyers = readersOf.filter((b) => (furthest.get(b.accessId) ?? -1) >= p.index);
     const perBuyer = readersOf.map((b) => ({ b, att: attentionOn(b, p), skim: b.pages[viewerPageKey(p.pageId, p.part)]?.skimMs ?? 0 }));
     const attentionMs = perBuyer.reduce((s, x) => s + x.att, 0);
     const skimMs = perBuyer.reduce((s, x) => s + x.skim, 0);
+    const heat = pageHeatOf(f.pageHeat?.[viewerPageKey(p.pageId, p.part)], attentionMs, listed);
+    const pageOnlyIds = new Set(heat.pageOnlyIds);
     const buyers: BuyerSeconds[] = perBuyer.filter((x) => x.att > 0)
       .sort((a, b) => b.att - a.att)
-      .map((x) => ({ accessId: x.b.accessId, name: x.b.name, attentionMs: x.att }));
+      .map((x) => ({ accessId: x.b.accessId, name: x.b.name, attentionMs: x.att, ...(pageOnlyIds.has(x.b.accessId) ? { pageOnly: true as const } : {}) }));
 
     // Parts of the page (the heat on the real page). Chart points fold into their chart.
     const blocks: BlockAttention[] = [];
@@ -220,9 +282,24 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
       interactions,
       questions,
       changedSince: changedN > 0 ? changedN : null,
-      pageLevelOnly: facts.legacyOnly || (attentionMs > 0 && !blockLevel.has(p.pageId)),
+      pageLevelOnly: heat.heat.basis === "page",
+      heat: heat.heat,
+      reachRecorded: true,
+      update: p.update ?? null,
     };
   });
+
+  // How far buyers got: the old tracking recorded only pages with reading,
+  // so pages after the last one with any reading are "not recorded" — left
+  // out of the drop and the headline, hatched on the chart.
+  const drawnVisits = facts.buyers.flatMap((b) => b.visits);
+  const reachBasis: ReachBasis = drawnVisits.length > 0 && drawnVisits.every((v) => v.legacy || v.sample) ? "old_tracking" : "tracked";
+  let lastRecordedIndex: number | null = null;
+  if (reachBasis === "old_tracking") {
+    for (const p of pages) if (p.attentionMs > 0) lastRecordedIndex = p.index;
+    for (const p of pages) p.reachRecorded = lastRecordedIndex !== null && p.index <= lastRecordedIndex;
+  }
+
   const doc = { pages, openedBy };
   for (const pg of pages) pg.headline = pageHeadline(pg, doc);
 
@@ -247,8 +324,13 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
     rendition: facts.rendition,
     renditions: facts.renditions,
     openedBy,
+    openedTotal,
+    reachBasis,
+    lastRecordedIndex,
+    sampleReading: !!facts.sampleReading,
+    versionNote: f.versionNote ?? null,
     reach,
-    reachHeadline: reachHeadline(reach),
+    reachHeadline: reachHeadline(reach, reachBasis === "old_tracking" ? { lastRecorded: lastRecordedIndex } : {}),
     pages,
     byKind,
     totals: {
@@ -311,6 +393,7 @@ export function buildSummaryResponse(facts: DealReadingFacts, published: boolean
     mostStudiedPage: most,
     renditions: facts.renditions,
     legacyOnly: facts.legacyOnly,
+    sampleReading: !!facts.sampleReading,
     lastWriteAt: facts.lastWriteAt,
   };
 }
@@ -362,6 +445,7 @@ export function buildJourneyResponse(
     accessId: b.accessId,
     name: b.name,
     company: b.company,
+    sampleReading: !!facts.sampleReading,
     visits,
     questions: b.questions,
     decisions: decisions && decisions.length ? decisions : b.decisionAt ? [{ decision: b.decision, at: b.decisionAt }] : [],

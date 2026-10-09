@@ -811,9 +811,17 @@ export function isMarkedDrop(drop: number, openedBy: number): boolean {
   return drop >= 2 && drop >= 0.1 * openedBy;
 }
 
-/** "Most buyers stopped around page 14 · Employees & Management (9 → 4 readers)", or null. */
-export function reachHeadline(reach: ReachPoint[]): string | null {
-  const pts = [...reach].sort((a, b) => a.index - b.index);
+/**
+ * "Most buyers stopped around page 14 · Employees & Management (9 → 4 readers)", or null.
+ *
+ * `lastRecorded` (the old tracking, heat-map spec §5.4): the last page the
+ * old tracker could record. Later pages never had reading recorded, so they
+ * are left out — never "6 → 0 readers" on a page nobody's tracker could see —
+ * and the last page named is that one ("…, the last page recorded").
+ */
+export function reachHeadline(reach: ReachPoint[], opts: { lastRecorded?: number | null } = {}): string | null {
+  const limited = opts.lastRecorded !== undefined;
+  const pts = [...reach].sort((a, b) => a.index - b.index).filter((p) => !limited || (opts.lastRecorded != null && p.index <= opts.lastRecorded));
   if (pts.length === 0) return null;
   const n = pts[0].buyers;
   if (n <= 0) return null;
@@ -823,14 +831,16 @@ export function reachHeadline(reach: ReachPoint[]): string | null {
     if (d > 0 && (!drop || d > drop.from - drop.at.buyers)) drop = { at: pts[i], from: pts[i - 1].buyers };
   }
   const last = pts[pts.length - 1];
+  const lastWords = `got to page ${last.label} · ${last.title}, the last page recorded`;
   if (n === 1) {
     // One buyer (or a view filtered to one): where they got to, never "most buyers".
-    if (last.buyers >= 1) return "The buyer who opened the CIM reached the last page.";
+    if (last.buyers >= 1) return limited ? `The buyer who opened the CIM ${lastWords}.` : "The buyer who opened the CIM reached the last page.";
     const furthest = [...pts].reverse().find((p) => p.buyers >= 1);
     return furthest ? `This buyer got as far as page ${furthest.label} · ${furthest.title}.` : null;
   }
   const significant = !!drop && isMarkedDrop(drop.from - drop.at.buyers, n);
   if (!drop || !significant) {
+    if (limited) return last.buyers === n ? `All ${n} buyers who opened the CIM ${lastWords}.` : `${last.buyers} of ${plural(n, "buyer")} ${lastWords}.`;
     if (last.buyers === n) return `All ${n} buyers who opened the CIM reached the last page.`;
     return `${last.buyers} of ${plural(n, "buyer")} reached the last page.`;
   }

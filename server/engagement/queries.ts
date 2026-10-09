@@ -48,6 +48,8 @@ export interface RawVisit {
   path: Array<[number, string]>;
   legacy: boolean;
   ipHash: string | null;
+  /** Sample reading on an example deal (buyer_visits.demo_seed); absent/null = real. */
+  demoSeed?: string | null;
 }
 
 /** Reading per (buyer, rendition, page, block), summed over the filtered visits. */
@@ -127,6 +129,18 @@ export interface ReadingSource {
    * those before the deal's first part-by-part visit (no double counting).
    */
   legacyExits(dealId: string): Promise<LegacyExit[]>;
+  /**
+   * The kept copy's sections (id, key, title only — projected in SQL, never
+   * the whole snapshot row) and when it was taken; null when the deal has no
+   * kept copy (server/engagement/titles.ts).
+   */
+  keptCopyTitles?(dealId: string): Promise<KeptCopyTitles | null>;
+}
+
+/** The kept copy as the titles need it (server/cim/published-snapshot.ts holds the copy). */
+export interface KeptCopyTitles {
+  takenAt: Date;
+  sections: Array<{ id: string; sectionKey: string; sectionTitle: string }>;
 }
 
 const num = (v: unknown) => Number(v ?? 0) || 0;
@@ -267,6 +281,18 @@ export const dbReadingSource: ReadingSource = {
       LIMIT 50000`);
     return r.map((x) => ({ accessId: String(x.buyer_access_id), key: String(x.section_key), seconds: Number(x.time_spent_seconds ?? 0) || 0, at: asDate(x.created_at) }));
   },
+  async keptCopyTitles(dealId) {
+    const r = await rows(sql`
+      SELECT s->>'id' AS id, s->>'sectionKey' AS section_key, s->>'sectionTitle' AS section_title, p.taken_at
+      FROM cim_published_snapshots p, jsonb_array_elements(p.sections) s
+      WHERE p.deal_id = ${dealId}
+        AND p.taken_at = (SELECT MAX(taken_at) FROM cim_published_snapshots WHERE deal_id = ${dealId})`);
+    if (r.length === 0) return null;
+    return {
+      takenAt: asDate(r[0].taken_at),
+      sections: r.filter((x) => x.id != null).map((x) => ({ id: String(x.id), sectionKey: String(x.section_key ?? ""), sectionTitle: String(x.section_title ?? "") })),
+    };
+  },
 };
 
 // ── In memory (tests) ────────────────────────────────────────────────────
@@ -274,7 +300,7 @@ export const dbReadingSource: ReadingSource = {
 /** A source over the in-memory ingest store, plus fixture questions/decisions. */
 export function memoryReadingSource(
   store: MemoryReadingStore,
-  extra: { questions?: RawQuestion[]; decisions?: RawDecision[]; sections?: Map<string, unknown[]>; legacyExits?: LegacyExit[] } = {},
+  extra: { questions?: RawQuestion[]; decisions?: RawDecision[]; sections?: Map<string, unknown[]>; legacyExits?: LegacyExit[]; kept?: KeptCopyTitles | null } = {},
 ): ReadingSource {
   const visitOk = (q: ReadingQuery, v: { dealId: string; buyerAccessId: string; selfView: boolean; clamped: boolean; lastSeenAt: Date; deviceClass: string }) =>
     v.dealId === q.dealId && !v.selfView && !v.clamped && (!q.since || v.lastSeenAt >= q.since) && deviceMatches(q.device, v.deviceClass)
@@ -346,6 +372,9 @@ export function memoryReadingSource(
     async legacyExits(dealId) {
       const first = visits().filter((v) => v.dealId === dealId && !v.selfView).reduce<number>((m, v) => Math.min(m, v.startedAt.getTime()), Infinity);
       return (extra.legacyExits ?? []).filter((e) => e.at.getTime() < first);
+    },
+    async keptCopyTitles() {
+      return extra.kept ?? null;
     },
   };
 }

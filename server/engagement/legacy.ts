@@ -30,6 +30,7 @@ import { createHash } from "crypto";
 import { READING_RULES, type CimMode, type CimVariant, type LegacyUnmatchedReading, type RenditionPage } from "@shared/analytics-v2";
 import type { Deal } from "@shared/schema";
 import { pageRole } from "@shared/cim-page-role";
+import { WEAK_KEY_WORDS, keyWordsOf } from "@shared/section-words";
 import type { RawBlockSum, RawRendition, RawVisit, RawVisitPage, ReadingQuery, RenditionRow } from "./queries";
 
 /** A uuid-shaped id derived from a string (stable across runs). */
@@ -161,28 +162,7 @@ export function legacyPageRemap(
   };
 }
 
-// ── Renamed keys ─────────────────────────────────────────────────────────
-
-const KEY_STOPWORDS = new Set(["the", "and", "of", "a", "an", "to", "for", "in", "on", "our", "we", "where", "with", "by", "at", "s", "vs"]);
-/** One spelling per word: plurals folded, long words cut to their first six letters ("normalized"/"normalization" → "normal"). */
-function keyStem(word: string): string {
-  let w = word.toLowerCase();
-  if (w.length > 4 && w.endsWith("ies")) w = `${w.slice(0, -3)}y`;
-  else if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss")) w = w.slice(0, -1);
-  return w.length > 6 ? w.slice(0, 6) : w;
-}
-function keyWordsOf(text: string | null | undefined): Set<string> {
-  return new Set(
-    String(text ?? "")
-      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-      .split(/[^A-Za-z0-9]+/)
-      .map((w) => w.toLowerCase())
-      .filter((w) => w.length >= 2 && !KEY_STOPWORDS.has(w))
-      .map(keyStem),
-  );
-}
-/** Words too broad to place a page on their own ("services", "overview", "where we operate"). */
-const WEAK_KEY_WORDS = new Set(["service", "overview", "detail", "summary", "section", "page", "info", "information", "general", "key", "business", "company", "operate", "operations", "other", "notes"].map(keyStem));
+// ── Renamed keys (word helpers: shared/section-words.ts) ─────────────────
 
 /**
  * The current section an old, since-renamed key was: the one sharing the
@@ -322,13 +302,52 @@ export function mainAccessLevel(levels: ReadonlyArray<string>): string {
  * The CIM as a buyer at this access level would be served it right now
  * (the view room's own inputs: servedCimFor), as a rendition that isn't
  * stored. Null while the blind version is being prepared or nothing is shown.
+ * opts.ignoreHold (broker side and scripts only): a CIM held from buyers is
+ * drawn as they will get it (renditions.ts servedCimFor).
+ *
+ * Memoised for 30 s per (deal, level, CIM version, hold flag): each filter
+ * set of the Engagement tab (and compare's two extra queries) would
+ * otherwise rebuild the whole CIM. The date only labels the version.
  */
-export async function liveRendition(deal: Deal, accessLevel: string, createdAt: Date = new Date()): Promise<{ raw: RawRendition; row: RenditionRow } | null> {
+export async function liveRendition(
+  deal: Deal,
+  accessLevel: string,
+  createdAt: Date = new Date(),
+  opts: { ignoreHold?: boolean } = {},
+): Promise<{ raw: RawRendition; row: RenditionRow } | null> {
+  const key = [deal.id, accessLevel, deal.cimLayoutVersion ?? "", opts.ignoreHold ? 1 : 0].join("|");
+  const hit = liveMemo.get(key);
+  let built: Promise<LiveBuild | null>;
+  if (hit && Date.now() - hit.at < LIVE_MEMO_MS) built = hit.value;
+  else {
+    built = buildLive(deal, accessLevel, opts);
+    liveMemo.delete(key);
+    liveMemo.set(key, { at: Date.now(), value: built });
+    if (liveMemo.size > LIVE_MEMO_MAX) liveMemo.delete(liveMemo.keys().next().value as string);
+    // A failed or empty build is not remembered.
+    built.then((v) => { if (!v) liveMemo.delete(key); }, () => liveMemo.delete(key));
+  }
+  const b = await built;
+  if (!b) return null;
+  const raw: RawRendition = { id: b.id, mode: b.mode, variant: b.variant, createdAt, visits: 0 };
+  return { raw, row: { ...raw, sections: b.sections, design: b.design, pageIndex: b.pageIndex } };
+}
+
+interface LiveBuild { id: string; mode: string; variant: string; sections: unknown[]; design: unknown; pageIndex: RenditionPage[] }
+const LIVE_MEMO_MS = 30_000;
+const LIVE_MEMO_MAX = 200;
+const liveMemo = new Map<string, { at: number; value: Promise<LiveBuild | null> }>();
+
+/** Tests: forget the memoised live renditions. */
+export function _resetLiveRenditionMemo(): void {
+  liveMemo.clear();
+}
+
+async function buildLive(deal: Deal, accessLevel: string, opts: { ignoreHold?: boolean }): Promise<LiveBuild | null> {
   const { servedCimFor, buildPageIndex, renditionId } = await import("../analytics/renditions");
-  const served = await servedCimFor(deal, accessLevel).catch(() => null);
+  const served = await servedCimFor(deal, accessLevel, { ignoreHold: opts.ignoreHold }).catch(() => null);
   if (!served) return null;
   const id = renditionId({ mode: served.mode as CimMode, variant: served.variant as CimVariant, design: served.design, sections: served.sections });
   const pageIndex: RenditionPage[] = buildPageIndex(served.sections, served.design as never, served.live);
-  const raw: RawRendition = { id, mode: served.mode, variant: served.variant, createdAt, visits: 0 };
-  return { raw, row: { ...raw, sections: served.sections as unknown[], design: served.design ?? null, pageIndex } };
+  return { id, mode: served.mode, variant: served.variant, sections: served.sections as unknown[], design: served.design ?? null, pageIndex };
 }

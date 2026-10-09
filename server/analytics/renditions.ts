@@ -216,13 +216,23 @@ export function _resetRenditionCache(): void {
  * while an update is reviewed, a live CIM's approved versions otherwise —
  * with the codename that copy was redacted under, + the design payload).
  * Null while the CIM is held, the blind version is still being prepared or
- * nothing is shown. Used by the reading seeder (scripts/seed-reading-demo.ts)
- * and the legacy view (server/engagement/legacy.ts); the view room itself
- * records what it actually served.
+ * nothing is shown. Used by the reading seeders (scripts/seed-reading-demo.ts,
+ * scripts/seed-demo-reading.ts) and the legacy view (server/engagement/legacy.ts);
+ * the view room itself records what it actually served.
+ *
+ * opts.ignoreHold (broker-side code and scripts ONLY — never a buyer path):
+ * draw a CIM that is held from buyers (an update waiting for review with
+ * nothing served meanwhile) as buyers WILL be served it when the broker
+ * publishes. Everything else is identical: buildBuyerCim, every blind
+ * guard (fail-closed), the published versions, the kept copy.
+ * opts.accessId: the buyer link a per-buyer rendition is for (null = the
+ * level-wide one; INTEGRATION §2.2 — extras for that buyer arrive with
+ * buyerCimExtras when gl/dd merge).
  */
 export async function servedCimFor(
   deal: import("@shared/schema").Deal,
   accessLevel: string,
+  opts: { ignoreHold?: boolean; accessId?: string | null } = {},
 ): Promise<(RenditionInput & { accessLevel: string }) | null> {
   const [{ buildBuyerCim, cimHeldFromBuyers }, { designPayload }, { loadMediaAssets }, { listedAskingPrice }, { cimModeForAccessLevel }, { buyerCimRows, servedBlindCodename }] = await Promise.all([
     import("@shared/cim-buyer-view"),
@@ -232,7 +242,7 @@ export async function servedCimFor(
     import("@shared/cim-layouts"),
     import("../cim/published-snapshot"),
   ]);
-  if (cimHeldFromBuyers(deal)) return null;
+  if (cimHeldFromBuyers(deal) && !opts.ignoreHold) return null;
   const mode = cimModeForAccessLevel(accessLevel);
   const [rows, media, keptCodename] = await Promise.all([
     buyerCimRows(deal, accessLevel),

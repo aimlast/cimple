@@ -128,7 +128,9 @@ test("the version shown: asked for, else the latest with reading, else the lates
 });
 test("real titles on blind pages: the buyer's words are kept as servedTitle", () => {
   const blindIdx = buildPageIndex([S("new-fin", 0, "financial_table", "Financial Performance", fin(4))], design, [{ id: "new-fin", analyticsLineage: "L-fin" }]);
-  const facts = assembleFacts(base({ indexes: new Map([["r-new", blindIdx]]), renditions: [], sums: [], visits: [] }));
+  // (The drawn version is the blind one; a named version keeps its own served title — engagement-titles.test.ts.)
+  const blindNew = { id: "r-new", mode: "blind", variant: "full", createdAt: new Date("2026-09-20T00:00:00Z"), visits: 1 };
+  const facts = assembleFacts(base({ indexes: new Map([["r-new", blindIdx]]), renditions: [], chosen: blindNew, sums: [], visits: [] }));
   assert.equal(facts.pages[0].title, "Historical Financial Performance");
   assert.equal(facts.pages[0].servedTitle, "Financial Performance");
 });

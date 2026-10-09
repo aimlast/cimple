@@ -644,6 +644,13 @@ export function buyerAccessPhrase(level: string | null | undefined): string {
   return /^[A-Z]{2,}\b/.test(label) ? label : label.charAt(0).toLowerCase() + label.slice(1);
 }
 
+/**
+ * The access level that sees the NAMED CIM (heat-map fallback when no
+ * blind reading decides the version). At merge the teaser stream's
+ * shared/access-levels.ts re-export ("named") replaces this line (C6).
+ */
+export const NAMED_ACCESS_LEVEL = "loi";
+
 /** Which CIM version a buyer access level sees. */
 export function cimModeForAccessLevel(level: string | null | undefined): "blind" | "normal" | "dd" {
   if (level === "due_diligence") return "dd";
