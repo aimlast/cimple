@@ -26,7 +26,7 @@ import type { GlAddbackTrace } from "@shared/schema";
 import { normaliseFiscalYearEnd } from "@shared/fiscal-year";
 import { glStore } from "./store";
 import { withGlLock } from "./lock";
-import { loadGlContext } from "./context";
+import { loadGlContext, type GlDealContext } from "./context";
 import { planTraces, syncFingerprint, type NormLike } from "./traces";
 import { proposeUnlocked, recomputeTraces, type AiMode } from "./match-run";
 import { tieOutFor } from "./tie-out";
@@ -53,8 +53,8 @@ async function payCountry(dealId: string, deal?: { location?: string | null; ext
 }
 
 /** Sync the add-backs with the analysis (inside the lock). Returns the ids whose matching inputs changed. */
-async function syncUnlocked(dealId: string, force = false): Promise<{ changed: string[]; synced: boolean }> {
-  const c = await loadGlContext(dealId);
+async function syncUnlocked(dealId: string, force = false, ctx?: GlDealContext): Promise<{ changed: string[]; synced: boolean }> {
+  const c = ctx ?? (await loadGlContext(dealId));
   const store = glStore();
   const analysis = await analysisForTraces(dealId);
   const fp = syncFingerprint(analysis, c.fye);
@@ -86,21 +86,20 @@ async function syncUnlocked(dealId: string, force = false): Promise<{ changed: s
   return { changed, synced: true };
 }
 
-/** The fiscal-year end the deal's facts and statements give now (D26). */
-async function derivedFiscalYearEnd(dealId: string): Promise<string> {
-  const [deal, docs] = await Promise.all([storage.getDeal(dealId), storage.getDocumentsByDeal(dealId)]);
-  return fiscalYearEndFor(deal, docs);
-}
-
 /**
  * While the broker hasn't set it, the fiscal-year end follows the facts and
  * statements: when they now say otherwise, every entry and link moves years
  * and everything is worked out again (inside the lock). True when it moved.
+ * With the deal's context already loaded (refreshGl, afterLedgersChanged)
+ * it reads nothing more (checker r2 GL-R2-10: no second load of the deal and
+ * its documents on every poll); a broker-set end reads nothing at all.
  */
-async function followFiscalYearEndUnlocked(dealId: string): Promise<boolean> {
-  const tr = await glStore().getTracing(dealId);
+async function followFiscalYearEndUnlocked(dealId: string, c?: GlDealContext): Promise<boolean> {
+  const tr = c ? c.tracing : await glStore().getTracing(dealId);
   if (!tr || tr.fiscalYearEndByBroker) return false;
-  const derived = await derivedFiscalYearEnd(dealId);
+  const derived = c
+    ? fiscalYearEndFor(c.deal, c.docs)
+    : await Promise.all([storage.getDeal(dealId), storage.getDocumentsByDeal(dealId)]).then(([deal, docs]) => fiscalYearEndFor(deal, docs));
   if (derived === tr.fiscalYearEnd) return false;
   console.log(`[gl] ${dealId}: fiscal year end follows the facts — ${tr.fiscalYearEnd} → ${derived}`);
   await changeFyeUnlocked(dealId, derived);
@@ -115,9 +114,12 @@ export async function followFiscalYearEnd(dealId: string): Promise<boolean> {
 /** Brings the deal's add-backs, proposals, reconciliation and tie-out up to date. Fingerprint-skipped when nothing changed. */
 export async function refreshGl(dealId: string, opts: { force?: boolean } = {}): Promise<{ synced: boolean; changed: string[] }> {
   return withGlLock(dealId, async () => {
+    // One load of the deal, its documents, ledgers and tracing row serves the
+    // fiscal-year check and the sync (the common case — nothing changed — stops there).
+    const ctx = await loadGlContext(dealId);
     // A fiscal-year end the facts have overtaken moves first (it re-syncs everything itself).
-    if (await followFiscalYearEndUnlocked(dealId)) return { synced: true, changed: [] };
-    const { changed, synced } = await syncUnlocked(dealId, opts.force);
+    if (await followFiscalYearEndUnlocked(dealId, ctx)) return { synced: true, changed: [] };
+    const { changed, synced } = await syncUnlocked(dealId, opts.force, ctx);
     if (!synced) return { synced, changed };
     const c = await loadGlContext(dealId);
     if (changed.length) await proposeUnlocked(dealId, changed, { ai: "none" }, c);
@@ -130,9 +132,9 @@ export async function refreshGl(dealId: string, opts: { force?: boolean } = {}):
 /** A ledger became ready / was removed / changed audience: proposals for every add-back, then the numbers. */
 export async function afterLedgersChanged(dealId: string, info: { ledgerId: string; uploadedBy: string; change: "ready" | "removed" }): Promise<void> {
   await withGlLock(dealId, async () => {
-    await followFiscalYearEndUnlocked(dealId);
-    await syncUnlocked(dealId);
-    const c = await loadGlContext(dealId);
+    let c = await loadGlContext(dealId);
+    if (await followFiscalYearEndUnlocked(dealId, c)) c = await loadGlContext(dealId);
+    if ((await syncUnlocked(dealId, false, c)).synced) c = await loadGlContext(dealId);
     const ai: AiMode = info.change === "ready" ? (info.uploadedBy === "seller" ? "seller" : "broker") : "none";
     await proposeUnlocked(dealId, null, { ai }, c);
     await recomputeTraces(dealId, null, c);
