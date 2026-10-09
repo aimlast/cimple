@@ -93,11 +93,13 @@ export function VdrLinkProvider({ source, children, onDrawerChange }: { source: 
   const setUrl = useCallback((t: DrawerTarget | null, mode: "push" | "replace") => {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
-    url.searchParams.delete("doc");
-    url.searchParams.delete("page");
+    for (const k of ["doc", "page", "needle", "sheet", "rows"]) url.searchParams.delete(k);
     if (t) {
       url.searchParams.set("doc", t.itemId);
       if (t.page) url.searchParams.set("page", String(t.page));
+      if (t.needle) url.searchParams.set("needle", t.needle);
+      if (t.sheet) url.searchParams.set("sheet", t.sheet);
+      if (t.rows && t.rows.length) url.searchParams.set("rows", t.rows.join(","));
     }
     const next = `${url.pathname}${url.search}${url.hash}`;
     if (mode === "push") window.history.pushState({ vdrDrawer: !!t }, "", next);
@@ -130,7 +132,7 @@ export function VdrLinkProvider({ source, children, onDrawerChange }: { source: 
     const onPop = () => {
       const link = parseRoomLink(window.location.search);
       if (link.itemId) {
-        setTarget((cur) => (cur && cur.itemId === link.itemId ? cur : { itemId: link.itemId!, title: null, number: null, page: link.page, needle: null, sheet: null, rows: null, replaced: false }));
+        setTarget((cur) => (cur && cur.itemId === link.itemId ? cur : { itemId: link.itemId!, title: null, number: null, page: link.page, needle: link.needle, sheet: link.sheet, rows: link.rows, replaced: false }));
         pushed.current = true;
       } else {
         pushed.current = false;
@@ -145,7 +147,7 @@ export function VdrLinkProvider({ source, children, onDrawerChange }: { source: 
   useEffect(() => {
     if (source.kind !== "buyer") return;
     const link = parseRoomLink(window.location.search);
-    if (link.itemId) setTarget({ itemId: link.itemId, title: null, number: null, page: link.page, needle: null, sheet: null, rows: null, replaced: false });
+    if (link.itemId) setTarget({ itemId: link.itemId, title: null, number: null, page: link.page, needle: link.needle, sheet: link.sheet, rows: link.rows, replaced: false });
   }, [sourceKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { onDrawerChange?.(!!target, target?.itemId ?? null); }, [target?.itemId]); // eslint-disable-line react-hooks/exhaustive-deps
