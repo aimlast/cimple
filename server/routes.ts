@@ -2671,6 +2671,9 @@ Return JSON only.`,
       if (!deal) return res.status(404).json({ error: "Deal not found" });
       const doc = await storage.getDocument(req.params.documentId);
       if (!doc || doc.dealId !== deal.id) return res.status(404).json({ error: "Source not found" });
+      // An "Interview together" transcript is filed live and never read again (§5.8).
+      const { isTogetherSitting } = await import("./together/transcript");
+      if (isTogetherSitting(doc)) return res.status(409).json({ status: "together", error: "Answers from a session together are filed live and can't be read again. Edit them on the board or in Information.", message: "Answers from a session together are filed live and can't be read again. Edit them on the board or in Information." });
       // Its first read is still running (a long source read in parts): never a second, concurrent read.
       const { isBeingRead } = await import("./documents/ingest");
       if (isBeingRead(doc.id)) return res.status(409).json({ status: "running", message: "Cimple is still reading this source. It will show its facts when it's done." });

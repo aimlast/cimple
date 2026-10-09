@@ -18,6 +18,7 @@
 import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
+import { isTogetherSitting } from "../together/transcript";
 import { extractTextWithPages, isPdfSource, UnreadableFormatError } from "./parser";
 import { newDocumentFileName, resolveDocumentPath } from "./document-path";
 import {
@@ -427,6 +428,10 @@ export function startReadHeartbeat(
 export async function ingestDocument(documentId: string): Promise<IngestResult> {
   const doc = await storage.getDocument(documentId);
   if (!doc) return { status: "missing", fieldsWritten: [] };
+  // 1. An "Interview together" transcript is filed live, answer by answer,
+  // through the interview's guards — it is never read again from its text
+  // (specs/together.md §5.8; hook order: INTEGRATION §2.17).
+  if (isTogetherSitting(doc)) return { status: "extracted", fieldsWritten: [] };
   const kind = documentKind(doc);
   // Already being read (a second "parse" while the first read runs): one read at a time.
   if (activeReads.has(doc.id)) return { status: "busy", fieldsWritten: [] };

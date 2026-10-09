@@ -234,7 +234,7 @@ export function useLiveListening(o: LiveListeningOptions): LiveListening {
       setState(remoteCountNow(call) > 0 ? "listening" : "call_waiting");
     } catch (err) {
       callStarted.current = false;
-      setState(listenStateForError(err) === "stopped" ? "stopped" : listenStateForError(err));
+      setState(listenStateForError(err));
       setDetail((err as Error)?.message ?? "Couldn't start the call");
     }
   }, [o.dealId, heard]);

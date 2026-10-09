@@ -4221,11 +4221,9 @@ export async function endSessionManually(
   const mode = sessionModeOf(session);
   const completes = endingCompletesInterview(mode);
   if (completes) {
-    await completeDealInterview(dealId, {
-      mode,
-      messages: (session.messages as ConversationMessage[]) ?? [],
-      byDealBroker: opts.byDealBroker,
-    });
+    // (The announce site is in completeDealInterview.)
+    const byDealBroker = opts.byDealBroker;
+    await completeDealInterview(dealId, { mode, messages: (session.messages as ConversationMessage[]) ?? [], byDealBroker });
   }
 
   // The next session reads what this one answered as on file (background).

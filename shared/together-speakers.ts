@@ -286,19 +286,21 @@ export function autoRoles(
  */
 export function applySpeakerChoice(current: SpeakerMap, present: string[], speaker: string, role: Exclude<SpeakerRole, "unknown">): SpeakerMap {
   const next: SpeakerMap = { ...current };
-  next[speaker] = { ...(current[speaker]?.name ? { name: current[speaker]!.name } : {}), role, by: "broker" };
+  const named = (id: string) => (current[id]?.name ? { name: current[id]!.name } : {});
+  next[speaker] = { ...named(speaker), role, by: "broker" };
+  if (role !== "broker" && role !== "seller") return next;
   const kind = speakerKind(speaker);
-  // Only one broker at a time among voices of the same kind: a previous
-  // automatic "broker" guess yields.
-  if (role === "broker") {
-    for (const id of present) {
-      if (id === speaker || speakerKind(id) !== kind) continue;
-      if (next[id]?.role === "broker" && next[id]?.by !== "broker") next[id] = { ...next[id]!, role: "unknown", by: "auto" };
-    }
-  }
-  const peers = present.filter((id) => id !== speaker && speakerKind(id) === kind && (kind === "deepgram" || kind === "recall"));
-  if (peers.length === 1 && next[peers[0]]?.by !== "broker" && (role === "broker" || role === "seller")) {
-    next[peers[0]] = { ...(next[peers[0]]?.name ? { name: next[peers[0]]!.name } : {}), role: role === "broker" ? "seller" : "broker", by: "auto" };
+  if (kind !== "deepgram" && kind !== "recall" && kind !== "room") return next;
+  const peers = present.filter((id) => id !== speaker && speakerKind(id) === kind);
+  const complement: SpeakerRole = role === "broker" ? "seller" : "broker";
+  // The latest choice wins: in a two-voice room or a two-person meeting the
+  // other voice takes the other role (unless the broker called it "someone
+  // else"); with more voices, whoever held this role before no longer does.
+  if (peers.length === 1) {
+    const peer = peers[0];
+    if (!(next[peer]?.by === "broker" && next[peer]?.role === "other")) next[peer] = { ...named(peer), role: complement, by: "auto" };
+  } else {
+    for (const id of peers) if (next[id]?.role === role) next[id] = { ...named(id), role: "unknown", by: "auto" };
   }
   return next;
 }

@@ -59,8 +59,23 @@ export async function screenAsk(text: string, deal: Pick<Deal, "extractedInfo">)
   const { getSellerKeepOut, carriesPrivateDetail } = await import("../interview/seller-keep-out");
   if (getSellerKeepOut(facts).some((e) => carriesPrivateDetail(t, e))) return { ok: false, reason: "keep_out", message: PRIVATE_ASK_MESSAGE };
   const { screenStaffPrivateText, staffContextFrom } = await import("../cim/staff-private");
-  if (screenStaffPrivateText(t, staffContextFrom(facts)).held.length > 0) return { ok: false, reason: "staff_private", message: PRIVATE_ASK_MESSAGE };
+  const ctx = staffContextFrom(facts);
+  if (screenStaffPrivateText(t, ctx).held.length > 0 || asksAboutStaffPrivate(t, ctx.staffNames, ctx.ownerNames)) {
+    return { ok: false, reason: "staff_private", message: PRIVATE_ASK_MESSAGE };
+  }
   return { ok: true, text: t };
+}
+
+/** A staff member's private matter, as the subject of a question (the CIM-side guard reads statements). */
+const STAFF_TOPIC_RE = /\b(?:equity|stake|shares?|partnership|raise|pay rise|paid|pay|salary|salaries|wages?|bonus(?:es)?|leav(?:e|es|ing)|quit(?:ting)?|resign\w*|retir\w*|health|sick\w*|illness|medical|divorc\w*|family|pregnan\w*|maternity|paternity|warning|disciplin\w*|fired|let go|performance|complain\w*|lawsuit|grievance)\b/i;
+const STAFF_WORD_RE = /\b(?:employee|staff member|technician|tech|manager|supervisor|foreman|bookkeeper|assistant|dispatcher|lead hand|installer|apprentice)s?\b/i;
+
+export function asksAboutStaffPrivate(text: string, staffNames: string[], ownerNames: string[] = []): boolean {
+  if (!STAFF_TOPIC_RE.test(text)) return false;
+  const owner = new Set(ownerNames.map((w) => w.toLowerCase()));
+  const words = new Set((text.toLowerCase().match(/[a-z\u00c0-\u024f'-]+/g) ?? []).map((w) => w.replace(/'s$/, "")));
+  const namesStaff = staffNames.some((n) => n.split(/\s+/).some((w) => w.length >= 3 && !owner.has(w.toLowerCase()) && words.has(w.toLowerCase())));
+  return namesStaff || STAFF_WORD_RE.test(text);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

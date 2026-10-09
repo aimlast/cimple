@@ -44,7 +44,7 @@ import { useTogetherSitting } from "@/hooks/useTogetherSitting";
 import { useLiveListening } from "@/hooks/useLiveListening";
 import { usePictureInPicture } from "@/lib/pip";
 import { viewCounts, type CoverageBoard, type CoverageFilter, type CoverageView } from "@shared/coverage-board";
-import { VIA_LABEL, listenCopy, listenIsProblem, type TogetherVia } from "@shared/together";
+import { VIA_LABEL, listenCopy, listenIsActive, listenIsProblem, type TogetherVia } from "@shared/together";
 import type { Deal } from "@shared/schema";
 
 const VIEWS: CoverageView[] = ["ask", "all", "filed", "verify", "questions", "docs", "section"];
@@ -397,6 +397,16 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
     notetakerState: sit.notetaker,
     sessionEnded: ended,
   });
+
+  // "Pause listening" pauses the session too (the seller's own interview is
+  // free while it's paused); listening again resumes it.
+  const listenState = listening.state;
+  const sittingStatus = sitting?.status;
+  useEffect(() => {
+    if (listenState === "paused" && sittingStatus === "live") void sit.pause().catch(() => undefined);
+    else if (listenIsActive(listenState) && sittingStatus === "paused") void sit.resume().catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listenState, sittingStatus]);
 
   const pip = usePictureInPicture({ width: 460, height: 600 });
   const [endOpen, setEndOpen] = useState(false);

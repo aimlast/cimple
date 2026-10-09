@@ -10,7 +10,7 @@
  * and turns the pill amber.
  */
 import { useEffect, useState } from "react";
-import { AlertTriangle, Copy, Loader2, Mail, Mic, MicOff, Pause, Play, RefreshCw, Video } from "lucide-react";
+import { AlertTriangle, Copy, Loader2, Mail, Mic, Pause, Play, RefreshCw, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -190,8 +190,4 @@ export function NotetakerCard({ via, listening, initialLink, ended }: { via: Tog
       <p className="text-[11px] text-muted-foreground">It joins as “Cimple Notetaker”. Pop the checklist out to keep it over the call.</p>
     </div>
   );
-}
-
-export function MicOffIcon() {
-  return <MicOff className="h-3.5 w-3.5" />;
 }

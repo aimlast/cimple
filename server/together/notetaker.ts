@@ -77,7 +77,8 @@ export async function pollNotetaker(sittingId: string, now = Date.now()): Promis
       w.busy = false;
     }
   }
-  if (!watches.has(sittingId)) return null;
+  // (A final state ended the watch — report it.)
+  if (!watches.has(sittingId)) return w.state;
   const lastLine = s.lastLineAt ? new Date(s.lastLineAt).getTime() : 0;
   if (w.state === "notetaker_live" && lastLine > 0 && now - lastLine >= SILENCE_WATCHDOG_MS) setState(sittingId, w, "notetaker_silent");
   return w.state;
