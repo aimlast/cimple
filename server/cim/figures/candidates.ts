@@ -230,7 +230,9 @@ export function sellerAskRefusal(
 ): string | null {
   const fig = reg[key];
   if (!fig) return "That figure isn't in this CIM any more.";
-  if (!askableLine(fig)) return `Cimple doesn't ask the seller about ${fig.lineLabel.toLowerCase()}: it's worked out from other figures or by the accountant. Write the reason yourself.`;
+  // "Income taxes" → "income taxes"; an acronym ("EBITDA") keeps its capitals.
+  const word = fig.lineLabel.replace(/^[A-Z](?=[a-z])/, (c) => c.toLowerCase());
+  if (!askableLine(fig)) return `Cimple doesn't ask the seller about ${word}: it's worked out from other figures or by the accountant. Write the reason yourself.`;
   const held = heldFigures(checks, reg);
   const prev = kind === "movement" ? previousOf(reg, fig) : null;
   const heldYear = held.has(key) ? fig.year : prev && held.has(prev.key) ? prev.year : null;

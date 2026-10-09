@@ -34,6 +34,7 @@ test("checker r2: EBITDA, net income, income taxes and the held FY2022 cost of s
   assert.ok(plan.reject, "nothing left to ask → 422");
   assert.match(sellerAskRefusal(raw.registry, raw.checks.checks, "costOfSales|2022")!, /FY2022 figures don't match the statements/);
   assert.match(sellerAskRefusal(raw.registry, raw.checks.checks, "incomeTaxes|2024")!, /doesn't ask the seller about income taxes/);
+  assert.match(sellerAskRefusal(raw.registry, raw.checks.checks, "ebitda|2023")!, /doesn't ask the seller about EBITDA/);
 });
 
 test("a single refused figure is a 422 with its own reason", () => {
