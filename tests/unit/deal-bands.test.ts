@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import {
   customerRange,
+  customerShare,
   headcountRange,
   indexedTrend,
   marginRange,
@@ -99,6 +100,7 @@ check("years, margins, customers, recurring, headcount are ranges", () => {
   assert.equal(marginRange(31), "30%+");
   assert.equal(customerRange(22), "Largest customer 20–30%");
   assert.equal(customerRange(8), "No customer above 10%");
+  assert.equal(customerShare(22), "20–30% of revenue");
   assert.equal(recurringRange(45), "40–60% recurring");
   assert.equal(headcountRange(148), "100–249");
   assert.equal(headcountRange(0), null);
