@@ -205,7 +205,7 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, payDo
       {trace.sentAt && (
         <section className="space-y-2">
           <Label htmlFor="gl-ask" className="text-sm font-medium">Ask the seller about this</Label>
-          <Textarea id="gl-ask" value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="e.g. Is the Petro-Canada fuel for the Lexus only?" rows={2} maxLength={1000} />
+          <Textarea id="gl-ask" value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="e.g. Is all of this fuel for the owner's own car?" rows={2} maxLength={1000} />
           <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5" disabled={question.trim().length < 3 || act.isPending}
             onClick={() => act.mutate({ method: "POST", url: `/api/deals/${dealId}/gl/traces/${trace.id}/question`, body: { text: question } }, { onSuccess: () => { setQuestion(""); toast({ title: "Question sent", description: "It's on the seller's page." }); } })}>
             <MessageSquare className="h-3.5 w-3.5" /> Send the question
