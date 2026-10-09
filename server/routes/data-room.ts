@@ -73,7 +73,7 @@ import {
   roomPayload,
   shareAudience,
   validateShares,
-  waitingFor,
+  roomAndWaiting,
   LEDGER_DD_ONLY,
   type BrokerDeps,
   type ShareInput,
@@ -1309,11 +1309,9 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       const d = await deps();
       const deal = res.locals.deal as Deal;
       await requireRoom(d, deal.id);
-      const payload = await roomPayload(brokerDeps(d), deal);
-      const ctx = await loadBrokerContext(brokerDeps(d), deal);
-      const buyers = buildBuyers(deal.id, ctx.groups, ctx.snap, ctx.views, { root: d.root(), now: ctx.now, privateMatters: ctx.pm });
+      const { waiting } = await roomAndWaiting(brokerDeps(d), deal);
       res.setHeader("Cache-Control", "no-store");
-      res.json({ items: await waitingFor(brokerDeps(d), deal, ctx, payload.items, buyers.eligible, payload.folders) } satisfies WaitingPayload);
+      res.json({ items: waiting } satisfies WaitingPayload);
     } catch (err) {
       send(res, err, "load your to-do list");
     }

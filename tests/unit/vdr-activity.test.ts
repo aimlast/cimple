@@ -182,6 +182,16 @@ assert.ok(r.text.includes("Northgate"));
 // The drawer's per-document readers still work (no ?view).
 r = await app.call("GET", `/api/deals/D/data-room/activity?item=${it.id}`, undefined, "b1");
 assert.equal(r.json.buyers.length, 1);
+// The analytics contract (§11.4), on the same store.
+const { vdrSignalsForDeal, vdrJourneyEvents, vdrBrokerTotals } = await import("../../server/vdr/timeline");
+await app.call("POST", "/api/view/tok-dd-xxxxxxxxxx/data-room/views", { viewId: start.json.viewId, activeMs: 5000, pageMs: { "1": 5000 }, maxPage: 1 });
+const sig2 = await vdrSignalsForDeal("D", now, app.f.store);
+assert.equal(sig2.get("jane@n.invalid").docsOpened7d, 1);
+assert.equal(sig2.get("jane@n.invalid").financialMs7d, 5000, "the T2 sits under Financial");
+const journey = await vdrJourneyEvents("D", "JANE@n.invalid", app.f.store);
+assert.ok(journey.some((e) => /Opened 1 document in the data room/.test(e.title)), JSON.stringify(journey));
+const totals = await vdrBrokerTotals(["D", "E", "nope"], now, app.f.store);
+assert.deepEqual(totals, { rooms: 2, documentsShared: 1, buyersReading7d: 1, activeMs7d: 5000 });
 app.close();
 
 console.log("vdr-activity: all passed");

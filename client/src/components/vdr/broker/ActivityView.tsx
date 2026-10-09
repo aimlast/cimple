@@ -81,7 +81,7 @@ function pageList(pages: number[]): string {
 
 const ROLE: Record<string, string> = { principal: "the buyer", accountant: "accountant", lawyer: "lawyer", lender: "lender", adviser: "adviser", colleague: "colleague" };
 
-function ByBuyer({ dealId, onOpenItem, onViewAs, onLog }: { dealId: string; onOpenItem: (id: string) => void; onViewAs: (accessId: string) => void; onLog: (accessId: string) => void }) {
+export function ByBuyer({ dealId, onOpenItem, onViewAs, onLog }: { dealId: string; onOpenItem: (id: string) => void; onViewAs: (accessId: string) => void; onLog: (accessId: string) => void }) {
   const q = useActivityReport(dealId, { view: "buyers" });
   const [open, setOpen] = useState<string | null>(null);
   if (q.isLoading) return <Loading />;
@@ -156,7 +156,7 @@ function PageStrip({ d }: { d: ActivityDocRow }) {
   );
 }
 
-function ByDocument({ dealId, onOpenItem }: { dealId: string; onOpenItem: (id: string) => void }) {
+export function ByDocument({ dealId, onOpenItem }: { dealId: string; onOpenItem: (id: string) => void }) {
   const q = useActivityReport(dealId, { view: "documents" });
   if (q.isLoading) return <Loading />;
   if (q.error || !q.data) return <PanelError what="the activity" onRetry={() => q.refetch()} />;

@@ -321,6 +321,11 @@ export function itemRow(
 }
 
 export async function roomPayload(deps: BrokerDeps, deal: Deal): Promise<BrokerRoomPayload> {
+  return (await roomAndWaiting(deps, deal)).payload;
+}
+
+/** The tab's payload and its "Waiting on you" list, from one load (GET …/todo uses the list). */
+export async function roomAndWaiting(deps: BrokerDeps, deal: Deal): Promise<{ payload: BrokerRoomPayload; waiting: WaitingItem[] }> {
   const ctx = await loadBrokerContext(deps, deal);
   const { snap, groups, views, now, pm, rows } = ctx;
   const room = await deps.store.getRoom(deal.id);
@@ -361,7 +366,7 @@ export async function roomPayload(deps: BrokerDeps, deal: Deal): Promise<BrokerR
   const ddShared = new Set(live.filter((i) => i.sharing.levels.includes(DD_ACCESS_LEVEL) && i.documentId).map((i) => i.documentId!));
   const citedIds = cited ? Array.from(new Set(cited)) : [];
   const ddNotShared = citedIds.filter((id) => !ddShared.has(id)).length;
-  return {
+  const payload: BrokerRoomPayload = {
     room: room ? { status: room.status === "closed" ? "closed" : "open", autoAddNew: room.autoAddNew, planAppliedAt: iso(room.planAppliedAt), setUpAt: new Date(room.setUpAt).toISOString(), closedAt: iso(room.closedAt) } : null,
     folders: room ? folderRows(snap.folders, snap.items, numbers.folders) : [],
     items: room ? items : [],
@@ -381,6 +386,7 @@ export async function roomPayload(deps: BrokerDeps, deal: Deal): Promise<BrokerR
     deal: { live: !!deal.isLive, everLive: !!deal.isLive || rows.length > 0, name: deal.businessName },
     ddCited: { available: !!cited, total: citedIds.length, notShared: ddNotShared },
   };
+  return { payload, waiting };
 }
 
 /** "Waiting on you" (§5.8) for a deal, from the tab's own context. */
