@@ -102,23 +102,9 @@ interface TurnResult {
   coverageSummary?: CoverageSummary;
 }
 
-/** How a broker-led ("together") interview is happening. */
-export type TogetherVia = "person" | "zoom" | "meet" | "teams" | "cimple";
-
-export const VIA_LABEL: Record<TogetherVia, string> = {
-  person: "In person",
-  zoom: "Zoom",
-  meet: "Google Meet",
-  teams: "Microsoft Teams",
-  cimple: "Cimple call",
-};
-
 interface InterviewProps {
-  /** broker = broker alone; seller = seller alone; together = broker with the seller on a call / in person */
-  mode: "broker" | "seller" | "together";
-  /** together mode: where the conversation happens */
-  via?: TogetherVia;
-  meetingLink?: string;
+  /** broker = the broker alone (their own session); seller = the seller. ("Interview together" is the coverage board: pages/TogetherInterview.tsx.) */
+  mode: "broker" | "seller";
   dealId: string;
   businessName?: string;
   /** Seller invite token — authenticates seller-mode interview API calls */
@@ -134,8 +120,6 @@ interface InterviewProps {
 
 export function Interview({
   mode,
-  via,
-  meetingLink,
   dealId,
   businessName,
   sellerToken,
@@ -144,7 +128,6 @@ export function Interview({
   resume,
   transcriptHref,
 }: InterviewProps) {
-  const isTogether = mode === "together";
   const [, setSectionCoverage] = useState<SectionCoverage[]>([]);
   const [industryContext, setIndustryContext] = useState<IndustryContext>({
     identified: false,
@@ -243,14 +226,6 @@ export function Interview({
               </span>
             </>
           )}
-          {isTogether && (
-            <>
-              <span className="text-muted-foreground/30">·</span>
-              <span className="text-xs text-muted-foreground inline-flex items-center gap-1" data-testid="label-together-mode">
-                Interview together · {VIA_LABEL[via ?? "person"]}
-              </span>
-            </>
-          )}
           <div className="ml-auto flex items-center gap-2 shrink-0">
             {/* Broker: % collected + quality + coverage panel toggle */}
             {isBroker && (
@@ -306,12 +281,9 @@ export function Interview({
             sellerToken={sellerToken}
             onTurnResult={handleTurnResult}
             onComplete={handleComplete}
-            variant={isTogether ? "together" : "chat"}
             // The broker's own page: a session of their own, recorded as
             // the broker's word — never resumed or read by the seller.
             conductedBy={mode === "broker" ? "broker" : undefined}
-            via={via}
-            meetingLink={meetingLink}
             resume={resume}
             transcriptHref={transcriptHref}
           />

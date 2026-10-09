@@ -1,21 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { createPortal } from "react-dom";
-import { Send, StopCircle, CheckCircle, LogOut, Mic, MicOff, AlertCircle, RefreshCw, Pencil, X, PictureInPicture2, SkipForward, HelpCircle, Users } from "lucide-react";
-import { usePictureInPicture } from "@/lib/pip";
-import { startLiveTranscription, NotConfiguredError, type LiveTranscriptionHandle, type LiveSegment } from "@/lib/live-transcription";
-import { createDailyCall, joinDailyCall, type CallHandle } from "@/lib/daily-call";
-import DailyIframe, { type DailyCall } from "@daily-co/daily-js";
-import { CallStage } from "@/components/call/CallStage";
+import { Send, CheckCircle, LogOut, Mic, MicOff, AlertCircle, RefreshCw, Pencil, X, Users } from "lucide-react";
 import { looksLikeQuestionEcho } from "@shared/together-speakers";
-import {
-  answeringAt as answeringAtOf,
-  afterFailedSend,
-  liveExchangeText,
-  brokerNameFromMe,
-  botSpeakerFor,
-  newBotSpeakerState,
-} from "@/lib/interview-sync";
-import { Copy } from "lucide-react";
+import { answeringAt as answeringAtOf, afterFailedSend } from "@/lib/interview-sync";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -73,12 +59,6 @@ interface AIConversationInterfaceProps {
   sellerToken?: string;
   onTurnResult?: (result: TurnResult) => void;
   onComplete?: () => void | Promise<void>;
-  /** "together": broker-led — the broker reads the question aloud, the
-   *  seller answers by voice (mic) or the broker types; a floating window can
-   *  carry the question over an external call. */
-  variant?: "chat" | "together";
-  via?: string;
-  meetingLink?: string;
   /** The caller already chose to continue a finished interview ("Add more detail"). */
   resume?: boolean;
   /** Where the finished interview's transcript can be read (broker). */
@@ -87,7 +67,8 @@ interface AIConversationInterfaceProps {
    * The broker's own page ("Start AI Interview" on the deal): "broker" — the
    * broker answers from their notes, in a session of their own that the
    * seller never resumes or reads. (Seller pages send nothing: the invite
-   * token decides. "together" sends broker_with_seller itself.)
+   * token decides.) "Interview together" is the coverage board now
+   * (client/src/components/together) — it never runs this chat.
    */
   conductedBy?: "broker";
 }
@@ -98,8 +79,6 @@ class TurnRefused extends Error {
     super(message);
   }
 }
-
-const IMPORTANCE_TEXT = { critical: "Critical for buyers", important: "Important", helpful: "Helpful" } as const;
 
 // (Moved to shared/together-speakers.ts — re-exported for existing callers.)
 export { looksLikeQuestionEcho };
@@ -180,67 +159,12 @@ export function AIConversationInterface({
   sellerToken,
   onTurnResult,
   onComplete,
-  variant = "chat",
-  via,
-  meetingLink,
   resume = false,
   transcriptHref,
   conductedBy: conductedByProp,
 }: AIConversationInterfaceProps) {
-  const together = variant === "together";
-  const conductedBy = together ? ("broker_with_seller" as const) : conductedByProp;
-  // Hands-free (together mode): keep listening across questions and send the
-  // seller's answer automatically after a pause. The broker clicks once.
-  const [handsFree, setHandsFree] = useState(false);
-  const handsFreeRef = useRef(false);
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const consumedResultsRef = useRef(0);
-  const lastResultsLengthRef = useRef(0);
-  const currentQuestionRef = useRef<string | undefined>(undefined);
+  const conductedBy = conductedByProp;
   const handleSendRef = useRef<(text?: string, queued?: QueuedSend) => Promise<void>>(async () => {});
-  const HANDS_FREE_PAUSE_MS = 3000;
-  // Speaker-aware live transcription (Deepgram) — the room's conversation,
-  // labelled by speaker, sent to the AI as an exchange after a pause.
-  const [liveActive, setLiveActive] = useState(false);
-  const [liveStarting, setLiveStarting] = useState(false);
-  const [liveLines, setLiveLines] = useState<{ speaker: number; text: string }[]>([]);
-  const [liveInterim, setLiveInterim] = useState("");
-  const [brokerSpeaker, setBrokerSpeaker] = useState<number | null>(null);
-  const liveRef = useRef<LiveTranscriptionHandle | null>(null);
-  const liveLinesRef = useRef<{ speaker: number; text: string }[]>([]);
-  const brokerSpeakerRef = useRef<number | null>(null);
-  const liveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // How long the seller must be silent before their answer is sent. 3s cut
-  // natural speech ("let me see…") into fragments; 5s lets people think.
-  const LIVE_PAUSE_MS = 5000;
-  /** Mirrors isLoading for timer callbacks (a stale closure would read false). */
-  const isLoadingRef = useRef(false);
-  // In-Cimple video call (Daily) — together mode with via="cimple".
-  const inCimpleCall = together && via === "cimple";
-  const callHandleRef = useRef<CallHandle | null>(null);
-  const [callObject, setCallObject] = useState<DailyCall | null>(null);
-  // Bumped by "Rejoin" to run the call startup again after leaving.
-  const [callAttempt, setCallAttempt] = useState(0);
-  const [callState, setCallState] = useState<"idle" | "joining" | "live" | "ended" | "error">("idle");
-  const [callError, setCallError] = useState<string | null>(null);
-  const [sellerCallLink, setSellerCallLink] = useState<string | null>(null);
-  const [sellerEmail, setSellerEmail] = useState("");
-  const [sellerName, setSellerName] = useState("");
-  const [linkBusy, setLinkBusy] = useState<"create" | "send" | null>(null);
-  const [linkSentTo, setLinkSentTo] = useState<string | null>(null);
-  // Notetaker bot on the broker's own Zoom / Meet / Teams call (Recall.ai).
-  const externalCall = together && (via === "zoom" || via === "meet" || via === "teams");
-  const [botMeetingUrl, setBotMeetingUrl] = useState(meetingLink || "");
-  const [botState, setBotState] = useState<"idle" | "starting" | "joining" | "live" | "ended" | "error" | "unavailable">("idle");
-  const [botStatusText, setBotStatusText] = useState<string>("");
-  /** Why the notetaker's live transcript is behind (a failed poll), or "". */
-  const [botPollNote, setBotPollNote] = useState<string>("");
-  const botSeqRef = useRef(0);
-  const botActiveRef = useRef(false);
-  const brokerNameRef = useRef<string>("");
-  // One speaker per meeting participant (so "this is me" works), and who the broker is.
-  const botSpeakersRef = useRef(newBotSpeakerState());
-  const pip = usePictureInPicture({ width: 460, height: 600 });
   // Seller-mode calls carry the invite token; broker-mode relies on the
   // session cookie. authHeaders merges the token header when present.
   const authHeaders = (base: Record<string, string> = {}) =>
@@ -346,8 +270,8 @@ export function AIConversationInterface({
             headers: authHeaders({ "Content-Type": "application/json", Accept: "text/event-stream" }),
             body: JSON.stringify({
               stream: true,
-              ...(conductedBy ? { conductedBy, ...(via ? { conductedVia: via } : {}) } : {}),
-              ...(resumeRef.current || together ? { resume: true } : {}),
+              ...(conductedBy ? { conductedBy } : {}),
+              ...(resumeRef.current ? { resume: true } : {}),
             }),
           },
           (stage) => { if (!cancelled) setStartStage(stage); },
@@ -490,13 +414,10 @@ export function AIConversationInterface({
   // restored transcript reads as the page running away.
   useEffect(() => {
     if (isStarting || !messagesEndRef.current) return;
-    // Broker-led: the call and the question to read aloud live at the top —
-    // never scroll them out of view; the transcript below is secondary.
-    if (variant === "together") return;
     const behavior: ScrollBehavior = initialScrollDoneRef.current ? "smooth" : "auto";
     initialScrollDoneRef.current = true;
     messagesEndRef.current.scrollIntoView({ behavior, block: "end" });
-  }, [messages, isLoading, isStarting, variant]);
+  }, [messages, isLoading, isStarting]);
 
   // Escalate the thinking label after a few seconds so long Opus turns
   // read as "still with you" rather than frozen.
@@ -545,33 +466,16 @@ export function AIConversationInterface({
     recognition.onresult = (event: any) => {
       let fullFinal = "";
       let interimTranscript = "";
-      const hf = handsFreeRef.current;
-      lastResultsLengthRef.current = event.results.length;
-      for (let i = hf ? consumedResultsRef.current : 0; i < event.results.length; i++) {
+      for (let i = 0; i < event.results.length; i++) {
         const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          // Hands-free: the broker reading the question aloud is not an answer.
-          if (hf && looksLikeQuestionEcho(transcript, currentQuestionRef.current)) continue;
-          fullFinal += transcript + " ";
-        } else {
-          interimTranscript += transcript;
-        }
+        if (event.results[i].isFinal) fullFinal += transcript + " ";
+        else interimTranscript += transcript;
       }
-      const base = hf ? "" : preRecordingInputRef.current;
+      const base = preRecordingInputRef.current;
       const prefix = base ? base + " " : "";
       const combined = prefix + fullFinal.trimEnd() + (interimTranscript ? "\u200B" + interimTranscript : "");
       setInput(combined);
       inputRef.current = combined;
-      if (hf) {
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        const words = fullFinal.trim().split(/\s+/).filter(Boolean).length;
-        if (words >= 3) {
-          silenceTimerRef.current = setTimeout(() => {
-            consumedResultsRef.current = lastResultsLengthRef.current;
-            void handleSendRef.current();
-          }, HANDS_FREE_PAUSE_MS);
-        }
-      }
     };
 
     recognition.onerror = (event: any) => {
@@ -595,40 +499,16 @@ export function AIConversationInterface({
       setIsRecording(false);
       recognitionRef.current = null;
       setInput((prev) => prev.replace(/\u200B/g, "").trimEnd());
-      // Chrome ends recognition after a stretch of silence — in hands-free
-      // mode start it again (fresh result list, so nothing is re-sent).
-      if (handsFreeRef.current) {
-        consumedResultsRef.current = 0;
-        lastResultsLengthRef.current = 0;
-        setTimeout(() => { if (handsFreeRef.current && !recognitionRef.current) startRecordingRef.current(); }, 400);
-      }
     };
 
     recognitionRef.current = recognition;
     recognition.start();
   }, [getSpeechRecognition, stopRecording, toast]);
 
-  const startRecordingRef = useRef(startRecording);
-  useEffect(() => { startRecordingRef.current = startRecording; }, [startRecording]);
-
   const toggleRecording = useCallback(() => {
     if (isRecording) stopRecording();
     else startRecording();
   }, [isRecording, stopRecording, startRecording]);
-
-  const toggleHandsFree = useCallback(() => {
-    const next = !handsFreeRef.current;
-    handsFreeRef.current = next;
-    setHandsFree(next);
-    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
-    consumedResultsRef.current = 0;
-    lastResultsLengthRef.current = 0;
-    if (next) {
-      if (!recognitionRef.current) startRecording();
-    } else {
-      stopRecording();
-    }
-  }, [startRecording, stopRecording]);
 
   // Cleanup speech recognition on unmount
   useEffect(() => {
@@ -647,7 +527,7 @@ export function AIConversationInterface({
       if (!isStreaming || queued || queuedSendRef.current) return;
       const text = (overrideText ?? input).replace(/​/g, "").trim();
       if (!text) return;
-      if (!handsFreeRef.current) stopRecording();
+      stopRecording();
       const correction = editing;
       const userMessage: ConversationMessage = {
         role: "user",
@@ -673,8 +553,7 @@ export function AIConversationInterface({
       });
       return;
     }
-    if (!handsFreeRef.current) stopRecording();
-    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
+    stopRecording();
 
     // overrideText: a message sent programmatically (e.g. the broker's Skip)
     // without going through the composer's state. A queued answer is
@@ -743,7 +622,7 @@ export function AIConversationInterface({
           message: cleanedInput,
           sessionId,
           ...(userMessage.correctionOf ? { correctionOf: userMessage.correctionOf } : {}),
-          ...(conductedBy ? { conductedBy, ...(via ? { conductedVia: via } : {}) } : {}),
+          ...(conductedBy ? { conductedBy } : {}),
           // The question this answers — the server refuses an answer to a
           // question that is no longer the latest (another tab, a resend).
           ...(answering ? { answeringAt: answering } : {}),
@@ -1017,366 +896,11 @@ export function AIConversationInterface({
     localOnlyRef.current.add(finishMessage.timestamp);
     setMessages((prev) => [...prev, finishMessage]);
     setIsEnding(false);
-    // Interview together: ending the interview never ends the call — the
-    // broker is still talking to the seller; leaving the page (an explicit
-    // "Return to deal") does.
-    if (!together) void onComplete?.();
-  }, [stopRecording, handleCancel, onComplete, sessionId, dealId, isEnding, toast, together]);
+    void onComplete?.();
+  }, [stopRecording, handleCancel, onComplete, sessionId, dealId, isEnding, toast]);
 
   // Enter sends (the convention in every messaging app); Shift+Enter inserts
   // a newline. Ctrl/Cmd+Enter still sends for muscle memory.
-  // ── Speaker-aware listening (Deepgram) ──
-  const speakerLabel = useCallback((speaker: number) => {
-    const b = brokerSpeakerRef.current;
-    if (b === null) return `Speaker ${speaker + 1}`;
-    return speaker === b ? "Broker" : "Seller";
-  }, []);
-
-  /**
-   * Sends the room's exchange since the last question. The pause timer sends
-   * once the seller has answered (any length when the broker hasn't spoken
-   * since — "We lease it." used to wait forever for a fourth word); "Send
-   * now" (`force`) sends whatever the transcript holds.
-   */
-  const flushLiveExchange = useCallback((force = false) => {
-    const lines = liveLinesRef.current;
-    if (lines.length === 0) return;
-    // The AI is still answering the previous exchange: keep everything and try
-    // again shortly. (Previously the lines were cleared and then the send was
-    // refused because a reply was in progress — speech said while the AI was
-    // thinking was silently lost.)
-    if (isLoadingRef.current) {
-      if (liveTimerRef.current) clearTimeout(liveTimerRef.current);
-      liveTimerRef.current = setTimeout(() => flushLiveExchangeRef.current(force), 1500);
-      return;
-    }
-    // Only the broker's lines can be "the question being read aloud"; a
-    // seller who repeats the question's words is answering it.
-    const text = liveExchangeText(lines, brokerSpeakerRef.current, {
-      force,
-      label: speakerLabel,
-      isEcho: (t) => looksLikeQuestionEcho(t, currentQuestionRef.current),
-    });
-    if (!text) return;
-    liveLinesRef.current = [];
-    setLiveLines([]);
-    setLiveInterim("");
-    void handleSendRef.current(text);
-  }, [speakerLabel]);
-
-  const flushLiveExchangeRef = useRef(flushLiveExchange);
-  useEffect(() => { flushLiveExchangeRef.current = flushLiveExchange; }, [flushLiveExchange]);
-  useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
-
-  const armLiveTimer = useCallback(() => {
-    if (liveTimerRef.current) clearTimeout(liveTimerRef.current);
-    liveTimerRef.current = setTimeout(() => flushLiveExchange(false), LIVE_PAUSE_MS);
-  }, [flushLiveExchange]);
-
-  const onLiveSegment = useCallback((seg: LiveSegment) => {
-    if (!seg.isFinal) { setLiveInterim(seg.text); return; }
-    setLiveInterim("");
-    // The speaker who reads the question aloud is the broker.
-    if (brokerSpeakerRef.current === null && looksLikeQuestionEcho(seg.text, currentQuestionRef.current)) {
-      brokerSpeakerRef.current = seg.speaker;
-      setBrokerSpeaker(seg.speaker);
-    }
-    const lines = liveLinesRef.current.slice();
-    const last = lines[lines.length - 1];
-    if (last && last.speaker === seg.speaker) last.text = `${last.text} ${seg.text}`.trim();
-    else lines.push({ speaker: seg.speaker, text: seg.text });
-    liveLinesRef.current = lines;
-    setLiveLines(lines);
-    armLiveTimer();
-  }, [armLiveTimer]);
-
-  const stopLive = useCallback(() => {
-    liveRef.current?.stop();
-    liveRef.current = null;
-    if (liveTimerRef.current) { clearTimeout(liveTimerRef.current); liveTimerRef.current = null; }
-    setLiveActive(false);
-    setLiveInterim("");
-  }, []);
-
-  /** One "Listen" button: speaker-aware transcription when configured, else the browser's. */
-  const toggleListening = useCallback(async () => {
-    if (liveActive) { stopLive(); return; }
-    if (handsFreeRef.current) { toggleHandsFree(); return; }
-    setLiveStarting(true);
-    try {
-      liveRef.current = await startLiveTranscription({
-        dealId,
-        sellerToken,
-        onSegment: onLiveSegment,
-        onUtteranceEnd: armLiveTimer,
-        onError: (message) => { toast({ title: "Listening stopped", description: message, variant: "destructive" }); stopLive(); },
-      });
-      setLiveActive(true);
-    } catch (err: any) {
-      if (err instanceof NotConfiguredError) {
-        toast({ title: "Using basic listening", description: "Speaker separation isn't set up on this server; the browser's speech recognition is used instead." });
-        toggleHandsFree();
-      } else {
-        toast({ title: "Couldn't start listening", description: err?.message || "Microphone unavailable", variant: "destructive" });
-      }
-    } finally {
-      setLiveStarting(false);
-    }
-  }, [liveActive, stopLive, toggleHandsFree, dealId, sellerToken, onLiveSegment, armLiveTimer, toast]);
-
-  useEffect(() => { if (isFinished) stopLive(); }, [isFinished, stopLive]);
-  useEffect(() => () => { liveRef.current?.stop(); if (liveTimerRef.current) clearTimeout(liveTimerRef.current); }, []);
-
-  // Start the deal's video call when the together page opens in Cimple-call
-  // mode; the transcript arrives per participant, so labels are exact.
-  // Runs once: a ref guards it, because putting callState in the deps made
-  // the effect cancel itself the moment it set "joining" (the broker's side
-  // stayed blank while the seller got in).
-  const callStartedRef = useRef(false);
-  const onLiveSegmentRef = useRef(onLiveSegment);
-  useEffect(() => { onLiveSegmentRef.current = onLiveSegment; }, [onLiveSegment]);
-  const [remoteCount, setRemoteCount] = useState(0);
-  // Call layout: the conversation column keeps itself scrolled to the latest turn.
-  const callChatScrollRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = callChatScrollRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [messages, isLoading]);
-  useEffect(() => {
-    if (!inCimpleCall || !sessionId || callStartedRef.current) return;
-    callStartedRef.current = true;
-    const start = async () => {
-      setCallState("joining");
-      try {
-        const r = await fetch(`/api/interview/${dealId}/call/start`, { method: "POST", credentials: "include" });
-        if (r.status === 503) throw new Error("The video call service isn't set up on this server.");
-        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't start the call");
-        const { roomUrl, token } = await r.json();
-        brokerSpeakerRef.current = 0;
-        setBrokerSpeaker(0);
-        // Our own call screen renders from this object; Daily only carries media.
-        const call = createDailyCall();
-        setCallObject(call);
-        callHandleRef.current = await joinDailyCall(call, {
-          roomUrl,
-          token,
-          onTranscript: (line) => {
-            onLiveSegmentRef.current({ speaker: line.local ? 0 : 1, text: line.text, isFinal: line.isFinal, speechFinal: false });
-          },
-          onLeft: () => { setCallState("ended"); setLiveActive(false); },
-          onError: (m) => { setCallError(m); },
-          onRemoteCount: setRemoteCount,
-        });
-        setLiveActive(true);
-        setCallState("live");
-      } catch (err: any) {
-        setCallError(err?.message || "Couldn't start the call");
-        setCallState("error");
-        callStartedRef.current = false;
-      }
-    };
-    void start();
-  }, [inCimpleCall, sessionId, dealId, callAttempt]);
-
-  /** Leave button on the stage — the room stays open so the broker can rejoin. */
-  const leaveCall = useCallback(async () => {
-    const h = callHandleRef.current;
-    callHandleRef.current = null;
-    setCallObject(null);
-    setCallState("ended");
-    setLiveActive(false);
-    if (h) await h.leave();
-  }, []);
-
-  const rejoinCall = useCallback(() => {
-    callStartedRef.current = false;
-    setCallError(null);
-    setCallState("idle");
-    setCallAttempt((n) => n + 1);
-  }, []);
-
-  // Leaving the "Interview together" page (closing the tab included) tells
-  // the server the sitting is over for now, so the seller's own link opens
-  // at once instead of "your broker is going through this with you now".
-  // Coming back resumes the sitting.
-  useEffect(() => {
-    if (!together) return;
-    const leave = () => {
-      void fetch(`/api/interview/${dealId}/together/leave`, { method: "POST", credentials: "include", keepalive: true }).catch(() => {});
-    };
-    window.addEventListener("pagehide", leave);
-    return () => {
-      window.removeEventListener("pagehide", leave);
-      leave();
-    };
-  }, [dealId, together]);
-
-  // Leaving the page ends the call for everyone and clears the room.
-  // Also covers leaving before actually joining (e.g. still on the camera
-  // check): the room exists from call/start, so end it and remove the frame.
-  useEffect(() => () => {
-    if (callHandleRef.current) {
-      void callHandleRef.current.leave();
-      callHandleRef.current = null;
-    } else {
-      try { DailyIframe.getCallInstance()?.destroy(); } catch { /* no call */ }
-    }
-    if (callStartedRef.current) {
-      callStartedRef.current = false;
-      void fetch(`/api/interview/${dealId}/call/end`, { method: "POST", credentials: "include", keepalive: true });
-    }
-  }, [dealId]);
-
-  // Send the notetaker to the external call and poll its transcript.
-  const startBot = useCallback(async (url: string) => {
-    if (!url.trim()) return;
-    setBotState("starting");
-    setBotStatusText("");
-    try {
-      // (GET /me answers { user: { name, username } } — reading me.name
-      // found nothing, and every line fell back to "the host is the broker".)
-      const me = await fetch("/api/broker-auth/me", { credentials: "include" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-      brokerNameRef.current = brokerNameFromMe(me);
-      botSpeakersRef.current = newBotSpeakerState();
-      const r = await fetch(`/api/interview/${dealId}/call/bot/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meetingUrl: url.trim() }),
-        credentials: "include",
-      });
-      if (r.status === 503) { setBotState("unavailable"); return; }
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't send the notetaker");
-      botSeqRef.current = 0;
-      botActiveRef.current = true;
-      // Who the broker is comes from the lines (their name; the host only
-      // when no name is known) or the broker's own "this is me".
-      brokerSpeakerRef.current = null;
-      setBrokerSpeaker(null);
-      setLiveActive(true);
-      setBotState("joining");
-    } catch (err: any) {
-      setBotState("error");
-      setBotStatusText(err?.message || "Couldn't send the notetaker");
-    }
-  }, [dealId]);
-
-  useEffect(() => {
-    if (!externalCall || !sessionId || botState !== "idle" || !meetingLink) return;
-    void startBot(meetingLink);
-  }, [externalCall, sessionId, botState, meetingLink, startBot]);
-
-  useEffect(() => {
-    if (!externalCall || !botActiveRef.current || (botState !== "joining" && botState !== "live")) return;
-    let cancelled = false;
-    let failures = 0;
-    const tick = async () => {
-      try {
-        const r = await fetch(`/api/interview/${dealId}/call/bot/lines?after=${botSeqRef.current}`, { credentials: "include" });
-        if (cancelled) return;
-        if (!r.ok) {
-          // Lines are buffered on the server (after=seq), so nothing is lost —
-          // but the broker must know the live transcript is behind, not
-          // silently frozen.
-          failures++;
-          if (r.status === 429) setBotPollNote("The live transcript is paused for a moment (too many requests) — it will catch up on its own.");
-          else if (r.status === 401) setBotPollNote("Your session has expired — sign in again to keep the live transcript running.");
-          else if (failures >= 3) setBotPollNote("Can't reach the live transcript right now — retrying.");
-          return;
-        }
-        failures = 0;
-        setBotPollNote("");
-        const data = await r.json() as { lines: { seq: number; participantId: string | number; name: string | null; isHost: boolean | null; text: string }[]; seq: number; status: string | null };
-        for (const l of data.lines) {
-          botSeqRef.current = Math.max(botSeqRef.current, l.seq);
-          const st = botSpeakersRef.current;
-          const speaker = botSpeakerFor(st, l, brokerNameRef.current);
-          // A name match settles who the broker is (over an echo guess); the
-          // host is only a fallback; the broker's own pick always stands.
-          if (st.broker !== null && st.broker !== brokerSpeakerRef.current && (st.brokerBy === "name" || brokerSpeakerRef.current === null)) {
-            brokerSpeakerRef.current = st.broker;
-            setBrokerSpeaker(st.broker);
-          }
-          onLiveSegment({ speaker, text: l.text, isFinal: true, speechFinal: false });
-        }
-        const st = data.status || "";
-        if (st === "fatal" || st === "call_ended" || st === "done") {
-          setBotState("ended");
-          setBotStatusText(st === "fatal" ? "The notetaker couldn't join — check the meeting link and that the meeting has started." : "The notetaker left the call.");
-          botActiveRef.current = false;
-        } else if (st === "in_call_recording" || st === "in_call_not_recording" || data.lines.length > 0) {
-          setBotState("live");
-        } else if (st) {
-          setBotStatusText(st.replace(/_/g, " "));
-        }
-      } catch {
-        // Network blip — say so only if it persists.
-        failures++;
-        if (!cancelled && failures >= 3) setBotPollNote("Can't reach the live transcript right now — retrying.");
-      }
-    };
-    void tick();
-    const id = setInterval(tick, 2000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [externalCall, botState, dealId, onLiveSegment]);
-
-  // Leaving the page makes the bot leave the call.
-  useEffect(() => () => {
-    if (botActiveRef.current) {
-      botActiveRef.current = false;
-      void fetch(`/api/interview/${dealId}/call/bot/stop`, { method: "POST", credentials: "include", keepalive: true });
-    }
-  }, [dealId]);
-
-  // The seller's link to the call — loaded as soon as the call page opens.
-  useEffect(() => {
-    if (!inCimpleCall) return;
-    fetch(`/api/interview/${dealId}/call/seller-link`, { credentials: "include" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!d) return;
-        if (d.link) setSellerCallLink(d.link);
-        if (d.sellerEmail) setSellerEmail(d.sellerEmail);
-        if (d.sellerName) setSellerName(d.sellerName);
-      })
-      .catch(() => {});
-  }, [inCimpleCall, dealId]);
-
-  const requestSellerLink = useCallback(async (send: boolean) => {
-    setLinkBusy(send ? "send" : "create");
-    try {
-      const r = await fetch(`/api/interview/${dealId}/call/seller-link`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sellerEmail: sellerEmail.trim(), sellerName: sellerName.trim(), send }),
-        credentials: "include",
-      });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.error || "Couldn't get the seller's link");
-      setSellerCallLink(d.link);
-      if (send) {
-        if (d.emailSent) { setLinkSentTo(sellerEmail.trim()); toast({ title: "Link sent", description: `Emailed to ${sellerEmail.trim()}.` }); }
-        else toast({ title: "Email didn't send", description: "Copy the link and send it yourself.", variant: "destructive" });
-      } else {
-        const ok = await navigator.clipboard?.writeText(d.link).then(() => true).catch(() => false);
-        toast({ title: ok ? "Seller's link copied" : "Seller's link ready", description: ok ? "Paste it into a text or email to the seller." : d.link });
-      }
-    } catch (err: any) {
-      toast({ title: "Couldn't get the seller's link", description: err?.message, variant: "destructive" });
-    } finally {
-      setLinkBusy(null);
-    }
-  }, [dealId, sellerEmail, sellerName, toast]);
-
-  const listening = liveActive || handsFree;
-  const listenLabel = liveStarting ? "Starting…" : listening ? "Stop listening" : "Listen";
-
-  // ── Broker-led ("together") helpers ──
-  const currentQuestion = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "ai") return messages[i];
-    return null;
-  }, [messages]);
-  const cleanInput = input.replace(/\u200B/g, "").trim();
-  useEffect(() => { currentQuestionRef.current = currentQuestion?.content; }, [currentQuestion]);
   useEffect(() => { handleSendRef.current = handleSend; }, [handleSend]);
   // The turn is saved: an answer the seller sent while it was finishing goes
   // out now. (Declared after the ref update so it calls the fresh handleSend.)
@@ -1388,103 +912,6 @@ export function AIConversationInterface({
     setQueuedSend(false);
     void handleSendRef.current(undefined, next);
   }, [isLoading, isFinished]);
-  // Stop hands-free when the interview finishes or the component unmounts.
-  useEffect(() => {
-    if (isFinished && handsFreeRef.current) { handsFreeRef.current = false; setHandsFree(false); stopRecording(); }
-  }, [isFinished, stopRecording]);
-  useEffect(() => () => { handsFreeRef.current = false; if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current); }, []);
-  const skipQuestion = useCallback(() => {
-    if (isFinished || isLoading) return;
-    void handleSend("The seller would rather skip this one for now — please move on to the next question.");
-  }, [isFinished, isLoading, handleSend]);
-
-  /** The compact question + answer panel — main view and floating window share it. */
-  /** What's being heard right now, labelled by speaker. */
-  const renderLiveTranscript = (extraClass: string, maxLines: number) => (
-    liveActive && (liveLines.length > 0 || liveInterim) ? (
-        <div className={`${extraClass} rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-xs space-y-0.5`} data-testid="live-transcript">
-          {liveLines.slice(-maxLines).map((l, i) => (
-            <p key={i} className="flex gap-2">
-              <button
-                type="button"
-                className={`shrink-0 font-medium ${brokerSpeaker === l.speaker ? "text-muted-foreground" : "text-teal"} hover:underline`}
-                title={brokerSpeaker === l.speaker ? "This is you" : "Click if this is you (the broker)"}
-                onClick={() => {
-                  brokerSpeakerRef.current = l.speaker;
-                  setBrokerSpeaker(l.speaker);
-                  botSpeakersRef.current.broker = l.speaker;
-                  botSpeakersRef.current.brokerBy = "picked";
-                }}
-              >
-                {speakerLabel(l.speaker)}
-              </button>
-              <span className="text-foreground/90">{l.text}</span>
-            </p>
-          ))}
-          {liveInterim && <p className="text-muted-foreground/60 italic">{liveInterim}</p>}
-        </div>
-      ) : null
-  );
-
-  const renderTogetherPanel = (compact: boolean) => (
-    <div className={compact ? "p-4 space-y-3" : "max-w-3xl mx-auto mb-4"} data-testid={compact ? "together-panel-pip" : "together-panel"}>
-      <div className="rounded-xl border border-teal/30 bg-teal/5 px-5 py-4">
-        <div className="flex items-center justify-between gap-2 mb-1.5">
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-teal">Ask the seller</p>
-          {currentQuestion?.importance && (
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{IMPORTANCE_TEXT[currentQuestion.importance]}</span>
-          )}
-        </div>
-        <p className={`${compact ? "text-base" : "text-lg"} leading-snug`}>
-          {currentQuestion?.content || (isLoading ? "Preparing the next question…" : "…")}
-        </p>
-        {currentQuestion?.whyItMatters && (
-          <p className="mt-2 text-xs text-muted-foreground flex items-start gap-1.5">
-            <HelpCircle className="h-3 w-3 mt-0.5 shrink-0" />
-            <span>{currentQuestion.whyItMatters}</span>
-          </p>
-        )}
-        {suggestedAnswers.length > 0 && (!isLoading || turnReady) && (
-          <div className="mt-3">
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1">Listen for</p>
-            <ul className="flex flex-wrap gap-1.5">
-              {suggestedAnswers.map((a, i) => (
-                <li key={i} className="text-xs rounded-full border border-border/70 px-2.5 py-1 text-muted-foreground">{a}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
-      {!inCimpleCall && renderLiveTranscript(compact ? "" : "mt-2", 4)}
-      {compact && !isFinished && (
-        <div className="space-y-2">
-          <Textarea
-            value={input}
-            onChange={(e) => { setInput(e.target.value); inputRef.current = e.target.value; }}
-            placeholder={isRecording ? "Listening… the seller can answer now" : "Seller's answer — press the mic or type"}
-            className="resize-none min-h-[72px] text-sm"
-            disabled={isLoading}
-          />
-          <div className="flex items-center gap-2">
-            <Button onClick={() => void toggleListening()} size="sm" variant={listening ? "destructive" : "outline"} disabled={isFinished || liveStarting} className="h-8 gap-1.5" title="What the seller says is sent automatically after a pause">
-              {listening ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-              {listenLabel}
-            </Button>
-            <Button onClick={() => void handleSend()} size="sm" disabled={isLoading || !cleanInput} className="h-8 gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90">
-              {isLoading ? <StopCircle className="h-3.5 w-3.5 animate-pulse" /> : <Send className="h-3.5 w-3.5" />}
-              {isLoading ? "Thinking…" : "Send"}
-            </Button>
-            <Button onClick={skipQuestion} size="sm" variant="ghost" disabled={isLoading} className="h-8 gap-1.5 ml-auto text-muted-foreground">
-              <SkipForward className="h-3.5 w-3.5" /> Skip
-            </Button>
-          </div>
-        </div>
-      )}
-      {compact && isFinished && (
-        <p className="text-sm text-muted-foreground">Interview finished — close this window.</p>
-      )}
-    </div>
-  );
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1631,7 +1058,7 @@ export function AIConversationInterface({
 
   // ── Reusable pieces of the conversation screen ──
   const messagesView = (
-      <div className={inCimpleCall ? "px-4 py-4 space-y-4" : `px-6 py-5 space-y-5 ${together ? "opacity-80" : ""}`}>
+      <div className="px-6 py-5 space-y-5">
         {messages.map((message, idx) => (
           <ChatMessage
             key={`${message.timestamp}-${idx}`}
@@ -1678,11 +1105,7 @@ export function AIConversationInterface({
                 <div>
                   <p className="text-sm font-medium">Business Overview up to date</p>
                   <p className="text-xs text-muted-foreground mt-0.5" data-testid="text-finished-note">
-                    {inCimpleCall && callState === "live"
-                      ? "The interview is finished — the call stays open until you leave this page."
-                      : externalCall && (botState === "joining" || botState === "live")
-                        ? "The interview is finished — the notetaker leaves when you leave this page."
-                        : "You can come back anytime to add or update details."}
+                    You can come back anytime to add or update details.
                   </p>
                 </div>
               </div>
@@ -1692,7 +1115,7 @@ export function AIConversationInterface({
                   className="shrink-0 px-3 py-1.5 text-xs font-medium rounded-md bg-teal text-teal-foreground hover:bg-teal/90 transition-colors"
                   data-testid="button-finished-continue"
                 >
-                  {together ? "Return to deal →" : "Continue →"}
+                  Continue →
                 </button>
               )}
             </div>
@@ -1753,7 +1176,7 @@ export function AIConversationInterface({
                 Multi-select produced nonsense like "One. Three." Hidden while
                 editing: the chips answer the current question, not the one
                 being corrected. */}
-            {!together && suggestedAnswers.length > 0 && (!isLoading || (turnReady && !queuedSend)) && !editing && (
+            {suggestedAnswers.length > 0 && (!isLoading || (turnReady && !queuedSend)) && !editing && (
               <div className="max-w-3xl mx-auto mb-2.5 flex flex-wrap gap-1.5">
                 {suggestedAnswers.map((answer, idx) => {
                   const isSelected = selectedAnswer === idx;
@@ -1789,9 +1212,7 @@ export function AIConversationInterface({
                 onChange={(e) => { setInput(e.target.value); inputRef.current = e.target.value; }}
                 onKeyDown={handleKeyDown}
                 placeholder={
-                  together
-                    ? (isRecording ? "Listening… the seller can answer now" : isLoading ? "Waiting…" : "Seller's answer — press the mic while they talk, or type what they said")
-                    : turnEnding
+                  turnEnding
                     ? "Wrapping up…"
                     : isRecording
                     ? "Listening... speak now"
@@ -1848,19 +1269,6 @@ export function AIConversationInterface({
                   ? "Enter to send your correction · Esc to cancel"
                   : "Enter to send · Shift+Enter for a new line · Progress saves automatically"}
               </span>
-              {together && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={skipQuestion}
-                  disabled={isLoading || isEnding}
-                  className="h-6 text-[10px] text-muted-foreground/60 hover:text-muted-foreground px-2 ml-auto mr-1"
-                  data-testid="button-skip-question"
-                >
-                  <SkipForward className="h-3 w-3 mr-1" />
-                  Skip question
-                </Button>
-              )}
               <Button
                 variant="ghost"
                 size="sm"
@@ -1876,64 +1284,6 @@ export function AIConversationInterface({
           </>
         )}
       </div>
-  );
-
-  /** Invite the seller to the in-Cimple call — one compact row; collapses once they're in. */
-  const inviteView = remoteCount > 0 ? (
-    <p className="text-xs text-success flex items-center gap-1.5" data-testid="seller-joined">
-      <CheckCircle className="h-3.5 w-3.5" /> Seller joined the call
-      {sellerCallLink && (
-        <button type="button" className="ml-2 text-muted-foreground hover:text-foreground underline underline-offset-2"
-          onClick={() => { void navigator.clipboard?.writeText(sellerCallLink).then(() => toast({ title: "Seller's link copied" })); }}>
-          copy link again
-        </button>
-      )}
-    </p>
-  ) : (
-    <div
-      className="flex flex-wrap items-center gap-2 rounded-lg border border-teal/30 bg-teal/5 px-3 py-2 text-xs"
-      title="The seller opens the link in their browser — nothing to install — and joins as soon as you're in the call."
-      data-testid="seller-call-invite"
-    >
-      <span className="font-medium shrink-0">Invite the seller</span>
-      {sellerCallLink ? (
-        <>
-          <span className="min-w-[160px] flex-1 truncate rounded border border-border bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground" title={sellerCallLink}>{sellerCallLink}</span>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs gap-1 shrink-0"
-            onClick={() => { void navigator.clipboard?.writeText(sellerCallLink).then(() => toast({ title: "Seller's link copied", description: "Paste it into a text or email to the seller." })); }}
-            data-testid="button-copy-seller-call-link"
-          >
-            <Copy className="h-3 w-3" /> Copy
-          </Button>
-        </>
-      ) : (
-        <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => void requestSellerLink(false)} disabled={!!linkBusy} data-testid="button-create-seller-call-link">
-          {linkBusy === "create" ? "Creating…" : "Get the link"}
-        </Button>
-      )}
-      <span className="text-muted-foreground shrink-0">or email it</span>
-      <input
-        value={sellerEmail}
-        onChange={(e) => setSellerEmail(e.target.value)}
-        placeholder="seller@email.com"
-        type="email"
-        className="h-7 w-44 rounded border border-border bg-background px-2 text-xs"
-        data-testid="input-seller-call-email"
-      />
-      <Button
-        size="sm"
-        className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90 shrink-0"
-        onClick={() => void requestSellerLink(true)}
-        disabled={!!linkBusy || !sellerEmail.trim()}
-        data-testid="button-email-seller-call-link"
-      >
-        {linkBusy === "send" ? "Sending…" : "Send"}
-      </Button>
-      {linkSentTo && <span className="text-success shrink-0">Sent to {linkSentTo}</span>}
-    </div>
   );
 
   /** Ending closes the session on the server — confirm before doing it. */
@@ -1968,175 +1318,15 @@ export function AIConversationInterface({
   );
 
 
-  // ── In-Cimple video call: video big on the left with the question under
-  // it; transcript + conversation + notes in a column on the right. ──
-  if (inCimpleCall) {
-    return (
-      <div className="flex h-full min-h-0 flex-col lg:flex-row" data-testid="call-layout">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
-          <div className="shrink-0">{inviteView}</div>
-          {callState === "ended" || callState === "error" ? (
-            <div className="flex min-h-[300px] flex-1 flex-col items-center justify-center gap-3 rounded-xl bg-[#0c0b0a] text-sm text-[#9C958A]" data-testid="broker-call-frame">
-              <span>{callState === "ended" ? "You left the call." : (callError || "Couldn't start the call")}</span>
-              <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90" onClick={rejoinCall} data-testid="button-rejoin-call">
-                {callState === "ended" ? "Rejoin the call" : "Try again"}
-              </Button>
-            </div>
-          ) : (
-            <CallStage
-              call={callObject}
-              selfLabel="You"
-              otherLabel={sellerName || "Seller"}
-              waitingText="Waiting for the seller to join…"
-              onLeave={() => void leaveCall()}
-              className="min-h-[300px] flex-1"
-            />
-          )}
-          {callState === "live" && callError && <p className="shrink-0 -mt-1 text-[11px] text-red-400">{callError}</p>}
-          <div className="shrink-0 [&_[data-testid=together-panel]]:max-w-none [&_[data-testid=together-panel]]:mb-0">
-            {renderTogetherPanel(false)}
-          </div>
-        </div>
-        <div className="flex min-h-[420px] w-full shrink-0 flex-col border-t border-border bg-card/30 lg:min-h-0 lg:w-[400px] lg:border-l lg:border-t-0">
-          <div className="shrink-0 border-b border-border px-4 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Live transcript</p>
-            {renderLiveTranscript("mt-1.5", 8) ?? (
-              <p className="mt-1 text-xs text-muted-foreground/70">
-                {callState === "live" ? "Listening — what the seller says appears here." : "Starts when you join the call."}
-              </p>
-            )}
-            {liveLines.length > 0 && (
-              <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                <span>{isLoading ? "Held until the AI finishes its reply…" : "Sends automatically 5 seconds after the seller stops."}</span>
-                <button
-                  type="button"
-                  className="shrink-0 underline underline-offset-2 hover:text-foreground disabled:opacity-40"
-                  disabled={isLoading}
-                  onClick={() => { if (liveTimerRef.current) clearTimeout(liveTimerRef.current); flushLiveExchangeRef.current(true); }}
-                  data-testid="button-send-exchange-now"
-                >
-                  Send now
-                </button>
-              </div>
-            )}
-          </div>
-          <div ref={callChatScrollRef} className="min-h-0 flex-1 overflow-y-auto">
-            {messagesView}
-          </div>
-          {composerView}
-        </div>
-        {confirmDialogView}
-        {together && pip.container && createPortal(renderTogetherPanel(true), pip.container)}
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-col h-full">
-      {/* Everything above the composer scrolls as one — in "together" mode the
-          call, invite box and question card would otherwise push the composer
-          off the bottom of the screen. */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-      {/* Broker-led: the question to read aloud sits on top; the transcript
-          below stays available but secondary. */}
-      {externalCall && (
-        <div className="px-6 pt-4 shrink-0">
-          <div className="max-w-3xl mx-auto rounded-lg border border-border/60 bg-card/50 px-4 py-2.5 text-xs" data-testid="notetaker-panel">
-            {(botState === "idle" || botState === "error" || botState === "ended" || botState === "unavailable") && (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-muted-foreground">
-                  {botState === "unavailable"
-                    ? "The notetaker isn't set up on this server — use Listen below with your laptop mic instead."
-                    : botState === "error" || botState === "ended"
-                      ? botStatusText
-                      : `Paste your ${via === "meet" ? "Google Meet" : via === "teams" ? "Teams" : "Zoom"} link and Cimple's notetaker will join to transcribe.`}
-                </span>
-                {botState !== "unavailable" && (
-                  <>
-                    <input
-                      value={botMeetingUrl}
-                      onChange={(e) => setBotMeetingUrl(e.target.value)}
-                      placeholder="https://…"
-                      className="flex-1 min-w-[220px] h-7 rounded border border-border bg-background px-2 text-xs"
-                      data-testid="input-notetaker-url"
-                    />
-                    <Button size="sm" className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => void startBot(botMeetingUrl)} disabled={!botMeetingUrl.trim()} data-testid="button-notetaker-start">
-                      {botState === "ended" || botState === "error" ? "Send again" : "Send notetaker"}
-                    </Button>
-                  </>
-                )}
-              </div>
-            )}
-            {(botState === "starting" || botState === "joining") && (
-              <p className="text-muted-foreground flex items-center gap-2"><StopCircle className="h-3 w-3 animate-pulse" /> Cimple Notetaker is joining your call{botStatusText ? ` (${botStatusText})` : "…"} — it appears as a participant named "Cimple Notetaker".</p>
-            )}
-            {botState === "live" && (
-              <p className="flex items-center gap-2"><span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-teal" /></span> In the call — transcribing. The seller's answers send automatically after a pause.</p>
-            )}
-            {botPollNote && (botState === "joining" || botState === "live") && (
-              <p className="text-amber-500 text-[11px]" role="status" data-testid="notetaker-poll-note">{botPollNote}</p>
-            )}
-          </div>
-        </div>
-      )}
-      {together && (
-        <div className="px-6 pt-5 shrink-0">
-          {renderTogetherPanel(false)}
-          <div className="max-w-3xl mx-auto -mt-2 mb-2 flex items-center justify-between gap-2">
-            <p className="text-[11px] text-muted-foreground">
-              {inCimpleCall
-                ? "Read the question to the seller; their answer is captured from the call."
-                : via && via !== "person"
-                ? `On your ${via === "meet" ? "Google Meet" : via === "teams" ? "Teams" : "Zoom"} call${meetingLink ? "" : ""} — pop the question out so it floats over the call.`
-                : liveActive
-                  ? `Listening to the room — ${brokerSpeaker === null ? "read the question aloud once so Cimple learns your voice" : "the seller's answer is sent automatically after a pause"}.`
-                  : "Read the question aloud; press Listen once and the seller's answer is sent automatically after a pause."}
-            </p>
-            {!isFinished && !inCimpleCall && !(externalCall && (botState === "joining" || botState === "live" || botState === "starting")) && (
-              <Button
-                size="sm"
-                variant={listening ? "destructive" : "outline"}
-                className="h-7 text-xs gap-1.5 shrink-0"
-                onClick={() => void toggleListening()}
-                disabled={liveStarting}
-                title="Keep listening to the room; what the seller says is sent automatically after a pause"
-                data-testid="button-listen"
-              >
-                {listening ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-                {listenLabel}
-              </Button>
-            )}
-            {!isFinished && (
-              <Button
-                size="sm"
-                variant={pip.isOpen ? "secondary" : "outline"}
-                className="h-7 text-xs gap-1.5 shrink-0"
-                onClick={() => {
-                  if (pip.isOpen) { pip.close(); return; }
-                  void pip.open()
-                    .then((ok) => { if (!ok) toast({ title: "Floating window needs Chrome or Edge", description: "Keep this tab beside your call instead.", variant: "destructive" }); })
-                    .catch((err: Error) => toast({ title: "Couldn't open the floating window", description: `${err.message}. Keep this tab beside your call instead.`, variant: "destructive" }));
-                }}
-                data-testid="button-pop-out"
-              >
-                <PictureInPicture2 className="h-3.5 w-3.5" />
-                {pip.isOpen ? "Bring back" : "Pop out"}
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {messagesView}
+        {messagesView}
       </div>
 
       {composerView}
 
       {confirmDialogView}
-
-      {/* Floating question window (Chrome/Edge) — same state, rendered into
-          the picture-in-picture document so it floats over the broker's call. */}
-      {together && pip.container && createPortal(renderTogetherPanel(true), pip.container)}
     </div>
   );
 }

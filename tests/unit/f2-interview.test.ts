@@ -319,8 +319,10 @@ function patternsTurn(message: string, prevAi: string | undefined, priorStopCoun
     assert.match(src, /togetherSessionLive\(s, Date\.now\(\), deal as TogetherCallState\)/);
     const routes = fs.readFileSync(path.join(REPO, "server/routes.ts"), "utf8");
     assert.match(routes, /app\.post\("\/api\/interview\/:dealId\/together\/leave", requireBroker, requireOwnedDeal/);
-    const client = fs.readFileSync(path.join(REPO, "client/src/components/AIConversationInterface.tsx"), "utf8");
-    assert.match(client, /\/together\/leave`, \{ method: "POST", credentials: "include", keepalive: true \}/);
+    // ("Interview together" is the coverage board now: leaving its page pauses the session — keepalive —
+    // so the seller's own link opens again; the old /together/leave route stays one release for old tabs.)
+    const client = fs.readFileSync(path.join(REPO, "client/src/hooks/useTogetherSitting.ts"), "utf8");
+    assert.match(client, /\/pause`;[\s\S]*method: "POST", credentials: "include", keepalive: true/);
     ok("F2-INT-5: once the call or notetaker ended (or the broker left the page) after the last exchange, the seller's link is no longer locked");
   }
 
