@@ -213,6 +213,8 @@ export interface Kpi {
   breakdown: Array<{ label: string; count: number }> | null;
   /** "waiting": answers waiting for the seller's OK (shown, not counted). */
   sellerPending: number | null;
+  /** "waiting", across deals: how many per deal, each linked (the popover's footer when the list is cut). */
+  byDeal?: Array<{ dealId: string; dealName: string; count: number; href: string }> | null;
   link: { tab: AnalyticsTab | "buyers_view" | "qa" | "approval"; query?: Record<string, string> } | null;
 }
 
@@ -338,6 +340,12 @@ export interface DealDashboardRow {
   lastActivityAt: string | null;
   partByPart: boolean;
 }
+/** GET /api/broker/analytics/call-list: the call list plus each listed deal's chips (Example / Not live). */
+export interface AnalyticsCallListResponse {
+  entries: CallListEntry[];
+  deals: Array<{ dealId: string; live: boolean; demo: boolean }>;
+}
+
 export interface AnalyticsDealsResponse {
   range: DashboardRange;
   rangeAuto: boolean;
@@ -481,6 +489,8 @@ export interface ActivityResponse {
   items: ActivityItem[];
   next: string | null;
   total: number;
+  /** The deals have data-room activity (a registered source sent some): the "Data room" kind chip shows. */
+  dataRoom?: boolean;
   lastActivity: { at: string; text: string } | null;
   partial: PartialLoad | null;
 }

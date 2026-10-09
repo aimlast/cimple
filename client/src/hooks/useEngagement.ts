@@ -105,6 +105,7 @@ export function useMarkContacted(dealId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: engagementKeys.all(dealId) });
       qc.invalidateQueries({ queryKey: engagementKeys.callList() });
+      qc.invalidateQueries({ queryKey: ["analytics"] });
     },
   });
 }

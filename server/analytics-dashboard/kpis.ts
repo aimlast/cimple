@@ -173,6 +173,20 @@ export function waitingItems(inputs: Pick<BrokerInputs, "deals" | "access" | "qu
   return out.sort((a, b) => a.at.getTime() - b.at.getTime() || a.id.localeCompare(b.id));
 }
 
+/** "Pacific Coast Logistics: 3 · Beacon Specialty Pharmacy: 1": per deal, linked to its Q&A (or its approvals when nothing else waits there). */
+export function waitingByDeal(waiting: WaitingItem[]): NonNullable<Kpi["byDeal"]> {
+  const by = new Map<string, { dealId: string; dealName: string; count: number; questions: number }>();
+  for (const w of waiting) {
+    const d = by.get(w.dealId) ?? { dealId: w.dealId, dealName: w.dealName, count: 0, questions: 0 };
+    d.count++;
+    if (w.kind === "question") d.questions++;
+    by.set(w.dealId, d);
+  }
+  return Array.from(by.values())
+    .sort((a, b) => b.count - a.count || a.dealName.localeCompare(b.dealName))
+    .map((d) => ({ dealId: d.dealId, dealName: d.dealName, count: d.count, href: d.questions > 0 ? `/deal/${d.dealId}/qa` : `/deal/${d.dealId}/buyers?stage=approval` }));
+}
+
 function sellerPendingCount(questions: QuestionRow[], allowed: Set<string> | null): number {
   return questions.filter((q) => questionWaitingOn(q.status, q.publishedAnswer) === "seller" && (!allowed || (!!q.accessId && allowed.has(q.accessId)))).length;
 }
@@ -276,6 +290,7 @@ export function computeKpis(inputs: BrokerInputs, opts: KpiOptions): { kpis: Kpi
       { label: "Waiting for your approval", count: nA },
     ],
     sellerPending: sellerPendingCount(inputs.questions, allowed),
+    byDeal: waitingByDeal(waiting),
     link: scope === "deal" ? { tab: "qa" } : null,
   });
 

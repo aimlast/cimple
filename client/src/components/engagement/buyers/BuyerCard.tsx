@@ -17,7 +17,8 @@ import { cn } from "@/lib/utils";
 import {
   Check, ChevronDown, ChevronUp, FileSearch, History, Loader2, Mail, MessageSquare, PhoneCall, Sparkles, X,
 } from "lucide-react";
-import { PageStrip, StatusChip, agoText, buyerTypeWord, initials } from "./parts";
+import { Link } from "wouter";
+import { PageStrip, StatusChip, StripLegend, agoText, buyerTypeWord, initials } from "./parts";
 import type { EngagementNav } from "../types";
 
 const VERDICT: Record<string, string> = { strong: "Strong fit", good: "Good fit", possible: "Possible fit", unlikely: "Unlikely fit" };
@@ -46,6 +47,13 @@ export interface BuyerCardProps {
   briefing: boolean;
   brief: { text: string; generatedAt: string } | null;
   onCloseBrief: () => void;
+  /** The deal, as a line at the top (the cross-deal Analytics page). */
+  dealName?: string;
+  dealHref?: string;
+  /** Chips beside the deal line (Example · Not live). */
+  dealExtra?: React.ReactNode;
+  /** Show the strip's legend under it (the master–detail views). */
+  legend?: boolean;
 }
 
 function PageLink({ refs, onOpen }: { refs: PageRef[]; onOpen: (r: PageRef) => void }) {
@@ -87,6 +95,16 @@ export function BuyerCard(props: BuyerCardProps) {
       )}
       data-testid={`buyer-card-${card.accessId}`}
     >
+      {props.dealName && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-border/60 pb-2.5 text-xs" data-testid="buyer-card-deal">
+          {props.dealHref ? (
+            <Link href={props.dealHref} className="font-medium text-teal hover:underline">{props.dealName} →</Link>
+          ) : (
+            <span className="font-medium text-foreground/90">{props.dealName}</span>
+          )}
+          {props.dealExtra}
+        </div>
+      )}
       {/* Who, and where they stand */}
       <div className="flex items-start gap-3">
         <div className="hidden sm:flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-muted/40 font-mono text-xs text-muted-foreground">
@@ -115,8 +133,9 @@ export function BuyerCard(props: BuyerCardProps) {
       <p className="mt-3 text-sm leading-relaxed text-foreground/90" data-testid="buyer-why">{card.why}</p>
 
       {/* Where they read */}
-      <div className="mt-3">
+      <div className="mt-3" title={`See where ${card.name.split(" ")[0]} read →`}>
         <PageStrip cells={card.pageStrip} titles={card.mode === "blind" ? blindTitles : titles} maxMs={maxMs} onOpen={(c: PageStripCell) => openPage(c)} />
+        {props.legend && <StripLegend className="mt-1.5" />}
       </div>
 
       {/* What to say */}

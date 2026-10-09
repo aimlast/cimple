@@ -2502,6 +2502,7 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
   return (
     <div className="max-w-4xl mx-auto px-6 py-6 space-y-3">
       <PublishedVersionBanner deal={deal} />
+      <BuyerPulseCard dealId={dealId} placement="top" />
       {PHASES.map((phase, idx) => {
         const isCurrentPhase = deal.phase === phase.key;
         const isComplete = currentPhaseIdx > idx;
@@ -2642,8 +2643,8 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
       <DocumentTable />
 
       {/* Buyer pulse: who is reading, who to call first (replaces the old analytics widget) */}
-      <div className="mt-6 pt-6 border-t border-border">
-        <BuyerPulseCard dealId={dealId} />
+      <div className="mt-6 pt-6 border-t border-border empty:hidden">
+        <BuyerPulseCard dealId={dealId} placement="bottom" />
       </div>
     </div>
   );

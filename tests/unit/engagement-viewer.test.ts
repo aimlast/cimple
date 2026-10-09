@@ -366,9 +366,11 @@ test("the global Analytics page no longer has the cursor heat map, Drop-off or p
   assert.doesNotMatch(code, /HeatMapViz|heatGrid|scrollDistribution/);
   assert.doesNotMatch(code, /value="heatmap"|value="dropoff"|Drop-off/);
   assert.doesNotMatch(code, /Per section read|Avg\. Time/);
-  assert.match(code, /<CallListPanel \/>/);
-  assert.match(code, /<ComparePanel \/>/);
-  assert.match(code, /engagement\?view=document/);
+  // The page is a tabbed dashboard now (analytics stream): Who to call and Deals are tabs; the
+  // Deals tab carries the Heat map link to each deal's "Where they read".
+  assert.match(code, /<CallListTab\b/);
+  assert.match(code, /<DealsTab\b/);
+  assert.match(fs.readFileSync(path.join(ROOT, "client/src/components/analytics/DealsTab.tsx"), "utf8"), /engagement\?view=document/);
 });
 
 console.log(`\n${passed} passed`);

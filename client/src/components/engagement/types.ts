@@ -7,7 +7,13 @@
  */
 import type { EngagementFilters } from "@shared/analytics-v2";
 
-export type EngagementView = "buyers" | "document";
+/**
+ * The shell's views: Buyers, Where they read (document), Activity, plus any
+ * registered extra view (extra-views.tsx: Teaser, Data room). Every reader of
+ * `?view=` validates it against the known keys and the views available for
+ * the deal (components/analytics/url.ts resolveEngagementView).
+ */
+export type EngagementView = "buyers" | "document" | "activity" | (string & {});
 
 export interface EngagementNav {
   /** Open the Document view, optionally on one page (pageId + part) and/or filtered to one buyer. */

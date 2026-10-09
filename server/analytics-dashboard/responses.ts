@@ -12,6 +12,7 @@ import {
   resolveRange,
   type ActivityResponse,
   type AnalyticsBuyersResponse,
+  type AnalyticsCallListResponse,
   type AnalyticsDealsResponse,
   type AnalyticsOverviewResponse,
   type AttentionResponse,
@@ -72,8 +73,13 @@ export function overviewResponse(inputs: BrokerInputs, rangeReq: unknown, now: D
 }
 
 /** The global "Who to call": the same items as the KPI strip, so the list and "Worth a call" agree. */
-export function callListResponse(inputs: BrokerInputs, size = 15): { entries: CallListEntry[] } {
-  return { entries: buildCallList(inputs.items.map((it) => ({ deal: it.deal, facts: cimOnly(it.facts) })), size) };
+export function callListResponse(inputs: BrokerInputs, size = 15): AnalyticsCallListResponse {
+  const entries: CallListEntry[] = buildCallList(inputs.items.map((it) => ({ deal: it.deal, facts: cimOnly(it.facts) })), size);
+  const listed = new Set(entries.map((e) => e.dealId));
+  return {
+    entries,
+    deals: inputs.items.filter((it) => listed.has(it.deal.id)).map((it) => ({ dealId: it.deal.id, live: it.live, demo: it.demo })),
+  };
 }
 
 export function dealsResponse(inputs: BrokerInputs, rangeReq: unknown, now: Date): AnalyticsDealsResponse {
@@ -107,6 +113,7 @@ export function activityResponse(
     items: page.items,
     next: page.next,
     total: all.length,
+    dataRoom: (opts.extra ?? []).some((i) => i.group === "data_room"),
     lastActivity: last ? { at: last.at.toISOString(), text: last.text } : null,
     partial: partialOf(inputs),
   };
