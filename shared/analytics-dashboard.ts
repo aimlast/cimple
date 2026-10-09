@@ -422,7 +422,7 @@ export function matchesBuyerStatus(row: BuyerDashboardRow, filter: BuyerStatusFi
       const t = Date.parse(row.expiresAt);
       return t > now.getTime() && t - now.getTime() <= 7 * DAY;
     }
-    case "teaser": return row.document === "teaser";
+    case "teaser": return row.document !== "cim";
     case "teaser_asked": return row.status === "teaser_asked";
     case "revoked": return !!row.revokedAt;
   }

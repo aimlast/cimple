@@ -20,6 +20,7 @@
  */
 import {
   READING_RULES,
+  filterSince,
   formatReadingTime,
   type BuyerReadingFacts,
   type EngagementFilters,
@@ -551,6 +552,8 @@ export function buyerGroups(windowFactsIn: CaptureFacts, allFactsIn: CaptureFact
   const callRank = new Map(callable.map((id, i) => [id, i]));
   const win = new Map(windowFacts.buyers.map((b) => [b.accessId, b]));
   const rangeAll = windowFacts.filters.range === "all";
+  // Opened in the period (a blocked tracker leaves only the first-view stamp) → still "reading".
+  const sinceMs = filterSince(windowFacts.filters, new Date(windowFacts.now))?.getTime() ?? 0;
   const groups: BuyerGroups = { worthACall: [], reading: [], quietInRange: [], declined: [], revoked: [], notOpened: [] };
   const row = (b: BuyerReadingFacts, w: BuyerReadingFacts | undefined): GroupRow => ({
     accessId: b.accessId,
@@ -569,8 +572,7 @@ export function buyerGroups(windowFactsIn: CaptureFacts, allFactsIn: CaptureFact
     else if (DECLINED.has(b.decision)) groups.declined.push(r);
     else if (!openedCim(b)) groups.notOpened.push(r);
     else if (callRank.has(b.accessId)) groups.worthACall.push(r);
-    else if (w && (w.visits.length > 0 || (rangeAll && !!w.firstViewedAt))) groups.reading.push(r);
-    else if (rangeAll) groups.reading.push(r);
+    else if (rangeAll || (w && w.visits.length > 0) || t(firstOpenAt(b)) >= sinceMs) groups.reading.push(r);
     else groups.quietInRange.push(r);
   }
   const byOrder = (a: GroupRow, b: GroupRow) => (order.get(a.accessId) ?? 1e9) - (order.get(b.accessId) ?? 1e9) || a.name.localeCompare(b.name);

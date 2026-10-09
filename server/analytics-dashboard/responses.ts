@@ -122,7 +122,8 @@ export function dealKpisResponse(inputs: DealInputs, readingNow: ReadingNowDbRow
   const { kpis } = computeKpis(inputs, { range, now, scope: "deal", filters: inputs.filters });
   const callTop = buildCallList([{ deal, facts }], 3);
   const groups = buyerGroups(inputs.groupFacts, item.facts);
-  const listed = new Set(facts.buyers.map((b) => b.accessId));
+  // Every listed link (teaser readers too: the shell says "reading the teaser"; no page for them).
+  const listed = new Set(item.facts.buyers.map((b) => b.accessId));
   const rows = readingNowResponseRows(readingNow.filter((r) => r.dealId === deal.id && listed.has(r.accessId)), () => deal.businessName).map((r) => {
     const b = facts.buyers.find((x) => x.accessId === r.accessId);
     const latest = b ? [...b.visits].sort((x, y) => t(y.lastSeenAt) - t(x.lastSeenAt))[0] : undefined;
