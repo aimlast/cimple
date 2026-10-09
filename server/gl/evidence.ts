@@ -111,6 +111,12 @@ async function heldNamesFor(deal: Deal | undefined): Promise<{ held: string[]; s
   return { held: Array.from(held), staff: staffContextFrom(info).staffNames };
 }
 
+/** What masking needs about a deal's people (the broker's drawer shows each entry as buyers would get it). */
+export async function buyerMaskBasics(deal: Deal | undefined): Promise<{ staffNames: string[]; heldNames: string[]; ownerText: string }> {
+  const names = await heldNamesFor(deal);
+  return { staffNames: names.staff, heldNames: names.held, ownerText: ownerNamesText(deal) };
+}
+
 export async function loadEvidenceState(dealId: string): Promise<EvidenceState> {
   const c = await loadGlContext(dealId);
   const store = glStore();

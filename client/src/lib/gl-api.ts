@@ -133,6 +133,8 @@ export interface BrokerEntry {
   id: string; ledgerId: string; rowNo: number; fiscalYear: string; date: string | null; account: string | null; name: string | null; memo: string | null;
   amountCents: number; state: "proposed" | "confirmed" | "rejected" | "orphaned"; proposedBy: string | null; confidence: string | null; reason: string | null;
   decidedBy: string | null; showDetails: boolean | null; privateLedger: boolean;
+  /** Ticked entries: what the rules withhold from due-diligence buyers (before the broker's choice). */
+  buyerWithheld?: "personal" | "staff" | "keep_out" | null;
 }
 export interface BrokerEntriesData {
   entries: BrokerEntry[];

@@ -29,7 +29,9 @@ import { glProgressForDeal } from "./progress";
 import { remindGlRequest, sendGlRequest, sendTraceQuestion } from "./notify";
 import { sellerEntry } from "./seller-view";
 import { parseMoneyToCents } from "./text";
-import { buildEvidence, evidenceChangeCount, publishEvidence, publishPreview, unpublishEvidence } from "./evidence";
+import { buildEvidence, buyerMaskBasics, evidenceChangeCount, publishEvidence, publishPreview, unpublishEvidence } from "./evidence";
+import { maskForBuyer } from "./sensitive";
+import { personsFor } from "./match-run";
 
 const dealIdOf = (req: Request) => String(req.params.dealId);
 
@@ -497,11 +499,19 @@ export function registerGlBrokerRoutes(app: Express): void {
       const c = await loadGlContext(t.dealId);
       const links = (await glStore().linksOfTrace(t.id)).filter((k) => !fy || k.fiscalYear === fy);
       const docs = new Map(c.docs.map((d) => [d.id, d]));
+      // How each entry would reach a due-diligence buyer by the rules (before the broker's per-entry choice).
+      const basics = await buyerMaskBasics(c.deal);
+      const parties = personsFor(t, basics.ownerText);
+      const personal = t.category === "discretionary" || t.category === "owner_comp" || /\b(?:personal|owner|family|spouse|related)\b/i.test(t.label);
+      const staffShown = new Map(c.ledgers.map((l) => [l.id, !!l.showStaffNames]));
+      const buyerWithheld = (k: (typeof links)[number]) =>
+        maskForBuyer({ account: k.account ?? "", name: k.name, memo: k.memo }, { staffNames: basics.staffNames, heldNames: basics.heldNames, parties, personalAddback: personal, showStaffNames: !!staffShown.get(k.ledgerId ?? "") }, null).withheld ?? null;
       res.json({
         entries: links.filter((k) => k.ledgerId).map((k) => ({
           id: k.id, ledgerId: k.ledgerId, rowNo: k.rowNo, fiscalYear: k.fiscalYear, date: k.txnDate, account: k.account, name: k.name, memo: k.memo,
           amountCents: k.amountCents, state: k.state, proposedBy: k.proposedBy, confidence: k.confidence, reason: k.reason, decidedBy: k.decidedBy,
           showDetails: k.showDetails, privateLedger: !!k.ledgerId && c.brokerOnlyLedgerIds.has(k.ledgerId),
+          buyerWithheld: k.state === "confirmed" ? buyerWithheld(k) : null,
         })),
         documents: links.filter((k) => k.documentId).map((k) => ({
           id: k.id, documentId: k.documentId, fiscalYear: k.fiscalYear, amountCents: k.amountCents, check: k.docAmountCheck,

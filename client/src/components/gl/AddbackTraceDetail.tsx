@@ -131,6 +131,7 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, payDo
           <EntryTable
             rows={[...confirmed, ...proposed]}
             onTick={(e, tick) => links(tick ? { add: [{ ledgerId: e.ledgerId, rowNo: e.rowNo }] } : { remove: [{ ledgerId: e.ledgerId, rowNo: e.rowNo }] })}
+            onShowDetails={(e, v) => patch({ links: [{ id: e.id, showDetails: v }] })}
             busy={act.isPending}
           />
         )}
@@ -267,7 +268,44 @@ function Figure({ label, value, sub }: { label: string; value: string; sub?: str
   );
 }
 
-function EntryTable({ rows, onTick, busy }: { rows: BrokerEntry[]; onTick: (e: BrokerEntry, tick: boolean) => void; busy: boolean }) {
+const WITHHELD_WHY: Record<"personal" | "staff" | "keep_out", string> = {
+  personal: "a personal expense",
+  staff: "an employee's name",
+  keep_out: "a name someone asked to keep out of the CIM",
+};
+
+/**
+ * What due-diligence buyers get of one ticked entry, and the broker's choice
+ * (gl spec §9.2): a withheld entry can be shown (with the warning; a kept-out
+ * name needs a second yes); any entry can be hidden from buyers.
+ */
+function BuyerVisibility({ e, busy, onSet }: { e: BrokerEntry; busy: boolean; onSet: (showDetails: boolean | null) => void }) {
+  const [step, setStep] = useState(0);
+  const why = e.buyerWithheld ? WITHHELD_WHY[e.buyerWithheld] : null;
+  const shownAnyway = !!why && e.showDetails === true;
+  const hidden = e.showDetails === false || (!!why && !shownAnyway);
+  if (step > 0 && why) {
+    const second = e.buyerWithheld === "keep_out" && step === 1;
+    return (
+      <span className="block mt-1 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1 text-2xs text-amber-700 dark:text-amber-300" data-testid="gl-entry-show-confirm">
+        {second ? `This entry names ${why} — buyers will see it.` : e.buyerWithheld === "keep_out" ? "Someone asked to keep this name out of the CIM. Show it anyway?" : `This entry names ${why} — buyers will see it.`}{" "}
+        <button type="button" className="font-medium underline" disabled={busy} onClick={() => { if (second) setStep(2); else { setStep(0); onSet(true); } }}>{second ? "Continue" : "Show it"}</button>{" · "}
+        <button type="button" className="underline" onClick={() => setStep(0)}>Cancel</button>
+      </span>
+    );
+  }
+  return (
+    <span className="block mt-0.5 text-2xs text-muted-foreground" data-testid="gl-entry-buyer">
+      {shownAnyway
+        ? <>Shown to due-diligence buyers (it names {why}) · <button type="button" className="underline" disabled={busy} onClick={() => onSet(null)}>Withhold again</button></>
+        : hidden
+          ? <>{why ? `Buyers see the date, account and amount only (${why})` : "Hidden from buyers"} · <button type="button" className="underline" disabled={busy} onClick={() => (why ? setStep(1) : onSet(null))}>{why ? "Show it to buyers…" : "Show it again"}</button></>
+          : <button type="button" className="underline-offset-2 hover:underline" disabled={busy} onClick={() => onSet(false)}>Hide the details from buyers</button>}
+    </span>
+  );
+}
+
+function EntryTable({ rows, onTick, busy, onShowDetails }: { rows: BrokerEntry[]; onTick: (e: BrokerEntry, tick: boolean) => void; busy: boolean; onShowDetails?: (e: BrokerEntry, v: boolean | null) => void }) {
   const total = rows.filter((r) => r.state === "confirmed").reduce((s, r) => s + r.amountCents, 0);
   return (
     <div className="rounded-md border border-border">
@@ -285,6 +323,7 @@ function EntryTable({ rows, onTick, busy }: { rows: BrokerEntry[]; onTick: (e: B
                   {ticked ? (e.decidedBy === "seller" ? "Ticked by the seller" : "Ticked by you") : e.reason ? `Suggested: ${e.reason}` : "Suggested by Cimple"}
                   {e.privateLedger ? " · private ledger" : ""}
                 </p>
+                {ticked && !e.privateLedger && onShowDetails && <BuyerVisibility e={e} busy={busy} onSet={(v) => onShowDetails(e, v)} />}
               </div>
               <span className="tabular-nums font-medium shrink-0">{money(e.amountCents)}</span>
             </li>
