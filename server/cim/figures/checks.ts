@@ -22,7 +22,7 @@
  */
 import type { FigureRegistry, RegistryFigure } from "@shared/figure-anchors";
 import { agrees, reconcileByComponents, sizeOf, type ComponentLine, type Reconciliation } from "@shared/figure-compare";
-import { cimVsStatementsText, differenceComponentsText, groupingOpexText, otherRecordLabel, restatedText } from "@shared/figure-copy";
+import { cimMismatchWarning, cimVsStatementsText, differenceComponentsText, groupingOpexText, otherRecordLabel, restatedText } from "@shared/figure-copy";
 import type { FigureCheckInput } from "@shared/figure-layer";
 import { figureKey, standardLine, standardLineOf, type StandardLineId } from "@shared/figure-lines";
 import type { FigureLocatedEntry } from "@shared/schema";
@@ -260,4 +260,19 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
   }
   const mismatches = Array.from(mismatchByYear.values()).sort((a, b) => a.year.localeCompare(b.year));
   return { checks, mismatches, notLocated, toLocate };
+}
+
+/** Lines a mismatch follows from (listed only when nothing more basic disagrees). */
+const DERIVED_LINES = new Set<StandardLineId>(["grossProfit", "ebitda", "incomeBeforeTax", "netIncome"]);
+
+/**
+ * The broker-only "Fix first" warning for a year (D9a): "Your CIM shows FY2022
+ * cost of sales of $20,384,000 and operating expenses of $4,127,000. The FY2022
+ * statements say $20,948,200 and $4,282,000. Fix FY2022 on the Financials tab,
+ * or explain the difference, before buyers see checks on these figures."
+ */
+export function mismatchMessage(w: MismatchWarning): string {
+  const basic = w.items.filter((i) => !DERIVED_LINES.has(i.line));
+  const items = (basic.length > 0 ? basic : w.items).map((i) => ({ lineWord: i.lineWord, cim: i.cim, statements: i.statements }));
+  return cimMismatchWarning({ year: w.year, items });
 }

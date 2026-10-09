@@ -409,6 +409,9 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
   for (const key of Array.from(anchoredKeys)) {
     const fig = registry[key];
     if (!fig) continue;
+    // D9a: a CIM figure that disagrees with its statements (unexplained) is
+    // the broker's to fix — buyers get that cell plain (no check, no note, no parts).
+    if (!broker && mismatch.has(key)) continue;
     const first = anchors.find((a) => a.figureKey === key)!;
     const notes = (notesBy.get(key) ?? []).filter(served);
     const movement = notes.find((n) => n.kind === "movement") ?? null;
@@ -581,15 +584,20 @@ function partsOf(
 // ── The "How the figures check out" page ───────────────────────────────────
 
 /**
- * Where the check page goes: right after the last section with ≥ 3 checked
- * anchors, else after the last financial table, else at the end (before the
- * contact page). Returns the index to insert after (−1 = at the end).
+ * Where the check page goes: right after the last table (never an earnings
+ * bridge or a chart) with ≥ 3 checked cells, else after the last financial table, else
+ * at the end (before the contact page). Returns the index to insert after
+ * (−1 = at the end).
  */
 export function ddSourceCheckAnchor(sections: SectionLike[], layer: FigureLayer): number {
   const checkedFigs = new Set(Object.values(layer.figures).filter((v) => (v.checks?.length ?? 0) > 0).map((v) => v.id));
   let best = -1;
   sections.forEach((s, i) => {
-    const n = layer.anchors.filter((a) => a.pageId === s.id && checkedFigs.has(a.fig)).length;
+    // An earnings bridge is never the anchor: the check page comes before it
+    // (financial table → check page → … → bridge → gl's ledger page).
+    if (s.layoutType === "waterfall_chart") return;
+    // Table cells only: a chart of the same figures is not where readers compare them.
+    const n = layer.anchors.filter((a) => a.pageId === s.id && checkedFigs.has(a.fig) && /(^|\/)row:\d+$/.test(a.block)).length;
     if (n >= 3) best = i;
   });
   if (best >= 0) return best;

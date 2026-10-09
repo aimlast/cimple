@@ -49,11 +49,11 @@ test("every layout has a label, description, category and blank data", () => {
   }
 });
 
-test("keys are unique and the gallery covers every layout", () => {
+test("keys are unique and the gallery covers every layout (pages the system adds for buyers excepted)", () => {
   const keys = CIM_LAYOUTS.map((l) => l.key);
   assert.equal(new Set(keys).size, keys.length);
   const inGallery = layoutsByCategory().flatMap((g) => g.layouts.map((l) => l.key));
-  assert.deepEqual([...inGallery].sort(), [...keys].sort());
+  assert.deepEqual([...inGallery].sort(), CIM_LAYOUTS.filter((l) => !l.synthetic).map((l) => l.key).sort());
 });
 
 test("the AI prompt lists exactly the planner layouts", () => {

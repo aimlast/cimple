@@ -95,3 +95,49 @@ export async function figurePglite(): Promise<{ db: any; pg: any }> {
   await pg.exec(FIGURE_TABLES_DDL);
   return { db: drizzle(pg, { schema }), pg };
 }
+
+// ── Fixture → figure raw inputs (no DB) ────────────────────────────────────
+
+export interface RawOpts {
+  notes?: any[];
+  decisions?: any[];
+  ddShownAt?: Date | null;
+  /** Locate every value in the fixture's document texts first (as the refresh does). Default true. */
+  locate?: boolean;
+  info?: Record<string, unknown>;
+}
+
+/** The audience-neutral raw inputs for a fixture deal, exactly as loadFigureRaw assembles them. */
+export async function fixtureRaw(name: "pacific" | "beacon" | "lakeshore", opts: RawOpts = {}) {
+  const fx = fixture(name);
+  const { assembleFigureRaw } = await import("../../../server/cim/figures/serve");
+  const { locateValues } = await import("../../../server/cim/figures/locate");
+  const docs = fx.documents.map((d) => ({ ...d, extractedText: undefined })) as any[];
+  const base = (located: Record<string, any>) => assembleFigureRaw(fx.deal.id, {
+    info: opts.info ?? fx.facts,
+    docs,
+    analyses: fx.analyses,
+    notes: opts.notes ?? [],
+    questions: [],
+    decisions: opts.decisions ?? [],
+    state: { dealId: fx.deal.id, build: null, budgetDay: null, budgetCalls: 0, autoAsk: null, ddShownAt: opts.ddShownAt ?? null, ddShownBy: null, keepOut: null, located, refreshedFingerprint: null, refreshedAt: null, updatedAt: new Date() } as any,
+  });
+  let raw = base({});
+  if (opts.locate !== false) {
+    const text = (id: string) => fx.documents.find((d) => d.id === id)?.extractedText ?? null;
+    raw = base(locateValues(raw.checks.toLocate, text));
+  }
+  return { fx, raw };
+}
+
+/** A cim_figure_notes row as the store returns it. */
+export function noteRow(over: Record<string, any>): any {
+  return {
+    id: over.id ?? `note-${Math.random().toString(36).slice(2, 8)}`,
+    dealId: "deal", kind: "movement", compareKey: "", origin: "computed", status: "approved",
+    text: "A note.", blindText: null, sources: [{ kind: "computed" }], valuesSnapshot: { year: "2023", value: 0 },
+    inputFingerprint: "fp", staleReason: null, proposal: null, sellerComment: null, history: [],
+    approvedAt: new Date(), approvedBy: "b", editedAt: null, createdAt: new Date(), updatedAt: new Date(),
+    ...over,
+  };
+}
