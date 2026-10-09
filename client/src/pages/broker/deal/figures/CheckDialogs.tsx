@@ -17,6 +17,22 @@ import { FiguresError, figuresErrorText, money, useFigureActions } from "./useFi
 
 export type CheckDialogState = { kind: "leave_out" | "read_wrong"; check: WorkspaceCheck } | null;
 
+/** "86,000", "$86000", "(86,000)", "-86,000", "−86,000" → a number (parentheses and minus = negative); null when it isn't one. */
+export function parseTypedFigure(input: string): number | null {
+  const t = String(input ?? "").trim();
+  if (!t) return null;
+  const negative = /^\(.*\)$/.test(t) || /^[-−–]/.test(t);
+  const digits = t.replace(/[()$,\s−–-]/g, "");
+  if (!/^\d+(?:\.\d+)?$/.test(digits)) return null;
+  const n = Number(digits);
+  return Number.isFinite(n) ? (negative ? -n : n) : null;
+}
+
+/** Expense lines compare as amounts (no sign). */
+function isExpenseCheck(c: WorkspaceCheck): boolean {
+  return !c.signed;
+}
+
 export function CheckDialogs({ dealId, state, onClose }: { dealId: string; state: CheckDialogState; onClose: () => void }) {
   const { toast } = useToast();
   const { putCheck } = useFigureActions(dealId);
@@ -25,7 +41,8 @@ export function CheckDialogs({ dealId, state, onClose }: { dealId: string; state
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     setReason("");
-    setValue(state?.kind === "read_wrong" ? String(Math.round(Math.abs(state.check.other))) : "");
+    // An expense as an amount; a loss keeps its minus sign (checker r2 R2-7: signs matter for profits).
+    setValue(state?.kind === "read_wrong" ? String(Math.round(state.check.other < 0 && !isExpenseCheck(state.check) ? state.check.other : Math.abs(state.check.other))) : "");
     setError(null);
   }, [state]);
   if (!state) return null;
@@ -42,10 +59,10 @@ export function CheckDialogs({ dealId, state, onClose }: { dealId: string; state
         await putCheck.mutateAsync({ checkKey: c.checkKey, state: "left_out", reason: reason.trim() });
         toast({ title: "Left out", description: "Due-diligence buyers won't see this comparison." });
       } else {
-        const n = Number(value.replace(/[$,\s]/g, ""));
-        if (!Number.isFinite(n)) { setError("Enter the figure as the document shows it, e.g. 86000."); return; }
+        const n = parseTypedFigure(value);
+        if (n === null) { setError("Enter the figure as the document shows it, e.g. 86000 (a loss as -86000 or (86,000))."); return; }
         await putCheck.mutateAsync({ checkKey: c.checkKey, state: "corrected", correctedValue: n });
-        toast({ title: "Corrected", description: "Cimple is checking it again with your figure. A difference stays hidden from buyers until you show it." });
+        toast({ title: "Corrected", description: "Cimple looks for your figure on that line of the document. Buyers see it only once you show it." });
       }
       onClose();
     } catch (err) {

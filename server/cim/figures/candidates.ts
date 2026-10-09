@@ -14,7 +14,7 @@
  *                     the same line and year
  */
 import type { FigureRegistry, RegistryFigure } from "@shared/figure-anchors";
-import { agrees } from "@shared/figure-compare";
+import { agrees, differenceOf } from "@shared/figure-compare";
 import { captureKeyFor } from "@shared/figure-explain";
 import { cimMismatchHeld, type FigureCheckInput } from "@shared/figure-layer";
 import { baseLineOf, figureKey, lineWords, parseFigureKey, standardLine, standardLineOf, type LineId } from "@shared/figure-lines";
@@ -152,7 +152,7 @@ export function differenceTargets(reg: FigureRegistry, checks: ReadonlyArray<Fig
       figureKey: c.figureKey, kind: "difference", compareKey: c.compareKey,
       line: fig.line, lineLabel: fig.lineLabel, year: fig.year, value: c.base,
       other: c.other, otherKind: c.kind, otherLabel: c.otherLabel, checkKey: c.key,
-      weight: weightOf(reg, fig.year, Math.abs(c.other) - Math.abs(c.base)), total: !!fig.total,
+      weight: weightOf(reg, fig.year, differenceOf(c.base, c.other, !!c.signed)), total: !!fig.total,
       valuesFingerprint: fingerprintOf(["difference", c.key, c.base, c.other]),
     });
   }

@@ -27,7 +27,7 @@
  * Pure.
  */
 import { anchorFigures, type Anchor, type FigureRegistry, type RegistryFigure, glBridgeMarks, type GlBridgeLine } from "./figure-anchors";
-import { agrees, dollars, percentOf, signedDollars, type DiffSize } from "./figure-compare";
+import { agrees, differenceOf, dollars, percentOf, signedDollars, type DiffSize } from "./figure-compare";
 import { checkState, type CheckState } from "./figure-states";
 import { blindBasisLabel, changeLine, differsBy, SOURCE_CHECK_TITLE, type NoteBasis } from "./figure-copy";
 import { AS_ISSUED, FIGURE_LINES, baseLineOf, figureKey, parseFigureKey, standardLine } from "./figure-lines";
@@ -148,6 +148,8 @@ export interface FigureCheckInput {
   blank?: "grouped";
   /** "corrected" = the broker corrected the figure read and hasn't shown the check (a correction never shows it). */
   decision: "shown" | "left_out" | "corrected" | null;
+  /** Not an expense: compared with its sign (a loss never matches a profit). */
+  signed?: true;
   /** `other` is the broker's figure ("Cimple read it wrong"), located in the document like any other. */
   corrected?: true;
   /** When the CIM figure differs from the statements as issued and D6 explains it. */
@@ -391,7 +393,7 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
     const buyerSees = ddOn && !cimMis && c.located && c.decision !== "left_out" &&
       (c.corrected ? c.decision === "shown" : state === "match" || state === "regrouped" || c.decision === "shown");
     if (!broker && !buyerSees) return null;
-    const diff = Math.abs(c.other) - Math.abs(c.base);
+    const diff = differenceOf(c.base, c.other, !!c.signed);
     const differs = !agrees(c.size);
     const note = differs && !c.regrouped ? differenceNote(c) : null;
     const preview: FigureCheckView["preview"] | undefined = broker && !buyerSees

@@ -4,7 +4,7 @@
  * shows and the deal's state; nothing here reads or writes the database.
  */
 import { anchorFigures } from "@shared/figure-anchors";
-import { agrees, percentOf } from "@shared/figure-compare";
+import { agrees, differenceOf, percentOf } from "@shared/figure-compare";
 import { cimMismatchWarning, notLocatedMessage } from "@shared/figure-copy";
 import { checkState, preTicked } from "@shared/figure-states";
 import { baseLineOf, figureKey } from "@shared/figure-lines";
@@ -280,14 +280,15 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
       thisCim: fig.value,
       base: c.base,
       other: c.other,
-      difference: Math.abs(c.other) - Math.abs(c.base),
-      pct: agrees(c.size) ? null : percentOf(Math.abs(c.other) - Math.abs(c.base), c.base, "difference"),
+      difference: differenceOf(c.base, c.other, !!c.signed),
+      pct: agrees(c.size) ? null : percentOf(differenceOf(c.base, c.other, !!c.signed), c.base, "difference"),
       sourceLabel: c.sourceLabel,
       state,
       size: c.size,
       located: c.located,
       decision: c.decision,
       corrected: !!c.corrected,
+      ...(c.signed ? { signed: true } : {}),
       leftOutReason: input.leftOutReasons?.[c.key] ?? null,
       regroupedText: c.regroupedText,
       note: note ? workspaceNote(note, raw) : null,

@@ -11,12 +11,23 @@
 export type DiffSize = "match" | "rounding" | "minor" | "material";
 
 /**
+ * The difference `other − base`. Expenses compare as amounts (parentheses and
+ * minus signs mean the same cost); `signed` lines — revenue, profits, net
+ * income, other income, EBITDA — keep their sign, so a $50,000 loss never
+ * "matches" a $50,000 profit (checker r2 R2-7).
+ */
+export function differenceOf(base: number, other: number, signed = false): number {
+  return signed ? other - base : Math.abs(other) - Math.abs(base);
+}
+
+/**
  * D5 size of `other − base`: `match` within $1 or 0.05%; `rounding` within
  * $100 or 0.1%; `material` at least $2,500 AND (at least 1% of the figure or
- * 0.5% of that year's revenue); else `minor`. Signs don't matter.
+ * 0.5% of that year's revenue); else `minor`. Signs don't matter for an
+ * expense; for a `signed` line (not an expense) they do.
  */
-export function sizeOf(base: number, other: number, revenueOfYear?: number | null): DiffSize {
-  const d = Math.abs(Math.abs(other) - Math.abs(base));
+export function sizeOf(base: number, other: number, revenueOfYear?: number | null, opts: { signed?: boolean } = {}): DiffSize {
+  const d = Math.abs(differenceOf(base, other, !!opts.signed));
   const ref = Math.max(Math.abs(base), Math.abs(other));
   if (d <= 1 || (ref > 0 && d / ref <= 0.0005)) return "match";
   if (d <= 100 || (ref > 0 && d / ref <= 0.001)) return "rounding";

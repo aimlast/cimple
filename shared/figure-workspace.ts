@@ -111,6 +111,8 @@ export interface WorkspaceCheck {
   decision: "shown" | "left_out" | "corrected" | null;
   /** The other record's figure is the one you entered ("Cimple read it wrong") — "Your figure". */
   corrected: boolean;
+  /** Not an expense: compared with its sign (a loss never matches a profit). */
+  signed?: boolean;
   leftOutReason: string | null;
   regroupedText: string | null;
   note: WorkspaceNote | null;

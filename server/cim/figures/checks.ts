@@ -21,7 +21,7 @@
  * `corrected` apply only while the values are the ones decided on (D10).
  */
 import type { FigureRegistry, RegistryFigure } from "@shared/figure-anchors";
-import { agrees, reconcileByComponents, sizeOf, type ComponentLine, type Reconciliation } from "@shared/figure-compare";
+import { agrees, differenceOf, reconcileByComponents, sizeOf, type ComponentLine, type Reconciliation } from "@shared/figure-compare";
 import { cimMismatchWarning, cimVsStatementsText, differenceComponentsText, groupingOpexText, otherRecordLabel, restatedText } from "@shared/figure-copy";
 import type { FigureCheckInput } from "@shared/figure-layer";
 import { figureKey, standardLine, standardLineOf, type StandardLineId } from "@shared/figure-lines";
@@ -63,7 +63,10 @@ export interface ChecksResult {
   toLocate: Array<{ documentId: string; updatedAt: string; value: number; line?: string }>;
 }
 
-const near = (a: number, b: number) => Math.abs(Math.abs(a) - Math.abs(b)) <= 0.5;
+/** The same figure (an expense as an amount; a `signed` line with its sign). */
+const near = (a: number, b: number, signed = false) => Math.abs(differenceOf(a, b, signed)) <= 0.5;
+/** A loss on one side and a profit on the other: never explained by regrouping lines. */
+const signsDiffer = (a: number, b: number) => (a < 0 && b > 0) || (a > 0 && b < 0);
 
 function atomicLinesOf(reg: FigureRegistry, year: string): RegistryFigure[] {
   return Object.values(reg).filter((f) => f.year === year && f.line.startsWith("line:"));
@@ -141,6 +144,8 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
     if (keys && !keys.has(fig.key)) continue;
     const line = standardLineOf(fig.line);
     if (!line) continue;
+    // Revenue, profits, net income, other income, EBITDA keep their sign (checker r2 R2-7).
+    const signed = !line.expense;
     const year = fig.year;
     const st = sourceFor(sources, "statements", year);
     const sValue = ownValue(st, line.id);
@@ -151,7 +156,7 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
 
     // 1. This CIM vs the statements as issued.
     if (st && typeof sValue === "number") {
-      const size = sizeOf(fig.value, sValue, revenue);
+      const size = sizeOf(fig.value, sValue, revenue, { signed });
       const sLoc = find(st, sValue);
       // The other records are compared with the statements as issued in every case.
       base = sValue;
@@ -160,8 +165,8 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
         base = sValue;
         baseIsStatements = true;
       } else {
-        const diff = Math.abs(sValue) - Math.abs(fig.value);
-        const rec = reconcileByComponents(diff, [], familyFor(line.id, "cim_statements", reg, year, st));
+        const diff = differenceOf(fig.value, sValue, signed);
+        const rec = signed && signsDiffer(fig.value, sValue) ? null : reconcileByComponents(diff, [], familyFor(line.id, "cim_statements", reg, year, st));
         const compareKey = `cim_statements:${st.documentId}`;
         const key = `${fig.key}~${compareKey}`;
         if (rec) {
@@ -170,7 +175,7 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
           const items = rec.components.map((c) => c.label);
           checks.push({
             key, figureKey: fig.key, compareKey, kind: "cim_statements", otherLabel: otherRecordLabel("statements"),
-            base: fig.value, other: sValue, sourceLabel: sLoc?.sourceLabel ?? null, size, regrouped: true,
+            base: fig.value, other: sValue, sourceLabel: sLoc?.sourceLabel ?? null, size, regrouped: true, ...(signed ? { signed: true as const } : {}),
             regroupedText: cimVsStatementsText({ asIssued: sValue, items, total: rec.components.reduce((s, c) => s + c.value, 0), count: rec.components.length }),
             cimMismatch: false, located: !!sLoc, decision: null,
             asIssuedText: cimVsStatementsText({ asIssued: sValue, items, total: rec.components.reduce((s, c) => s + c.value, 0), count: rec.components.length }),
@@ -180,7 +185,7 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
           cimMismatch = true;
           checks.push({
             key, figureKey: fig.key, compareKey, kind: "cim_statements", otherLabel: otherRecordLabel("statements"),
-            base: fig.value, other: sValue, sourceLabel: sLoc?.sourceLabel ?? null, size, regrouped: false, regroupedText: null,
+            base: fig.value, other: sValue, sourceLabel: sLoc?.sourceLabel ?? null, size, regrouped: false, regroupedText: null, ...(signed ? { signed: true as const } : {}),
             cimMismatch: true, located: !!sLoc, decision: null,
             baseCitation: null, otherCitation: sourceRef(st, { page: sLoc?.page ?? null, value: sValue }),
           });
@@ -205,9 +210,9 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
       const decision = decisions.get(key) ?? null;
       // "Cimple read it wrong": the broker's figure replaces the one read — kept through a later
       // "Show" (the same row) while the statements' figure it was entered against still stands.
-      const corrected = decision && decision.state !== "left_out" && decision.correctedValue !== null && near(decision.valuesSnapshot.base, base) ? decision.correctedValue : null;
+      const corrected = decision && decision.state !== "left_out" && decision.correctedValue !== null && near(decision.valuesSnapshot.base, base, signed) ? decision.correctedValue : null;
       const value = corrected ?? raw;
-      const size = sizeOf(base, value, revenue);
+      const size = sizeOf(base, value, revenue, { signed });
       // The broker's figure is never "found in the tax return" unless the tax return prints it on its
       // own line for this figure ("Interest and bank charges" — not "Inventories", where the same
       // number may also be printed): else it needs checking and can't be shown (D11; checker r2 R2-1).
@@ -216,9 +221,9 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
       let regrouped = false;
       let regroupedText: string | null = null;
       if (!agrees(size)) {
-        const diff = Math.abs(value) - Math.abs(base);
+        const diff = differenceOf(base, value, signed);
         const pool = atomicLinesOf(reg, year).map(comp);
-        const rec = reconcileByComponents(diff, pool, familyFor(line.id, kind, reg, year, st));
+        const rec = signed && signsDiffer(base, value) ? null : reconcileByComponents(diff, pool, familyFor(line.id, kind, reg, year, st));
         if (rec) {
           regrouped = true;
           regroupedText = explanationText(line.id, rec);
@@ -226,7 +231,7 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
           // Not like for like on a tax form and not worked out: no comparison (blank cell).
           checks.push({
             key, figureKey: fig.key, compareKey, kind, otherLabel: otherRecordLabel(kind, other.taxForm),
-            base, other: value, sourceLabel: null, size, regrouped: false, regroupedText: null, cimMismatch, located, blank: "grouped",
+            base, other: value, sourceLabel: null, size, regrouped: false, regroupedText: null, cimMismatch, located, blank: "grouped", ...(signed ? { signed: true as const } : {}),
             decision: null, ...(corrected !== null ? { corrected: true } : {}), baseCitation, otherCitation: sourceRef(other, { page: oLoc?.page ?? null, value }),
           });
           continue;
@@ -237,10 +242,10 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
       const decided = !decision ? null
         : decision.state === "left_out" ? "left_out"
         : decision.state === "corrected" ? (corrected !== null ? "corrected" : null)
-        : near(decision.valuesSnapshot.base, base) && near(decision.valuesSnapshot.other, value) ? "shown" : null;
+        : near(decision.valuesSnapshot.base, base, signed) && near(decision.valuesSnapshot.other, value, signed) ? "shown" : null;
       checks.push({
         key, figureKey: fig.key, compareKey, kind, otherLabel: otherRecordLabel(kind, other.taxForm),
-        base, other: value, sourceLabel: oLoc?.sourceLabel ?? null, size, regrouped, regroupedText, cimMismatch, located,
+        base, other: value, sourceLabel: oLoc?.sourceLabel ?? null, size, regrouped, regroupedText, cimMismatch, located, ...(signed ? { signed: true as const } : {}),
         decision: decided, ...(corrected !== null ? { corrected: true } : {}), baseCitation, otherCitation: sourceRef(other, { page: oLoc?.page ?? null, value }),
       });
       // A correction that isn't on its line needs checking whatever its size: it would otherwise read
@@ -257,16 +262,16 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
     if (st && typeof sValue === "number" && line.comparable !== "none") {
       const next = sourceFor(sources, "statements", String(Number(year) + 1));
       const comparative = next?.values[line.id]?.[year];
-      if (next && typeof comparative === "number" && !agrees(sizeOf(sValue, comparative, revenue))) {
+      if (next && typeof comparative === "number" && !agrees(sizeOf(sValue, comparative, revenue, { signed }))) {
         const compareKey = `restated:${next.documentId}`;
         const key = `${fig.key}~${compareKey}`;
         const decision = decisions.get(key) ?? null;
         const cLoc = find(next, comparative);
         checks.push({
           key, figureKey: fig.key, compareKey, kind: "restated", otherLabel: `Financial statements FY${next.year} (comparative)`,
-          base: sValue, other: comparative, sourceLabel: cLoc?.sourceLabel ?? null, size: sizeOf(sValue, comparative, revenue),
+          base: sValue, other: comparative, sourceLabel: cLoc?.sourceLabel ?? null, size: sizeOf(sValue, comparative, revenue, { signed }), ...(signed ? { signed: true as const } : {}),
           regrouped: false, regroupedText: null, cimMismatch, located: !!cLoc && !!locatedEntry(located, st.documentId, st.updatedAt, sValue),
-          decision: decision?.state === "left_out" ? "left_out" : decision && near(decision.valuesSnapshot.base, sValue) && near(decision.valuesSnapshot.other, comparative) ? (decision.state === "corrected" ? null : "shown") : null,
+          decision: decision?.state === "left_out" ? "left_out" : decision && near(decision.valuesSnapshot.base, sValue, signed) && near(decision.valuesSnapshot.other, comparative, signed) ? (decision.state === "corrected" ? null : "shown") : null,
           asIssuedText: restatedText({ year, lineWord: line.blindWord, earlier: sValue, later: comparative }),
           baseCitation: sourceRef(st, { value: sValue }), otherCitation: sourceRef(next, { page: cLoc?.page ?? null, value: comparative }),
         });
