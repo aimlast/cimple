@@ -18,7 +18,7 @@
  * The functions take an optional drizzle database (tests pass an in-process
  * PGlite one); by default they use the app's.
  */
-import { and, asc, eq, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import {
   cimFigureNotes, cimFigureQuestions, cimFigureState, ddCheckDecisions,
   type CimFigureNote, type CimFigureQuestion, type CimFigureState, type DdCheckDecision,
@@ -29,6 +29,10 @@ import {
 export type FigureDb = any;
 
 let appDb: FigureDb | null = null;
+/** Tests: run every store function on this database (an in-process PGlite); null restores the app's. */
+export function _useFigureDbForTests(d: FigureDb | null): void {
+  appDb = d;
+}
 async function dbOf(d?: FigureDb): Promise<FigureDb> {
   if (d) return d;
   if (!appDb) appDb = (await import("../../db")).db;
@@ -330,6 +334,130 @@ export async function putDecision(
 export async function listQuestions(dealId: string, d?: FigureDb): Promise<CimFigureQuestion[]> {
   const db = await dbOf(d);
   return db.select().from(cimFigureQuestions).where(eq(cimFigureQuestions.dealId, dealId)).orderBy(asc(cimFigureQuestions.createdAt));
+}
+
+export type QuestionStatus = "suggested" | "ask_seller" | "answered" | "asked" | "closed";
+
+export interface NewQuestion {
+  figureKey: string;
+  kind: "movement" | "difference";
+  compareKey: string;
+  captureKey: string;
+  question: string;
+  valuesShown: Record<string, string | number>;
+  status: "suggested" | "ask_seller";
+  routedBy: "auto" | "broker" | null;
+}
+
+/** A question about the numbers (ON CONFLICT DO NOTHING on deal + figure + kind + compare key). Returns its id when inserted. */
+export async function insertQuestionIfAbsent(dealId: string, q: NewQuestion, d?: FigureDb): Promise<string | null> {
+  const routed = q.status === "ask_seller";
+  const rows = await exec(d, sql`
+    INSERT INTO cim_figure_questions (deal_id, figure_key, kind, compare_key, capture_key, question, values_shown, status, routed_at, routed_by)
+    VALUES (${dealId}, ${q.figureKey}, ${q.kind}, ${q.compareKey}, ${q.captureKey}, ${q.question}, ${json(q.valuesShown)}, ${q.status},
+            ${routed ? sql`now()` : sql`NULL::timestamp`}, ${routed ? q.routedBy : null})
+    ON CONFLICT (deal_id, figure_key, kind, compare_key) DO NOTHING
+    RETURNING id`);
+  return rows.length > 0 ? String(rows[0].id) : null;
+}
+
+export async function getQuestion(dealId: string, id: string, d?: FigureDb): Promise<CimFigureQuestion | null> {
+  const db = await dbOf(d);
+  const rows = await db.select().from(cimFigureQuestions).where(and(eq(cimFigureQuestions.dealId, dealId), eq(cimFigureQuestions.id, id)));
+  return rows[0] ?? null;
+}
+
+export interface QuestionChange {
+  status?: QuestionStatus;
+  routedAt?: Date | null;
+  routedBy?: "auto" | "broker" | null;
+  raisedAt?: Date | null;
+  sessionId?: string | null;
+  closedReason?: string | null;
+  question?: string;
+  valuesShown?: Record<string, string | number>;
+}
+
+/**
+ * Compare-and-set on the status read (like updateDiscrepancyIfStill): the
+ * change applies only while the question is still in one of `from`.
+ * Returns true when it applied.
+ */
+export async function updateQuestionIf(dealId: string, id: string, from: QuestionStatus[], change: QuestionChange, d?: FigureDb): Promise<boolean> {
+  if (from.length === 0) return false;
+  const db = await dbOf(d);
+  const set: Record<string, unknown> = { updatedAt: new Date() };
+  for (const [k, v] of Object.entries(change)) if (v !== undefined) set[k] = v;
+  const rows = await db.update(cimFigureQuestions).set(set)
+    .where(and(eq(cimFigureQuestions.dealId, dealId), eq(cimFigureQuestions.id, id), inArray(cimFigureQuestions.status, from)))
+    .returning({ id: cimFigureQuestions.id });
+  return rows.length > 0;
+}
+
+// ── Bulk approval and the review sheet ─────────────────────────────────────
+
+/** Why a note can't be approved in bulk (null = it can). */
+export function bulkApproveRefusal(n: Pick<CimFigureNote, "status" | "staleReason" | "sources">): string | null {
+  if (n.status === "approved") return "already shown to buyers";
+  if (n.status !== "suggested") return "hidden";
+  if (n.staleReason === "seller_flagged") return "the owner asked for a change";
+  if (n.staleReason) return "the figures changed";
+  const sources = n.sources ?? [];
+  if (sources.length > 0 && sources.every((s) => s.internal === true)) return "based only on your internal note; check the wording first";
+  return null;
+}
+
+/**
+ * Approve suggested notes by id (compare-and-set on status 'suggested' and
+ * — when given — the fingerprint the broker saw). Returns what was approved
+ * and what was skipped, with the reason.
+ */
+export async function approveNotes(
+  dealId: string,
+  items: Array<{ id: string; fingerprint?: string | null }>,
+  by: string,
+  d?: FigureDb,
+  opts: { allowInternal?: boolean } = {},
+): Promise<{ approved: string[]; skipped: Array<{ id: string; reason: string }> }> {
+  const approved: string[] = [];
+  const skipped: Array<{ id: string; reason: string }> = [];
+  const notes = new Map((await listNotes(dealId, d)).map((n) => [n.id, n]));
+  const now = new Date().toISOString();
+  for (const item of items) {
+    const n = notes.get(item.id);
+    if (!n) { skipped.push({ id: item.id, reason: "not found" }); continue; }
+    const refusal = bulkApproveRefusal(n);
+    if (refusal && !(opts.allowInternal && refusal.startsWith("based only"))) { skipped.push({ id: item.id, reason: refusal }); continue; }
+    if (item.fingerprint && item.fingerprint !== n.inputFingerprint) { skipped.push({ id: item.id, reason: "changed while you were reviewing" }); continue; }
+    const rows = await exec(d, sql`
+      UPDATE cim_figure_notes
+         SET status = 'approved', approved_at = now(), approved_by = ${by}, stale_reason = NULL,
+             history = history || ${json([{ at: now, by: "broker", what: "approved" }])}, updated_at = now()
+       WHERE deal_id = ${dealId} AND id = ${item.id} AND status = 'suggested' AND stale_reason IS NULL
+         AND input_fingerprint = ${n.inputFingerprint}
+      RETURNING id`);
+    if (rows.length > 0) approved.push(item.id);
+    else skipped.push({ id: item.id, reason: "changed while you were reviewing" });
+  }
+  return { approved, skipped };
+}
+
+/** Run `fn` in one database transaction (the review sheet's publish). */
+export async function inFigureTransaction<T>(fn: (tx: FigureDb) => Promise<T>, d?: FigureDb): Promise<T> {
+  const db = await dbOf(d);
+  return db.transaction(async (tx: FigureDb) => fn(tx));
+}
+
+/** Counts for the CIM tab's lines and the follow-up card (cheap). */
+export async function figureCounts(dealId: string, d?: FigureDb): Promise<{ notesWaiting: number; notesShown: number; questionsSuggested: number; questionsWithSeller: number }> {
+  const rows = await exec(d, sql`
+    SELECT
+      (SELECT count(*)::int FROM cim_figure_notes WHERE deal_id = ${dealId} AND status = 'suggested') AS waiting,
+      (SELECT count(*)::int FROM cim_figure_notes WHERE deal_id = ${dealId} AND status = 'approved' AND stale_reason IS NULL) AS shown,
+      (SELECT count(*)::int FROM cim_figure_questions WHERE deal_id = ${dealId} AND status = 'suggested') AS suggested,
+      (SELECT count(*)::int FROM cim_figure_questions WHERE deal_id = ${dealId} AND status = 'ask_seller') AS with_seller`);
+  const r = rows[0] ?? {};
+  return { notesWaiting: Number(r.waiting ?? 0), notesShown: Number(r.shown ?? 0), questionsSuggested: Number(r.suggested ?? 0), questionsWithSeller: Number(r.with_seller ?? 0) };
 }
 
 // ── Cache key parts ──────────────────────────────────────────────────────

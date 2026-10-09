@@ -456,6 +456,8 @@ export async function reprocessDealDocuments(
       documentsSkipped: results.filter((r) => r.skipped).length,
     };
   });
+  // dd: the figure checks re-read the deal's documents after a re-read.
+  void import("../cim/figures/refresh").then((m) => m.invalidateAndRefreshFigures(dealId, "documents")).catch(() => {});
   // Each source says on its row whether its last re-read failed (the
   // Information tab shows it, with "Read again"); a fresh read clears it.
   for (const r of results) {

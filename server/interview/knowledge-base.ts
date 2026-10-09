@@ -35,6 +35,8 @@ import { sessionModeOf, type ConductedBy } from "./session-mode";
 // Types
 // =====================
 
+import type { ExplainRequest } from "../cim/figures/requests";
+
 export interface KnowledgeBase {
   // Business identity
   business: {
@@ -90,6 +92,12 @@ export interface KnowledgeBase {
   // back through normal extraction. Optional because KBs persisted before
   // this field existed (and test fixtures) lack it.
   askSellerDiscrepancies?: AskSellerDiscrepancy[];
+
+  // Questions about the numbers the broker (or auto-ask) put to this
+  // interview (stream dd: cim_figure_questions, status ask_seller). An
+  // OPTIONAL block — never MANDATORY, never a completion blocker; the answer
+  // is recorded under each capture key. Set per turn by session-manager.
+  explainRequests?: ExplainRequest[];
 
   // Open entries from the durable deferral ledger (session-manager sets this
   // per turn). Rendered into the dynamic prompt so the agent always sees its
@@ -996,6 +1004,36 @@ export function sellerSafeGuidance(text: string | null | undefined): string | nu
 // Rendering for system prompt injection
 // =====================
 
+/**
+ * The questions about the numbers routed to this interview (stream dd).
+ * Optional: never MANDATORY, never a completion blocker, never framed as a
+ * problem; no add-back / SDE / EBITDA wording. Values are the statements as
+ * issued (shared documents only). Pure.
+ */
+export function renderExplainRequests(requests: ReadonlyArray<ExplainRequest>): string {
+  if (requests.length === 0) return "";
+  const money = (n: number) => `$${Math.round(Math.abs(n)).toLocaleString("en-US")}`;
+  const lines = [
+    `## THE BROKER WOULD LIKE THE STORY BEHIND THESE NUMBERS (optional — never hold the interview open for these)`,
+    `Buyers will ask what drove these. At natural moments, one at a time and never back-to-back, ask the seller what happened.`,
+    `Never suggest a reason, never call it a problem or a discrepancy, and never mention add-backs, SDE, EBITDA or what it does to value.`,
+    `Record the seller's explanation in their own words under the key shown. If they don't know, offer that their accountant can explain, defer it, and move on.`,
+  ];
+  for (const r of requests) {
+    const line = r.line || "this line";
+    if (r.kind === "movement" && typeof r.from === "number" && typeof r.value === "number" && r.fromYear) {
+      lines.push(`- ${r.captureKey}: ${line} ${money(r.from)} (${r.fromYear}) → ${money(r.value)} (${r.year}), from the financial statements`);
+    } else if (r.kind === "difference" && typeof r.statements === "number" && typeof r.other === "number") {
+      lines.push(`- ${r.captureKey}: ${line} for ${r.year} — the financial statements show ${money(r.statements)} and the ${r.otherKind ?? "tax return"} shows ${money(r.other)}`);
+    } else if (r.kind === "difference") {
+      lines.push(`- ${r.captureKey}: why ${line} for ${r.year} differs between the financial statements and the ${r.otherKind ?? "tax return"}`);
+    } else {
+      lines.push(`- ${r.captureKey}: what drove the change in ${line} in ${r.year}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   const parts: string[] = [];
 
@@ -1033,6 +1071,10 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     }
     parts.push(``);
   }
+
+  // The story behind the numbers (dd) — optional, never holds the interview open.
+  const explainBlock = renderExplainRequests(kb.explainRequests ?? []);
+  if (explainBlock) parts.push(explainBlock, ``);
 
   // Risks the sources flag — what a buyer's diligence asks about first.
   const risks = kb.flaggedRisks ?? [];

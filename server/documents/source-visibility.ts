@@ -58,6 +58,8 @@ export async function restampSourceVisibility(dealId: string, documentId: string
   });
   // Merge rows are re-read against the re-stamped facts.
   await settleMergeRowsQuietly(dealId, "visibility");
+  // dd (INTEGRATION §2.17, last): a document made broker-only stops being cited at once.
+  void import("../cim/figures/refresh").then((m) => m.invalidateAndRefreshFigures(dealId, "documents")).catch(() => {});
 }
 
 /** What Cimple recorded about reading a source — kept when the broker edits its details. */

@@ -64,7 +64,12 @@ const running = new Map<string, Promise<RefreshResult>>();
 export function runFigureRefresh(dealId: string, d?: FigureDb): Promise<RefreshResult> {
   const live = running.get(dealId);
   if (live) return live;
-  const p = withFigureLock(dealId, () => doRefresh(dealId, d)).finally(() => running.delete(dealId));
+  const p = withFigureLock(dealId, () => doRefresh(dealId, d))
+    .then(async (r) => {
+      if (!d) await planAfterRefresh(dealId);
+      return r;
+    })
+    .finally(() => running.delete(dealId));
   running.set(dealId, p);
   return p;
 }
@@ -118,6 +123,29 @@ async function doRefresh(dealId: string, d?: FigureDb): Promise<RefreshResult> {
   await setRefreshed(dealId, fingerprint, d);
   invalidateFigureRaw(dealId);
   return { located: locatedCount, written, proposals, removed, fingerprint };
+}
+
+/** After a refresh (outside the lock): the questions for the seller follow the new checks and notes. Never throws. */
+async function planAfterRefresh(dealId: string): Promise<void> {
+  if (!planHook) return;
+  await planHook(dealId).catch(() => {});
+}
+
+/** The planner (requests.ts) — injected so the refresh's own tests run without it. */
+let planHook: ((dealId: string) => Promise<unknown>) | null = (dealId) => import("./requests").then((m) => m.planExplainQuestions(dealId));
+export function _setRefreshPlanHookForTests(fn: ((dealId: string) => Promise<unknown>) | null): void {
+  planHook = fn;
+}
+
+/**
+ * A document was added, changed, deleted or changed visibility: drop the
+ * cached inputs now (a buyer is never served a citation to a document that
+ * just went private) and refresh soon.
+ */
+export function invalidateAndRefreshFigures(dealId: string, reason: string): void {
+  if (!dealId) return;
+  invalidateFigureRaw(dealId);
+  scheduleFigureRefresh(dealId, reason);
 }
 
 // ── Scheduling (debounced; never blocks the caller) ────────────────────────

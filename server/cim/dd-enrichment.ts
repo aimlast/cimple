@@ -274,9 +274,9 @@ export async function loadDdInputs(deal: Pick<Deal, "id" | "extractedInfo">): Pr
 
 // ── Validation ───────────────────────────────────────────────────────────
 
-/** Wording about Cimple's own process that must never reach a buyer. */
-const INTERNAL_WORDING =
-  /\b(?:confirmed facts?|per (?:the )?(?:broker|facts|knowledge base|analysis|interview)|knowledge base|teaser|dd context|clarifying questions?|internal (?:note|review)|broker[- ]only|crm|the seller (?:said|told us|claimed|stated)|initially estimated|previously (?:stated|estimated))\b/i;
+/** Wording about Cimple's own process that must never reach a buyer (shared with the figure notes' guards). */
+import { INTERNAL_WORDING } from "./dd-enrichment-wording";
+export { INTERNAL_WORDING };
 
 function textsOf(value: unknown, out: string[] = [], depth = 0): string[] {
   if (depth > 8 || value == null) return out;
@@ -1315,6 +1315,8 @@ export function startFullDdGeneration(deal: Deal, sections: CimSection[], inputs
     .then((summary) => {
       lastRuns.set(deal.id, summary);
       ddRunning.delete(deal.id);
+      // dd figure notes: a DD run is one of the AI pass's triggers (debounced).
+      if (!summary.error) void import("./figures/build").then((m) => m.scheduleFigureBuild(deal.id, "dd_generated")).catch(() => {});
       return summary;
     });
   return { done };

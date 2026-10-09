@@ -708,6 +708,8 @@ export async function runFinancialAnalysis(
       // in part says so where the broker reads the analysis's reasoning.
       aiReasoning: withUnreadNote([analysisResult.aiReasoning, ...sources.readNotes].filter(Boolean).join("\n\n"), sources.sourceDocumentIds),
     });
+    // dd figure notes: the analysis's figures changed — refresh the checks and notes ($0).
+    void import("../cim/figures/refresh").then((m) => m.scheduleFigureRefresh(dealId, "analysis_completed")).catch(() => {});
 
     // 6. Route cross-source discrepancies into the shared discrepancies table
     await persistFinancialDiscrepancies(

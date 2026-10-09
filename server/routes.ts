@@ -58,6 +58,7 @@ import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
 import { registerEngagementRoutes } from "./routes/engagement.js";
 import { registerEngagementInsightRoutes } from "./routes/engagement-insights.js";
 import { registerFigureRoutes } from "./routes/figures.js";
+import { figureQuestionsWithSeller } from "./interview/seller-followups";
 import { buyerCimExtras } from "./cim/buyer-extras.js";
 import { registerDataRoomRoutes } from "./routes/data-room.js";
 import { registerReadingRoutes } from "./routes/reading.js";
@@ -4607,6 +4608,7 @@ Return JSON only.`,
       // (a conflict to clear up). Only the count — the rows are the broker's.
       const followUpQuestions = interviewCompleted
         ? (await storage.getDiscrepanciesByDeal(deal.id)).filter((d) => d.status === "ask_seller" && !!routedToSellerAt(d)).length
+          + (await figureQuestionsWithSeller(deal.id)) // dd: questions about the figures with the seller
         : 0;
 
       // Step status. Intake is complete when the last intake page (Key

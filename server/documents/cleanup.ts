@@ -85,6 +85,8 @@ export async function deleteDocumentAndProvenance(docId: string): Promise<string
   }
 
   await removeDocumentFile(doc);
+  // dd (INTEGRATION §2.17, last): its citations drop at once; the figure checks re-read the deal's documents.
+  void import("../cim/figures/refresh").then((m) => m.invalidateAndRefreshFigures(doc.dealId, "documents")).catch(() => {});
   return removed;
 }
 

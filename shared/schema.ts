@@ -2886,6 +2886,12 @@ export interface FigureBuildStatus {
   candidates?: number;
   warnings?: string[];
   skippedBecauseEdited?: number;
+  /** Why the build ran ("cim_generated", "dd_generated", "broker", "interview_answers"). */
+  reason?: string;
+  /** "<candidate key>@<fingerprint>" the AI found no reason for (not sent to the model again until something changes). */
+  noReason?: string[];
+  /** Candidates whose suggested note a guard dropped ("A suggested note was dropped: …"). */
+  dropped?: string[];
 }
 /** Where a figure was found in a document's text (D11), or that it wasn't. */
 export type FigureLocatedEntry = { index: number; page: number | null; sourceLabel: string | null } | { missing: true };
@@ -2990,7 +2996,7 @@ export const cimFigureState = pgTable("cim_figure_state", {
   ddShownAt: timestamp("dd_shown_at"),
   ddShownBy: varchar("dd_shown_by"),
   /** The last build's keep-out holds (broker-side only). */
-  keepOut: jsonb("keep_out").$type<{ names: string[]; at: string; by: "ai" | "rules" } | null>(),
+  keepOut: jsonb("keep_out").$type<{ names: string[]; at: string; by: "ai" | "rules"; fp?: string } | null>(),
   /** "<docId>@<docUpdatedAt>#<value>" → where it was found (D11). */
   located: jsonb("located").$type<Record<string, FigureLocatedEntry>>().notNull().default(sql`'{}'::jsonb`),
   refreshedFingerprint: text("refreshed_fingerprint"),

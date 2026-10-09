@@ -188,6 +188,8 @@ app.use("/api/deals/:dealId/buyer-fit/:accessId/ai", aiLimiter);
 // view room's reading tracker (a flush every ~15 s per tab) gets its own
 // roomy per-link ceiling, keyed by a hash of the link — never the AI limiter.
 app.use("/api/deals/:dealId/engagement/buyers/:accessId/brief", aiLimiter);
+// ── dd limiters ── (figure notes: the AI pass that reads for reasons)
+app.use("/api/deals/:dealId/figures/build", aiLimiter);
 app.use("/api/view/:token/reading", rateLimit({
   windowMs: 60 * 1000,
   limit: 120,

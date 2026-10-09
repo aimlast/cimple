@@ -499,6 +499,8 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
   } finally {
     stopHeartbeat();
     activeReads.delete(doc.id);
+    // dd (INTEGRATION §2.17, last in the finally): the figure checks re-read the deal's documents.
+    void import("../cim/figures/refresh").then((m) => m.invalidateAndRefreshFigures(doc.dealId, "documents")).catch(() => {});
   }
 }
 

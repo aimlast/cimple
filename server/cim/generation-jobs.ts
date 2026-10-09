@@ -431,6 +431,9 @@ async function run(job: CimGenerationJob, deal: Deal, beforeWriting?: BeforeWrit
     job.sectionCount = document.sections.length;
     job.warnings = document.warnings ?? [];
     job.heldPrivate = document.heldPrivate ?? [];
+    // dd: the new CIM's figures — the $0 refresh now, the AI pass debounced.
+    void import("./figures/refresh").then((m) => m.scheduleFigureRefresh(job.dealId, "cim_generated")).catch(() => {});
+    void import("./figures/build").then((m) => m.scheduleFigureBuild(job.dealId, "cim_generated")).catch(() => {});
   } catch (err: any) {
     if (err?.name === "DiscrepancyGateError") console.log(`[cim-generation] deal ${job.dealId} stopped at the discrepancy gate: ${err.message}`);
     else console.error(`[cim-generation] deal ${job.dealId} failed:`, err);
