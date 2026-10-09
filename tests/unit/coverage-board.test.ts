@@ -496,6 +496,17 @@ const mark = (itemId: string, kind: string, extra: Partial<CoverageMarkLike> = {
   assert.equal(wc.privateValue, true);
   assert.ok(!JSON.stringify(screen).includes("settled by the broker"));
   assert.ok(!JSON.stringify(screen).includes("301,000"));
+  // Another member on file (the statements' figure) never stands in for the settled one.
+  const deal2 = mkDeal(factsOf({
+    workingCapital: ["Normalized net working capital $301,000 at Dec 31, 2024 (cash-free, debt-free)", { source: "broker", at: "2026-10-01T00:00:00Z" }],
+    netWorkingCapital: ["$531,000", { source: "document", documentId: "FS1" }],
+  }));
+  const wc2 = item(build(deal2, { documents: [{ id: "FS1", name: "FY2024 statements", visibility: "shared" }] }, "screen"), "financials:workingCapital");
+  assert.ok(wc2.readKeys.includes("netWorkingCapital"), "the statements figure reads as the same item");
+  {
+    assert.equal(wc2.privateValue, true, "the settled value stays private — another member's figure isn't shown as the answer");
+    assert.equal(wc2.value, null);
+  }
   ok("screen: a fact the broker settled reads 'On file — private to you', never the stand-in text");
 }
 

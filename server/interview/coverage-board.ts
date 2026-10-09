@@ -762,6 +762,9 @@ function screenItem(
   const held = shape.readKeys.filter((k) => isHeldPlaceholder(coverageValueText(sellerFacts[k])));
   const shownFacts = held.length > 0 ? Object.fromEntries(Object.entries(sellerFacts).filter(([k]) => !held.includes(k))) : sellerFacts;
   const sellerBest = bestValue(shape, shownFacts, sellerConfidence);
+  // (The value the broker sees is one the broker settled: the item is private — never another member's
+  // figure shown in its place, which would read as the answer.)
+  const brokerValueHeld = !!item.valueKey && held.includes(item.valueKey);
   const sellerSrc = sellerBest ? getFieldSources(sellerFacts)[sellerBest.key] : undefined;
   const marks = item.marks.filter((m) => m.kind !== "note").map(({ note: _n, ...m }) => m as CoverageItemMark);
   const out: CoverageItem = { ...item, marks, source: null, value: null };
@@ -775,7 +778,7 @@ function screenItem(
   out.reason = screenReason(item.reason, sellerBest?.text ?? null);
   if (item.status === "missing") return out;
   if (!d.fullValue) return out;
-  if (!sellerBest || sellerBest.lead) {
+  if (!sellerBest || sellerBest.lead || brokerValueHeld) {
     out.privateValue = true;
     return out;
   }
