@@ -192,6 +192,13 @@ async function main() {
     const renewed = { ...mkAccess({ buyerEmail: "late@x.invalid" }), id: "L-late2" };
     const answered = computeTeaserEngagement({ links: [expired, renewed] as never, requests: [], visits: [], blockSums: [], pageIndexes: new Map(), now });
     assert.equal(answered.buyers.find((b) => b.accessId === "L-late")!.freshLinkRequestedAt, null);
+    // The reading list names the header "Header" and an untitled block by what it is ("Key numbers"), never "Untitled block".
+    const named = computeTeaserEngagement({
+      links: [links[0]] as never, requests: [], visits: [visits[0]], now,
+      blockSums: [{ accessId: "L-a", pageId: "teaser_header", attentionMs: 4000 }, { accessId: "L-a", pageId: "kn", attentionMs: 3000 }],
+      pageIndexes: new Map([[rid, [{ ...pageIndex[0], pageId: "teaser_header", servedTitle: "Project Drift" }, { ...pageIndex[1], pageId: "kn", servedTitle: "", layoutType: "metric_grid" }] as never]]),
+    });
+    assert.deepEqual(named.blocks.map((b) => b.title), ["Header", "Key numbers"]);
   });
 
   await h.close();

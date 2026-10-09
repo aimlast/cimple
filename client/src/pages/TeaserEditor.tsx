@@ -383,7 +383,7 @@ function EditorBody({
                   decorate={decorate}
                   headerWarning={t.headerProblem}
                   onLayout={setLayout}
-                  className={cn(running && "animate-pulse")}
+                  className={cn(running && t.generation?.fullRewrite && "animate-pulse")}
                 />
               </>
             )}

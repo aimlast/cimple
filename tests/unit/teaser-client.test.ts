@@ -21,6 +21,7 @@ import { classifyGenerationWarnings } from "../../shared/cim-generation-warnings
 import { publishButtonState } from "../../client/src/components/teaser/TeaserPublishDialog";
 import { sampleTeaser } from "../../client/src/components/teaser/samples";
 import { printFooterText } from "../../client/src/pages/TeaserPrintPreview";
+import { fillTeaserTokens, teaserFill } from "../../shared/teaser-view";
 import { tileLinesFor } from "../../client/src/pages/broker/deal/cim-tab-slots";
 
 let passed = 0;
@@ -94,6 +95,15 @@ test("tokens filled like the buyer's; hidden blocks left out; stand-ins drawn", 
   assert.ok(!JSON.stringify(fallback).includes("{price}"));
   assert.ok(!JSON.stringify(fallback).includes("{firm}"));
   assert.equal(FALLBACK_FILL.price, "Price on request");
+});
+
+test("a line that starts with {firm} starts with a capital, even with no firm name on file", () => {
+  const b = block({ id: "n", slot: "next_step", origin: "fixed", layoutType: "numbered_list", layoutData: { items: [{ title: "{firm} reviews your request" }, { title: "Ask {firm} for the CIM" }] } });
+  const fill = teaserFill({ askingPrice: null, showAskingPrice: true, numbers: "ranges", contact: { firm: null, name: null, email: null, phone: null } }, []);
+  assert.equal(fill.firm, "the broker");
+  const items = (fillTeaserTokens(b, fill).layoutData as { items: Array<{ title: string }> }).items;
+  assert.equal(items[0].title, "The broker reviews your request");
+  assert.equal(items[1].title, "Ask the broker for the CIM");
 });
 
 test("block names: the title, else the slot's name", () => {

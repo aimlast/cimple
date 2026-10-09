@@ -344,7 +344,9 @@ function CellsEditor({ api, state, block, cells, isKeyNumbers, disabled }: { api
         <label className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-xs">
           <span>
             Show the asking price
-            <span className="block text-[11px] text-muted-foreground">Off: buyers read “Price on request”.</span>
+            <span className="block text-[11px] text-muted-foreground">
+              {cells.find((c) => c.key === "askingPrice")?.edited ? "You typed over the price, so buyers read what you typed." : "Off: buyers read “Price on request”."}
+            </span>
           </span>
           <Switch checked={state.teaser.showAskingPrice} onCheckedChange={(v) => api.settings.mutate({ showAskingPrice: v })} disabled={api.settings.isPending || disabled} data-testid="switch-teaser-show-price" />
         </label>
@@ -354,14 +356,16 @@ function CellsEditor({ api, state, block, cells, isKeyNumbers, disabled }: { api
 }
 
 function CellRow({ api, blockId, cell, disabled }: { api: TeaserApi; blockId: string; cell: KeyCell; disabled: boolean }) {
+  // {price} / {contact}: filled for each buyer from your listing and brand — the box stays empty until you type over it.
   const token = /\{(price|contact|firm)\}/.test(cell.value);
-  const [value, setValue] = useState(cell.value);
-  useEffect(() => setValue(cell.value), [cell.value]);
+  const shown = token ? "" : cell.value;
+  const [value, setValue] = useState(shown);
+  useEffect(() => setValue(shown), [shown]);
   const limit = cellLimit(cell.key);
   const commit = () => {
     const v = value.replace(/\s+/g, " ").trim();
-    if (!v || v === cell.value) {
-      setValue(cell.value);
+    if (!v || v === shown) {
+      setValue(shown);
       return;
     }
     api.patchCell.mutate({ id: blockId, key: cell.key, value: v });
@@ -379,23 +383,18 @@ function CellRow({ api, blockId, cell, disabled }: { api: TeaserApi; blockId: st
           </span>
         )}
       </div>
-      {token ? (
-        <p className="rounded-md border border-border bg-muted/20 px-2.5 py-1.5 text-xs text-muted-foreground">
-          {cell.key === "askingPrice" ? "Your listed asking price, in the teaser's number style" : "Filled in for each buyer"}
-        </p>
-      ) : (
-        <Input
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); } if (e.key === "Escape") setValue(cell.value); }}
-          maxLength={limit}
-          disabled={disabled}
-          className={cn("h-8 text-xs", cell.edited && "border-teal/50")}
-          aria-label={cell.label}
-          data-testid={`input-teaser-cell-${cell.key}`}
-        />
-      )}
+      <Input
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); } if (e.key === "Escape") setValue(shown); }}
+        maxLength={limit}
+        disabled={disabled}
+        placeholder={token ? (cell.key === "askingPrice" ? "Your listed asking price, in the teaser's number style" : "Filled in for each buyer") : undefined}
+        className={cn("h-8 text-xs", cell.edited && "border-teal/50")}
+        aria-label={cell.label}
+        data-testid={`input-teaser-cell-${cell.key}`}
+      />
     </div>
   );
 }

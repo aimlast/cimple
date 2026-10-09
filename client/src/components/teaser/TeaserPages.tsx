@@ -265,7 +265,8 @@ export function TeaserPages(props: TeaserPagesProps) {
               <CimSheet
                 flow={false}
                 className={cn("teaser-sheet teaser-paper relative", mode === "print" ? "teaser-print-sheet" : "")}
-                style={{ width: box.width, minHeight: box.height, height: mode === "print" ? box.height : pageH, padding: 48, borderRadius: mode === "thumb" ? 4 : 6, overflow: mode === "print" ? "hidden" : undefined }}
+                // Print: a page is at least one sheet tall; a block taller than a page flows onto the next sheet (never clipped).
+                style={{ width: box.width, minHeight: box.height, height: mode === "print" ? undefined : pageH, padding: 48, borderRadius: mode === "thumb" ? 4 : 6 }}
               >
                 {group.map((idx, j) => {
                   const it = items[idx];
