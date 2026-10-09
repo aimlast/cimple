@@ -12,7 +12,10 @@
  *    a document the buyer can open shows its room title).
  *
  * Outside a VdrLinkProvider (previews, print, the seller's review) gl shows
- * plain words, so this renders its children untouched there.
+ * plain words, so this renders its children untouched there. Inside a broker
+ * VdrLinkProvider (the CIM builder preview, mounted at the dd merge) both
+ * slots render the room's broker chip (the document's name, a link into the
+ * Data room tab).
  */
 import { useEffect, type ReactNode } from "react";
 import { BookOpen } from "lucide-react";
@@ -41,8 +44,11 @@ export function glDocRef(documentId: string, label: string): { documentId: strin
 function LedgerLink({ documentId, rows }: { documentId: string; rows: number[] }) {
   const links = useVdrLinks();
   useEffect(() => { if (links && documentId) links.request(documentId); }, [links?.request, documentId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The broker's own CIM preview (once a broker VdrLinkProvider wraps it): the room's chip — the
+  // ledger's own name and a link into the Data room tab (never the buyer's "ask your broker" words).
+  if (links && links.source.kind === "broker") return <VdrCitationChip docRef={{ documentId, kind: "general_ledger" }} />;
   const res = links?.resolved(documentId) as ResolvedDocument | undefined;
-  if (links && links.source.kind === "buyer" && res && res.available) {
+  if (links && res && res.available) {
     return (
       <button
         type="button"

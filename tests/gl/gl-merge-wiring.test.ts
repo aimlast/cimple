@@ -167,6 +167,7 @@ await test("the view room: a DD buyer reads a ready ledger in gl's viewer; gl's 
   assert.deepEqual(glDocRef("d3", "Financial statements 2023"), { documentId: "d3", kind: "financial_statements", period: "2023" });
   assert.deepEqual(glDocRef("d4", "Supporting document (2022)"), { documentId: "d4", kind: "other", period: "2022" });
   assert.ok(!/title=/.test(src("client/src/components/vdr/GlRoomLinks.tsx").replace(/title: res\.title/g, "")), "no title prop on a chip");
+  assert.ok(src("client/src/components/vdr/GlRoomLinks.tsx").includes('links.source.kind === "broker") return <VdrCitationChip'), "a broker preview gets the room's broker chip, never the buyer's ask words");
 });
 
 await test("documents: gl runs before the data room at every hook (§2.17)", () => {
