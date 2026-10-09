@@ -1,0 +1,17 @@
+{
+  "tagline": "A residential HVAC and plumbing service company with a membership base",
+  "overview": "Project Ember is a residential heating, cooling and plumbing company in Ontario. It installs and services equipment for homeowners, with a maintenance membership that brings customers back every season and a trained team of technicians and comfort advisors.",
+  "highlights": [
+    { "title": "Membership base", "detail": "A maintenance club brings repeat service visits through the year." },
+    { "title": "Trained technicians", "detail": "Licensed technicians handle service and installation in-house." },
+    { "title": "Balanced work", "detail": "Service, repair and replacement work smooth out the seasons." },
+    { "title": "Equipped fleet", "detail": "Stocked service vans keep jobs to one visit." }
+  ],
+  "growth": [],
+  "whoItSuits": ["An HVAC operator adding a region", "An owner-operator with trades experience"],
+  "reasonForSale": "The owner is retiring",
+  "transition": "The owner offers a 6-month handover through the heating season",
+  "managementNote": null,
+  "operationsNotes": [],
+  "listingPhrases": { "financing": "Vendor financing available", "supportTraining": "The owner stays for a 6-month handover", "reasonForSale": "Retirement" }
+}

@@ -78,7 +78,14 @@ export interface TeaserDoc {
 
 export const EMPTY_TEASER_DOC: TeaserDoc = { header: null, blocks: [] };
 
-export const TEASER_LIMITS = { blocks: 30, title: 120, text: 4000, tagline: 140, chips: 5, cell: 40 } as const;
+export const TEASER_LIMITS = { blocks: 30, title: 120, text: 4000, tagline: 140, chips: 5, cell: 40, phraseCell: 80 } as const;
+
+/** Cells that hold a short phrase rather than a figure ("Owner transition", "Support & training"). */
+const PHRASE_CELLS = /^(?:reasonForSale|transition|financing|supportTraining|saleType|realEstate|note\d*|inventory|ffe)$/;
+/** How long a key-number cell may be: 40 characters for a figure, 80 for a phrase. */
+export function cellLimit(key: string): number {
+  return PHRASE_CELLS.test(key) ? TEASER_LIMITS.phraseCell : TEASER_LIMITS.cell;
+}
 
 /** Filled at serve time, in fixed blocks only. */
 export const TEASER_TOKENS = { price: "{price}", contact: "{contact}", firm: "{firm}" } as const;

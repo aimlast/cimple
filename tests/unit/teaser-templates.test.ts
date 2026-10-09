@@ -61,6 +61,7 @@ async function main() {
     assert.deepEqual(kn.inventoryOf({ inventory: "Inventory of about $85,000 at cost, in addition to the price" }), { value: 85_000, included: "extra" });
     assert.deepEqual(kn.inventoryOf({ inventory: "Inventory included" }), { value: null, included: "included" });
     assert.equal(kn.inventoryOf({ inventory: "About $85,000 on hand" }), null, "says neither → hidden");
+    assert.equal(kn.inventoryOf({ inventory: "$361,000 at Dec 31, 2024 (warehouse plus van stock)" }), null, "'plus van stock' is not about the price");
     assert.equal(kn.realEstateOf("The owner owns the building; it is included in the sale"), "Owned — included");
     assert.equal(kn.realEstateOf("Building owned by the seller, available for purchase separately"), "Owned — available separately");
     assert.equal(kn.realEstateOf("10-year lease with the landlord"), "Leased");
@@ -68,6 +69,31 @@ async function main() {
     assert.equal(kn.saleTypeOf("Share sale (recommended); cash-free"), "Share sale");
     assert.equal(kn.saleTypeOf("Asset sale"), "Asset sale");
     assert.equal(kn.saleTypeOf("Share or asset sale, buyer's choice"), null);
+  });
+
+  await check("facts read carefully: a year is never a headcount; 'since 1998' is years; the adjusted EBITDA in a mixed fact", () => {
+    const f = kn.figuresFrom({
+      deal: { industry: "Pharmacy" },
+      info: {
+        annualRevenue: "$9,120,400 (FY2024)",
+        ebitda: "FY2024 reported EBITDA $660,252; adjusted EBITDA $780,052 (8.6% margin) per the accountant's normalization",
+        employees: "Key personnel mentioned: Daniel (lead pharmacist, since 2014), Mei-Lin (since 2018)",
+        yearsOperating: "since 1998",
+        locationSite: "Ottawa, Ontario",
+      },
+      canon: null,
+      askingPrice: null,
+      now: new Date("2026-10-09T00:00:00Z"),
+    });
+    assert.equal(f.employees, null, "names and years, no headcount");
+    assert.equal(f.yearsInBusiness, 28);
+    assert.deepEqual(f.earnings, { label: "Adjusted EBITDA", value: 780_052, year: null });
+    assert.equal(kn.ebitdaFromText("ebitda", "$917,000 reported EBITDA (FY2024)")!.adjusted, false);
+    assert.equal(kn.yearsFromText("34 years in trucking (since 1991)", new Date("2026-10-09")), 34);
+    const small = kn.figuresFrom({ deal: { industry: "HVAC" }, info: { annualRevenue: "$4,800,000", sde: "$1,312,000", ebitda: "$917,000 reported EBITDA" }, canon: null, askingPrice: null });
+    assert.equal(small.earnings!.label, "SDE", "main-street size: SDE leads");
+    const big = kn.figuresFrom({ deal: { industry: "HVAC" }, info: { annualRevenue: "$7,412,000", sde: "$1,312,000", ebitda: "$917,000 adjusted EBITDA" }, canon: null, askingPrice: null });
+    assert.equal(big.earnings!.label, "Adjusted EBITDA");
   });
 
   await check("employees and years are ranges in both number styles", () => {

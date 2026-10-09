@@ -30,6 +30,7 @@ import { TEASER_TOKENS, type KeyCell } from "@shared/teaser";
 import { dealBlindRegion } from "@shared/cim-media";
 import type { EarningsCanon } from "../cim/earnings-canon";
 import { regionOf } from "../buyers/blind-deal-summary";
+import { parseHeadcount } from "../matching/fact-numbers";
 
 export interface TeaserFigures {
   industry: string | null;
@@ -86,6 +87,32 @@ function firstNumber(t: string): number | null {
   if (!m) return null;
   const n = Number(m[1].replace(/,/g, ""));
   return Number.isFinite(n) ? n : null;
+}
+
+/** "34 years in trucking (since 1991)" → 34; "since 1998" → years since; a bare year → years since. */
+export function yearsFromText(t: string, now: Date): number | null {
+  const y = /(\d{1,3})\s*\+?\s*(?:years?|yrs?)\b/i.exec(t);
+  if (y) return Number(y[1]);
+  const since = /\b(1[89]\d{2}|20\d{2})\b/.exec(t);
+  if (since) {
+    const n = now.getUTCFullYear() - Number(since[1]);
+    return n >= 0 ? n : null;
+  }
+  const lone = /^\s*(\d{1,3})\s*$/.exec(t);
+  return lone ? Number(lone[1]) : null;
+}
+
+/** An EBITDA fact: the adjusted figure when the text gives one ("reported $660K; adjusted EBITDA $780K"). */
+export function ebitdaFromText(key: string, t: string): { value: number; adjusted: boolean } | null {
+  const adj = /adjusted\s+ebitda[^$\d]{0,24}(\$?\s*\d[\d,]*(?:\.\d+)?\s*(?:k|m|mm|million|thousand)?)/i.exec(t)
+    ?? /(\$\s*\d[\d,]*(?:\.\d+)?\s*(?:k|m|mm|million|thousand)?)\s*(?:\(?\s*)?adjusted\s+ebitda/i.exec(t);
+  if (adj) {
+    const v = parseMoney(adj[1]);
+    if (v) return { value: v, adjusted: true };
+  }
+  const v = parseMoney(t);
+  if (!v) return null;
+  return { value: v, adjusted: key === "adjustedEbitda" || /\b(?:adjusted|normali[sz]ed)\b/i.test(t) && !/\breported\b/i.test(t) };
 }
 
 function firstPercent(t: string): number | null {
@@ -145,8 +172,9 @@ export function inventoryOf(info: Info): TeaserFigures["inventory"] {
   const f = fact(info, INVENTORY_KEYS);
   if (!f) return null;
   const t = f[1];
-  const extra = /\b(?:in addition|on top of|plus|extra|additional|not included|at cost|separately)\b/i.test(t);
-  const included = /\b(?:included|includes)\b/i.test(t);
+  // Only wording about the PRICE counts ("plus van stock" is not "in addition to the price").
+  const extra = /\bin addition to (?:the )?(?:purchase |asking |sale )?price\b|\bon top of (?:the )?(?:purchase |asking )?price\b|\bnot included\b|\bexcluded\b|\bpurchased separately\b|\bsold separately\b|\bplus inventory\b|\bextra to the price\b/i.test(t);
+  const included = !extra && /\b(?:is |are )?included\b|\bincludes inventory\b|\bincluded in (?:the )?price\b/i.test(t);
   if (!extra && !included) return null;
   return { value: parseMoney(t), included: extra ? "extra" : "included" };
 }
@@ -205,28 +233,29 @@ export function figuresFrom(input: FiguresInput): TeaserFigures {
     const sde = fact(info, ["sde", "sellersDiscretionaryEarnings", "cashFlow"]);
     const ebitda = fact(info, ["adjustedEbitda", "ebitda"]);
     const sdeN = sde ? parseMoney(sde[1]) : null;
-    const ebitdaN = ebitda ? parseMoney(ebitda[1]) : null;
-    if (sdeN && (!ebitdaN || /sde|discretionary/i.test(sde![0]))) {
+    const eb = ebitda ? ebitdaFromText(ebitda[0], ebitda[1]) : null;
+    // No analysis: SDE leads for a main-street size (under $5M revenue) or when there's no EBITDA.
+    if (sdeN && (!eb || (revenue !== null && revenue < 5_000_000))) {
       earnings = { label: "SDE", value: sdeN, year: null };
       headline = "sde";
       note("earnings", sde![0]);
-    } else if (ebitdaN) {
-      earnings = { label: ebitda![0] === "adjustedEbitda" || /adjust|normali/i.test(ebitda![1]) ? "Adjusted EBITDA" : "EBITDA", value: ebitdaN, year: null };
+    } else if (eb) {
+      earnings = { label: eb.adjusted ? "Adjusted EBITDA" : "EBITDA", value: eb.value, year: null };
       headline = "ebitda";
       note("earnings", ebitda![0]);
     }
     if (earnings && revenue) marginPct = (earnings.value / revenue) * 100;
   }
 
-  // People and years — always ranges.
+  // People and years — always ranges. ("since 2014" is never a headcount.)
   const emp = fact(info, EMPLOYEE_KEYS);
-  const employees = emp ? firstNumber(emp[1]) : null;
-  if (emp) note("employees", emp[0]);
+  const employees = emp ? parseHeadcount(emp[1]) : null;
+  if (emp && employees !== null) note("employees", emp[0]);
   let yearsInBusiness: number | null = null;
   const yrs = fact(info, YEARS_KEYS);
   if (yrs) {
-    yearsInBusiness = firstNumber(yrs[1]);
-    note("years", yrs[0]);
+    yearsInBusiness = yearsFromText(yrs[1], now);
+    if (yearsInBusiness !== null) note("years", yrs[0]);
   }
   if (yearsInBusiness === null) {
     const fy = fact(info, FOUNDED_KEYS);
@@ -357,10 +386,14 @@ export function listingRowsFor(f: TeaserFigures, s: CellSettings, phrases: Listi
   return rows.filter((c): c is KeyCell => !!c);
 }
 
+/** Shorten at a word boundary ("The owner stays as designated…"), never mid-word. */
 function clip(s: string | null | undefined, n = 60): string | null {
   const t = (s ?? "").replace(/\s+/g, " ").trim();
   if (!t) return null;
-  return t.length > n ? `${t.slice(0, n - 1).trimEnd()}…` : t;
+  if (t.length <= n) return t;
+  const cut = t.slice(0, n - 1);
+  const sp = cut.lastIndexOf(" ");
+  return `${(sp > n * 0.5 ? cut.slice(0, sp) : cut).replace(/[,;:.\-–— ]+$/, "")}…`;
 }
 
 /** Locations as a range ("1 location", "2–3 locations", "4–9 locations", "10+ locations"). */
@@ -396,10 +429,10 @@ export function financialSnapshotCells(f: TeaserFigures): KeyCell[] {
 export function dealCells(f: TeaserFigures, phrases: { reasonForSale?: string | null; transition?: string | null; financing?: string | null } = {}, withFinancing = false): KeyCell[] {
   return [
     cell("saleType", "Sale type", f.saleType),
-    cell("reasonForSale", "Reason for sale", clip(phrases.reasonForSale, 40)),
-    cell("transition", "Owner transition", clip(phrases.transition, 40)),
+    cell("reasonForSale", "Reason for sale", clip(phrases.reasonForSale, 80)),
+    cell("transition", "Owner transition", clip(phrases.transition, 80)),
     cell("realEstate", "Real estate", f.realEstate),
-    withFinancing ? cell("financing", "Financing", clip(phrases.financing, 40)) : null,
+    withFinancing ? cell("financing", "Financing", clip(phrases.financing, 60)) : null,
   ].filter((c): c is KeyCell => !!c);
 }
 

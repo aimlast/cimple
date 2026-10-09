@@ -15,6 +15,7 @@ import { defaultLayoutData, sameLayoutFamily } from "@shared/cim-layouts";
 import {
   TEASER_LIMITS,
   blockCells,
+  cellLimit,
   isTeaserLayout,
   validateTeaserLayout,
   withCellsApplied,
@@ -60,7 +61,7 @@ function checkLimits(block: TeaserBlock): void {
     if (t.length > TEASER_LIMITS.text) throw new TeaserOpError(400, `Keep each piece of text under ${TEASER_LIMITS.text.toLocaleString("en-US")} characters.`);
   }
   if (JSON.stringify(block.layoutData).length > 40_000) throw new TeaserOpError(400, "This block is too long for a teaser.");
-  for (const c of blockCells(block)) if (c.value.length > TEASER_LIMITS.cell) throw new TeaserOpError(400, `Keep each key number under ${TEASER_LIMITS.cell} characters.`);
+  for (const c of blockCells(block)) if (c.value.length > cellLimit(c.key)) throw new TeaserOpError(400, `Keep each key number under ${cellLimit(c.key)} characters.`);
   const problem = validateTeaserLayout(block);
   if (problem) throw new TeaserOpError(400, problem);
 }
@@ -130,7 +131,7 @@ export function patchCell(doc: TeaserDoc, blockId: string, key: string, value: s
   } else {
     const v = value.replace(/\s+/g, " ").trim();
     if (!v) throw new TeaserOpError(400, "Type a value, or use Reset from the facts.");
-    if (v.length > TEASER_LIMITS.cell) throw new TeaserOpError(400, `Keep each key number under ${TEASER_LIMITS.cell} characters.`);
+    if (v.length > cellLimit(key)) throw new TeaserOpError(400, `Keep each key number under ${cellLimit(key)} characters.`);
     if (i < 0) throw new TeaserOpError(404, "That key number isn't in this block.");
     cells[i] = { ...cells[i], value: v, edited: true, editedAt: nowIso() };
   }
