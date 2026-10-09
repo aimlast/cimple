@@ -7568,7 +7568,8 @@ Return JSON only.`,
       // Published by the broker on purpose → for every buyer (a Blind buyer
       // still never sees it if it names the business — buyer-qa-scope.ts).
       if (isPublished === true) {
-        updates.answerScope = existingQ.vdrItemId ? updates.answerScope : "all";
+        // (A data-room question keeps the scope set above — never "all".)
+        if (!existingQ.vdrItemId) updates.answerScope = "all";
         // Sharing an AI answer makes it the broker's answer: recorded as
         // their draft, which is what lets other buyers read it
         // (approvedForSharing in shared/buyer-qa-scope.ts) — and it no
