@@ -20,6 +20,8 @@ interface CallInfo {
   token?: string;
   startedAt?: string;
   businessName?: string;
+  /** The broker confirmed you know Cimple is taking notes of this call. */
+  notetaking?: boolean;
 }
 
 export default function SellerCall() {
@@ -60,11 +62,29 @@ export default function SellerCall() {
 
   useEffect(() => () => { void handleRef.current?.leave(); }, []);
 
+  // While in the call: is Cimple taking notes? (Checked every 15 s — the broker may start it after you joined.)
+  const { data: status } = useQuery<{ active: boolean; notetaking?: boolean }>({
+    queryKey: ["/api/seller", token, "call", "status"],
+    enabled: !!token && joined && !left,
+    queryFn: async () => {
+      const r = await fetch(`/api/seller/${token}/call?status=1`);
+      if (!r.ok) throw new Error("Couldn't check the call");
+      return r.json();
+    },
+    refetchInterval: 15_000,
+  });
+  const notetaking = joined ? !!status?.notetaking || (!!data?.notetaking && status === undefined) : !!data?.notetaking;
+
   return (
     <div className="h-screen w-full bg-background flex flex-col">
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border shrink-0">
         <span className="text-sm font-semibold">{data?.businessName || "Business Overview"}</span>
         <span className="text-xs text-muted-foreground">· Video call with your broker</span>
+        {notetaking && !left && (
+          <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-teal/40 bg-teal/10 px-2.5 py-0.5 text-[11px] text-foreground" data-testid="badge-taking-notes" title="Only the words are kept, as text — no audio.">
+            <span className="h-1.5 w-1.5 rounded-full bg-teal" aria-hidden /> Cimple is taking notes
+          </span>
+        )}
       </div>
       <div className="flex-1 min-h-0 p-3">
         {left ? (

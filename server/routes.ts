@@ -62,6 +62,7 @@ import { registerAnalyticsDashboardRoutes } from "./routes/analytics-dashboard.j
 import { registerAnalyticsExtraSources } from "./routes/analytics-extra-sources.js";
 import { questionWaitingOn } from "@shared/analytics-dashboard";
 import { registerTeaserRoutes } from "./routes/teaser.js";
+import { registerTogetherRoutes } from "./routes/together.js";
 import { registerDataRoomRoutes } from "./routes/data-room.js";
 import { registerReadingRoutes } from "./routes/reading.js";
 import { recordRendition } from "./analytics/renditions.js";
@@ -1730,8 +1731,15 @@ Return JSON only.`,
       if (!deal) return res.status(404).json({ error: "Deal not found" });
       const call = activeCall(deal);
       if (!call || !isDailyConfigured()) return res.json({ active: false, businessName: deal.businessName });
+      // "Cimple is taking notes" (D15): an Interview together sitting on this
+      // call, after the broker confirmed the seller knows.
+      const { liveSittingFor } = await import("./together/sittings");
+      const sitting = await liveSittingFor(deal.id).catch(() => null);
+      const notetaking = !!sitting && sitting.via === "cimple" && !!sitting.consentAt;
+      // (?status=1: the in-call check of the badge — no new meeting token.)
+      if (req.query.status === "1") return res.json({ active: true, notetaking });
       const token = await createMeetingToken(call.roomName, invite.sellerName || "Seller", false);
-      res.json({ active: true, roomUrl: call.roomUrl, token, startedAt: call.startedAt, businessName: deal.businessName });
+      res.json({ active: true, roomUrl: call.roomUrl, token, startedAt: call.startedAt, businessName: deal.businessName, notetaking });
     } catch (error: any) {
       console.error("[call] seller lookup failed:", error);
       res.status(500).json({ error: "Couldn't check the call" });
@@ -1754,9 +1762,21 @@ Return JSON only.`,
       if (!isSupportedMeetingUrl(meetingUrl)) return res.status(400).json({ error: "Paste a Zoom, Google Meet or Microsoft Teams meeting link (https://…)" });
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
+      // Interview together: the notetaker joins only for a sitting whose
+      // broker confirmed the seller knows Cimple is taking notes (D15), and
+      // the bot is recorded on that sitting (its lines go only there).
+      const { sittingForDeal } = await import("./together/sittings");
+      const { togetherStore } = await import("./together/store");
+      const { watchNotetaker } = await import("./together/notetaker");
+      const sittingId = typeof req.body?.sittingId === "string" ? req.body.sittingId : "";
+      const sitting = sittingId ? await sittingForDeal(deal.id, sittingId) : null;
+      if (!sitting || sitting.status === "ended") return res.status(409).json({ error: "Start the session together first.", code: "no_sitting" });
+      if (!sitting.consentAt) return res.status(409).json({ error: "Let the seller know Cimple is taking notes first.", code: "consent_required" });
       const existing = activeBot(deal);
       if (existing && existing.meetingUrl === meetingUrl) {
         webhookTokens.set(existing.webhookToken, deal.id);
+        if (sitting.botId !== existing.botId) await togetherStore().updateSitting(sitting.id, { botId: existing.botId });
+        watchNotetaker(sitting.id, existing.botId);
         return res.json({ botId: existing.botId, startedAt: existing.startedAt, status: readBotLines(deal.id, 0).status });
       }
       if (existing) void leaveCall(existing.botId);
@@ -1768,6 +1788,8 @@ Return JSON only.`,
       webhookTokens.set(webhookToken, deal.id);
       clearBotBuffer(deal.id);
       setBotStatus(deal.id, latestStatus(bot) || "joining_call");
+      await togetherStore().updateSitting(sitting.id, { botId: bot.id });
+      watchNotetaker(sitting.id, bot.id);
       res.json({ botId: bot.id, startedAt: record.startedAt, status: latestStatus(bot) || "joining_call" });
     } catch (error: any) {
       console.error("[recall] bot start failed:", error);
@@ -1785,6 +1807,14 @@ Return JSON only.`,
         await leaveCall(bot.botId);
         await storage.updateDeal(deal.id, { interviewBot: { ...bot, endedAt: new Date().toISOString() } } as any);
         webhookTokens.delete(bot.webhookToken);
+        const { togetherStore } = await import("./together/store");
+        const { stopNotetakerWatch } = await import("./together/notetaker");
+        for (const st of await togetherStore().openSittings(deal.id)) {
+          if (st.botId !== bot.botId) continue;
+          stopNotetakerWatch(st.id);
+          const { publish } = await import("./together/hub");
+          publish(st.id, { type: "listen", state: "notetaker_ended" });
+        }
       }
       res.json({ stopped: true });
     } catch (error: any) {
@@ -1830,8 +1860,16 @@ Return JSON only.`,
         const line = lineFromWebhook(req.body);
         if (line) pushBotLine(dealId, line);
         setBotStatus(dealId, "in_call_recording");
+        // Interview together: the line joins the live sitting whose bot this is.
+        if (line) {
+          const { togetherLineFromWebhook, appendRecallLine } = await import("./together/recall-lines");
+          const tl = togetherLineFromWebhook(req.body);
+          if (tl) await appendRecallLine(dealId, token, tl).catch((err) => console.warn("[recall] together line failed:", (err as Error).message));
+        }
       } else if (event === "participant_events.join" || event === "participant_events.leave") {
         setBotStatus(dealId, "in_call_recording");
+        const { recallParticipantEvent } = await import("./together/recall-lines");
+        await recallParticipantEvent(dealId, token, req.body).catch(() => undefined);
       }
       res.status(200).json({ ok: true });
     } catch (error: any) {
@@ -2716,6 +2754,9 @@ Return JSON only.`,
       if (!deal) return res.status(404).json({ error: "Deal not found" });
       const doc = await storage.getDocument(req.params.documentId);
       if (!doc || doc.dealId !== deal.id) return res.status(404).json({ error: "Source not found" });
+      // An "Interview together" transcript is filed live and never read again (§5.8).
+      const { isTogetherSitting } = await import("./together/transcript");
+      if (isTogetherSitting(doc)) return res.status(409).json({ status: "together", error: "Answers from a session together are filed live and can't be read again. Edit them on the board or in Information.", message: "Answers from a session together are filed live and can't be read again. Edit them on the board or in Information." });
       // Its first read is still running (a long source read in parts): never a second, concurrent read.
       const { isBeingRead } = await import("./documents/ingest");
       if (isBeingRead(doc.id)) return res.status(409).json({ status: "running", message: "Cimple is still reading this source. It will show its facts when it's done." });
@@ -4644,11 +4685,25 @@ Return JSON only.`,
       );
       const sectionCoverage = progressKb.recordedCoverage ?? progressKb.sectionCoverage;
       const readiness = computeCimReadiness(sectionCoverage);
-      const wellCovered = sectionCoverage.filter((s) => s.status === "well_covered").length;
-      const partial = sectionCoverage.filter((s) => s.status === "partial").length;
-      const interviewPct = sectionCoverage.length > 0
-        ? Math.round(((wellCovered + partial * 0.4) / sectionCoverage.length) * 100)
-        : 0;
+      // The coverage board's seller numbers (shared/coverage-board.ts): the
+      // same items, statuses and "% collected" as the seller's interview
+      // header and "What we've covered", and the broker's board. Statuses
+      // and counts only — never a value. (Replaces the old section formula.)
+      const allDiscrepanciesForProgress = await storage.getDiscrepanciesByDeal(deal.id);
+      const { boardFromCoverage, coverageInputsFrom, activeMarksForDeal } = await import("./interview/coverage-board");
+      const sellerBoard = boardFromCoverage(
+        coverageInputsFrom({
+          deal,
+          documents: kbDocuments,
+          sessions,
+          openDiscrepancies: allDiscrepanciesForProgress,
+          resolvedDiscrepancies: await storage.getResolvedDiscrepancies(deal.id),
+          marks: await activeMarksForDeal(deal.id),
+          brokerFacts: {},
+        }),
+        "seller",
+      );
+      const interviewPct = sellerBoard.percentCollected;
       const hasActiveSession = sessions.some((s) => s.status === "active");
       // A session the broker reopened no longer counts as the interview being done.
       // (Not one the broker reopened, nor one closed because "Interview
@@ -4665,7 +4720,10 @@ Return JSON only.`,
 
       // Uploaded documents — broker-only sources (CRM notes, private emails)
       // never reach the seller.
-      const allDocs = kbDocuments.filter((d) => (d as any).visibility !== "broker_only");
+      // (An "Interview together" transcript is shared with the interview,
+      // but never listed among the seller's own documents — §7.5.)
+      const { isTogetherSitting } = await import("./together/transcript");
+      const allDocs = kbDocuments.filter((d) => (d as any).visibility !== "broker_only" && !isTogetherSitting(d));
 
       // Buyer questions waiting on the seller's approval — each with its own
       // review link, on every step (the approval email can land in spam).
@@ -4686,8 +4744,13 @@ Return JSON only.`,
 
       // Questions the broker routed back to the seller after the interview
       // (a conflict to clear up). Only the count — the rows are the broker's.
+      // (Plus the data points the broker asked to raise next at the end of an
+      // "Interview together" session, while they aren't on file.)
+      const { getInterviewOutline: outlineOf, openFollowUpItems } = await import("./interview/outline");
+      const boardItemStatus = new Map(sellerBoard.sections.flatMap((s) => s.items.map((i) => [i.id, i.status] as const)));
+      const followUpItemsOpen = openFollowUpItems(outlineOf(deal)).filter((f) => boardItemStatus.get(f.itemId) !== "on_file").length;
       const followUpQuestions = interviewCompleted
-        ? (await storage.getDiscrepanciesByDeal(deal.id)).filter((d) => d.status === "ask_seller" && !!routedToSellerAt(d)).length
+        ? allDiscrepanciesForProgress.filter((d) => d.status === "ask_seller" && !!routedToSellerAt(d)).length + followUpItemsOpen
         : 0;
 
       // Step status. Intake is complete when the last intake page (Key
@@ -4710,11 +4773,12 @@ Return JSON only.`,
           hasActiveSession,
           percentage: interviewPct,
           readiness,
-          sections: sectionCoverage.map((s) => ({
-            key: s.key,
-            title: s.title,
-            status: s.status,
-          })),
+          // Per CIM section: how many of its data points are on file (no values).
+          sections: sellerBoard.sections.map((s) => {
+            const counted = s.items.filter((i) => i.origin !== "figures");
+            return { key: s.key, title: s.title, onFile: counted.filter((i) => i.status === "on_file").length, items: counted.length };
+          }),
+          totals: sellerBoard.totals,
         },
         intake,
         documents: {
@@ -7404,8 +7468,15 @@ Return JSON only.`,
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
-      const { excludeSection, restoreSection, removeTopic, clearEmphasis, removeItem, restoreItem } = req.body ?? {};
-      const result = await patchOutline(deal, { excludeSection, restoreSection, removeTopic, clearEmphasis, removeItem, restoreItem });
+      const { excludeSection, restoreSection, removeTopic, clearEmphasis, removeItem, restoreItem, removeItems, restoreItems, addItem } = req.body ?? {};
+      // (The coverage board takes an item off with all its members at once —
+      // removeItems — and adds a data point to a section — addItem.)
+      const result = await patchOutline(deal, {
+        excludeSection, restoreSection, removeTopic, clearEmphasis, removeItem, restoreItem,
+        removeItems: Array.isArray(removeItems) ? removeItems.slice(0, 12) : undefined,
+        restoreItems: Array.isArray(restoreItems) ? restoreItems.slice(0, 12) : undefined,
+        addItem: addItem && typeof addItem === "object" ? { sectionKey: String(addItem.sectionKey ?? ""), label: String(addItem.label ?? "") } : undefined,
+      });
       if (result.refused) return res.status(409).json({ error: result.refused });
       res.json(outlineView(await storage.getDeal(deal.id)));
     } catch (error: any) {
@@ -8230,6 +8301,7 @@ Return JSON only.`,
   registerEngagementInsightRoutes(app);
   registerAnalyticsDashboardRoutes(app);
   registerAnalyticsExtraSources(); // teaser's (and later vdr's) activity + heads-up lines, INTEGRATION §2.9
+  registerTogetherRoutes(app);
   registerTeaserRoutes(app, { grant: (request, deal, baseUrl, review, opts) => grantApprovedBuyer(request as any, deal, baseUrl, review, opts) });
   // Data room (vdr). Wave 0: only the renderer canary, GET /api/vdr/health.
   registerDataRoomRoutes(app);

@@ -22,6 +22,7 @@ import {
   dealDocumentRequirements, buyerEmails, dealMedia, buyerUsers, cimPublishedSnapshots,
   cimRenditions, buyerVisits, readingRollups, readingBenchmarks,
   dealTeasers, buyerLinkEmailChecks,
+  togetherSittings, togetherLines, togetherChunks, coverageMarks,
 } from "@shared/schema";
 import { resolveDocumentPath } from "../documents/document-path";
 
@@ -65,6 +66,12 @@ export const DEAL_CHILD_TABLES = {
   // The teaser (server/teaser/*): the deal's teaser document and its links' email checks.
   deal_teasers: { table: dealTeasers, column: dealTeasers.dealId, mode: "delete" },
   buyer_link_email_checks: { table: buyerLinkEmailChecks, column: buyerLinkEmailChecks.dealId, mode: "delete" },
+  // Interview together (server/together/*): sessions, their lines and filed
+  // parts, and the broker's marks on the coverage board.
+  together_sittings: { table: togetherSittings, column: togetherSittings.dealId, mode: "delete" },
+  together_lines: { table: togetherLines, column: togetherLines.dealId, mode: "delete" },
+  together_chunks: { table: togetherChunks, column: togetherChunks.dealId, mode: "delete" },
+  coverage_marks: { table: coverageMarks, column: coverageMarks.dealId, mode: "delete" },
   buyer_emails: { table: buyerEmails, column: buyerEmails.dealId, mode: "detach", field: "dealId" },
   buyer_users: { table: buyerUsers, column: buyerUsers.invitedByDeal, mode: "detach", field: "invitedByDeal" },
 } as const;

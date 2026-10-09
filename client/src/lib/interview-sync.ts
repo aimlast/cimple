@@ -5,6 +5,8 @@
  * tests/unit/f-interview-client.test.ts.
  */
 
+import { isThinkingAloud } from "@shared/together-speakers";
+
 export interface SyncMessage {
   role: "ai" | "user" | string;
   content: string;
@@ -65,19 +67,6 @@ export interface LiveLine {
 const wordsIn = (s: string) => s.split(/\s+/).filter(Boolean).length;
 
 /**
- * Thinking aloud, not an answer: "Hmm, let me think.", "Good question…",
- * "Uh, one sec." (A bare "Yeah" / "No" / "Okay" IS an answer.)
- */
-const THINKING_ALOUD_RE =
-  /^(?:(?:u+h+|u+m+|h+m+|m+h*m+|e+r+m*|a+h+|o+h+|well|so|hmm+|let\s+me\s+(?:think|see|check|look|remember|recall)(?:\s+(?:about\s+)?(?:it|that|this))?|let['’]?s\s+see|good\s+question|that['’]?s\s+a\s+(?:good|great|tough|hard)\s+(?:one|question)|(?:give\s+me\s+)?(?:a|one)\s+(?:sec(?:ond)?|moment|minute)|hold\s+on|bear\s+with\s+me|i['’]m\s+(?:just\s+)?thinking|how\s+do\s+i\s+put\s+(?:it|this)|i\s+(?:need|have)\s+to\s+think(?:\s+about\s+(?:it|that))?)[\s,.!?…-]*)+$/i;
-
-/** Is this line only the seller thinking aloud? */
-export function isThinkingAloud(text: string): boolean {
-  const t = text.trim();
-  return !!t && THINKING_ALOUD_RE.test(t);
-}
-
-/**
  * The labelled exchange to send, or null to keep listening.
  * - `force` ("Send now"): whatever is in the transcript goes (the broker's
  *   question being read aloud is still filtered out).
@@ -112,91 +101,16 @@ export function liveExchangeText(
 }
 
 // =====================
-// Zoom / Meet / Teams notetaker: who is the broker?
+// Zoom / Meet / Teams notetaker: who is the broker? (moved to
+// shared/together-speakers.ts; re-exported for existing callers and tests)
 // =====================
 
-/**
- * The signed-in broker's display name from GET /api/broker-auth/me
- * (`{ user: { name, username } }`), or "" when they have none. Never the
- * username: a login like "broker_demo" is no one's name in a meeting, and
- * a name that matches nobody used to switch off the host fallback.
- */
-export function brokerNameFromMe(me: unknown): string {
-  const m = (me ?? {}) as { user?: { name?: unknown }; name?: unknown };
-  const pick = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-  return (pick(m.user?.name) || pick(m.name)).toLowerCase();
-}
-
-export interface BotSpeakerState {
-  /** participantId → speaker number, in order of first line. */
-  speakers: Map<string, number>;
-  /** The broker's speaker number, once known. */
-  broker: number | null;
-  /** How the broker was found: a name match is kept over a host guess. */
-  brokerBy: "name" | "host" | "picked" | null;
-}
-
-export function newBotSpeakerState(): BotSpeakerState {
-  return { speakers: new Map(), broker: null, brokerBy: null };
-}
-
-/** Words that describe a meeting device, not a person ("Morgan's iPhone", "Morgan (Zoom)"). */
-const DEVICE_WORDS = new Set([
-  "iphone", "ipad", "android", "phone", "mobile", "cell", "laptop", "desktop", "pc", "mac", "macbook", "galaxy", "pixel",
-  "zoom", "teams", "meet", "room", "office", "guest", "host", "me", "my", "the",
-]);
-
-const nameWords = (s: string) =>
-  (s.toLowerCase().replace(/['’]s\b/g, "").match(/[a-z0-9\u00c0-\u024f]+/g) ?? []).filter((w) => w.length > 1);
-
-/** A meeting name without its label: "Morgan (Brassline)", "Morgan Ellis - Brassline", "Morgan | Advisory" → the person's part. */
-const personPart = (s: string) => s.replace(/[([{][^)\]}]*[)\]}]/g, " ").split(/\s+[-–—|@·]\s+|\s*[|@·]\s*/)[0] ?? "";
-
-/**
- * Is this participant the broker? Whole names, never a substring ("Ian" is
- * not "Brian Walsh", "Anne" is not "Joanne"): every word of the broker's name
- * appears in the participant's ("Morgan Ellis (Brassline)"), or every word
- * of the participant's own name (a bracketed or dashed label and device
- * words aside) is one of the broker's ("Morgan", "Morgan (Brassline)",
- * "Morgan's iPhone" — but not "Morgan Smith").
- */
-export function nameMatches(participant: string, broker: string): boolean {
-  const p = nameWords(participant);
-  const b = nameWords(broker);
-  if (p.length === 0 || b.length === 0) return false;
-  const pSet = new Set(p);
-  const bSet = new Set(b);
-  if (b.every((w) => pSet.has(w))) return true;
-  const own = nameWords(personPart(participant)).filter((w) => !DEVICE_WORDS.has(w));
-  return own.length > 0 && own.every((w) => bSet.has(w) && w.length >= 3);
-}
-
-/**
- * The speaker number for one notetaker line (one per meeting participant,
- * so the transcript's label buttons can re-assign "this is me"), updating
- * who the broker is: the participant whose name matches the signed-in
- * broker's; the host only when the broker has no display name (a seller
- * who hosts the meeting must not be labelled the broker). A broker the user
- * picked is never overruled.
- */
-export function botSpeakerFor(
-  state: BotSpeakerState,
-  line: { participantId: string | number | null | undefined; name: string | null | undefined; isHost: boolean | null | undefined },
-  brokerName: string,
-): number {
-  const pid = String(line.participantId ?? line.name ?? "unknown");
-  let speaker = state.speakers.get(pid);
-  if (speaker === undefined) {
-    speaker = state.speakers.size;
-    state.speakers.set(pid, speaker);
-  }
-  const name = (line.name ?? "").trim().toLowerCase();
-  if (state.brokerBy !== "picked" && state.brokerBy !== "name" && brokerName && nameMatches(name, brokerName)) {
-    state.broker = speaker;
-    state.brokerBy = "name";
-  } else if (state.broker === null && !brokerName && line.isHost === true) {
-    state.broker = speaker;
-    state.brokerBy = "host";
-  }
-  return speaker;
-}
+export {
+  brokerNameFromMe,
+  botSpeakerFor,
+  newBotSpeakerState,
+  nameMatches,
+  isThinkingAloud,
+  looksLikeQuestionEcho,
+  type BotSpeakerState,
+} from "@shared/together-speakers";

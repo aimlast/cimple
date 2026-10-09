@@ -23,6 +23,7 @@
  *
  * The broker's endpoint runs it as a background job (reprocess-jobs.ts).
  */
+import { isTogetherSitting } from "../together/transcript";
 import fs from "fs";
 import { storage } from "../storage";
 import { extractTextWithPages, isPdfSource } from "./parser";
@@ -179,6 +180,9 @@ export async function reprocessDealDocuments(
         : null;
     // A run for chosen sources: every other one keeps what it had.
     if (onlyIds && !onlyIds.has(doc.id)) return { data: stored, freshText: null, skipped: true };
+    // An "Interview together" transcript is replay-only: what the session filed
+    // (guarded, minus what was undone) is replayed, never read again from its text.
+    if (isTogetherSitting(doc)) return { data: stored, freshText: null };
 
     let text: string | null = null;
     // How the text was laid out (a PDF's pages) — tells a scan from a readable file.

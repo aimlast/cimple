@@ -6,6 +6,7 @@ import path from "path";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { applyAnalyticsRateLimits } from "./analytics-dashboard/limits";
+import { applyTogetherRateLimits } from "./together/limits";
 import { createHash } from "crypto";
 import * as Sentry from "@sentry/node";
 import { registerRoutes } from "./routes";
@@ -194,6 +195,8 @@ app.use("/api/deals/:dealId/engagement/buyers/:accessId/brief", aiLimiter);
 // The AI limiter on the model-running teaser routes only (server/routes/teaser.ts);
 // the buyer's request steps are limited per link inside those routes.
 applyTeaserRateLimits(app, aiLimiter);
+// ── together limiters ── (Interview together + the coverage board: server/together/limits.ts)
+applyTogetherRateLimits(app, aiLimiter);
 app.use("/api/view/:token/reading", rateLimit({
   windowMs: 60 * 1000,
   limit: 120,
@@ -292,6 +295,8 @@ app.use((req, res, next) => {
       import("./crm/buyer-sync").then((m) => m.startBuyerSyncScheduler()).catch((err) => console.error("[buyer-sync] scheduler failed to start:", err));
       // Sources a redeploy cut off mid-read are marked "couldn't read" (with "Read it again").
       import("./documents/ingest").then((m) => m.startInterruptedReadRecovery()).catch((err) => console.error("[ingest] interrupted-read recovery failed:", err));
+      // ── together recovery ── Interview together: sessions a restart cut off are picked up again; parts that waited for the AI are retried (only where live filing runs).
+      import("./together/recovery").then((m) => m.startTogetherRecovery()).catch((err) => console.error("[together] recovery failed to start:", err));
       // Once per volume: files earlier deletes left behind (no row points at them) leave the volume.
       if (process.env.NODE_ENV === "production") {
         // First what deleted deals left (their rows made their files look in use), then files no row points at.

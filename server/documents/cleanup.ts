@@ -83,6 +83,13 @@ export async function deleteDocumentAndProvenance(docId: string): Promise<string
   } catch (e) {
     console.warn("[documents] provenance cleanup failed:", e);
   }
+  // 1. together: an "Interview together" transcript stops its session filing (INTEGRATION §2.17).
+  try {
+    const { onTogetherSourceDeleted } = await import("../together/transcript");
+    await onTogetherSourceDeleted(doc);
+  } catch (e) {
+    console.warn("[documents] together clean-up failed:", e);
+  }
 
   await removeDocumentFile(doc);
   return removed;
