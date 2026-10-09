@@ -264,4 +264,30 @@ await test("a payroll-provider ledger (one 'Wagepoint' line per pay run): no pay
 });
 cleanup(P.w);
 
+// ── Fixer round 1 (GL-R1-06): "Why it's added back" is never the analyst's working notes ──
+
+await test("GL-R1-06: the offered reason drops treatment wording and the owner's plans; the broker's own text (or none) stays", async () => {
+  const { stripWorkingNotes, buyerReasonFor } = await import("../../server/gl/screen");
+  const pacific = "Owner's pay $285,000 (2024) less a $120,000 market salary for the role: the difference counts for EBITDA and SDE; the market salary is added back for SDE only. Harjit's salary and benefits; market replacement cost of a general manager. Harjit plans to exit within 6-12 months post-sale.";
+  const out = stripWorkingNotes(pacific);
+  assert.ok(!/ebitda|sde|market|plans|exit|post-sale/i.test(out), out);
+  assert.equal(buyerReasonFor("Personal vehicle expenses for the owner's own car, run through the company. The owner plans to retire after the sale.", {}), "Personal vehicle expenses for the owner's own car, run through the company.");
+  assert.equal(buyerReasonFor("One-time legal settlement of a former employee's claim in 2023; not expected to recur.", {}), "One-time legal settlement of a former employee's claim in 2023; not expected to recur.");
+  assert.equal(buyerReasonFor("Counts for EBITDA and SDE.", {}), null, "nothing left → nothing offered");
+  // In the plan: new add-backs get the cleaned offer.
+  const norm = brightwaterNormalization();
+  const v = norm.addbacks.find((a) => a.label === "Owner vehicle expenses") as any;
+  v.description = "Lexus lease, insurance and fuel for the owner's personal use. Added back for SDE and EBITDA. Dan intends to keep the Lexus after closing.";
+  const plan = planTraces(norm, [], { country: "CA" });
+  const veh = plan.inserts.find((t) => t.label === "Owner vehicle expenses")!;
+  assert.equal(veh.buyerReason, "Lexus lease, insurance and fuel for the owner's personal use.");
+  // An existing row with the old offer (the whole description) is replaced; the broker's text and "" (none) are kept.
+  const base = { id: "tv", dealId: "d", proofByBroker: false, sentAt: null, sellerStatus: "not_started", reopenedNote: null, removedAt: null, reviewedAt: null, ...veh, sellerHint: veh.sellerHint ?? null, leftOut: veh.leftOut ?? null, shareBasisDoc: null } as unknown as GlAddbackTrace;
+  const again = (buyerReason: string | null) => planTraces(norm, [{ ...base, buyerReason } as GlAddbackTrace], { country: "CA" }).updates.find((u) => u.id === "tv")?.patch.buyerReason;
+  assert.equal(again(v.description), "Lexus lease, insurance and fuel for the owner's personal use.", "the old offer is replaced");
+  assert.equal(again("The owner's car, paid by the company."), undefined, "the broker's own words stay");
+  assert.equal(again(""), undefined, "the broker chose to show none — never refilled");
+  assert.equal(again(null), "Lexus lease, insurance and fuel for the owner's personal use.");
+});
+
 done("traces / matching");

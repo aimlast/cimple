@@ -7,15 +7,20 @@
  *   Blind CIM          the same note (counts and years only)
  *
  * Add-backs can be left out (they leave the counts, never shown as "not
- * found"). The warnings say what buyers won't see and why. Nothing reaches
+ * found"). Each add-back's "Why it's added back" is shown exactly as
+ * due-diligence buyers will read it, and can be edited or removed right here
+ * (it is saved on the add-back at once). Full and Blind can't be ticked while
+ * the CIM's earnings bridge shows other add-backs (it contradicts the note).
+ * The warnings say what buyers won't see and why. Nothing reaches
  * buyers until "Show to buyers"; afterwards removals and private switches
  * apply at once, everything else waits for "Update what buyers see".
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, BookCheck, Eye, Loader2 } from "lucide-react";
+import { AlertTriangle, BookCheck, Eye, Loader2, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
@@ -50,11 +55,19 @@ export function PublishEvidenceDialog({ open, onOpenChange, dealId }: { open: bo
   const [versions, setVersions] = useState<GlVersions>({ dd: true, normal: false, blind: false });
   const [leaveOut, setLeaveOut] = useState<Set<string>>(new Set());
   const [previewing, setPreviewing] = useState(false);
+  // The ticks start from the server once per opening (saving a reason refetches the preview — the ticks stay).
+  const started = useRef(false);
   useEffect(() => {
-    if (!open || !data) return;
+    if (!open) { started.current = false; return; }
+    if (!data || started.current) return;
+    started.current = true;
     setVersions(data.published ? data.published.versions : data.versions);
     setLeaveOut(new Set(data.published ? data.published.leaveOut : data.lines.filter((l) => l.defaultLeftOut).map((l) => l.key)));
   }, [open, data]);
+  // The bridge contradicts the note: Full and Blind stay off until it's regenerated.
+  useEffect(() => {
+    if (data?.bridgeMismatch) setVersions((v) => (v.normal || v.blind ? { ...v, normal: false, blind: false } : v));
+  }, [data?.bridgeMismatch]);
 
   const note = useMemo(() => (data ? noteFor(data, leaveOut) : null), [data, leaveOut]);
   const keptCount = data ? data.lines.filter((l) => !leaveOut.has(l.key)).length : 0;
@@ -117,24 +130,28 @@ export function PublishEvidenceDialog({ open, onOpenChange, dealId }: { open: bo
                     <Eye className="h-3.5 w-3.5" /> See the page
                   </button>
                 </VersionRow>
-                <VersionRow id="gl-v-normal" checked={versions.normal} onChange={(v) => setVersions((x) => ({ ...x, normal: v }))} title="Full CIM" reason={!versions.normal ? data.reasons.normal : null}>
+                <VersionRow id="gl-v-normal" checked={versions.normal} disabled={!!data.bridgeMismatch} onChange={(v) => setVersions((x) => ({ ...x, normal: v }))} title="Full CIM" reason={!versions.normal ? data.reasons.normal : null}>
                   This note under the earnings bridge:
                   <NoteQuote text={note} />
                 </VersionRow>
-                <VersionRow id="gl-v-blind" checked={versions.blind} onChange={(v) => setVersions((x) => ({ ...x, blind: v }))} title="Blind CIM" reason={!versions.blind ? data.reasons.blind : null}>
+                <VersionRow id="gl-v-blind" checked={versions.blind} disabled={!!data.bridgeMismatch} onChange={(v) => setVersions((x) => ({ ...x, blind: v }))} title="Blind CIM" reason={!versions.blind ? data.reasons.blind : null}>
                   The same note — counts and years only, no names or amounts.
                 </VersionRow>
               </section>
 
               {data.lines.length > 0 && (
-                <section className="space-y-2">
-                  <p className="text-sm font-medium">Leave out of what buyers see</p>
+                <section className="space-y-2" data-testid="gl-publish-lines">
+                  <p className="text-sm font-medium">The add-backs, as due-diligence buyers read them</p>
+                  <p className="text-xs text-muted-foreground">Tick one to leave it out. Check each "Why it's added back" — buyers read it word for word.</p>
                   <ul className="rounded-lg border border-border divide-y divide-border">
                     {data.lines.map((l) => (
-                      <li key={l.key} className="flex items-center gap-3 px-3 py-2">
-                        <Checkbox id={`gl-out-${l.key}`} checked={leaveOut.has(l.key)} onCheckedChange={(v) => toggle(l.key, v === true)} aria-label={`Leave out ${l.label}`} />
-                        <label htmlFor={`gl-out-${l.key}`} className="flex-1 min-w-0 text-sm break-words cursor-pointer">{l.label}</label>
-                        <Pill tone={STATUS_TONE[l.status]}>{l.statusWords}</Pill>
+                      <li key={l.key} className="px-3 py-2.5 space-y-1.5" data-testid={`gl-publish-line-${l.key}`}>
+                        <div className="flex items-center gap-3">
+                          <Checkbox id={`gl-out-${l.key}`} checked={leaveOut.has(l.key)} onCheckedChange={(v) => toggle(l.key, v === true)} aria-label={`Leave out ${l.label}`} />
+                          <label htmlFor={`gl-out-${l.key}`} className={`flex-1 min-w-0 text-sm break-words cursor-pointer ${leaveOut.has(l.key) ? "text-muted-foreground line-through" : ""}`}>{l.label}</label>
+                          <Pill tone={STATUS_TONE[l.status]}>{l.statusWords}</Pill>
+                        </div>
+                        {!leaveOut.has(l.key) && <WhyRow dealId={dealId} line={l} onSaved={() => refetch()} />}
                       </li>
                     ))}
                   </ul>
@@ -178,10 +195,59 @@ export function PublishEvidenceDialog({ open, onOpenChange, dealId }: { open: bo
   );
 }
 
-function VersionRow({ id, checked, onChange, title, reason, children }: { id: string; checked: boolean; onChange: (v: boolean) => void; title: string; reason?: string | null; children: React.ReactNode }) {
+/**
+ * One add-back's "Why it's added back" in the dialog: exactly what DD buyers
+ * read (or that none is shown, or that the saved text is held back), with
+ * Edit / Show none. Saved on the add-back at once.
+ */
+function WhyRow({ dealId, line, onSaved }: { dealId: string; line: GlPublishPreview["lines"][number]; onSaved: () => void }) {
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(line.whyText ?? "");
+  useEffect(() => { if (!editing) setText(line.whyText ?? ""); }, [line.whyText, editing]);
+  const save = useMutation({
+    mutationFn: (buyerReason: string) => sendJson("PATCH", `/api/deals/${dealId}/gl/traces/${line.traceId}`, { buyerReason }),
+    onSuccess: () => { setEditing(false); invalidateGl(dealId); onSaved(); },
+    onError: (e: unknown) => toast({ title: "Couldn't save the reason", description: e instanceof Error ? e.message : undefined, variant: "destructive" }),
+  });
+  if (editing) {
+    return (
+      <div className="pl-7 space-y-1.5">
+        <label htmlFor={`gl-why-${line.key}`} className="text-xs text-muted-foreground">Why it's added back — what due-diligence buyers read</label>
+        <Textarea id={`gl-why-${line.key}`} value={text} onChange={(e) => setText(e.target.value)} rows={2} maxLength={1200} placeholder="e.g. The owner's personal car, paid by the company." className="text-sm" />
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" className="h-8 text-xs bg-teal text-teal-foreground hover:bg-teal/90" disabled={save.isPending} onClick={() => save.mutate(text.trim())}>Save</Button>
+          <Button size="sm" variant="ghost" className="h-8 text-xs" disabled={save.isPending} onClick={() => setEditing(false)}>Cancel</Button>
+        </div>
+      </div>
+    );
+  }
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-border p-3">
-      <Checkbox id={id} checked={checked} onCheckedChange={(v) => onChange(v === true)} className="mt-0.5" data-testid={id} />
+    <div className="pl-7 text-xs flex flex-wrap items-baseline gap-x-2 gap-y-1" data-testid={`gl-why-${line.key}`}>
+      <span className="text-muted-foreground shrink-0">Why it's added back:</span>
+      {line.why ? (
+        <span className="text-foreground/90 break-words min-w-0">“{line.why}”</span>
+      ) : line.whyHeld ? (
+        <span className="text-amber-600 dark:text-amber-400">Not shown — it names someone or something held back from buyers.</span>
+      ) : (
+        <span className="text-muted-foreground italic">None shown.</span>
+      )}
+      <span className="flex gap-2">
+        <button type="button" className="inline-flex items-center gap-1 text-teal hover:underline" onClick={() => setEditing(true)} data-testid={`gl-why-edit-${line.key}`}>
+          <Pencil className="h-3 w-3" /> {line.why || line.whyHeld ? "Edit" : "Write one"}
+        </button>
+        {line.why && (
+          <button type="button" className="text-muted-foreground hover:underline" disabled={save.isPending} onClick={() => save.mutate("")} data-testid={`gl-why-none-${line.key}`}>Show none</button>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function VersionRow({ id, checked, onChange, title, reason, disabled, children }: { id: string; checked: boolean; onChange: (v: boolean) => void; title: string; reason?: string | null; disabled?: boolean; children: React.ReactNode }) {
+  return (
+    <div className={`flex items-start gap-3 rounded-lg border border-border p-3 ${disabled ? "opacity-80" : ""}`}>
+      <Checkbox id={id} checked={checked} disabled={disabled} onCheckedChange={(v) => onChange(v === true)} className="mt-0.5" data-testid={id} />
       <div className="min-w-0 flex-1">
         <label htmlFor={id} className="text-sm font-medium cursor-pointer">{title}</label>
         <div className="mt-0.5 text-sm text-muted-foreground">{children}</div>

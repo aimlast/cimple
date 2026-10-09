@@ -25,8 +25,8 @@ import { storage } from "../storage";
 import type { Deal, Document, GlAddbackTrace, GlLedger, GlTraceLink, GlTracing } from "@shared/schema";
 import type { GlTieOutYear, GlTraceComputed, GlYearStatus } from "@shared/gl-types";
 import {
-  GL_EVIDENCE_MAX_ENTRIES, glNoteText,
-  type GlBuyerStatus, type GlEvidenceDoc, type GlEvidenceEntry, type GlEvidenceLine, type GlEvidenceMode, type GlEvidencePayload,
+  GL_EVIDENCE_MAX_ENTRIES, glNoteText, glBridgeShows, glEvidenceAnchorInfo,
+  type GlBridgeCheck, type GlBuyerStatus, type GlEvidenceDoc, type GlEvidenceEntry, type GlEvidenceLine, type GlEvidenceMode, type GlEvidencePayload,
   type GlEvidenceTieOut, type GlEvidenceYear, type GlPublishedEvidence, type GlSnapshotEntry, type GlSnapshotLine, type GlSnapshotYear,
 } from "@shared/gl-evidence";
 import { amountStatus, claimedYears, reconcileTrace, type ReconcileContext } from "@shared/gl-reconcile";
@@ -436,6 +436,18 @@ function markFor(line: GlSnapshotLine, agree: ReadonlySet<string>): boolean {
   return ys.length > 0 && ys.every((y) => agree.has(y.year) || (y.entries.length === 0 && y.docs.length > 0));
 }
 
+/**
+ * What the earnings bridge must show for the Full/Blind note to stand: every
+ * add-back the note counts (not the statement lines, not pay — the bridge
+ * splits pay into the excess and the market salary), by its amounts. Pure.
+ */
+export function bridgeChecksFor(lines: ReadonlyArray<GlSnapshotLine>): GlBridgeCheck[] {
+  return lines
+    .filter((l) => l.status !== "statement" && !l.pay)
+    .map((l) => ({ amounts: l.years.filter((y) => y.status !== "left_out" && y.claimedCents).map((y) => dollars(y.claimedCents)) }))
+    .filter((c) => c.amounts.length > 0);
+}
+
 function summaryOf(lines: GlSnapshotLine[]): GlEvidencePayload["summary"] {
   const n = (s: GlBuyerStatus) => lines.filter((l) => l.status === s).length;
   return { total: lines.length, found: n("found"), partly: n("partly_found"), notFound: n("not_found"), document: n("document"), statement: n("statement") };
@@ -475,6 +487,7 @@ export function projectEvidence(snap: GlPublishedEvidence, mode: GlEvidenceMode,
     const payload: GlEvidencePayload = {
       ...base, note,
       lines: lines.map((l) => ({ lineId: l.lineId, status: l.status, mark: markFor(l, agree) })),
+      bridge: bridgeChecksFor(lines),
     };
     // Constants, counts and fiscal years only — and the guard still reads it (fail-closed).
     if (ctx.deal) {
@@ -490,6 +503,7 @@ export function projectEvidence(snap: GlPublishedEvidence, mode: GlEvidenceMode,
     if (!note) return null;
     return {
       ...base, note,
+      bridge: bridgeChecksFor(lines),
       lines: lines.map((l) => ({
         lineId: l.lineId, status: l.status, mark: markFor(l, agree), label: l.label,
         years: l.years.map((y) => {
@@ -713,8 +727,18 @@ export interface PublishPreview {
   versions: GlPublishedEvidence["versions"];
   reasons: { normal: string | null; blind: string | null };
   notes: { normal: string | null; blind: string | null };
-  lines: Array<{ key: string; label: string; status: GlBuyerStatus; statusWords: string; defaultLeftOut: boolean; years: string[] }>;
+  lines: Array<{
+    key: string; traceId: string; label: string; status: GlBuyerStatus; statusWords: string; defaultLeftOut: boolean; years: string[];
+    /** "Why it's added back" exactly as due-diligence buyers will read it (null = not shown). */
+    why: string | null;
+    /** The text as saved (the broker edits this here; "" = the broker chose to show none). */
+    whyText: string | null;
+    /** There is text, but it names someone or something held back — buyers don't see it. */
+    whyHeld: boolean;
+  }>;
   warnings: string[];
+  /** The CIM's earnings bridge (its title) when it shows other add-backs or amounts: Full/Blind can't be shown until it's regenerated. */
+  bridgeMismatch: string | null;
   published: { at: string; versions: GlPublishedEvidence["versions"]; leaveOut: string[] } | null;
   changes: string[];
   /** Years whose ledger agrees with the statements (or the difference was accepted): the dialog rewrites the note exactly as lines are left out. */
@@ -739,8 +763,19 @@ export async function publishPreview(dealId: string): Promise<PublishPreview> {
     warnings.push(`${r.year}: the ledger's net income differs from the statements${r.difference ? ` by ${money(Math.abs(r.difference))}` : ""} and you haven't accepted it — the Full and Blind notes won't mention ${r.year}.`);
   }
   if (skippedUnreviewed.length) warnings.push(`Not reviewed yet, so left out: ${skippedUnreviewed.join(", ")}.`);
-  const stale = await bridgeOlderThanAnalysis(dealId).catch(() => null);
-  if (stale) warnings.push(`Your CIM's "${stale}" was written before the latest financial analysis — regenerate it so the bridge and the note show the same add-backs.`);
+  const bridge = await bridgeMismatch(dealId, snapshot).catch(() => null);
+  if (bridge) {
+    // The note would sit under different numbers: Full and Blind start off, with the reason.
+    const reason = `Off because your CIM's earnings bridge ("${bridge}") shows different add-backs or amounts from the ones found in the books — regenerate that section first, or buyers would see two different sets of numbers.`;
+    d.versions.normal = false;
+    d.versions.blind = false;
+    d.reasons.normal = reason;
+    d.reasons.blind = reason;
+    warnings.push(`Your CIM's "${bridge}" shows different add-backs or amounts from the latest financial analysis. Until you regenerate it, the Full and Blind note stays off what buyers see, and due-diligence buyers see this page's amounts next to the older bridge.`);
+  } else {
+    const stale = await bridgeOlderThanAnalysis(dealId).catch(() => null);
+    if (stale) warnings.push(`Your CIM's "${stale}" was written before the latest financial analysis — regenerate it so the bridge and the note show the same add-backs.`);
+  }
   const pub = s.tracing.published as GlPublishedEvidence | null;
   const changes = pub && pub.v === 1 ? await changesSincePublished(s, pub) : [];
   const done = gate.state === "done" || gate.state === "waived";
@@ -756,8 +791,15 @@ export async function publishPreview(dealId: string): Promise<PublishPreview> {
     versions: d.versions,
     reasons: d.reasons,
     notes: { normal: noteFor(snapshot), blind: noteFor(snapshot) },
-    lines: snapshot.lines.map((l) => ({ key: l.addbackKey, label: l.label, status: l.status, statusWords: words[l.status], defaultLeftOut: false, years: l.years.map((y) => y.year) })),
+    lines: snapshot.lines.map((l) => {
+      const saved = s.traces.find((t) => t.addbackKey === l.addbackKey)?.buyerReason ?? null;
+      return {
+        key: l.addbackKey, traceId: l.traceId, label: l.label, status: l.status, statusWords: words[l.status], defaultLeftOut: false, years: l.years.map((y) => y.year),
+        why: l.why, whyText: saved, whyHeld: !!saved?.trim() && !l.why,
+      };
+    }),
     warnings,
+    bridgeMismatch: bridge,
     published: pub && pub.v === 1 ? { at: pub.publishedAt, versions: pub.versions, leaveOut: pub.leaveOut } : null,
     changes,
     agreeYears: snapshot.tieOut.filter((r) => r.state === "agrees" || r.state === "accepted").map((r) => r.year),
@@ -781,10 +823,30 @@ async function bridgeOlderThanAnalysis(dealId: string): Promise<string | null> {
   return new Date(sec.updatedAt as unknown as string).getTime() < when ? sec.sectionTitle : null;
 }
 
+/**
+ * The CIM's earnings bridge (its title) when it doesn't show the add-backs the
+ * note counts — a bridge written from an earlier analysis. null when it does,
+ * or when the CIM has no earnings bridge (nothing to contradict).
+ */
+export async function bridgeMismatch(dealId: string, snap: GlPublishedEvidence): Promise<string | null> {
+  const checks = bridgeChecksFor(snap.lines.filter((l) => !snap.leaveOut.includes(l.addbackKey)));
+  if (checks.length === 0) return null;
+  const sections = await storage.getCimSectionsByDeal(dealId);
+  const visible = (sections ?? []).filter((x) => x.isVisible !== false).sort((a, b) => a.order - b.order);
+  const at = glEvidenceAnchorInfo(visible);
+  if (at.index < 0 || !at.bridge) return null;
+  const sec = visible[at.index];
+  return glBridgeShows(sec, checks) ? null : sec.sectionTitle || "Earnings bridge";
+}
+
 /** What changed since the broker published: what tightening took away, and what waits for "Update what buyers see". */
 async function changesSincePublished(s: EvidenceState, pub: GlPublishedEvidence): Promise<string[]> {
   const tight = tightenPublished(pub, tightenCurrentFrom(s));
   const out = [...tight.changes];
+  if (pub.versions.normal || pub.versions.blind) {
+    const bridge = await bridgeMismatch(s.dealId, tight.snapshot).catch(() => null);
+    if (bridge) out.push(`The Full and Blind note is held back from buyers: your CIM's "${bridge}" shows different add-backs or amounts. Regenerate it, then update what buyers see.`);
+  }
   const { snapshot: live } = await snapshotFromState(s, { versions: pub.versions, leaveOut: pub.leaveOut, publishedBy: null });
   const was = new Map(tight.snapshot.lines.map((l) => [l.addbackKey, l]));
   for (const l of live.lines) {
@@ -826,6 +888,10 @@ export async function publishEvidence(
     }
     if (!body.versions.dd && !noteFor(snapshot)) {
       throw new GlPublishError("The Full and Blind notes need at least one add-back found in the books.");
+    }
+    if (body.versions.normal || body.versions.blind) {
+      const bridge = await bridgeMismatch(dealId, snapshot).catch(() => null);
+      if (bridge) throw new GlPublishError(`Your CIM's "${bridge}" shows different add-backs or amounts from the ones found in the books. Regenerate it before showing the Full or Blind note — or show only the due-diligence page for now.`);
     }
     await glStore().updateTracing(dealId, { published: snapshot, publishedAt: new Date(snapshot.publishedAt), publishedBy: by } as Partial<GlTracing>);
     return { publishedAt: snapshot.publishedAt, versions: snapshot.versions, lines: snapshot.lines.length };

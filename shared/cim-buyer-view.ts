@@ -53,7 +53,7 @@ import { blindIdentifiers, blindTitleRedactor } from "./blind-identifiers";
 import { blindLeakTerms, blindPlaceholders, collectStrings, findBlindLeaks } from "./blind-guard";
 import { buyerMediaLayoutData, dealAddressFragments, isMediaLayout, type MediaAssetRef } from "./cim-media";
 import { factAmounts, parseChartNumber, withStatedChartTotal } from "./cim-chart-values";
-import { GL_EVIDENCE_LAYOUT, GL_EVIDENCE_SECTION_KEY, GL_EVIDENCE_TITLE, glEvidenceAnchor, type GlEvidencePayload, type GlNoteData } from "./gl-evidence";
+import { GL_EVIDENCE_LAYOUT, GL_EVIDENCE_SECTION_KEY, GL_EVIDENCE_TITLE, glBridgeShows, glEvidenceAnchor, glEvidenceAnchorInfo, type GlEvidencePayload, type GlNoteData } from "./gl-evidence";
 
 export interface BuyerSection {
   id: string;
@@ -547,9 +547,11 @@ function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
       const data = mediaData(s, null);
       if (data) sections.push(withCurrentFigures({ ...base(s), layoutData: withoutAiPreparedBy(s.layoutType, data) }));
     }
-    // gl: the note under the earnings bridge.
+    // gl: the note under the earnings bridge — only when the bridge served shows the add-backs
+    // the note counts (a bridge written from an earlier analysis would contradict it).
     const note = glNoteFrom(input.glEvidence, "normal");
-    const at = note ? glEvidenceAnchor(sections) : -1;
+    const anchor = note ? glEvidenceAnchorInfo(sections) : { index: -1, bridge: false };
+    const at = anchor.index >= 0 && (!anchor.bridge || glBridgeShows(sections[anchor.index], input.glEvidence?.bridge)) ? anchor.index : -1;
     if (note && at >= 0) sections[at] = withGlNote(sections[at], note);
     return { mode, sections, preparing: false, heldBack: 0, leaked: [], leakReasons: {}, glEvidence: note && at >= 0 ? input.glEvidence ?? null : null };
   }
@@ -606,15 +608,18 @@ function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
   const glNote = glNoteFrom(input.glEvidence, "blind");
   let glNoteAttached = false;
   let glAnchorId: string | null = null;
+  let glAnchorIsBridge = false;
   if (glNote) {
     const candidates = visible.filter((s) => getCimLayout(s.layoutType)?.blind !== "exclude" && overrideMap.has(s.id) && !s.blindStaleAt && !(teaser && sectionTier(s) === "full"));
-    const at = glEvidenceAnchor(candidates.map((s) => ({ sectionKey: s.sectionKey, sectionTitle: s.blindTitle || s.sectionTitle, layoutType: s.layoutType })));
-    glAnchorId = at >= 0 ? candidates[at].id : null;
+    const anchor = glEvidenceAnchorInfo(candidates.map((s) => ({ sectionKey: s.sectionKey, sectionTitle: s.blindTitle || s.sectionTitle, layoutType: s.layoutType })));
+    glAnchorId = anchor.index >= 0 ? candidates[anchor.index].id : null;
+    glAnchorIsBridge = anchor.bridge;
   }
   /** Serve it only if nothing identifying is left in what the buyer receives. */
   const serve = (s: CimSection, served: BuyerSection) => {
     let section = withCurrentFigures(served);
-    const withNote = !!glNote && s.id === glAnchorId;
+    // The note only under a bridge that shows the add-backs it counts (never under contradicting numbers).
+    const withNote = !!glNote && s.id === glAnchorId && (!glAnchorIsBridge || glBridgeShows(section, input.glEvidence?.bridge));
     if (withNote) section = withGlNote(section, glNote!);
     // relatedSections carry the real (title-derived) keys — switch them to
     // neutral ones before the check; unknown keys are dropped.

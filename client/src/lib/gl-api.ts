@@ -120,11 +120,21 @@ export interface GlPublishPreview {
   versions: GlVersions;
   reasons: { normal: string | null; blind: string | null };
   notes: { normal: string | null; blind: string | null };
-  lines: Array<{ key: string; label: string; status: "found" | "partly_found" | "not_found" | "document" | "statement"; statusWords: string; defaultLeftOut: boolean; years: string[] }>;
+  lines: Array<{
+    key: string; traceId: string; label: string; status: "found" | "partly_found" | "not_found" | "document" | "statement"; statusWords: string; defaultLeftOut: boolean; years: string[];
+    /** "Why it's added back" exactly as due-diligence buyers will read it (null = none shown). */
+    why: string | null;
+    /** The text as saved ("" = the broker chose to show none). */
+    whyText: string | null;
+    /** Saved text that names someone or something held back — buyers don't see it. */
+    whyHeld: boolean;
+  }>;
   warnings: string[];
   published: { at: string; versions: GlVersions; leaveOut: string[] } | null;
   changes: string[];
   agreeYears: string[];
+  /** The CIM's earnings bridge (its title) when it shows other add-backs or amounts — Full/Blind wait until it's regenerated. */
+  bridgeMismatch: string | null;
 }
 
 export interface GlProgressData { glTracing: GlTracingProgress | null; gate?: GlGate | null }

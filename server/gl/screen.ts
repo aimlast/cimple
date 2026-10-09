@@ -52,3 +52,38 @@ export function screenForBuyersWith(
   if (heldNames.length > 0 && mentionsHeldPerson(kept, heldNames)) return null;
   return kept;
 }
+
+/**
+ * The analyst's working notes in an add-back's description — how it's
+ * treated ("counts for EBITDA and SDE", "the market salary is added back for
+ * SDE only", "market replacement cost") and the owner's own plans ("plans to
+ * exit within 6-12 months post-sale") — are not a buyer's reason: such
+ * sentences are dropped before the description is offered as "Why it's added
+ * back" (the broker still sees and can edit it before publishing).
+ */
+const TREATMENT_RE = /\b(?:ebitda|sde|seller'?s discretionary|discretionary earnings|market (?:salary|wage|rate|replacement|compensation|pay)|replacement cost|added back for|add(?:ed)?[- ]?backs? (?:for|to|of)|counts? (?:for|toward|towards|as)|normali[sz]|recast|adjusted (?:earnings|net income)|the difference|excess (?:pay|compensation|salary)|treated as)\b/i;
+const OWNER_PLAN_RE = /\b(?:plans?|planning|intends?|intending|intention|wants?|wishes|hopes?|expects?) to\b|\b(?:retir(?:e|es|ing|ement)|exit(?:s|ing)?|step(?:s|ping)? (?:back|down|away)|succession|post[- ]?(?:sale|closing|close)|after (?:the )?(?:sale|closing|close)|transition period|stay(?:s|ing)? on|will (?:stay|remain|leave|retire|exit|work))\b/i;
+
+export function stripWorkingNotes(text: string | null | undefined): string {
+  const raw = (text ?? "").trim();
+  if (!raw) return "";
+  const keep = (part: string) => !TREATMENT_RE.test(part) && !OWNER_PLAN_RE.test(part);
+  return raw
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => {
+      // Clause by clause ("…; the market salary is added back for SDE only."), the rest of the sentence kept.
+      const clauses = sentence.replace(/[.!?]+$/, "").split(/\s*;\s*/).map((c) => c.trim()).filter(Boolean);
+      const kept = clauses.filter(keep);
+      if (kept.length === 0) return "";
+      const text = kept.join("; ");
+      return `${text.charAt(0).toUpperCase()}${text.slice(1)}${/[.!?]$/.test(sentence) ? sentence.match(/[.!?]+$/)![0] : "."}`;
+    })
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
+/** "Why it's added back" as Cimple offers it from the analysis: working notes dropped, then screened. null when nothing is left. */
+export function buyerReasonFor(description: string | null | undefined, info: Record<string, unknown> | null | undefined): string | null {
+  return screenForBuyers(stripWorkingNotes(description), info);
+}

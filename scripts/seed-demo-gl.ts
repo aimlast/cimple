@@ -188,7 +188,15 @@ async function main() {
 
   // 4. Buyers — only when asked.
   if (o.publish) {
+    // The publish dialog's defaults, never more: the Full/Blind note stays off when the CIM's
+    // earnings bridge shows other add-backs (a bridge from an earlier analysis) — regenerate it first.
     const p = await publishPreview(deal.id);
+    if (!p.canPublish) {
+      console.log(`Not shown to buyers: ${p.blocked}`);
+      return;
+    }
+    for (const w of p.warnings) console.log(`  ! ${w}`);
+    if (!p.versions.normal && p.reasons.normal) console.log(`  Full/Blind note: ${p.reasons.normal}`);
     const r = await publishEvidence(deal.id, { versions: p.versions, leaveOut: [] }, null);
     console.log(`Shown to buyers: ${Object.entries(r.versions).filter(([, v]) => v).map(([k]) => k).join(", ")} (${r.lines} add-backs).`);
   } else {

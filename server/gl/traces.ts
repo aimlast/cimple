@@ -30,7 +30,7 @@ import type { GlAddbackTrace, InsertGlAddbackTrace } from "@shared/schema";
 import { fiscalYearKey } from "@shared/fiscal-year";
 import { isDistributionLine } from "../financial/normalization-rules";
 import { personsIn } from "./match";
-import { screenForBuyers } from "./screen";
+import { buyerReasonFor, screenForBuyers } from "./screen";
 import { addbackKeyFor, payDocWords, type PayCountry } from "@shared/gl-copy";
 
 /** The analysis add-back as traces read it (server/financial/shape.ts UiAddback). */
@@ -258,7 +258,7 @@ export function planTraces(norm: NormLike | null | undefined, existing: GlAddbac
     const autoProof = proofFor(c);
     if (!ex) {
       const share = shareFor(c, true);
-      const reason = screenForBuyers(c.description, opts.info ?? null);
+      const reason = buyerReasonFor(c.description, opts.info ?? null);
       plan.inserts.push({
         addbackKey: c.addbackKey,
         analysisId: opts.analysisId ?? null,
@@ -312,9 +312,13 @@ export function planTraces(norm: NormLike | null | undefined, existing: GlAddbac
         patch.shareBasis = next ? "estimate" : null;
       }
     }
+    // Offered from the analysis while the broker hasn't written their own ("" = the broker chose none).
+    // A value the older rule offered (the description with its working notes) is replaced by today's offer.
+    const offer = buyerReasonFor(c.description, opts.info ?? null);
     if (ex.buyerReason === null || ex.buyerReason === undefined) {
-      const reason = screenForBuyers(c.description, opts.info ?? null);
-      if (reason) patch.buyerReason = reason;
+      if (offer) patch.buyerReason = offer;
+    } else if (ex.buyerReason && ex.buyerReason !== offer && ex.buyerReason === screenForBuyers(c.description, opts.info ?? null)) {
+      patch.buyerReason = offer;
     }
     // Labels that aren't a full year are left out automatically; the broker's own left-out years stay.
     const autoLeft = ex.leftOut?.reason === INTERIM_LEFT_OUT_REASON;

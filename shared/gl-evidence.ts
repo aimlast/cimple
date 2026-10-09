@@ -132,6 +132,17 @@ export interface GlEvidencePayload {
   lines: GlEvidenceLine[];
   /** Broker previews only: this is the live data, not what buyers see yet. */
   preview?: boolean;
+  /**
+   * Normal/Blind: what the earnings bridge the note sits under must show for
+   * the note to stand — each add-back's amounts (dollars, any year). Read by
+   * buildBuyerCim (glBridgeShows), never placed on a page.
+   */
+  bridge?: GlBridgeCheck[];
+}
+
+/** One add-back the earnings bridge must show: its amounts in dollars (one of them, any year). */
+export interface GlBridgeCheck {
+  amounts: number[];
 }
 
 // ── The broker's published snapshot (gl_tracing.published; server only) ──
@@ -304,27 +315,117 @@ export function glShareText(label: string, share: NonNullable<GlEvidenceLine["sh
 
 type AnchorSection = { sectionKey?: string | null; sectionTitle?: string | null; layoutType?: string | null };
 
-const BRIDGE_RE = /normali[sz]|add-?backs?|adjusted (?:ebitda|earnings)|\bsde\b|earnings bridge|quality of earnings/i;
+/** Words of an earnings bridge: normalisation, add-backs, recast earnings. */
+const BRIDGE_STRONG_RE = /normali[sz]|add-?backs?|earnings bridge|quality of earnings|recast|adjustments? to (?:earnings|ebitda|net income)/i;
+/** Words a bridge usually carries, but other sections too. */
+const BRIDGE_WEAK_RE = /adjusted (?:ebitda|earnings)|\bsde\b|seller'?s discretionary|discretionary earnings/i;
 const FINANCIAL_RE = /financial|income statement|profit/i;
+/** Never the anchor: the deal's terms and price, the summary pages, the closing pages. */
+const NOT_ANCHOR_RE = /transaction|deal (?:structure|terms|overview)|asking price|purchase price|\bprice\b|valuation|\bmultiples?\b|\boffers?\b|terms of (?:the )?sale|executive summary|investment highlights|key highlights|snapshot|at a glance|contact|closing|next steps|disclaimer|confidential/i;
 const CLOSING_RE = /contact|closing|next steps|disclaimer|confidential/i;
 
 /**
- * The section the DD page follows and the Full/Blind note is attached to:
- * the last earnings bridge (a waterfall, or a section about normalisation,
- * add-backs, adjusted EBITDA, SDE); else the last financial section; else
- * the section before a contact/closing page; else the last. -1 for none.
+ * The section the DD page follows and the Full/Blind note is attached to,
+ * and whether it is an earnings bridge. In order: a waterfall about the
+ * earnings; a section about normalisation / add-backs; any waterfall; a
+ * section about adjusted EBITDA / SDE; the last financial section; the
+ * section before a contact/closing page; the last. Never a transaction,
+ * price or closing section, a summary page or the cover (a closing "Asking
+ * price & SDE multiple" never takes the page away from the bridge). The last
+ * of each kind wins. -1 for none.
  */
-export function glEvidenceAnchor(sections: ReadonlyArray<AnchorSection>): number {
-  if (sections.length === 0) return -1;
-  const text = (s: AnchorSection) => `${s.sectionKey ?? ""} ${s.sectionTitle ?? ""}`.replace(/_/g, " ");
-  for (let i = sections.length - 1; i >= 0; i--) {
-    const s = sections[i];
-    if (s.layoutType === "waterfall_chart" || BRIDGE_RE.test(text(s))) return i;
+export function glEvidenceAnchorInfo(sections: ReadonlyArray<AnchorSection>): { index: number; bridge: boolean } {
+  if (sections.length === 0) return { index: -1, bridge: false };
+  const text = (s: AnchorSection) => `${s.sectionKey ?? ""} ${s.sectionTitle ?? ""}`.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2");
+  const ok = (s: AnchorSection) => s.layoutType !== "cover_page" && !NOT_ANCHOR_RE.test(text(s));
+  const last = (pred: (s: AnchorSection) => boolean) => {
+    for (let i = sections.length - 1; i >= 0; i--) if (ok(sections[i]) && pred(sections[i])) return i;
+    return -1;
+  };
+  const waterfall = (s: AnchorSection) => s.layoutType === "waterfall_chart";
+  const steps: Array<[(s: AnchorSection) => boolean, boolean]> = [
+    [(s) => waterfall(s) && (BRIDGE_STRONG_RE.test(text(s)) || BRIDGE_WEAK_RE.test(text(s))), true],
+    [(s) => BRIDGE_STRONG_RE.test(text(s)), true],
+    [waterfall, true],
+    [(s) => BRIDGE_WEAK_RE.test(text(s)), true],
+    [(s) => FINANCIAL_RE.test(text(s)), false],
+  ];
+  for (const [pred, bridge] of steps) {
+    const i = last(pred);
+    if (i >= 0) return { index: i, bridge };
   }
-  for (let i = sections.length - 1; i >= 0; i--) if (FINANCIAL_RE.test(text(sections[i]))) return i;
   const closing = sections.findIndex((s) => CLOSING_RE.test(text(s)) && s.layoutType !== "cover_page");
-  if (closing > 0) return closing - 1;
-  return sections.length - 1;
+  if (closing > 0) return { index: closing - 1, bridge: false };
+  return { index: sections.length - 1, bridge: false };
+}
+
+/** The anchor's index (see glEvidenceAnchorInfo). */
+export function glEvidenceAnchor(sections: ReadonlyArray<AnchorSection>): number {
+  return glEvidenceAnchorInfo(sections).index;
+}
+
+// ── Does the earnings bridge show the add-backs the note counts? (pure) ──
+
+type FigureSection = { layoutData?: unknown; aiDraftContent?: string | null; brokerEditedContent?: string | null };
+type Figure = { value: number; tol: number };
+
+const SCALE: Record<string, number> = { k: 1e3, thousand: 1e3, thousands: 1e3, m: 1e6, mm: 1e6, million: 1e6, millions: 1e6 };
+const MONEY_RE = /(?:CA\$|US\$|C\$|\$)?\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?\s*(k|mm|m|thousands?|millions?)?(?![\w])/gi;
+
+function figuresInText(text: string, out: Figure[], unitScale = 1): void {
+  for (const m of Array.from(text.matchAll(MONEY_RE))) {
+    const whole = m[1].replace(/,/g, "");
+    const decimals = m[2] ?? "";
+    const scale = m[3] ? SCALE[m[3].toLowerCase()] ?? 1 : 1;
+    const value = Number(`${whole}${decimals ? `.${decimals}` : ""}`) * scale;
+    if (!Number.isFinite(value)) continue;
+    // "$38K" is any of 37,500–38,499; "$1.2M" any of 1.15M–1.25M; "38,000" itself (± half a percent).
+    const tol = scale > 1 ? (0.5 * scale) / 10 ** decimals.length : Math.max(1, value * 0.005);
+    out.push({ value, tol });
+    // A table captioned "($000s)": a bare "18" is $18,000.
+    if (scale === 1 && unitScale > 1) out.push({ value: value * unitScale, tol: (0.5 * unitScale) / 10 ** decimals.length });
+  }
+}
+
+/** Every amount a served section shows (its layout data and text) — the note's own text is not read. */
+export function sectionFigures(section: FigureSection): Figure[] {
+  const out: Figure[] = [];
+  const data = section.layoutData;
+  const d = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
+  const unit = String(d.unit ?? "");
+  // The scale the numbers are written in: the unit, or a caption such as "SDE bridge ($000s)".
+  const caption = [d.title, d.subtitle, d.caption, d.note].filter((x) => typeof x === "string").join(" ");
+  const unitScale = /^\s*\$?\s*(?:k|000s|thousands?|\$000s?|in thousands)\s*$/i.test(unit) || /\(\s*(?:c?\$|cad|usd)?\s*000s?\s*\)|\$\s?000s?\b|in thousands|\(\s*\$?k\s*\)/i.test(caption)
+    ? 1e3
+    : /^\s*\$?\s*(?:m|mm|millions?|in millions)\s*$/i.test(unit) || /in millions|\(\s*\$?(?:m|mm)\s*\)/i.test(caption) ? 1e6 : 1;
+  const walk = (v: unknown, key: string) => {
+    if (key === "_glNote") return;
+    if (typeof v === "number" && Number.isFinite(v)) {
+      out.push({ value: v, tol: Math.max(1, Math.abs(v) * 0.005) });
+      if (unitScale > 1) {
+        const decimals = (String(v).split(".")[1] ?? "").length;
+        out.push({ value: v * unitScale, tol: (0.5 * unitScale) / 10 ** decimals });
+      }
+    } else if (typeof v === "string") figuresInText(v, out, unitScale);
+    else if (Array.isArray(v)) v.forEach((x) => walk(x, ""));
+    else if (v && typeof v === "object") for (const [k, x] of Object.entries(v as Record<string, unknown>)) walk(x, k);
+  };
+  walk(data, "");
+  for (const t of [section.aiDraftContent, section.brokerEditedContent]) if (t) figuresInText(t, out);
+  return out;
+}
+
+/**
+ * Does the served earnings bridge show every add-back the note counts (one of
+ * its amounts, any year)? A bridge written from an earlier analysis (other
+ * add-backs, other amounts) doesn't — the note is then held back, never shown
+ * under numbers that contradict it. No checks → nothing to contradict.
+ */
+export function glBridgeShows(section: FigureSection | null | undefined, checks: ReadonlyArray<GlBridgeCheck> | null | undefined): boolean {
+  if (!checks || checks.length === 0) return true;
+  if (!section) return false;
+  const figs = sectionFigures(section);
+  return checks.every((c) => c.amounts.some((a) => a !== 0 && figs.some((f) => Math.abs(Math.abs(f.value) - Math.abs(a)) <= f.tol)));
 }
 
 /** The note as the anchor section carries it (layoutData._glNote). */

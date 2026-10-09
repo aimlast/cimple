@@ -184,14 +184,72 @@ await test("nothing published → no evidence for buyers and no writer lines", a
 
 await test("the dialog warns when the CIM's earnings bridge predates the analysis the add-backs come from", async () => {
   const st = (await import("../../server/storage")).storage as any;
+  // A bridge that shows the traced add-backs' amounts, but written before the analysis.
+  const live = await buildEvidence(dealId, "normal", "live");
+  const items = (live?.bridge ?? []).map((c, i) => ({ label: `Add-back ${i + 1}`, value: c.amounts[c.amounts.length - 1] }));
+  assert.ok(items.length > 0, "the Full payload carries what the bridge must show");
   st.getCimSectionsByDeal = async () => [
     { id: "s1", sectionKey: "overview", sectionTitle: "Overview", layoutType: "prose_highlight", order: 1, isVisible: true, updatedAt: new Date("2025-03-01") },
-    { id: "s2", sectionKey: "bridge", sectionTitle: "Earnings Bridge", layoutType: "waterfall_chart", order: 2, isVisible: true, updatedAt: new Date("2025-01-15") },
+    { id: "s2", sectionKey: "bridge", sectionTitle: "Earnings Bridge", layoutType: "waterfall_chart", layoutData: { items }, order: 2, isVisible: true, updatedAt: new Date("2025-01-15") },
   ];
   const p = await publishPreview(dealId);
   assert.ok(p.warnings.some((w) => /"Earnings Bridge" was written before the latest financial analysis/.test(w)), p.warnings.join(" | "));
-  st.getCimSectionsByDeal = async () => [{ id: "s2", sectionKey: "bridge", sectionTitle: "Earnings Bridge", layoutType: "waterfall_chart", order: 2, isVisible: true, updatedAt: new Date("2025-02-10") }];
-  assert.ok(!(await publishPreview(dealId)).warnings.some((w) => /written before/.test(w)));
+  st.getCimSectionsByDeal = async () => [{ id: "s2", sectionKey: "bridge", sectionTitle: "Earnings Bridge", layoutType: "waterfall_chart", layoutData: { items }, order: 2, isVisible: true, updatedAt: new Date("2025-02-10") }];
+  assert.ok(!(await publishPreview(dealId)).warnings.some((w) => /written before|shows different add-backs/.test(w)));
+});
+
+await test("GL-R1-05: a bridge showing other add-backs or amounts → Full and Blind start OFF with the reason, and the warning says why", async () => {
+  const st = (await import("../../server/storage")).storage as any;
+  st.getCimSectionsByDeal = async () => [
+    { id: "s2", sectionKey: "bridge", sectionTitle: "SDE Bridge", layoutType: "waterfall_chart", order: 2, isVisible: true, updatedAt: new Date("2025-02-10"),
+      layoutData: { items: [{ label: "Net income", value: 812_000 }, { label: "Non-working family salary", value: 62_000 }, { label: "Personal vehicle expenses", value: 38_123 }] } },
+  ];
+  const p = await publishPreview(dealId);
+  assert.equal(p.versions.normal, false);
+  assert.equal(p.versions.blind, false);
+  assert.equal(p.versions.dd, true, "the DD page stays on");
+  assert.match(p.reasons.normal ?? "", /earnings bridge \("SDE Bridge"\) shows different add-backs or amounts/);
+  assert.ok(p.warnings.some((w) => /"SDE Bridge" shows different add-backs or amounts/.test(w)), p.warnings.join(" | "));
+  assert.equal(p.bridgeMismatch, "SDE Bridge");
+  // Publishing the Full or Blind note under it is refused; the DD page alone is fine.
+  const pubBefore = (await store.getTracing(dealId))?.published ?? null;
+  await assert.rejects(publishEvidence(dealId, { versions: { dd: true, normal: true, blind: false }, leaveOut: [] }, "b"), (e: unknown) => e instanceof GlPublishError && /Regenerate it before showing the Full or Blind note/.test((e as Error).message));
+  const ok = await publishEvidence(dealId, { versions: { dd: true, normal: false, blind: false }, leaveOut: [] }, "b");
+  assert.deepEqual(ok.versions, { dd: true, normal: false, blind: false });
+  await store.updateTracing(dealId, { published: pubBefore } as any);
+  st.getCimSectionsByDeal = async () => [];
+});
+
+await test("GL-R1-06: the dialog lists each add-back's 'Why it's added back' exactly as DD buyers read it — saved text, none, or held back", async () => {
+  const traces = await byLabel();
+  const meals = traces.get("Meals & entertainment (50% personal use estimate)")!;
+  const settlement = traces.get("Employment settlement (one-time)")!;
+  await store.updateTrace(meals.id, { buyerReason: "" } as any);
+  // A text that names a kept-out party is held back (the seller asked to keep it out).
+  const st = (await import("../../server/storage")).storage as any;
+  const realDeal = st.getDeal;
+  st.getDeal = async (id: string) => {
+    const d = await realDeal(id);
+    return d && id === dealId ? { ...d, extractedInfo: { ...(d.extractedInfo ?? {}), salesPipeline: "Shortlisted for the Harvest Lane Markets RFP.", _brokerPrivateNotes: ["Harvest Lane Markets RFP — keep out of the CIM."] } } : d;
+  };
+  await store.updateTrace(settlement.id, { buyerReason: "Paid while bidding for Harvest Lane Markets." } as any);
+  const p = await publishPreview(dealId);
+  st.getDeal = realDeal;
+  const line = (label: string) => p.lines.find((l) => l.label === label)!;
+  const veh = line("Owner vehicle expenses");
+  assert.equal(veh.why, "The owner's personal vehicle; a new owner won't have it.");
+  assert.equal(veh.whyText, veh.why);
+  assert.equal(veh.whyHeld, false);
+  assert.ok(veh.traceId);
+  const m = line("Meals & entertainment (50% personal use estimate)");
+  assert.equal(m.why, null);
+  assert.equal(m.whyText, "", "the broker chose none");
+  assert.equal(m.whyHeld, false);
+  const set = line("Employment settlement (one-time)");
+  assert.equal(set.why, null);
+  assert.equal(set.whyHeld, true, "saved, but buyers don't see it");
+  await store.updateTrace(settlement.id, { buyerReason: null } as any);
+  await store.updateTrace(meals.id, { buyerReason: null } as any);
 });
 
 cleanup(B.w);
