@@ -354,4 +354,38 @@ for (const open of [false, true]) {
   }
 }
 
+// ── 11. Every branded page still shows the wordmark (merge guard) ─────────
+{
+  // A merge that rewrites one of these files must keep the wordmark: dropping the line leaves the
+  // page with no brand at all, and taking another branch's copy of the file brings back a
+  // hand-made mask (caught by group 6). Interview.tsx belongs to the "together" stream; brand
+  // owns one import and the seller-mode top-bar line there.
+  const IMPORT = /^import \{[^}]*\bCimpleWordmark\b[^}]*\} from "@\/components\/brand\/CimpleLogo";$/m;
+  const SITES: Array<[string, RegExp, string]> = [
+    ["client/src/layouts/SellerLayout.tsx", /<CimpleWordmark\b/, "the seller pages' top bar"],
+    ["client/src/components/seller/SellerOnboarding.tsx", /<CimpleWordmark\b/, "the seller intro"],
+    [
+      "client/src/components/shared/Interview.tsx",
+      /\{!isBroker\s*&&\s*\(\s*<CimpleWordmark className="h-3\.5" \/>\s*\)\}/,
+      'the seller interview\'s top bar: `{!isBroker && (<CimpleWordmark className="h-3.5" />)}`',
+    ],
+    ["client/src/pages/broker/BrokerLogin.tsx", /<CimpleWordmark\b/, "the broker sign-in card"],
+    ["client/src/pages/broker/BrokerResetPassword.tsx", /<CimpleWordmark\b/, "the set-a-new-password card"],
+    ["client/src/pages/buyer/shared.tsx", /<CimpleWordmark\b[\s\S]*<CimpleWordmark\b/, "the buyer sign-in card and the buyer nav"],
+  ];
+  for (const [file, site, where] of SITES) {
+    const s = fs.readFileSync(path.join(ROOT, file), "utf8");
+    assert.match(s, IMPORT, `${file} must import CimpleWordmark from "@/components/brand/CimpleLogo"`);
+    assert.match(s, site, `${file} must render <CimpleWordmark /> in ${where} — re-apply it after the merge`);
+  }
+  // The import sits in Interview.tsx's FIRST import block (beside AIConversationInterface). The
+  // together stream deletes the stray imports below `interface SectionCoverage`; an import placed
+  // there conflicts on merge, and resolving it with together's copy restores the old mask.
+  const iv = fs.readFileSync(path.join(ROOT, "client/src/components/shared/Interview.tsx"), "utf8");
+  const firstDecl = iv.search(/^(interface|type|const|let|function|class|export)\b/m);
+  const imp = iv.search(IMPORT);
+  assert.ok(firstDecl > 0 && imp >= 0 && imp < firstDecl,
+    "Interview.tsx: keep `import { CimpleWordmark }` in the first import block, beside AIConversationInterface (merge-safe with the together stream)");
+}
+
 console.log("brand-lockup: ok");

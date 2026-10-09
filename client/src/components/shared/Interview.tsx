@@ -47,6 +47,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { AIConversationInterface } from "@/components/AIConversationInterface";
+import { CimpleWordmark } from "@/components/brand/CimpleLogo";
 import { Button } from "@/components/ui/button";
 import {
   CheckCircle,
@@ -74,7 +75,6 @@ interface SectionCoverage {
 const IMPORTANCE_SHORT = { critical: "Critical", important: "Important", helpful: "Helpful" } as const;
 import { computeCimReadiness } from "@shared/cim-readiness";
 import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadinessCard";
-import { CimpleWordmark } from "@/components/brand/CimpleLogo";
 
 interface IndustryContext {
   identified: boolean;
