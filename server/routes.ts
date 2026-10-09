@@ -7510,7 +7510,8 @@ Return JSON only.`,
       // A question asked from a figure's note (dd, D18): the figure's opaque
       // id, resolved below against this buyer's own version — a blind buyer
       // can't probe the named figures. It goes straight to the broker.
-      const figureId = typeof req.body?.figureId === "string" && /^f_[0-9a-f]{10}$/.test(req.body.figureId) ? req.body.figureId : null;
+      const { figureIdOf, figureQuestionText } = await import("./cim/figures/ask");
+      const figureId = figureIdOf(req.body);
       let chatLayer: ReturnType<typeof buildBuyerCim>["figureLayer"] = null;
       if (!held) {
         const { buyerCimRows, servedBlindCodename } = await import("./cim/published-snapshot");
@@ -7530,16 +7531,10 @@ Return JSON only.`,
           chatLayer = chatCim.figureLayer;
         }
       }
-      const askedFigure = figureId && chatLayer ? chatLayer.figures[figureId] ?? null : null;
-      if (askedFigure && chatLayer) {
+      const figureText = figureQuestionText(chatLayer, chatSections, figureId, question, MAX_BUYER_QUESTION_CHARS);
+      if (figureText) {
         // No AI: the broker answers, privately to this buyer (as today).
-        const anchor = chatLayer.anchors.find((a) => a.fig === figureId && a.pageId !== "dd-source-check") ?? chatLayer.anchors.find((a) => a.fig === figureId);
-        const pageNo = anchor ? chatSections.findIndex((s) => s.id === anchor.pageId) + 1 : 0;
-        const prefix = chatLayer.mode === "blind" || !askedFigure.label
-          ? `About a figure on page ${pageNo > 0 ? pageNo : "?"}: `
-          : `About ${askedFigure.label}, FY${askedFigure.year}: `;
-        const body = question.trim().replace(/^About [^:\n]{1,160}:\s*/, "");
-        const text = `${prefix}${body}`.slice(0, MAX_BUYER_QUESTION_CHARS);
+        const text = figureText;
         const saved = await storage.createBuyerQuestion({
           dealId, buyerAccessId, question: text, aiAnswer: null, status: "pending_broker", isPublished: false,
           publishedAnswer: null, addedToKnowledgeBase: false, answerScope: scope, ...askedOn,
