@@ -729,11 +729,13 @@ function PreviewBanner({
 }) {
   const blindView = previewAs !== "editor" && cimModeForAccessLevel(previewAs) === "blind";
   const label = PREVIEWS.find((p) => p.key === previewAs)?.label ?? "";
+  // "a Blind CIM buyer", "a Full CIM buyer", "a due-diligence buyer" (CIM stays capitalised).
+  const who = /^[A-Z][a-z]+ CIM\b/.test(label) ? label : label.charAt(0).toLowerCase() + label.slice(1);
   return (
     <div className="space-y-2">
       <div className="rounded-lg border border-border bg-card px-3 py-2 text-xs flex flex-wrap items-center gap-x-3 gap-y-1.5">
         {blindView ? <Lock className="h-3.5 w-3.5 text-amber-500" /> : <Unlock className="h-3.5 w-3.5 text-teal" />}
-        <span><span className="font-medium">Previewing as a {label.toLowerCase()}</span> <span className="text-muted-foreground">— {hint}. Read-only.</span></span>
+        <span><span className="font-medium">Previewing as a {who}</span> <span className="text-muted-foreground">— {hint}. Read-only.</span></span>
         {loading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
         <button type="button" onClick={onBackToEditing} className="ml-auto text-teal hover:underline">Back to editing</button>
       </div>
