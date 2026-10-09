@@ -123,7 +123,8 @@ export function BuyersTab() {
   const counts: Record<BuyerStage, number | null | undefined> = {
     find: !outside ? null : searched ? (outside.results ?? []).filter((a) => !a.inYourList).length : undefined,
     send: suggested ? suggested.suggested.filter((b) => !b.alreadyHasAccess && !b.inApproval && !b.excluded).length : null,
-    teaser: buyerAccessList ? (teaser?.counts.links ?? teaserLinks.length) : null,
+    // Every teaser link still on the list (an expired one is listed too, with "Link expired").
+    teaser: buyerAccessList ? teaserLinks.length : null,
     approval: approvals ? approvals.filter((r) => WAITING_APPROVAL_STATUSES.has(r.status)).length : null,
     have: buyerAccessList ? activeBuyers.length : null,
   };
@@ -144,6 +145,15 @@ export function BuyersTab() {
   useEffect(() => {
     if (!isBuyerStage(urlStage) && stage) setLocation(`${location}?stage=${stage}`, { replace: true });
   }, [urlStage, stage, location, setLocation]);
+
+  // Phones: the strip scrolls sideways — keep the current stage in view (sideways only, never the page).
+  const stripRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const nav = stripRef.current;
+    const tile = nav?.querySelector<HTMLElement>(`[data-testid="stage-${stage}"]`);
+    if (!nav || !tile || nav.scrollWidth <= nav.clientWidth) return;
+    nav.scrollLeft = Math.max(0, nav.scrollLeft + tile.getBoundingClientRect().left - nav.getBoundingClientRect().left - 16);
+  }, [stage]);
 
   // Opening another stage shows it as it is now, not as it was when the page loaded.
   const lastStage = useRef<BuyerStage | null>(null);
@@ -228,7 +238,7 @@ export function BuyersTab() {
   const current = BUYER_STAGES.find((s) => s.key === stage);
 
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-5">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-5">
       {/* Header — what this tab is, plus the two actions that apply to every stage */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
@@ -270,13 +280,14 @@ export function BuyersTab() {
           <Lock className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
           <p className="text-xs text-muted-foreground leading-relaxed">
             <span className="font-medium text-foreground">The CIM isn&apos;t published yet.</span>{" "}
-            You can line up buyers now. Nobody can open it until you publish it from the Overview tab — buyers the seller approves before then get it automatically when you do.
+            {teaserLive ? "Buyers can read the teaser now. " : "You can line up buyers now. "}
+            Nobody can open the CIM until you publish it from the Overview tab — buyers you or the seller approve before then get it automatically when you do.
           </p>
         </div>
       )}
 
       {/* The pipeline — five stages, one visible at a time (phones: a strip that scrolls and snaps) */}
-      <nav aria-label="Buyer stages" className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0" data-testid="buyer-stages">
+      <nav ref={stripRef} aria-label="Buyer stages" className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0" data-testid="buyer-stages">
         <div className="flex snap-x snap-mandatory gap-2 lg:grid lg:grid-cols-5">
           {BUYER_STAGES.map((s) => {
             const Icon = STAGE_ICONS[s.key];
@@ -289,30 +300,29 @@ export function BuyersTab() {
                 type="button"
                 onClick={() => goTo(s.key)}
                 aria-current={active ? "step" : undefined}
-                ref={active ? (el) => el?.scrollIntoView({ block: "nearest", inline: "nearest" }) : undefined}
-                className={`relative flex min-h-[64px] w-[160px] shrink-0 snap-start items-start gap-2 rounded-lg border px-3 py-2.5 text-left transition-colors lg:w-auto ${
+                className={`relative flex min-h-[72px] w-[168px] shrink-0 snap-start flex-col gap-0.5 rounded-lg border px-3 py-2.5 text-left transition-colors lg:w-auto ${
                   active
                     ? "border-teal/60 bg-teal/10"
                     : "border-border bg-card hover:border-foreground/20 hover:bg-muted/30"
                 }`}
                 data-testid={`stage-${s.key}`}
               >
-                <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${active ? "text-teal" : "text-muted-foreground"}`} />
-                <span className="min-w-0 flex-1">
-                  <span className={`block text-[11px] ${active ? "text-teal" : "text-muted-foreground"}`}>Step {s.step}</span>
-                  <span className={`block text-sm font-medium leading-tight ${active ? "text-foreground" : "text-foreground/85"}`}>{s.label}</span>
-                  {sub && <span className="mt-0.5 block truncate text-[11px] text-teal" data-testid={`stage-sub-${s.key}`}>{sub}</span>}
+                <span className="flex items-center gap-1.5">
+                  <Icon className={`h-3.5 w-3.5 shrink-0 ${active ? "text-teal" : "text-muted-foreground"}`} />
+                  <span className={`text-[11px] ${active ? "text-teal" : "text-muted-foreground"}`}>Step {s.step}</span>
+                  {count !== undefined && (
+                    <span
+                      className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${
+                        active ? "bg-teal text-teal-foreground" : "bg-muted text-muted-foreground"
+                      }`}
+                      data-testid={`stage-count-${s.key}`}
+                    >
+                      {count === null ? "·" : count}
+                    </span>
+                  )}
                 </span>
-                {count !== undefined && (
-                  <span
-                    className={`ml-1 shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${
-                      active ? "bg-teal text-teal-foreground" : "bg-muted text-muted-foreground"
-                    }`}
-                    data-testid={`stage-count-${s.key}`}
-                  >
-                    {count === null ? "·" : count}
-                  </span>
-                )}
+                <span className={`block text-sm font-medium leading-tight ${active ? "text-foreground" : "text-foreground/85"}`}>{s.label}</span>
+                {sub && <span className="block text-[11px] leading-snug text-teal" data-testid={`stage-sub-${s.key}`}>{sub}</span>}
               </button>
             );
           })}

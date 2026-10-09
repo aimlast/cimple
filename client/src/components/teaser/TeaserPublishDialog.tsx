@@ -28,6 +28,7 @@ export function publishButtonState(state: TeaserState): { label: string; disable
   if (writing) return { label, disabled: true, why: "Cimple is writing your teaser — wait a moment." };
   if (held > 0) return { label, disabled: true, why: `Fix the ${held === 1 ? "1 block" : `${held} blocks`} that ${held === 1 ? "names" : "name"} the business first.` };
   if (t.headerProblem) return { label, disabled: true, why: "Fix the header first — it names the business." };
+  if (t.codenameProblem) return { label, disabled: true, why: "The codename could point to the business — see the note on the Teaser tab." };
   if (t.draft.blocks.filter((b) => !b.hidden && !b.placeholder).length === 0) return { label, disabled: true, why: "Add a block buyers can read first." };
   if (s.status === "published" && s.changedSincePublish === 0) return { label, disabled: true, why: "Buyers already see this version." };
   return { label, disabled: false, why: null };

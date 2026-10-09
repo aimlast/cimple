@@ -66,7 +66,7 @@ export default function SellerReview() {
   const [part, setPart] = useState<"teaser" | "cim" | null>(null);
   const shown = part ?? (hasTeaser && teaser.data?.status === "sent" ? "teaser" : "cim");
   const switcher = hasTeaser ? (
-    <div className="mx-auto max-w-4xl px-4 pt-4 sm:px-6">
+    <div className={`mx-auto px-4 pt-4 sm:px-6 ${shown === "teaser" ? "max-w-6xl" : "max-w-4xl"}`}>
       <div role="tablist" aria-label="What to review" className="inline-flex rounded-lg border border-border bg-muted/30 p-1" data-testid="seller-review-parts">
         {(["teaser", "cim"] as const).map((k) => (
           <button
@@ -429,7 +429,7 @@ function SellerTeaserPart({ token, data, onChanged }: { token: string; data: Sel
       </div>
       {canAct && (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-background/95 backdrop-blur" data-testid="bar-seller-teaser-review">
-          <div className="mx-auto max-w-4xl px-4 py-3 sm:px-6" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}>
+          <div className="mx-auto max-w-6xl px-4 py-3 sm:px-6" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}>
             {asking ? (
               <div className="space-y-2">
                 <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} maxLength={4000} className="text-sm" placeholder="What should change? For example: “Don't say we're the only one in the region.”" data-testid="input-teaser-change-note" />

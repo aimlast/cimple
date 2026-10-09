@@ -98,6 +98,14 @@ export interface ComputeInput {
   now?: number;
 }
 
+/** What an untitled block is called in the reading list (the key numbers, the closing line). */
+const UNTITLED_BY_LAYOUT: Record<string, string> = {
+  metric_grid: "Key numbers",
+  icon_stat_row: "At a glance",
+  prose_highlight: "Closing note",
+  numbered_list: "Next steps",
+};
+
 /** Pure: the funnel, per buyer and per block. */
 export function computeTeaserEngagement(input: ComputeInput): TeaserEngagement {
   const now = input.now ?? Date.now();
@@ -116,7 +124,7 @@ export function computeTeaserEngagement(input: ComputeInput): TeaserEngagement {
     lastIndex.set(rid, pages.length - 1);
     for (const p of pages) {
       if (!pageTitle.has(p.pageId)) {
-        pageTitle.set(p.pageId, p.servedTitle || (p.pageId === "teaser_header" ? "Header" : "Untitled block"));
+        pageTitle.set(p.pageId, p.pageId === "teaser_header" ? "Header" : p.servedTitle || UNTITLED_BY_LAYOUT[p.layoutType] || "A block without a heading");
         pageOrder.push(p.pageId);
       }
     }

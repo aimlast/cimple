@@ -353,15 +353,15 @@ export function HaveCimStage({ dealId, published, buyers: allBuyers, revokedBuye
 
   const linkCell = (r: (typeof rows)[number]) => (
     <div className="text-xs">
-      <p className={r.buyer.ndaSigned ? "text-success-muted-foreground" : "text-muted-foreground"}>
+      <p className={`whitespace-nowrap ${r.buyer.ndaSigned ? "text-success-muted-foreground" : "text-muted-foreground"}`}>
         {r.buyer.ndaSigned ? "NDA signed" : "NDA not signed"}
       </p>
       {r.expiresAt ? (
-        <p className={r.expired ? "text-red-500" : "text-muted-foreground/80"}>
+        <p className={`whitespace-nowrap ${r.expired ? "text-red-500" : "text-muted-foreground/80"}`}>
           {r.expired ? "Link expired" : "Link expires"} {shortDate(r.expiresAt)}
         </p>
       ) : (
-        <p className="text-muted-foreground/60">Link never expires</p>
+        <p className="whitespace-nowrap text-muted-foreground/60">Link never expires</p>
       )}
     </div>
   );

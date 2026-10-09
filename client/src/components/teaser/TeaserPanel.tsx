@@ -30,6 +30,7 @@ import {
 import { PanelError } from "@/components/deal/PanelError";
 import { buildCimDesign } from "@/components/cim/CimDesignContext";
 import { cn } from "@/lib/utils";
+import { useDeal } from "@/contexts/DealContext";
 import { TeaserApiError, hasTeaser, shortDay, type TeaserEmpty, type TeaserState } from "./api";
 import { useTeaser, type TeaserApi } from "./useTeaser";
 import { TeaserTemplatePicker } from "./TeaserTemplatePicker";
@@ -171,6 +172,10 @@ function Intro() {
 // ── Draft / published / offline ────────────────────────────────────────────
 function TeaserWritten({ dealId, api, state }: { dealId: string; api: TeaserApi; state: TeaserState }) {
   const [, navigate] = useLocation();
+  const { deal } = useDeal();
+  // While a live CIM's update waits for review, blind buyers still read the
+  // published copy — under the codename it was published with.
+  const dealCodename = (deal as { blindCodename?: string | null } | undefined)?.blindCodename ?? null;
   const t = state.teaser;
   const s = state.summary;
   const [layout, setLayout] = useState<TeaserLayoutInfo | null>(null);
@@ -285,7 +290,14 @@ function TeaserWritten({ dealId, api, state }: { dealId: string; api: TeaserApi;
             </div>
           )}
           {t.codenameProblem && (
-            <p className="flex gap-2 text-xs text-amber-500"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> The codename could point buyers to the business: {t.codenameProblem} Change it on the Versions tab (Blind CIM card) before publishing.</p>
+            <p className="flex gap-2 text-xs text-amber-500" data-testid="teaser-codename-problem">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {dealCodename && dealCodename !== t.codename ? (
+                <span>Blind buyers still read the published CIM under “{t.codename}”, which could point to the business: {t.codenameProblem} Publish the CIM update on the Overview so they get “{dealCodename}”, then publish the teaser.</span>
+              ) : (
+                <span>The codename could point buyers to the business: {t.codenameProblem} Change it on the Versions tab (Blind CIM card) before publishing.</span>
+              )}
+            </p>
           )}
 
           {s.status !== "none" && (s.status === "published" || s.status === "offline" || s.counts.links > 0) && (

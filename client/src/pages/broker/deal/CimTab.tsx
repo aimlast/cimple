@@ -227,7 +227,7 @@ export function CimTab() {
       desc: "Short, anonymous, no NDA",
       amber: teaser && teaser.heldBlocks.length > 0 ? `${teaser.heldBlocks.length} block${teaser.heldBlocks.length === 1 ? "" : "s"} hidden from buyers` : null,
       onOpen: () => setView("teaser"),
-      onPreview: teaser && teaser.status !== "none" ? () => navigate(`/deal/${dealId}/teaser?preview=1`) : () => setView("teaser"),
+      onPreview: teaser && teaser.status !== "none" ? () => navigate(`/deal/${dealId}/teaser?preview=1`) : null,
     },
     {
       level: BLIND_ACCESS_LEVEL,

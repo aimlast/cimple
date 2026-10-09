@@ -108,6 +108,12 @@ const fromTeaser = (r: Pick<ApprovalRequest, "source">) => r.source === "teaser_
 const grantNoun = (l: unknown) => ACCESS_LEVELS.find((x) => x.key === normalizeAccessLevel(l))?.grantNoun ?? "the CIM";
 const firstName = (n: string | null | undefined) => (n ?? "").trim().split(/\s+/)[0] || "the buyer";
 const CIM_LEVEL_OPTIONS = [BLIND_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, DD_ACCESS_LEVEL].map((l) => ({ level: l as AccessLevel, line: LEVEL_TERMS[l as AccessLevel] }));
+/** For a request from the teaser the NDA is already signed: just what each version shows. */
+const REQUEST_LEVEL_OPTIONS: Array<{ level: AccessLevel; line: string }> = [
+  { level: BLIND_ACCESS_LEVEL, line: "The whole CIM, anonymous — under the codename" },
+  { level: NAMED_ACCESS_LEVEL, line: "The whole CIM with the business's name, people and places" },
+  { level: DD_ACCESS_LEVEL, line: "The Full CIM plus the due-diligence detail" },
+];
 
 const STATUS_META: Record<string, { label: string; icon: any; color: string }> = {
   pending_broker_review:  { label: "Pending broker review",  icon: Clock,        color: "bg-amber-500/10 text-amber-400 border-amber-500/30" },
@@ -172,7 +178,7 @@ export function BuyerApprovalsPanel({
       <div className="flex flex-wrap items-center justify-between gap-3">
         {embedded ? (
           <p className="text-xs text-muted-foreground">
-            {waiting === 0 ? "" : `${waiting} waiting · you decide; the seller can sign off too.`}
+            {waiting === 0 ? "" : `${waiting} waiting`}
           </p>
         ) : (
           <div>
@@ -979,7 +985,7 @@ function TeaserRequestCard({
     tr?.signerName ? `Signed the NDA ${day}` : `Asked ${day}`,
     reading?.firstOpenedAt ? `Read the teaser for ${formatReadingTime(reading.activeMs)}${reading.readToEnd ? ", to the end" : reading.furthestBlock ? `, to ${reading.furthestBlock}` : ""}` : null,
   ].filter(Boolean) as string[];
-  const background = (r.background ?? "").split("\n").map((l) => l.trim()).filter((l) => l && !/^Background:/.test(l)).join(" · ");
+  const background = (r.background ?? "").split("\n").map((l) => l.trim().replace(/[.;]+$/, "")).filter((l) => l && !/^Background:/.test(l)).join(" · ");
   const linkFirst = firstName(tr?.linkName);
   const StatusIcon = status?.Icon;
   return (
@@ -1079,8 +1085,14 @@ function TeaserRequestDialog({
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3 text-sm">
+          {request.teaserRequest?.mismatch && kind !== "decline" && (
+            <p className="flex gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-xs">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+              <span>Signed by {request.teaserRequest.signerName} — you sent this link to {request.teaserRequest.linkName}. The CIM would open on {firstName(request.teaserRequest.linkName)}'s link.</span>
+            </p>
+          )}
           {kind !== "decline" && (
-            <LevelRadio name="What they get" columns={1} options={CIM_LEVEL_OPTIONS} value={level} onChange={setLevel} />
+            <LevelRadio name="What they get" columns={1} options={REQUEST_LEVEL_OPTIONS} value={level} onChange={setLevel} />
           )}
           {kind === "give" && (
             <>

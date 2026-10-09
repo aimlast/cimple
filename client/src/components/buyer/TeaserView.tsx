@@ -101,18 +101,20 @@ export function TeaserView({ token, data, onChanged }: { token: string; data: Te
     </Button>
   );
 
+  const bannerNode = (where: "side" | "top") => banner && (
+    <div
+      className={`gap-2 rounded-lg border px-3 py-2.5 text-sm ${where === "side" ? "hidden lg:flex" : "flex lg:hidden"} ${banner.tone === "ok" ? "border-success/40 bg-success-muted/40" : banner.tone === "info" ? "border-teal/40 bg-teal/5" : "border-border bg-muted/30"}`}
+      role="status"
+      data-testid={`teaser-request-banner-${where}`}
+    >
+      {banner.tone === "ok" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" /> : banner.tone === "info" ? <Clock className="mt-0.5 h-4 w-4 shrink-0 text-teal" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
+      <span>{banner.text}</span>
+    </div>
+  );
+
   const card = (
     <div className="space-y-4" data-testid="teaser-side-card">
-      {banner && (
-        <div
-          className={`flex gap-2 rounded-lg border px-3 py-2.5 text-sm ${banner.tone === "ok" ? "border-success/40 bg-success-muted/40" : banner.tone === "info" ? "border-teal/40 bg-teal/5" : "border-border bg-muted/30"}`}
-          role="status"
-          data-testid="teaser-request-banner"
-        >
-          {banner.tone === "ok" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" /> : banner.tone === "info" ? <Clock className="mt-0.5 h-4 w-4 shrink-0 text-teal" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
-          <span>{banner.text}</span>
-        </div>
-      )}
+      {bannerNode("side")}
       {canAsk && (
         <div className="space-y-3">
           <h2 className="text-base font-semibold">Interested in {codename}?</h2>
@@ -167,7 +169,9 @@ export function TeaserView({ token, data, onChanged }: { token: string; data: Te
 
       <div className="mx-auto max-w-6xl px-0 py-6 sm:px-6 lg:py-8">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-8">
-          <main className="min-w-0 flex-1 px-3 sm:px-0">
+          <main className="min-w-0 flex-1 space-y-3 px-3 sm:px-0">
+            {/* Phones: where the request stands, above the summary. */}
+            {bannerNode("top")}
             <TeaserPages
               header={data.teaser.header}
               sections={data.teaser.blocks}
@@ -232,6 +236,7 @@ export function ExpiredTeaserCard({ token, firm }: { token: string; firm: string
       <div className="max-w-sm space-y-3 text-center" data-testid="teaser-expired">
         <Clock className="mx-auto h-8 w-8 text-muted-foreground/60" />
         <h2 className="text-lg font-semibold">This summary's link has expired</h2>
+        {state !== "sent" && <p className="text-sm text-muted-foreground">If the opportunity is still available, {name} can send you a new one.</p>}
         {state === "sent" ? (
           <p className="text-sm text-muted-foreground">Thanks — {name} will send you a new link if the opportunity is still available.</p>
         ) : (
