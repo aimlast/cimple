@@ -347,6 +347,7 @@ function LedgersView({ dealId, data }: { dealId: string; data: BrokerGlData }) {
   const [notLedgerFor, setNotLedgerFor] = useState<GlLedgerView | null>(null);
   const [columnsFor, setColumnsFor] = useState<GlLedgerView | null>(null);
   const [fyeTo, setFyeTo] = useState<string | null>(null);
+  const fyeByBroker = !!data.tracing?.fiscalYearEndByBroker;
   const invalidate = () => invalidateGl(dealId);
   const act = useMutation({
     mutationFn: ({ url, body, method = "POST" }: { url: string; body?: unknown; method?: string }) => sendJson(method, url, body ?? {}),
@@ -373,7 +374,9 @@ function LedgersView({ dealId, data }: { dealId: string; data: BrokerGlData }) {
                 onChange={(e) => setFyeTo(e.target.value)} data-testid="gl-fye">
                 {FYE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 {data.fiscalYearEnd && !FYE_OPTIONS.some(([v]) => v === data.fiscalYearEnd) && <option value={data.fiscalYearEnd}>{data.fiscalYearEnd}</option>}
+                {fyeByBroker && <option value="auto">Work it out from the deal's facts</option>}
               </select>
+              {!fyeByBroker && <span className="text-2xs" data-testid="gl-fye-auto">(from the deal's facts)</span>}
             </span>
           </span>
         </div>
@@ -476,8 +479,12 @@ function LedgersView({ dealId, data }: { dealId: string; data: BrokerGlData }) {
       <AlertDialog open={!!fyeTo} onOpenChange={(o) => !o && setFyeTo(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Change the fiscal year end to {FYE_OPTIONS.find(([v]) => v === fyeTo)?.[1] ?? fyeTo}?</AlertDialogTitle>
-            <AlertDialogDescription>Cimple moves every ledger entry to the right fiscal year and looks for the add-backs' entries again. Entries already ticked stay ticked.</AlertDialogDescription>
+            <AlertDialogTitle>{fyeTo === "auto" ? "Work out the fiscal year end from the deal's facts?" : `Change the fiscal year end to ${FYE_OPTIONS.find(([v]) => v === fyeTo)?.[1] ?? fyeTo}?`}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {fyeTo === "auto"
+                ? "Cimple takes it from the deal's facts and financial statements, and follows them if they change. If it moves, every ledger entry moves to the right fiscal year and Cimple looks for the add-backs' entries again."
+                : "Cimple moves every ledger entry to the right fiscal year and looks for the add-backs' entries again. Entries already ticked stay ticked. It stays as you set it, even if the deal's facts say otherwise."}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Keep it</AlertDialogCancel>

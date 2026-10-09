@@ -64,6 +64,8 @@ export interface BrokerGlView {
   analysis: { present: boolean };
   tracing: {
     fiscalYearEnd: string;
+    /** The broker chose it (it no longer follows the deal's facts and statements). */
+    fiscalYearEndByBroker: boolean;
     requestedAt: string | null;
     recipients: Array<{ memberId: string | null; inviteId: string | null; role: string }>;
     sellerMessage: string | null;
@@ -203,6 +205,7 @@ export async function buildBrokerView(c: GlDealContext): Promise<BrokerGlView> {
     analysis: { present: analyses.some((a) => a.status === "completed" || a.status === "reviewed") },
     tracing: {
       fiscalYearEnd: tr.fiscalYearEnd,
+      fiscalYearEndByBroker: !!tr.fiscalYearEndByBroker,
       requestedAt: iso(tr.requestedAt),
       recipients: (tr.recipients as BrokerGlView["tracing"]["recipients"]) ?? [],
       sellerMessage: tr.sellerMessage,

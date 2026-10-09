@@ -2913,6 +2913,7 @@ export const glTracing = pgTable("gl_tracing", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   dealId: varchar("deal_id").notNull(),
   fiscalYearEnd: text("fiscal_year_end").notNull().default("12-31"), // the one place (D26)
+  fiscalYearEndByBroker: boolean("fiscal_year_end_by_broker").notNull().default(false), // false = follows the facts/statements
   analysisId: varchar("analysis_id"),
   syncedFingerprint: text("synced_fingerprint"),          // analysis id + updatedAt + FYE: skip identical syncs
   requestedAt: timestamp("requested_at"),

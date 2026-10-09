@@ -686,7 +686,7 @@ export function memoryStore(data: MemoryStoreData = { tracing: [], ledgers: [], 
       let row = data.tracing.find((t) => t.dealId === dealId);
       if (!row) {
         row = {
-          id: newId(), dealId, fiscalYearEnd, analysisId: null, syncedFingerprint: null, requestedAt: null, requestedBy: null,
+          id: newId(), dealId, fiscalYearEnd, fiscalYearEndByBroker: false, analysisId: null, syncedFingerprint: null, requestedAt: null, requestedBy: null,
           recipients: null, sellerMessage: null, lastRemindedAt: null, withdrawnAt: null, sellerDoneAt: null, sellerConfirmation: null,
           cantGetLedger: null, accountantRequest: null, sellerSuggestions: [], emailLinkSends: null, tieOut: null, tieOutAccepted: {},
           accountClasses: {}, waived: null, reviewedAt: null, requireBeforeCim: false, published: null, publishedAt: null, publishedBy: null,

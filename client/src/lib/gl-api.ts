@@ -82,6 +82,8 @@ export interface BrokerGlData {
   analysis?: { present: boolean };
   tracing?: {
     fiscalYearEnd: string;
+    /** The broker chose it; otherwise it follows the deal's facts and statements. */
+    fiscalYearEndByBroker?: boolean;
     requestedAt: string | null;
     recipients: Array<{ memberId: string | null; inviteId: string | null; role: string }>;
     sellerMessage: string | null;

@@ -166,7 +166,8 @@ export function registerGlBrokerRoutes(app: Express): void {
       await loadGlContext(dealId);
       if (typeof req.body?.requireBeforeCim === "boolean") await glStore().updateTracing(dealId, { requireBeforeCim: req.body.requireBeforeCim } as Partial<GlTracing>);
       if (req.body?.fiscalYearEnd !== undefined) {
-        if (!normaliseFiscalYearEnd(req.body.fiscalYearEnd)) return res.status(400).json({ error: "Pick a valid fiscal year end (month and day)." });
+        // "auto": the fiscal-year end follows the deal's facts and statements again.
+        if (req.body.fiscalYearEnd !== "auto" && !normaliseFiscalYearEnd(req.body.fiscalYearEnd)) return res.status(400).json({ error: "Pick a valid fiscal year end (month and day)." });
         await changeFiscalYearEnd(dealId, String(req.body.fiscalYearEnd));
       }
       res.json({ ok: true });

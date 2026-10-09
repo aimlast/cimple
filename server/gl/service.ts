@@ -11,7 +11,13 @@
  *                          uploader's budget once pass 3 installs it) →
  *                          reconciliation → tie-out
  *   changeFiscalYearEnd    entries + links move years, proposals cleared,
- *                          everything recomputed (D26)
+ *                          everything recomputed (D26). The broker's choice
+ *                          sticks; until the broker sets it, the fiscal-year
+ *                          end FOLLOWS the deal's facts and statements
+ *                          (followFiscalYearEnd — run first by refreshGl,
+ *                          afterLedgersChanged and before every ledger read),
+ *                          so a row created early on Dec 31 moves once the
+ *                          facts say March 31.
  *
  * Installs itself as the ledger reader's follow-up (setGlAfterLedgersChanged).
  */
@@ -24,7 +30,8 @@ import { loadGlContext } from "./context";
 import { planTraces, syncFingerprint, type NormLike } from "./traces";
 import { proposeUnlocked, recomputeTraces, type AiMode } from "./match-run";
 import { tieOutFor } from "./tie-out";
-import { setGlAfterLedgersChanged } from "./ingest";
+import { setGlAfterLedgersChanged, setGlFollowFiscalYearEnd } from "./ingest";
+import { fiscalYearEndFor } from "./fiscal";
 
 /** The analysis the CIM uses, as traces read it. */
 export async function analysisForTraces(dealId: string): Promise<{ id: string; updatedAt: unknown; normalization: NormLike | null } | null> {
@@ -79,9 +86,37 @@ async function syncUnlocked(dealId: string, force = false): Promise<{ changed: s
   return { changed, synced: true };
 }
 
+/** The fiscal-year end the deal's facts and statements give now (D26). */
+async function derivedFiscalYearEnd(dealId: string): Promise<string> {
+  const [deal, docs] = await Promise.all([storage.getDeal(dealId), storage.getDocumentsByDeal(dealId)]);
+  return fiscalYearEndFor(deal, docs);
+}
+
+/**
+ * While the broker hasn't set it, the fiscal-year end follows the facts and
+ * statements: when they now say otherwise, every entry and link moves years
+ * and everything is worked out again (inside the lock). True when it moved.
+ */
+async function followFiscalYearEndUnlocked(dealId: string): Promise<boolean> {
+  const tr = await glStore().getTracing(dealId);
+  if (!tr || tr.fiscalYearEndByBroker) return false;
+  const derived = await derivedFiscalYearEnd(dealId);
+  if (derived === tr.fiscalYearEnd) return false;
+  console.log(`[gl] ${dealId}: fiscal year end follows the facts — ${tr.fiscalYearEnd} → ${derived}`);
+  await changeFyeUnlocked(dealId, derived);
+  return true;
+}
+
+/** The same, taking the lock (before a ledger is read — ingest.ts calls it through its hook). */
+export async function followFiscalYearEnd(dealId: string): Promise<boolean> {
+  return withGlLock(dealId, () => followFiscalYearEndUnlocked(dealId));
+}
+
 /** Brings the deal's add-backs, proposals, reconciliation and tie-out up to date. Fingerprint-skipped when nothing changed. */
 export async function refreshGl(dealId: string, opts: { force?: boolean } = {}): Promise<{ synced: boolean; changed: string[] }> {
   return withGlLock(dealId, async () => {
+    // A fiscal-year end the facts have overtaken moves first (it re-syncs everything itself).
+    if (await followFiscalYearEndUnlocked(dealId)) return { synced: true, changed: [] };
     const { changed, synced } = await syncUnlocked(dealId, opts.force);
     if (!synced) return { synced, changed };
     const c = await loadGlContext(dealId);
@@ -95,6 +130,7 @@ export async function refreshGl(dealId: string, opts: { force?: boolean } = {}):
 /** A ledger became ready / was removed / changed audience: proposals for every add-back, then the numbers. */
 export async function afterLedgersChanged(dealId: string, info: { ledgerId: string; uploadedBy: string; change: "ready" | "removed" }): Promise<void> {
   await withGlLock(dealId, async () => {
+    await followFiscalYearEndUnlocked(dealId);
     await syncUnlocked(dealId);
     const c = await loadGlContext(dealId);
     const ai: AiMode = info.change === "ready" ? (info.uploadedBy === "seller" ? "seller" : "broker") : "none";
@@ -104,23 +140,39 @@ export async function afterLedgersChanged(dealId: string, info: { ledgerId: stri
   });
 }
 
-/** The fiscal-year end changed (D26): rows and links move years, proposals go and come back, all in one go. */
+/** Rows and links move years, proposals go and come back, all in one go (inside the lock). */
+async function changeFyeUnlocked(dealId: string, fye: string): Promise<void> {
+  const store = glStore();
+  await loadGlContext(dealId); // makes sure the tracing row exists
+  await store.changeFiscalYearEnd(dealId, fye);
+  // Each ledger's year summaries follow its entries.
+  const { recomputeLedgerYears } = await import("./ledger-years");
+  await recomputeLedgerYears(dealId, fye);
+  await syncUnlocked(dealId, true);
+  const c = await loadGlContext(dealId);
+  await proposeUnlocked(dealId, null, { ai: "none", force: true }, c);
+  await recomputeTraces(dealId, null, c);
+  await tieOutFor(dealId, c).catch(() => undefined);
+}
+
+/**
+ * The broker set the fiscal-year end (D26): it sticks from now on. "auto"
+ * hands it back to the facts and statements. Returns the end in use.
+ */
 export async function changeFiscalYearEnd(dealId: string, value: string): Promise<string> {
-  const fye = normaliseFiscalYearEnd(value);
-  if (!fye) throw Object.assign(new Error("Pick a valid fiscal year end (month and day)."), { status: 400 });
+  const auto = value === "auto";
+  const fye = auto ? null : normaliseFiscalYearEnd(value);
+  if (!auto && !fye) throw Object.assign(new Error("Pick a valid fiscal year end (month and day)."), { status: 400 });
   return withGlLock(dealId, async () => {
     const store = glStore();
     await loadGlContext(dealId); // makes sure the tracing row exists
-    await store.changeFiscalYearEnd(dealId, fye);
-    // Each ledger's year summaries follow its entries.
-    const { recomputeLedgerYears } = await import("./ledger-years");
-    await recomputeLedgerYears(dealId, fye);
-    await syncUnlocked(dealId, true);
-    const c = await loadGlContext(dealId);
-    await proposeUnlocked(dealId, null, { ai: "none", force: true }, c);
-    await recomputeTraces(dealId, null, c);
-    await tieOutFor(dealId, c).catch(() => undefined);
-    return fye;
+    await store.updateTracing(dealId, { fiscalYearEndByBroker: !auto } as Partial<import("@shared/schema").GlTracing>);
+    if (auto) {
+      await followFiscalYearEndUnlocked(dealId);
+    } else if ((await store.getTracing(dealId))?.fiscalYearEnd !== fye) {
+      await changeFyeUnlocked(dealId, fye!);
+    }
+    return (await store.getTracing(dealId))?.fiscalYearEnd ?? fye ?? "12-31";
   });
 }
 
@@ -130,3 +182,4 @@ export async function recomputeAfterWrite(dealId: string, traceIds: string[] | n
 }
 
 setGlAfterLedgersChanged(afterLedgersChanged);
+setGlFollowFiscalYearEnd(followFiscalYearEnd);

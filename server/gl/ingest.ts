@@ -127,6 +127,12 @@ export interface GlIngestDeps {
    * null (couldn't map it / no budget / an outage → "needs columns").
    */
   mapColumns: null | ((ledger: GlLedger, sample: import("@shared/gl-types").GlRawRow[]) => Promise<GlLayout | "not_ledger" | null>);
+  /**
+   * Before a ledger is read: a fiscal-year end the deal's facts have overtaken
+   * (and the broker never set) moves, with every entry and link already on
+   * file (service.ts followFiscalYearEnd; takes the GL lock). null = none installed.
+   */
+  followFiscalYearEnd: null | ((dealId: string) => Promise<boolean>);
   now(): Date;
 }
 
@@ -163,6 +169,7 @@ function deps(): GlIngestDeps {
     releaseNonGlRequirements: async (dealId, docId) => (await import("../documents/requirements")).releaseRequirementsFor(dealId, docId),
     afterLedgersChanged: async () => undefined,
     mapColumns: null,
+    followFiscalYearEnd: null,
     now: () => new Date(),
   };
   return depsOverride ? { ...base, ...depsOverride } : base;
@@ -178,6 +185,11 @@ let mapColumnsHook: GlIngestDeps["mapColumns"] = null;
 export function setGlColumnMapper(fn: GlIngestDeps["mapColumns"]): void {
   mapColumnsHook = fn;
 }
+/** service.ts installs "the fiscal-year end follows the facts" here (kept out of this file: it moves rows and re-runs everything). */
+let followFyeHook: GlIngestDeps["followFiscalYearEnd"] = null;
+export function setGlFollowFiscalYearEnd(fn: GlIngestDeps["followFiscalYearEnd"]): void {
+  followFyeHook = fn;
+}
 
 function effectiveDeps(): GlIngestDeps {
   const d = deps();
@@ -185,17 +197,26 @@ function effectiveDeps(): GlIngestDeps {
     ...d,
     afterLedgersChanged: depsOverride?.afterLedgersChanged ?? afterChangedHook ?? d.afterLedgersChanged,
     mapColumns: depsOverride && "mapColumns" in depsOverride ? depsOverride.mapColumns! : mapColumnsHook,
+    followFiscalYearEnd: depsOverride && "followFiscalYearEnd" in depsOverride ? depsOverride.followFiscalYearEnd! : followFyeHook,
   };
 }
 
 // ── The deal's tracing row (fiscal-year end) ─────────────────────────────
 
-/** The deal's fiscal-year end (creating the deal's tracing row the first time). */
+/**
+ * The deal's fiscal-year end (creating the deal's tracing row the first
+ * time). Until the broker sets it, it follows the facts and statements: a row
+ * created early on the Dec 31 default moves (with every entry and link on
+ * file) once the facts say otherwise — checked here, before every read.
+ */
 export async function dealFiscalYearEnd(dealId: string, d: GlIngestDeps = effectiveDeps()): Promise<string> {
-  const existing = await d.store.getTracing(dealId);
-  if (existing) return existing.fiscalYearEnd;
-  const [deal, docs] = await Promise.all([d.getDeal(dealId), d.getDocumentsByDeal(dealId)]);
-  return (await d.store.ensureTracing(dealId, fiscalYearEndFor(deal, docs))).fiscalYearEnd;
+  const [existing, deal, docs] = await Promise.all([d.store.getTracing(dealId), d.getDeal(dealId), d.getDocumentsByDeal(dealId)]);
+  const derived = fiscalYearEndFor(deal, docs);
+  if (!existing) return (await d.store.ensureTracing(dealId, derived)).fiscalYearEnd;
+  if (existing.fiscalYearEndByBroker || existing.fiscalYearEnd === derived) return existing.fiscalYearEnd;
+  if (!d.followFiscalYearEnd) return existing.fiscalYearEnd; // the entries on file can't be moved here — leave it
+  await d.followFiscalYearEnd(dealId);
+  return (await d.store.getTracing(dealId))?.fiscalYearEnd ?? existing.fiscalYearEnd;
 }
 
 // ── The hook ─────────────────────────────────────────────────────────────
@@ -573,7 +594,14 @@ export async function ingestLedger(ledgerId: string): Promise<void> {
       const otherYears = others
         .filter((l) => l.id !== ledger!.id && l.status === "ready")
         .flatMap((l) => Object.keys((l.years as Record<string, GlYearSummary> | null) ?? {}));
+      let fyeMoved: string | null = null;
       await withGlLock(ledger!.dealId, async () => {
+        // The fiscal-year end moved while this file was read (the facts changed): its entries follow.
+        const fyeNow = (await d.store.getTracing(ledger!.dealId))?.fiscalYearEnd ?? fye;
+        if (fyeNow !== fye) {
+          await d.store.changeFiscalYearEnd(ledger!.dealId, fyeNow);
+          fyeMoved = fyeNow;
+        }
         // This file's copies of entries already in an earlier ready file are marked first…
         await d.store.recomputeDuplicates(ledger!.dealId);
         const duplicates = await d.store.countDuplicates(ledger!.id);
@@ -612,6 +640,7 @@ export async function ingestLedger(ledgerId: string): Promise<void> {
         // …then, with this one ready, a later-created file read before it is marked against it too.
         await d.store.recomputeDuplicates(ledger!.dealId);
         await refreshDuplicateCounts(d, ledger!.dealId);
+        if (fyeMoved) await (await import("./ledger-years")).recomputeLedgerYears(ledger!.dealId, fyeMoved);
       });
       const fresh = (await d.store.getLedger(ledger!.id))!;
 
