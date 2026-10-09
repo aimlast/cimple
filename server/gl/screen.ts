@@ -64,15 +64,55 @@ export function screenForBuyersWith(
 const TREATMENT_RE = /\b(?:ebitda|sde|seller'?s discretionary|discretionary earnings|market (?:salary|wage|rate|replacement|compensation|pay)|replacement cost|added back for|add(?:ed)?[- ]?backs? (?:for|to|of)|counts? (?:for|toward|towards|as)|normali[sz]|recast|adjusted (?:earnings|net income)|the difference|excess (?:pay|compensation|salary)|treated as)\b/i;
 const OWNER_PLAN_RE = /\b(?:plans?|planning|intends?|intending|intention|wants?|wishes|hopes?|expects?) to\b|\b(?:retir(?:e|es|ing|ement)|exit(?:s|ing)?|step(?:s|ping)? (?:back|down|away)|succession|post[- ]?(?:sale|closing|close)|after (?:the )?(?:sale|closing|close)|transition period|stay(?:s|ing)? on|will (?:stay|remain|leave|retire|exit|work))\b/i;
 
+/**
+ * Why someone was let go — an employee's conduct or performance, identified
+ * by name OR by role ("dispatcher terminated for cause"). The staff-private
+ * screen holds named staff only; a default reason must not carry it either
+ * (checker r2 GL-R2-07). The claim itself stays: "wrongful dismissal claim",
+ * "wrongful termination settlement" name the company's legal matter.
+ */
+const LET_GO_RE = /\b(?:terminated|fired|dismissed|let go|discharged|sacked)\b/i;
+const CONDUCT_RE = /\bfor[- ]cause\b|\bmisconduct\b|\b(?:poor|under)[- ]?perform\w*|\bperformance (?:issues?|problems?|concerns?|reasons?|grounds)\b|\binsubordinat\w*|\bharass\w*|\bdisciplin\w*|\bintoxicat\w*|\b(?:theft|stealing|stole)\b/i;
+const STAFF_WORD_RE = /\b(?:employees?|staff|workers?|hires?|dispatchers?|drivers?|managers?|technicians?|techs?|clerks?|assistants?|bookkeepers?|supervisors?|foremen|foreman|apprentices?|receptionists?|hygienists?|pharmacists?|nurses?|cooks?|servers?|he|she|him|her|they)\b/i;
+const withoutClaimWords = (part: string) => part.replace(/\bwrongful(?:ly)?\s+(?:dismiss\w*|terminat\w*|discharg\w*)/gi, " ");
+/** Says why someone was let go (for cause, theft, poor performance …). */
+function conduct(part: string): boolean {
+  const p = withoutClaimWords(part);
+  return /\bfor[- ]cause\b/i.test(p) || (CONDUCT_RE.test(p) && STAFF_WORD_RE.test(p));
+}
+/** An aside about someone being let go or why — dropped wherever it sits beside the reason. */
+function letGoAside(part: string): boolean {
+  return LET_GO_RE.test(withoutClaimWords(part)) || conduct(part);
+}
+/**
+ * A clause without its trailing aside (after a comma or a dash) about someone
+ * being let go ("Settlement with a former driver, who was fired for theft" →
+ * "Settlement with a former driver"). A clause that is itself about conduct
+ * goes (null); one that only mentions a departure ("Severance paid to an
+ * employee let go in 2023") stays.
+ */
+function withoutConductTail(clause: string): string | null {
+  if (!letGoAside(clause)) return clause;
+  const seps = Array.from(clause.matchAll(/\s*,\s*|\s+[—–-]\s+/g)).map((m) => m.index ?? 0).reverse();
+  for (const at of seps) {
+    const head = clause.slice(0, at).trim();
+    if (head && !letGoAside(head)) return head;
+  }
+  return conduct(clause) ? null : clause;
+}
+
 export function stripWorkingNotes(text: string | null | undefined): string {
   const raw = (text ?? "").trim();
   if (!raw) return "";
   const keep = (part: string) => !TREATMENT_RE.test(part) && !OWNER_PLAN_RE.test(part);
   return raw
+    // An aside in brackets about why someone was let go goes first ("(dispatcher terminated for cause in 2024)").
+    .replace(/\s*\(([^()]*)\)/g, (m, inner: string) => (letGoAside(inner) ? "" : m))
     .split(/(?<=[.!?])\s+/)
     .map((sentence) => {
       // Clause by clause ("…; the market salary is added back for SDE only."), the rest of the sentence kept.
-      const clauses = sentence.replace(/[.!?]+$/, "").split(/\s*;\s*/).map((c) => c.trim()).filter(Boolean);
+      const clauses = sentence.replace(/[.!?]+$/, "").split(/\s*;\s*/).map((c) => c.trim()).filter(Boolean)
+        .map(withoutConductTail).filter((c): c is string => !!c);
       const kept = clauses.filter(keep);
       if (kept.length === 0) return "";
       const text = kept.join("; ");

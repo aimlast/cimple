@@ -44,6 +44,9 @@ await test("proof, seller label, hint and share per add-back (pure)", () => {
   assert.equal(sellerHintFor({ label: "Owner compensation", category: "owner_comp", ownerPay: true }, "payroll", "CA"), "Your T4 slips or year-end payroll summary");
   assert.equal(sellerHintFor({ label: "Owner compensation", category: "owner_comp", ownerPay: true }, "payroll", "US"), "Your W-2 forms or year-end payroll summary");
   assert.equal(sellerHintFor({ label: "Related party salary - Maria Moretti (spouse)", category: "discretionary", ownerPay: false }, "payroll", "CA"), "Maria's T4 slips or year-end payroll summary");
+  // GL-R2-05: a club membership with entertainment is club dues, not a restaurant bill.
+  assert.equal(sellerHintFor({ label: "Golf club dues and entertainment", category: "discretionary", ownerPay: false }, "ledger"), "Membership dues and club charges");
+  assert.equal(sellerHintFor({ label: "Meals & entertainment (50% personal use estimate)", category: "discretionary", ownerPay: false }, "ledger"), "Restaurant and entertainment charges");
   assert.deepEqual(shareFor({ label: "Meals & entertainment (50% personal use estimate)", description: "", category: "discretionary" }), { pct: 50, basis: "estimate" });
   assert.equal(shareFor({ label: "Owner compensation", description: "50% personal", category: "owner_comp" }, true), null);
 });
@@ -263,6 +266,23 @@ await test("a payroll-provider ledger (one 'Wagepoint' line per pay run): no pay
   assert.equal(owner.proof, "payroll", "pay slips are asked for first");
 });
 cleanup(P.w);
+
+// ── Fixer round 2 (GL-R2-07): the offered reason never says why someone was let go ──
+
+await test("GL-R2-07: an employee's conduct or dismissal — by name or by role — is cut from the offered reason; the claim itself stays", async () => {
+  const { stripWorkingNotes, buyerReasonFor } = await import("../../server/gl/screen");
+  // Pacific's seed (checker r2): the parenthesis goes, the settlement stays.
+  assert.equal(buyerReasonFor("One-time settlement of $55,000 for wrongful dismissal claim (dispatcher terminated for cause in 2024).", {}), "One-time settlement of $55,000 for wrongful dismissal claim.");
+  assert.equal(stripWorkingNotes("Legal settlement with a former driver, who was fired for theft."), "Legal settlement with a former driver.");
+  assert.equal(stripWorkingNotes("Settlement paid in 2023 — the technician was let go for poor performance."), "Settlement paid in 2023.");
+  assert.equal(stripWorkingNotes("One-time legal fees; the bookkeeper was dismissed for misconduct; not expected to recur."), "One-time legal fees; not expected to recur.");
+  assert.equal(stripWorkingNotes("Employee terminated for cause after harassment complaints."), "", "a reason that is only the conduct offers nothing");
+  // The company's claim, a benign departure, a supplier's fraud: kept.
+  assert.equal(stripWorkingNotes("Wrongful termination settlement paid in 2024; non-recurring."), "Wrongful termination settlement paid in 2024; non-recurring.");
+  assert.equal(stripWorkingNotes("Severance paid to an employee let go in 2023 when the route closed."), "Severance paid to an employee let go in 2023 when the route closed.");
+  assert.equal(stripWorkingNotes("One-time loss from a supplier's invoice fraud (reported to police)."), "One-time loss from a supplier's invoice fraud (reported to police).");
+  assert.equal(stripWorkingNotes("Owner's golf club dues (personal)."), "Owner's golf club dues (personal).");
+});
 
 // ── Fixer round 1 (GL-R1-06): "Why it's added back" is never the analyst's working notes ──
 

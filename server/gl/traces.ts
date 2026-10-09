@@ -196,9 +196,10 @@ export function sellerHintFor(a: Pick<TraceCandidate, "label" | "category" | "ow
   }
   if (proof === "one_off") return "The payment, and the letter or invoice";
   if (/\b(vehicle|auto|car|truck|fuel|lease)\b/.test(l)) return "Fuel, insurance, lease or loan payments and repairs for the vehicle(s)";
+  // Club dues before meals: "Golf club dues and entertainment" is a membership, not a restaurant bill.
+  if (/\b(golf|club|membership|dues)\b/.test(l)) return "Membership dues and club charges";
   if (/\b(meal|meals|entertain\w*|restaurant)\b/.test(l)) return "Restaurant and entertainment charges";
   if (/\binsurance\b/.test(l)) return "The premium payments for this policy";
-  if (/\b(golf|club|membership|dues)\b/.test(l)) return "Membership dues and club charges";
   if (/\bconsult\w*/.test(l)) return "The consultant's invoices";
   return "The entries that make up this cost";
 }
