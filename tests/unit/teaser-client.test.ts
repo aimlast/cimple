@@ -12,7 +12,7 @@ import "./react-global";
 import { TEASER_PAGE_SIZES, validateTeaserLayout, isTeaserLayout, type TeaserBlock, type TeaserDoc } from "../../shared/teaser";
 import { TEASER_TEMPLATES } from "../../shared/teaser-templates";
 import { pageBox, paginateTeaser, printedPageCount, fitSentence, linesFor } from "../../client/src/components/teaser/paginate";
-import { blockName, draftSections, heldSentence, pinpointSentence, CHECK_LINE, FALLBACK_FILL } from "../../client/src/components/teaser/draft-view";
+import { blockName, checkSummary, draftSections, heldSentence, pinpointSentence, CHECK_LINE, FALLBACK_FILL } from "../../client/src/components/teaser/draft-view";
 import { requestBanner } from "../../client/src/components/buyer/TeaserView";
 import { matchesTeaserFilter, teaserNextLine, teaserReadLine, grantNoun } from "../../client/src/components/deal/buyers/HaveTeaserStage";
 import { moveQuestion } from "../../client/src/components/cim-builder/AccessLevelSelect";
@@ -20,8 +20,8 @@ import { attentionNoteGroups, groupSummary } from "../../client/src/components/c
 import { classifyGenerationWarnings } from "../../shared/cim-generation-warnings";
 import { publishButtonState } from "../../client/src/components/teaser/TeaserPublishDialog";
 import { sampleTeaser } from "../../client/src/components/teaser/samples";
-import { printFooterText } from "../../client/src/pages/TeaserPrintPreview";
-import { fillTeaserTokens, teaserFill } from "../../shared/teaser-view";
+import { printFooterText, sectionsForPaper } from "../../client/src/pages/TeaserPrintPreview";
+import { chipsBesideTagline, fillTeaserTokens, teaserFill } from "../../shared/teaser-view";
 import { tileLinesFor } from "../../client/src/pages/broker/deal/cim-tab-slots";
 
 let passed = 0;
@@ -119,6 +119,50 @@ test("the check wording: held / pinpoint / the check line", () => {
   assert.equal(pinpointSentence("the only"), "“the only” may let someone recognise the business. Buyers will see it — reword it if it's too specific.");
   assert.equal(CHECK_LINE, "No names, places or contacts found");
   assert.ok(!/anonymous ✓/i.test(CHECK_LINE));
+});
+
+test("the Teaser tab's summary: the green tick only when nothing is held and the header is clean (never above a red line)", () => {
+  const doc: TeaserDoc = { header: { label: "CONFIDENTIAL OPPORTUNITY", tagline: "HVAC", chips: [] }, blocks: [block({ id: "ov", slot: "overview", title: "The business" }), block({ id: "hl", slot: "highlights", title: "Highlights" })] };
+  const ok = { blockId: "ov", held: false, reason: null, leaks: [], pinpoint: [], layoutProblem: null, sample: false };
+  const clean = checkSummary(doc, [ok, { ...ok, blockId: "hl" }], null);
+  assert.deepEqual([clean.clean, clean.header, clean.held], [true, null, null]);
+  // The checker's case: a block naming the business — no tick, the red line leads and says why.
+  const named = checkSummary(doc, [{ ...ok, held: true, reason: "it names “Lakeshore Home Comfort” (the business's name)", leaks: ["Lakeshore Home Comfort"] }, { ...ok, blockId: "hl" }], null);
+  assert.equal(named.clean, false);
+  assert.equal(named.held!.sentence, "1 block names something that could identify the business, so buyers won't see it: The business. Open it in the editor to reword.");
+  // Sample text / a layout problem: held back, worded as such.
+  const sample = checkSummary(doc, [ok, { ...ok, blockId: "hl", sample: true }], null);
+  assert.equal(sample.clean, false);
+  assert.match(sample.held!.sentence, /^1 block is held back from buyers: Highlights/);
+  // The header naming the business: no tick either.
+  const header = checkSummary(doc, [ok, { ...ok, blockId: "hl" }], "The header names “Lakeshore”.");
+  assert.equal(header.clean, false);
+  assert.match(header.header!, /buyers see a plain header instead/);
+  // A hidden block the broker took off isn't counted.
+  const hidden = checkSummary({ ...doc, blocks: [doc.blocks[0], { ...doc.blocks[1], hidden: true }] }, [ok, { ...ok, blockId: "hl", held: true, reason: "x" }], null);
+  assert.equal(hidden.clean, true);
+});
+
+test("on paper the 'ask from this page' step names the firm and its contact; the Questions line goes", () => {
+  const sec = { id: "n", dealId: "D", sectionKey: "s_n", sectionTitle: "Interested?", order: 0, layoutType: "numbered_list", aiDraftContent: null, brokerEditedContent: null, isVisible: true,
+    layoutData: { ordered: true, items: [{ title: "Ask for the CIM from this page" }, { title: "Confirm your email, tell us about you and sign the NDA online" }, { title: "Brassline reviews your request and opens the CIM for you" }], note: "Questions? Morgan Ellis · morgan@brassline.invalid" } } as never;
+  const [p] = sectionsForPaper([sec], { firm: "Brassline Advisory Partners", name: "Morgan Ellis", email: "morgan@brassline.invalid", phone: null });
+  const d = p.layoutData as { items: Array<{ title: string }>; note?: string };
+  assert.equal(d.items[0].title, "Ask Brassline Advisory Partners for the CIM: Morgan Ellis · morgan@brassline.invalid");
+  assert.equal(d.items.length, 3);
+  assert.equal(d.note, undefined, "the contact is in the step now");
+  // No contact on file: the firm only, and the Questions line stays as it was.
+  const [q] = sectionsForPaper([sec], { firm: "Brassline Advisory Partners", name: null, email: null, phone: null });
+  assert.equal((q.layoutData as { items: Array<{ title: string }> }).items[0].title, "Ask Brassline Advisory Partners for the CIM");
+  // Other lists are untouched.
+  const other = { ...(sec as object), layoutData: { items: [{ title: "Add a second terminal" }] } } as never;
+  assert.equal(sectionsForPaper([other], { firm: "X", name: null, email: null, phone: null })[0], other);
+});
+
+test("the header: a chip that only repeats the one-line description is dropped", () => {
+  assert.deepEqual(chipsBesideTagline(["Home Services", "Ontario", "Established 20+ years"], "Home Services"), ["Ontario", "Established 20+ years"]);
+  assert.deepEqual(chipsBesideTagline(["Home Services", "Ontario"], "A trusted HVAC contractor"), ["Home Services", "Ontario"]);
+  assert.deepEqual(chipsBesideTagline(["Home Services"], ""), ["Home Services"]);
 });
 
 console.log("buyers");

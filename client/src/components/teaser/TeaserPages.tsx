@@ -190,9 +190,14 @@ export function TeaserPages(props: TeaserPagesProps) {
       return header ? <TeaserHeader header={header} warning={!measuring && mode === "editor" ? headerWarning : null} /> : null;
     }
     const s = forRenderer(section);
+    // "Interested?": the contact is a plain line under the numbered steps, never a step of its own.
+    const note = section.layoutType === "numbered_list" && typeof (section.layoutData as { note?: unknown } | null)?.note === "string"
+      ? ((section.layoutData as { note: string }).note).trim()
+      : "";
     return (
       <CimBlockScope pageId={id}>
         <CimSectionRenderer section={s} branding={branding} hideTitle={!section.sectionTitle} />
+        {note && <p className="mt-3 pl-12 text-xs leading-relaxed text-muted-foreground" data-testid="teaser-next-step-note">{note}</p>}
       </CimBlockScope>
     );
   };

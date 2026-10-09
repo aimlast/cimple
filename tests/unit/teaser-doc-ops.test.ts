@@ -165,7 +165,7 @@ async function main() {
     assert.throws(() => ops.addCellLine(many, opp.id, "One more", "x"), /8 lines/);
   });
 
-  await check("template start (no AI): the facts' lines in fixed words, and an empty column can be given lines", () => {
+  await check("template start (no AI): the facts' lines in fixed words, and an empty column can be given lines", async () => {
     const facts = kn.figuresFrom({
       deal: { industry: "HVAC services" },
       info: {
@@ -195,6 +195,16 @@ async function main() {
     assert.equal(kn.reasonForSalePhrase("Partners in a dispute"), null);
     assert.equal(kn.financingPhrase("No vendor financing"), null);
     assert.equal(kn.transitionPhrase("Owner will not stay on"), null);
+    // "Interested?": three numbered steps, the contact as a plain line under them (not step 04).
+    const next = doc.blocks.find((b) => b.slot === "next_step")!;
+    assert.deepEqual((next.layoutData.items as Array<{ title: string }>).map((i) => i.title), ["Ask for the CIM from this page", "Confirm your email, tell us about you and sign the NDA online", "{firm} reviews your request and opens the CIM for you"]);
+    assert.equal(next.layoutData.note, "Questions? {contact}");
+    // The header without the AI: the tagline is the industry, so the industry chip goes.
+    const { assembleHeader } = await import("../../server/teaser/generate");
+    const h = assembleHeader(facts, null);
+    assert.equal(h.tagline, "HVAC services");
+    assert.ok(!h.chips.includes("HVAC services"), JSON.stringify(h.chips));
+    assert.ok(h.chips.includes("Ontario"));
     const bare = kn.figuresFrom({ deal: { industry: "HVAC services" }, info: { annualRevenue: "$4,800,000" }, canon: null, askingPrice: null });
     const empty = assembleTeaserDoc({ def: TEASER_TEMPLATES.one_page, figures: bare, numbers: "ranges", showAskingPrice: true, wording: {}, written: null });
     const eo = empty.blocks.find((b) => b.slot === "opportunity")!;

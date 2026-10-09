@@ -96,8 +96,14 @@ export function checkTeaserDoc(doc: TeaserDoc | null | undefined, terms: BlindTe
 export function servedHeader(header: TeaserHeader | null, codename: string, terms: BlindTerm[], industry: string | null | undefined): ServedTeaserHeader {
   const label = header?.label && guardTeaserText(header.label, terms).ok ? header.label : DEFAULT_TEASER_WORDING.label;
   const tagline = header?.tagline && guardTeaserText(header.tagline, terms).ok ? header.tagline : industry && guardTeaserText(industry, terms).ok ? industry : "";
-  const chips = (header?.chips ?? []).filter((c) => typeof c === "string" && c.trim() && guardTeaserText(c, terms).ok).slice(0, 5);
+  const chips = chipsBesideTagline((header?.chips ?? []).filter((c) => typeof c === "string" && c.trim() && guardTeaserText(c, terms).ok), tagline).slice(0, 5);
   return { label, codename, tagline, chips };
+}
+
+/** The chips without one that only repeats the one-line description (an industry tagline and the industry chip). */
+export function chipsBesideTagline(chips: string[], tagline: string | null | undefined): string[] {
+  const t = (tagline ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  return t ? chips.filter((c) => c.replace(/\s+/g, " ").trim().toLowerCase() !== t) : chips;
 }
 
 export interface TeaserFill {

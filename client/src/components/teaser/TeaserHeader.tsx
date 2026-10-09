@@ -11,6 +11,7 @@
 import { useBlockAttrs, usePageAttrs } from "@/components/cim/blocks";
 import { useCimDesign, useCimTheme } from "@/components/cim/CimDesignContext";
 import { cn } from "@/lib/utils";
+import { chipsBesideTagline } from "@shared/teaser-view";
 
 export const TEASER_HEADER_PAGE_ID = "teaser_header";
 
@@ -28,6 +29,8 @@ export function TeaserHeader({ header, className, warning }: { header: TeaserHea
   const ba = useBlockAttrs();
   const logo = design.brokerage.logoUrl;
   const firm = design.brokerage.firmName;
+  // An industry tagline and the industry chip would say it twice.
+  const chips = chipsBesideTagline(header.chips, header.tagline);
   return (
     <div className={cn("cim-doc relative", className)} {...pageAttrs} data-teaser-header="">
       <div {...ba("heading")}>
@@ -49,9 +52,9 @@ export function TeaserHeader({ header, className, warning }: { header: TeaserHea
         {header.tagline && (
           <p className="mt-2 text-[14px] leading-snug max-w-[60ch]" style={{ color: theme.inkSoft }}>{header.tagline}</p>
         )}
-        {header.chips.length > 0 && (
+        {chips.length > 0 && (
           <div className="mt-2.5 flex flex-wrap gap-1.5">
-            {header.chips.map((c, i) => (
+            {chips.map((c, i) => (
               <span
                 key={`${c}-${i}`}
                 className="rounded-full px-2.5 py-1 text-[11px] font-medium"

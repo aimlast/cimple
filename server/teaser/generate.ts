@@ -36,7 +36,7 @@ import {
 } from "@shared/teaser";
 import { figuresOutsideAllowed, guardTeaserText, pinpointWarnings, processWordsIn } from "@shared/teaser-guard";
 import { DEFAULT_TEASER_WORDING, TEASER_TEMPLATES, templateDef, withCodenameFilled, type TeaserSlotDef, type TeaserTemplateDef } from "@shared/teaser-templates";
-import { NO_CODENAME } from "@shared/teaser-view";
+import { NO_CODENAME, chipsBesideTagline } from "@shared/teaser-view";
 import { isBuiltInTeaserTemplate } from "@shared/teaser";
 import { agentConfig } from "../interview/config/load-config";
 import { withAiRetry, describeAiFailure } from "../ai-retry";
@@ -436,10 +436,16 @@ function placeholderFor(slot: TeaserSlotDef, at: string, id?: string): TeaserBlo
   return block(slot, empty, { at, id, hidden: true, placeholder: true, origin: "ai", body: slot.layoutType === "prose_highlight" ? "" : null });
 }
 
+/** The numbered steps (the contact goes on a plain line under them — `nextStepData`). */
 function nextStepItems(wording: TeaserWording, def: TeaserTemplateDef): Array<{ title: string }> {
   const custom = (def.fixedText?.next_step ?? wording.nextStep ?? "").trim();
   const lines = custom ? custom.split(/\n+/).map((l) => l.trim()).filter(Boolean) : [...DEFAULT_TEASER_WORDING.nextStep];
-  return [...lines, DEFAULT_TEASER_WORDING.contactLine].map((title) => ({ title }));
+  return lines.filter((l) => !/^questions\?/i.test(l)).map((title) => ({ title }));
+}
+
+/** The "Interested?" block: the numbered steps, then "Questions? {contact}" as a plain line (not a step). */
+export function nextStepData(wording: TeaserWording, def: TeaserTemplateDef): Record<string, unknown> {
+  return { items: nextStepItems(wording, def), ordered: true, note: DEFAULT_TEASER_WORDING.contactLine };
 }
 
 const lines = (list: string[]) => list.filter(Boolean).join("\n");
@@ -533,7 +539,7 @@ export function assembleTeaserDoc(input: AssembleInput): TeaserDoc {
         break;
       }
       case "next_step": {
-        blocks.push(block(slot, { items: nextStepItems(input.wording, def), ordered: true }, { at, id, origin: def.fixedText?.next_step ? "broker" : "fixed" }));
+        blocks.push(block(slot, nextStepData(input.wording, def), { at, id, origin: def.fixedText?.next_step ? "broker" : "fixed" }));
         break;
       }
       case "confidentiality": {
@@ -555,7 +561,8 @@ export function assembleTeaserDoc(input: AssembleInput): TeaserDoc {
 /** The header: label, the AI tagline (or the industry), chips from code. */
 export function assembleHeader(figures: TeaserFigures, written: GuardedOutput | null): TeaserHeader {
   const tagline = written && !written.failed.has("tagline") && written.out.tagline ? written.out.tagline : figures.industry ?? "";
-  return { label: DEFAULT_TEASER_WORDING.label, tagline, chips: headerChips(figures).slice(0, 5) };
+  // A tagline that is just the industry: the industry chip would say it twice.
+  return { label: DEFAULT_TEASER_WORDING.label, tagline, chips: chipsBesideTagline(headerChips(figures), tagline).slice(0, 5) };
 }
 
 // ── The gate before starting ──────────────────────────────────────────────

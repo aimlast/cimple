@@ -39,7 +39,7 @@ import { TeaserSettingsFields } from "./TeaserSettings";
 import { TeaserSellerCheck } from "./TeaserSellerCheck";
 import { TeaserPublishButton } from "./TeaserPublishDialog";
 import { SaveTeaserTemplateDialog } from "./SaveTeaserTemplateDialog";
-import { CHECK_HELP, CHECK_LINE, blockName, draftSections, heldBlocks, pinpointBlocks } from "./draft-view";
+import { CHECK_LINE, blockName, checkSummary, draftSections, pinpointBlocks } from "./draft-view";
 import { templateTargetPages } from "./template-order";
 import { fitSentence } from "./paginate";
 
@@ -187,7 +187,7 @@ function TeaserWritten({ dealId, api, state }: { dealId: string; api: TeaserApi;
   const design = useMemo(() => buildCimDesign(state.design ?? null, "blind"), [state.design]);
   const sections = useMemo(() => draftSections(t.draft, dealId, state.fill), [t.draft, dealId, state.fill]);
   const header = t.draft.header ? { ...t.draft.header, codename: t.codename } : null;
-  const held = heldBlocks(t.draft, t.checks);
+  const summary = checkSummary(t.draft, t.checks, t.headerProblem);
   const pin = pinpointBlocks(t.draft, t.checks);
   const visibleBlocks = t.draft.blocks.filter((b) => !b.hidden && !b.placeholder).length;
   const placeholders = t.draft.blocks.filter((b) => b.placeholder).length;
@@ -246,18 +246,25 @@ function TeaserWritten({ dealId, api, state }: { dealId: string; api: TeaserApi;
         </button>
 
         <div className="min-w-0 flex-1 space-y-3">
-          {/* The check line — always this wording; it never says "Anonymous ✓". */}
-          <div className="flex gap-2 text-xs" data-testid="teaser-check-summary">
-            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
-            <span><span className="text-foreground">{CHECK_LINE}.</span> <span className="text-muted-foreground">Check it doesn't describe the business so precisely that someone could recognise it.</span></span>
-          </div>
-          {held.length > 0 && (
+          {/* The check line: the green tick only when nothing is held and the header is clean (never "Anonymous ✓"). */}
+          {summary.clean && (
+            <div className="flex gap-2 text-xs" data-testid="teaser-check-summary">
+              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+              <span><span className="text-foreground">{CHECK_LINE}.</span> <span className="text-muted-foreground">Check it doesn't describe the business so precisely that someone could recognise it.</span></span>
+            </div>
+          )}
+          {summary.header && (
+            <div className="flex gap-2 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs" role="alert" data-testid="teaser-header-held-line">
+              <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400" />
+              <span className="min-w-0 flex-1">{summary.header}</span>
+              <button type="button" className="shrink-0 text-teal hover:underline" onClick={() => openEditor("header")}>Open it</button>
+            </div>
+          )}
+          {summary.held && (
             <div className="flex gap-2 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs" role="alert" data-testid="teaser-held-line">
               <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400" />
-              <span className="min-w-0 flex-1">
-                {held.length === 1 ? "1 block is held back" : `${held.length} blocks are held back`} from buyers: {held.map((b) => blockName(b)).join(", ")}. Open {held.length === 1 ? "it" : "them"} in the editor to reword.
-              </span>
-              <button type="button" className="shrink-0 text-teal hover:underline" onClick={() => openEditor(held[0].id)}>Open it</button>
+              <span className="min-w-0 flex-1">{summary.held.sentence}</span>
+              <button type="button" className="shrink-0 text-teal hover:underline" onClick={() => openEditor(summary.held!.blocks[0].id)}>Open it</button>
             </div>
           )}
           {placeholders > 0 && (

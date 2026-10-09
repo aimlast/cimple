@@ -96,6 +96,31 @@ export function heldBlocks(doc: TeaserDoc | null | undefined, checks: TeaserBloc
   return (doc?.blocks ?? []).filter((b) => !b.hidden && !b.placeholder && !!heldSentence(checkFor(checks, b.id)));
 }
 
+/**
+ * The Teaser tab's check summary. The green "No names, places or contacts
+ * found" shows only when nothing is held and the header is clean; otherwise
+ * the red lines lead (a tick above "1 block is held back" contradicted it).
+ */
+export function checkSummary(
+  doc: TeaserDoc | null | undefined,
+  checks: TeaserBlockCheck[] | null | undefined,
+  headerProblem: string | null | undefined,
+): { clean: boolean; header: string | null; held: { blocks: TeaserBlock[]; sentence: string } | null } {
+  const held = heldBlocks(doc, checks);
+  const header = headerProblem ? "The header names the business, so buyers see a plain header instead. Open the header in the editor to reword it." : null;
+  let sentence = "";
+  if (held.length > 0) {
+    const names = held.map((b) => blockName(b)).join(", ");
+    const n = held.length;
+    const it = n === 1 ? "it" : "them";
+    const allNaming = held.every((b) => checkFor(checks, b.id)?.held);
+    sentence = allNaming
+      ? `${n === 1 ? "1 block names" : `${n} blocks name`} something that could identify the business, so buyers won't see ${it}: ${names}. Open ${it} in the editor to reword.`
+      : `${n === 1 ? "1 block is held back" : `${n} blocks are held back`} from buyers: ${names}. Open ${it} in the editor to fix ${it}.`;
+  }
+  return { clean: held.length === 0 && !header, header, held: held.length > 0 ? { blocks: held, sentence } : null };
+}
+
 /** Visible blocks with pinpointing wording. */
 export function pinpointBlocks(doc: TeaserDoc | null | undefined, checks: TeaserBlockCheck[] | null | undefined): Array<{ block: TeaserBlock; phrases: string[] }> {
   return (doc?.blocks ?? [])

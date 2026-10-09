@@ -5,7 +5,8 @@
  * draft before it's published — GET …/teaser/preview), on true-size pages:
  * `@page { size: letter | A4; margin: 0 }`, one teaser page per printed page,
  * a buyer-safe footer "{Brokerage} · Confidential · {date}" on every page
- * (a printed copy may be handed to a buyer). Links stay the way buyers get
+ * (a printed copy may be handed to a buyer). The "ask from this page" step
+ * becomes "Ask {firm} for the CIM: {contact}" (sectionsForPaper). Links stay the way buyers get
  * the teaser — there is no PDF download (CLAUDE.md: export strategy TBD).
  */
 import { useMemo, useState } from "react";
@@ -19,6 +20,29 @@ import { buildCimDesign } from "@/components/cim/CimDesignContext";
 import { cn } from "@/lib/utils";
 import { TeaserPages } from "@/components/teaser/TeaserPages";
 import { teaserPreviewKey, teaserRequest, type TeaserPreviewPayload } from "@/components/teaser/api";
+import { contactLine, type TeaserContact } from "@shared/teaser-view";
+import type { BuyerSection } from "@shared/cim-buyer-view";
+
+/**
+ * On paper there's no page to ask from: the "Ask for the CIM from this page"
+ * step becomes "Ask {firm} for the CIM: {contact}" (and the separate
+ * "Questions?" line goes, since the step now carries the contact).
+ */
+export function sectionsForPaper(sections: BuyerSection[], contact: TeaserContact): BuyerSection[] {
+  const firm = contact.firm?.trim() || "the broker";
+  const line = contactLine(contact);
+  const withContact = !!line && line !== contact.firm?.trim();
+  return sections.map((s) => {
+    if (s.layoutType !== "numbered_list") return s;
+    const d = (s.layoutData ?? {}) as { items?: Array<{ title?: string; description?: string }>; note?: string };
+    const items = Array.isArray(d.items) ? d.items : [];
+    const i = items.findIndex((it) => /\bfrom this page\b/i.test(it?.title ?? ""));
+    if (i < 0) return s;
+    const ask = `Ask ${firm} for the CIM${withContact ? `: ${line}` : ""}`;
+    const { note, ...rest } = d;
+    return { ...s, layoutData: { ...rest, items: items.map((it, j) => (j === i ? { ...it, title: ask } : it)), ...(!withContact && note ? { note } : {}) } };
+  });
+}
 
 export function printFooterText(firm: string | null | undefined, date = new Date()): string {
   const d = date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -39,6 +63,7 @@ export default function TeaserPrintPreview() {
   const size = data?.teaser.pageSize === "a4" ? "A4" : "letter";
   const footer = printFooterText(data?.contact.firm ?? data?.branding?.companyName ?? null);
   const isDraft = !!data?.draft;
+  const paper = useMemo(() => (data ? sectionsForPaper(data.teaser.blocks, data.contact) : []), [data]);
 
   return (
     <div className="min-h-screen bg-muted/30 print:bg-white" data-testid="teaser-print-preview">
@@ -90,7 +115,7 @@ export default function TeaserPrintPreview() {
           <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">Nothing to print yet — write the teaser first.</div>
         ) : (
           <div className="overflow-x-auto print:overflow-visible">
-            <TeaserPages header={data.teaser.header} sections={data.teaser.blocks} pageSize={data.teaser.pageSize} design={design} mode="print" printFooter={footer} />
+            <TeaserPages header={data.teaser.header} sections={paper} pageSize={data.teaser.pageSize} design={design} mode="print" printFooter={footer} />
           </div>
         )}
       </div>
