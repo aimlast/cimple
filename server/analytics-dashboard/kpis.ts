@@ -475,7 +475,11 @@ function namesWords(names: string[]): string {
  * The buyers behind the two built-in heads-up lines, uncapped: CIM links on
  * LIVE deals only (a buyer can't open an unpublished CIM), never teaser-only
  * links, never removed links.
- *   expiring     the link runs out within the next 7 days, no final answer yet
+ *   expiring     the link runs out within the next 7 days, and the buyer
+ *                hasn't said no or let the decision lapse (an Interested or
+ *                "more time" buyer is warned about too: those are the links
+ *                a broker most needs to extend in time; the same rule as
+ *                linkRanOut, so a warning always comes before the chip)
  *   not_opened   never opened, 3+ days after access was given
  * The line's number, its "See them" list (`?notice=<id>` → exactly these
  * ids) and the response's `noticeIds` are all this one set.
@@ -484,7 +488,7 @@ export function noticeSets(inputs: Pick<BrokerInputs, "items">, now: Date): Reco
   const nowMs = now.getTime();
   const live = cimBuyers({ items: inputs.items.filter((it) => it.live) }, undefined);
   const expiring = live
-    .filter(({ b }) => !b.revokedAt && !!b.expiresAt && !FINAL.has(b.decision))
+    .filter(({ b }) => !b.revokedAt && !!b.expiresAt && !DECLINED.has(b.decision))
     .filter(({ b }) => { const e = t(b.expiresAt); return e > nowMs && e - nowMs <= 7 * DAY; })
     .sort((x, y) => t(x.b.expiresAt) - t(y.b.expiresAt));
   const notOpened = live

@@ -561,7 +561,8 @@ export function parseBuyerStatusFilter(v: unknown): BuyerStatusFilter {
   return BUYER_STATUS_FILTERS.some((f) => f.key === s) ? (s as BuyerStatusFilter) : "all";
 }
 
-const FINAL_DECISIONS = new Set(["interested", "not_interested", "lapsed"]);
+/** Said no or didn't respond: the only decisions that end a "link runs out" warning (an Interested buyer still needs the link). */
+const DECLINED_DECISIONS = new Set(["not_interested", "lapsed"]);
 
 /** Whether a Buyers-tab row matches a status filter (the same rule on the client and in tests). */
 export function matchesBuyerStatus(row: BuyerDashboardRow, filter: BuyerStatusFilter, now: Date): boolean {
@@ -576,7 +577,7 @@ export function matchesBuyerStatus(row: BuyerDashboardRow, filter: BuyerStatusFi
     case "not_opened": return row.document === "cim" && !row.firstSeenAt && !row.revokedAt;
     case "declined": return row.decision === "not_interested" || row.decision === "lapsed";
     case "expiring": {
-      if (row.revokedAt || !row.expiresAt || FINAL_DECISIONS.has(row.decision)) return false;
+      if (row.revokedAt || !row.expiresAt || DECLINED_DECISIONS.has(row.decision)) return false;
       const t = Date.parse(row.expiresAt);
       return t > now.getTime() && t - now.getTime() <= 7 * DAY;
     }

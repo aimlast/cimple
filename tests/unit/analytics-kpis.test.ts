@@ -282,13 +282,15 @@ assert.equal(KPI_COPY.to_call.shortLabel, "Worth a call");
       { id: "x1", name: "Victoria Ashdown", firstViewedDaysAgo: 2, expiresInDays: 3 },
       { id: "x2", name: "Marcus Albrecht", firstViewedDaysAgo: 2, expiresInDays: 5 },
       { id: "x3", name: "Third Expiring", firstViewedDaysAgo: 2, expiresInDays: 6 },
-      { id: "x4", name: "Decided Already", firstViewedDaysAgo: 2, expiresInDays: 2, decision: "interested", decisionDaysAgo: 1 },
+      { id: "x4", name: "Said No", firstViewedDaysAgo: 2, expiresInDays: 2, decision: "not_interested", decisionDaysAgo: 1 },
+      { id: "x5", name: "Let It Lapse", firstViewedDaysAgo: 2, expiresInDays: 4, decision: "lapsed", decisionDaysAgo: 1 },
       { id: "y1", name: "Never Opened", createdDaysAgo: 5 },
       { id: "y2", name: "Too Soon", createdDaysAgo: 1 },
     ],
-    visits: ["x1", "x2", "x3", "x4"].map((a, n) => ({ id: `hv${n}`, access: a, daysAgo: 2, activeMs: 100_000 })),
+    visits: ["x1", "x2", "x3", "x4", "x5"].map((a, n) => ({ id: `hv${n}`, access: a, daysAgo: 2, activeMs: 100_000 })),
   };
   const lines = headsUp(inputsOf([HU]), NOW);
+  assert.ok(!lines[0].ids!.includes("x4") && !lines[0].ids!.includes("x5"), "a buyer who said no or let it lapse is never warned about");
   assert.equal(lines[0].id, "expiring");
   assert.equal(lines[0].text, "3 buyer links run out in the next 7 days: Victoria Ashdown, Marcus Albrecht and 1 more.");
   assert.equal(lines[1].text, "1 buyer hasn't opened their link 3 days after you gave it.");
@@ -360,6 +362,39 @@ assert.equal(KPI_COPY.to_call.shortLabel, "Worth a call");
   // A removed link is "Link removed", never "Haven't opened" (the Who-to-call line's count = the filter's rows).
   assert.ok(!rows.filter((r) => matchesBuyerStatus(r, "not_opened", NOW)).some((r) => r.revokedAt));
   assert.equal(rows.filter((r) => matchesBuyerStatus(r, "not_opened", NOW)).length, ov.counts.notOpened);
+}
+// ── An Interested (or "more time") buyer is warned about BEFORE their link runs out (checker AN2-1) ──
+// The same rule as linkRanOut: only a buyer who said no or let it lapse is left out,
+// so the 7-day warning always comes before the "Link ran out" chip.
+{
+  const IN: DealSpec = {
+    id: "in", name: "Interested Deal", live: true,
+    links: [
+      { id: "n1", name: "Natalie Vasconcelos", firstViewedDaysAgo: 6, expiresInDays: 2, decision: "interested", decisionDaysAgo: 3 },
+      { id: "n2", name: "Gordon Achebe", firstViewedDaysAgo: 6, expiresInDays: 4, decision: "interested", decisionDaysAgo: 2 },
+      { id: "n3", name: "Marcus Albrecht", firstViewedDaysAgo: 6, expiresInDays: 5, decision: "need_more_time", decisionDaysAgo: 1 },
+      { id: "n4", name: "Said No Soon", firstViewedDaysAgo: 6, expiresInDays: 1, decision: "not_interested", decisionDaysAgo: 1 },
+      { id: "n5", name: "Lapsed Soon", firstViewedDaysAgo: 6, expiresInDays: 3, decision: "lapsed", decisionDaysAgo: 1 },
+      { id: "n6", name: "Interested Ran Out", firstViewedDaysAgo: 9, expiresInDays: -3, decision: "interested", decisionDaysAgo: 5 },
+    ],
+    visits: ["n1", "n2", "n3", "n4", "n5", "n6"].map((a, n) => ({ id: `iv${n}`, access: a, daysAgo: 6, activeMs: 90_000 })),
+  };
+  const i = inputsOf([IN]);
+  const sets = noticeIds(i, NOW);
+  assert.deepEqual(sets.expiring, ["n1", "n2", "n3"], "an interested link expiring in 2 days is in the expiring line; said-no and lapsed are not");
+  const line = headsUp(i, NOW).find((h) => h.id === "expiring")!;
+  assert.equal(line.text, "3 buyer links run out in the next 7 days: Natalie Vasconcelos, Gordon Achebe and 1 more.");
+  assert.deepEqual(line.ids, sets.expiring, "the line's ids = noticeIds");
+  const rows = buyerRows(i, NOW);
+  assert.equal(applyKpiFilter(rows, line.ids!).length, line.count, "'See them' rows = the line's number");
+  // The "Link runs out soon" status filter follows the same decision rule.
+  const filtered = rows.filter((r) => matchesBuyerStatus(r, "expiring", NOW)).map((r) => r.accessId).sort();
+  assert.deepEqual(filtered, ["n1", "n2", "n3"], "status filter: interested and more-time included, declined excluded");
+  // Once it has run out, the same buyer gets the chip (and never both at once).
+  const ran = linkRanOut(IN.links.map((l) => ({ id: l.id, accessLevel: "full", revokedAt: null, decision: l.decision ?? null,
+    expiresAt: new Date(NOW.getTime() + (l.expiresInDays ?? 0) * 86_400_000) })), NOW);
+  assert.deepEqual(Object.keys(ran), ["n6"], "the chip: run out, not declined");
+  for (const id of sets.expiring) assert.ok(!(id in ran), `${id}: warned or ran out, never both`);
 }
 function h1Count(lines: ReturnType<typeof headsUp>, id: string): number {
   return lines.find((h) => h.id === id)?.count ?? 0;
