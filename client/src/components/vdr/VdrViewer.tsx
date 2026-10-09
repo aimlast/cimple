@@ -51,6 +51,9 @@ export type VdrViewerProps = {
   /** Where the buyer opened it from (stored with the view). */
   openedFrom?: "room" | "search" | "new" | "cim" | "question";
   initialPage?: number | null;
+  /** A citation's sheet (by name) and Excel rows: opens that sheet with those rows highlighted (§9.10). */
+  initialSheet?: string | null;
+  highlightRows?: number[] | null;
   /** Broker only: try preparing again. */
   onRetry?: () => void;
   className?: string;
@@ -155,7 +158,7 @@ export function VdrViewer(props: VdrViewerProps) {
         />
       );
     case "sheet":
-      return <SheetView source={source} urls={urls} itemId={itemId} sheets={manifest.sheets} reader={props.reader} className={props.className} onSheet={(i) => { currentPage.current = `s:${i}`; props.onPageChange?.(1); }} />;
+      return <SheetView source={source} urls={urls} itemId={itemId} sheets={manifest.sheets} reader={props.reader} className={props.className} initialSheet={props.initialSheet ?? null} highlightRows={props.highlightRows ?? null} onSheet={(i) => { currentPage.current = `s:${i}`; props.onPageChange?.(1); }} />;
     case "html":
       return <HtmlView source={source} urls={urls} itemId={itemId} reader={props.reader} className={props.className} onReady={() => { currentPage.current = "1"; }} />;
     case "text":
@@ -272,14 +275,19 @@ function PagesView(props: {
 
 // ── Sheets ─────────────────────────────────────────────────────────────────
 
-function SheetView(props: { source: VdrSource; urls: ReturnType<typeof vdrUrls>; itemId: string; sheets: VdrManifest["sheets"]; reader?: { name: string | null; email: string } | null; className?: string; onSheet: (i: number) => void }) {
-  const [sheet, setSheet] = useState(props.sheets[0]?.index ?? 0);
+function SheetView(props: { source: VdrSource; urls: ReturnType<typeof vdrUrls>; itemId: string; sheets: VdrManifest["sheets"]; reader?: { name: string | null; email: string } | null; className?: string; initialSheet?: string | null; highlightRows?: number[] | null; onSheet: (i: number) => void }) {
+  const cited = props.initialSheet ? props.sheets.find((s) => s.name === props.initialSheet) : undefined;
+  const [sheet, setSheet] = useState(cited?.index ?? props.sheets[0]?.index ?? 0);
+  const highlight = useMemo(() => new Set(props.highlightRows ?? []), [props.highlightRows]);
+  // A citation's rows: shown on their own first ("Show every row" for the rest).
+  const [onlyCited, setOnlyCited] = useState(highlight.size > 0);
+  const filterRows = onlyCited && highlight.size > 0 && (!props.initialSheet || sheet === (cited?.index ?? sheet)) ? `&rows=${Array.from(highlight).join(",")}` : "";
   useEffect(() => { props.onSheet(sheet); }, [sheet]); // eslint-disable-line react-hooks/exhaustive-deps
   const PAGE = 200;
   const q = useInfiniteQuery<VdrSheetRows>({
-    queryKey: [...sourceKey(props.source), "sheet", props.itemId, sheet],
+    queryKey: [...sourceKey(props.source), "sheet", props.itemId, sheet, filterRows],
     initialPageParam: 0,
-    queryFn: ({ pageParam }) => vdrFetch("GET", props.urls.sheet(props.itemId, `sheet=${sheet}&offset=${pageParam}&limit=${PAGE}`)),
+    queryFn: ({ pageParam }) => vdrFetch("GET", props.urls.sheet(props.itemId, `sheet=${sheet}&offset=${pageParam}&limit=${PAGE}${filterRows}`)),
     getNextPageParam: (last) => (last.offset + PAGE < last.total ? last.offset + PAGE : undefined),
   });
   const rows = useMemo(() => (q.data?.pages ?? []).flatMap((p) => p.rows), [q.data]);
@@ -296,6 +304,13 @@ function SheetView(props: { source: VdrSource; urls: ReturnType<typeof vdrUrls>;
               {s.name}
             </button>
           ))}
+        </div>
+      )}
+      {highlight.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 px-3 pt-2 text-xs text-[#46423B] dark:text-[#D9D3C7]" data-testid="vdr-sheet-cited">
+          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-[#9E752E]/30" />
+          <span>{highlight.size === 1 ? "1 row" : `${highlight.size} rows`} the CIM points to{props.initialSheet ? ` on "${props.initialSheet}"` : ""}.</span>
+          <button className="underline underline-offset-2" onClick={() => setOnlyCited((v) => !v)}>{onlyCited ? "Show every row" : "Show only those rows"}</button>
         </div>
       )}
       <div className="relative m-2 overflow-auto bg-white" style={{ maxHeight: "75vh" }} onContextMenu={(e) => e.preventDefault()}>
@@ -315,8 +330,8 @@ function SheetView(props: { source: VdrSource; urls: ReturnType<typeof vdrUrls>;
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.r}>
-                  <td className="sticky left-0 border border-[#E2DED5] bg-[#F3F1EC] px-2 py-1 text-right text-[10px] text-[#6B655B]">{row.r}</td>
+                <tr key={row.r} className={highlight.has(row.r) ? "bg-[#9E752E]/15" : undefined} data-cited={highlight.has(row.r) ? "" : undefined}>
+                  <td className={cn("sticky left-0 border border-[#E2DED5] px-2 py-1 text-right text-[10px] text-[#6B655B]", highlight.has(row.r) ? "bg-[#E9DCC2]" : "bg-[#F3F1EC]")}>{row.r}</td>
                   {cols.map((c, ci) => {
                     const v = row.v[ci] ?? "";
                     const isCovered = covered.has(`${row.r}:${c}`);

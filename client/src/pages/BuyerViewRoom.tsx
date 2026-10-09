@@ -39,6 +39,7 @@ import { READING_SHEET_ATTR, useCimReading } from "@/lib/cim-reading";
 import type { ViewRoomReading } from "@shared/analytics-v2";
 import type { ViewRoomDataRoom } from "@shared/vdr-api";
 import { RoomSwitch } from "@/components/vdr/RoomSwitch";
+import { VdrLinkProvider } from "@/components/vdr/VdrLinkContext";
 
 type BuyerDecision = "under_review" | "interested" | "not_interested" | "lapsed";
 
@@ -133,6 +134,9 @@ export default function BuyerViewRoom() {
   const queryClient = useQueryClient();
   const [timeOnPage, setTimeOnPage] = useState(0);
   const [localDecision, setLocalDecision] = useState<BuyerDecision | null>(null);
+  // A data-room document open beside the CIM (VdrViewerDrawer). INTEGRATOR (analytics' `paused`, INTEGRATION §2.4):
+  // pass `paused: roomDrawerOpen` to useCimReading below and record "vdr_open" when it opens.
+  const [roomDrawerOpen, setRoomDrawerOpen] = useState(false);
   const startTimeRef = useRef(Date.now());
 
   const { data, isLoading, error } = useQuery<ViewData>({
@@ -400,6 +404,8 @@ export default function BuyerViewRoom() {
           </aside>
 
           {/* ── Main CIM content ─────────────────────────────────────────────── */}
+          {/* Data-room citations (VdrCitationChip) and links inside the CIM open beside it (vdr §6.6). */}
+          <VdrLinkProvider source={{ kind: "buyer", token: token! }} onDrawerChange={(open) => setRoomDrawerOpen(open)}>
           <main className="flex-1 min-w-0">
             {hasAiSections && !!data.pendingSections && (
               <p className="mb-3 text-xs text-muted-foreground flex items-center gap-2" data-testid="view-pending-sections">
@@ -492,6 +498,7 @@ export default function BuyerViewRoom() {
             )}
 
           </main>
+          </VdrLinkProvider>
         </div>
       </div>
 

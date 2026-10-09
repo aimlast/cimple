@@ -79,6 +79,8 @@ export type RoomItemRow = {
     basic: string;
   };
   fileVersion: number;
+  /** The due-diligence CIM points to this document (dd's registry, else fact tracing). */
+  ddCited?: boolean;
 };
 
 export type NotPlacedDoc = {
@@ -169,7 +171,28 @@ export type RoomBuyerRow = {
   lastOpenedAt: string | null;
   expiresAt: string | null;
   endsInDays: number | null;
+  /** Their team in the room (pass 4): active and asked-for people. */
+  team?: RoomTeamRow[];
 };
+
+/** One person on a buyer's team (broker view). */
+export type RoomTeamRow = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  status: "requested" | "active" | "declined" | "removed";
+  /** They confirmed confidentiality (their first visit). */
+  acknowledgedAt: string | null;
+  linkSentAt: string | null;
+  lastVisitAt: string | null;
+  documentsOpened: number;
+  createdBy: "broker" | "buyer";
+  createdAt: string;
+};
+
+/** The buyer's own team (their room's "Your team"). */
+export type BuyerTeamRow = { id: string; name: string; email: string; role: string; status: "requested" | "active"; acknowledged: boolean };
 
 export type NotEligibleBuyerRow = {
   key: string;
@@ -258,6 +281,9 @@ export type BuyerRoomPayload = {
   endsInDays: number | null;
   newCount: number;
   allowDownloads: boolean;
+  /** The buyer's team (principal only; pass 4) and whether they may ask to add someone. */
+  team?: BuyerTeamRow[];
+  canInviteTeam?: boolean;
 };
 
 export type BuyerItemAbout = {
@@ -274,6 +300,8 @@ export type BuyerItemAbout = {
   keyFigures?: Array<{ label: string; value: string }>;
   /** Opened from a citation with `?needle=`: the page that prints it (PDFs only), else null. */
   focusPage?: number | null;
+  /** Who reads (the on-screen watermark on sheets, Word and text when opened from the CIM). */
+  reader?: { name: string | null; email: string };
   /** Due diligence only: what it was checked against (dd's checks; a counterpart the reader can't open is "another document"). */
   checks?: Array<{ ok: boolean; text: string }>;
   /** Memorandum pages that use its figures (none for a team member). */
@@ -360,6 +388,7 @@ export type RoomRequestsPayload = {
 export type WaitingKind =
   | "request"
   | "request_ready"
+  | "team_request"
   | "question"
   | "new_version"
   | "hinted"
@@ -378,6 +407,9 @@ export type WaitingItem = {
   itemId?: string | null;
   requestId?: string | null;
   questionId?: string | null;
+  /** A buyer asked to add someone from their team (Approve and send the link · Decline). */
+  teamMemberId?: string | null;
+  teamMemberName?: string | null;
   accessId?: string | null;
   buyerLabel?: string | null;
   levels?: string[];

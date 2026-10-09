@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { AlertTriangle, CalendarClock, FileClock, FileQuestion, FilePlus2, FileX2, Inbox, Loader2, MessageSquare, PenLine, ShieldAlert, Sparkles } from "lucide-react";
+import { AlertTriangle, CalendarClock, FileClock, FileQuestion, FilePlus2, FileX2, Inbox, Loader2, MessageSquare, PenLine, ShieldAlert, Sparkles, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -22,6 +22,7 @@ import { useRoomActions } from "./actions";
 import { RequestsView, useShareAndTell } from "./RequestsView";
 import { DescriptionsReview } from "./DescriptionsReview";
 import { EmailDialog } from "./EmailDialog";
+import { useTeamAction } from "./TeamParts";
 
 export type TodoSegment = "waiting" | "requests" | "checklist";
 
@@ -60,6 +61,7 @@ const ICON: Record<WaitingItem["kind"], typeof Inbox> = {
   hinted: FilePlus2,
   flag: AlertTriangle,
   dd_cited: FileQuestion,
+  team_request: UserPlus,
   descriptions: Sparkles,
   link_ending: CalendarClock,
   seller_removed: FileX2,
@@ -99,6 +101,7 @@ function Waiting({ dealId, data, onOpenItem, onRequests, onDocuments }: { dealId
   };
 
   const flow = useShareAndTell(dealId, (t, draft) => setTell({ requestId: t.requestId, label: t.label, draft }), onOpenItem);
+  const team = useTeamAction(dealId);
 
   if (todo.isLoading) return <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}</div>;
   if (todo.error || !todo.data) return <PanelError what="your to-do list" onRetry={() => todo.refetch()} />;
@@ -116,6 +119,16 @@ function Waiting({ dealId, data, onOpenItem, onRequests, onDocuments }: { dealId
       case "request":
         buttons = <Button size="sm" variant="outline" onClick={onRequests}>Open</Button>;
         break;
+      case "team_request": {
+        const who = { id: w.teamMemberId!, name: w.teamMemberName ?? "them" };
+        buttons = (
+          <>
+            <Button size="sm" onClick={() => team.run(who, "approve", true)} disabled={!!team.busy} data-testid="todo-team-approve">Approve and send the link</Button>
+            <Button size="sm" variant="ghost" onClick={() => team.run(who, "decline")} disabled={!!team.busy}>Decline</Button>
+          </>
+        );
+        break;
+      }
       case "request_ready":
         buttons = (
           <Button size="sm" onClick={() => flow.run({ requestId: w.requestId!, label: w.buyerLabel ?? "the buyer" })} disabled={flow.pending === w.requestId} data-testid="todo-share-and-tell">
@@ -151,7 +164,7 @@ function Waiting({ dealId, data, onOpenItem, onRequests, onDocuments }: { dealId
       case "dd_cited":
         buttons = (
           <>
-            <Button size="sm" onClick={() => onDocuments("not_shared")}>Review</Button>
+            <Button size="sm" onClick={() => onDocuments("dd_cited")}>Review</Button>
             <Button size="sm" variant="ghost" onClick={() => step(w.key, () => vdrFetch("POST", `${roomBase(dealId)}/todo/dismiss`, { key: "dd_cited" }))} disabled={b}>Not now</Button>
           </>
         );
@@ -202,6 +215,7 @@ function Waiting({ dealId, data, onOpenItem, onRequests, onDocuments }: { dealId
         }}
       />
       {flow.confirmRoom}
+      {team.dialog}
     </>
   );
 }

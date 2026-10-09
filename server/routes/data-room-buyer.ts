@@ -22,6 +22,8 @@
  *   GET  /search                    ?q=
  *   GET  /resolve                   ?documentIds=a,b,c  (the DD CIM's citation chips; ≤ 50)
  *   GET  /ledger/:documentId/rows   gl's ledger rows, behind assertBuyerDocumentAccess
+ *   POST /team                      the buyer asks to add someone { name, email, role } (the broker approves)
+ *   POST /acknowledge               a team member's confidentiality step { name }
  */
 import express, { type Express, type Request, type Response } from "express";
 import type { BuyerQuestion, InsertBuyerQuestion } from "@shared/schema";
@@ -32,6 +34,7 @@ import { assertBuyerDocumentAccess, decideForGate, defaultGateDeps, itemFor, lis
 import { parseDocumentIds, replacementsFor, resolveForReader } from "../vdr/resolve";
 import { locateInItem } from "../vdr/locate";
 import { ledgerRowsForBuyer } from "../vdr/gl-adapter";
+import { parseTeamInput, principalCompanyOf, teamAddProblem, TEAM_ROLE_LABEL, type TeamRole } from "../vdr/team";
 import { buyerAboutExtras, buyerItemAbout, buyerItems, buyerRoomPayload } from "../vdr/buyer-room";
 import { parseBuyerRequest, requestRows } from "../vdr/requests";
 import { dataRoomLevelRule, buyerKey } from "@shared/vdr";
@@ -119,7 +122,7 @@ export function registerDataRoomBuyerRoutes(app: Express, overrides?: Partial<Bu
       res.setHeader("Cache-Control", "no-store");
       if (gate.member && !gate.member.ackAt) {
         // Team members confirm confidentiality first (their acknowledgement screen ships with team access).
-        return res.status(403).json({ code: "ack_required", principalCompany: gate.access.buyerCompany || gate.access.buyerName || null, role: gate.member.role });
+        return res.status(403).json({ code: "ack_required", principalCompany: gate.access.buyerCompany || gate.access.buyerName || null, role: gate.member.role, name: gate.member.name });
       }
       res.json(await buyerRoomPayload({ store: d.store, brand: d.brand, now: d.now }, gate, snap, decided, { preview: ownerPreview(req, gate), ipHash: ipHashFor(gate.deal.id, req) }));
     } catch (err) {
@@ -369,6 +372,52 @@ export function registerDataRoomBuyerRoutes(app: Express, overrides?: Partial<Bu
       res.json({ ok: true, id: q.id });
     } catch (err) {
       send(res, err, "question");
+    }
+  });
+
+  // ── Pass 4: a buyer's team (§6.8) ──
+
+  // The buyer asks to add someone; the broker approves it in To do and sends the link (never automatic).
+  app.post(`${BASE}/team`, async (req, res) => {
+    try {
+      const { d, gate } = await gateAndItems(req);
+      if (gate.member) return res.status(403).json({ error: "Only the buyer can add people to their team." });
+      if (ownerPreview(req, gate)) return res.status(403).json({ error: "Preview: nothing is sent." });
+      const input = parseTeamInput(req.body);
+      if ("error" in input) return res.status(400).json({ error: input.error });
+      const members = await d.store.listTeamMembers(gate.deal.id);
+      const problem = teamAddProblem(members, gate.access, input);
+      if (problem) return res.status(409).json({ error: problem.replace("Approve it in To do.", "Your broker will look at it.").replace("Remove someone first.", "Ask your broker to remove someone first.") });
+      const old = members.find((m) => m.principalEmail === gate.reader.buyerEmail && m.email === input.email);
+      // Someone the broker declined or removed can be asked for again (same row, back to "asked").
+      let id: string | null = null;
+      if (old) { await d.store.updateTeamMember(old.id, { name: input.name, role: input.role, status: "requested", tokenHash: null, ackAt: null, ackName: null, ackIpHash: null, createdBy: "buyer", addedViaAccessId: gate.access.id }); id = old.id; }
+      else id = (await d.store.insertTeamMember({ dealId: gate.deal.id, principalEmail: gate.reader.buyerEmail, addedViaAccessId: gate.access.id, name: input.name, email: input.email, role: input.role, status: "requested", createdBy: "buyer" }))?.id ?? null;
+      if (!id) return res.status(409).json({ error: "You already asked to add them." });
+      await logVdrQuietly(d.store, buyerLog(gate, "team_requested", { detail: { memberId: id, role: input.role }, ipHash: ipHashFor(gate.deal.id, req) }));
+      const company = principalCompanyOf(gate.access);
+      void d.notifyBroker(gate.deal.id, "A buyer asked to add someone to the data room", `${escapeHtml(company)} asked to add ${escapeHtml(input.name)} (${escapeHtml(TEAM_ROLE_LABEL[input.role as TeamRole].toLowerCase())}) to the data room.`, `/deal/${gate.deal.id}/data-room?view=todo`, gate.deal.businessName ?? null).catch(() => undefined);
+      res.json({ ok: true, id });
+    } catch (err) {
+      send(res, err, "team request");
+    }
+  });
+
+  // A team member's first visit: "I'll keep this confidential" with their name (time + a keyed hash of the network address).
+  app.post(`${BASE}/acknowledge`, async (req, res) => {
+    try {
+      const d = await deps();
+      const gate = await vdrBuyerGate(d, String(req.params.token), { allowNoAck: true });
+      if (!gate.member) return res.status(400).json({ error: "Only a team member confirms here." });
+      const name = typeof req.body?.name === "string" ? req.body.name.replace(/[\u0000-\u001f\u007f<>]/g, " ").replace(/\s+/g, " ").trim() : "";
+      if (name.length < 2) return res.status(400).json({ error: "Type your full name." });
+      if (name.length > 120) return res.status(400).json({ error: "Keep your name under 120 characters." });
+      if (gate.member.ackAt) return res.json({ ok: true, already: true });
+      await d.store.updateTeamMember(gate.member.id, { ackAt: d.now(), ackName: name, ackIpHash: ipHashFor(gate.deal.id, req) });
+      await logVdrQuietly(d.store, buyerLog(gate, "team_acknowledged", { detail: { name }, ipHash: ipHashFor(gate.deal.id, req) }));
+      res.json({ ok: true });
+    } catch (err) {
+      send(res, err, "acknowledge");
     }
   });
 

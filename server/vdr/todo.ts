@@ -4,6 +4,7 @@
  * one-click action on the client; nothing here shares or sends anything.
  *
  * Order (the spec's table): buyer requests (a pasted list is one row) ·
+ * team members a buyer asked to add ·
  * requests ready to share · document questions · new seller versions ·
  * new files in a folder the plan shares · flags that need a look · what the
  * DD CIM points to · descriptions to accept · links ending · shared files the
@@ -27,7 +28,7 @@ export type WaitingInput = {
   accessRows: ReadonlyArray<BuyerAccess>;
   requests: ReadonlyArray<VdrRequest>;
   questions: ReadonlyArray<Pick<BuyerQuestion, "id" | "status" | "vdrItemId" | "vdrPage" | "vdrTeamMemberId" | "buyerAccessId" | "createdAt">>;
-  team: ReadonlyArray<Pick<VdrTeamMember, "id" | "name" | "role" | "principalEmail">>;
+  team: ReadonlyArray<Pick<VdrTeamMember, "id" | "name" | "role" | "principalEmail"> & Partial<Pick<VdrTeamMember, "status" | "email" | "createdAt" | "addedViaAccessId">>>;
   dismissed: ReadonlySet<string>;
   ddCited: { available: boolean; total: number; notShared: number };
   /** Document names (a seller's upload may not be in the room yet). */
@@ -84,6 +85,12 @@ export function waitingItems(i: WaitingInput): WaitingItem[] {
       ? `${who} asked for access to the data room · ${ago(r.createdAt, i.now)}`
       : `${who} asked for: '${r.text.length > 140 ? `${r.text.slice(0, 139)}…` : r.text}' · ${ago(r.createdAt, i.now)}`;
     out.push({ key: `req:${r.id}`, kind: "request", text, at: iso(r.createdAt), requestId: r.id, buyerLabel: label(r.buyerEmail) });
+  }
+
+  // 1b. A buyer asked to add someone from their team (Approve and send the link · Decline).
+  for (const m of i.team.filter((x) => x.status === "requested")) {
+    const role = ROLE_WORD[m.role] ?? "adviser";
+    out.push({ key: `team:${m.id}`, kind: "team_request", text: `${label(m.principalEmail)} asked to add ${m.name} (${role}${m.email ? `, ${m.email}` : ""}) to the data room${m.createdAt ? ` · ${ago(m.createdAt, i.now)}` : ""}`, at: iso(m.createdAt ?? null), teamMemberId: m.id, teamMemberName: m.name, accessId: m.addedViaAccessId ?? null, buyerLabel: label(m.principalEmail) });
   }
 
   // 2. Ready to share: the seller uploaded what a buyer asked for.

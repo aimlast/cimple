@@ -31,6 +31,8 @@
  *   GET    …/data-room/preview/:accessId[/items/:itemId]  what one buyer sees
  *   GET    …/data-room/activity?item=                     one document's readers (the drawer)
  *   GET    …/data-room/resolve?documentIds=               citation chips in the broker's CIM preview
+ *   POST   …/data-room/buyers/:accessId/team              add someone from their team { name, email, role, send }
+ *   PATCH  …/data-room/team/:memberId                     { action: approve | decline | remove | resend | new_link, send? }
  */
 import type { Express, NextFunction, Request, Response } from "express";
 import fs from "fs";
@@ -94,7 +96,8 @@ import { askerLabel } from "../vdr/todo";
 import { activityByBuyer, activityByDocument, activityCsv, activityLog, findTrace, labelForKey, LOG_ACTION_FILTERS, type LogFilter, type ReportContext } from "../vdr/activity-report";
 import { newDocumentFileName, resolveDocumentPath, uploadsRoot } from "../documents/document-path";
 import { decodeUploadName } from "../documents/upload";
-import { emailSellerAboutRequests, letBuyersKnowDraft, sendBrokerEmailToBuyers, tellBuyerDraft, type BuyerEmailDeps, type SellerEmailDeps } from "../vdr/emails";
+import { emailSellerAboutRequests, letBuyersKnowDraft, sendBrokerEmailToBuyers, sendTeamLinkEmail, tellBuyerDraft, type BuyerEmailDeps, type SellerEmailDeps } from "../vdr/emails";
+import { TEAM_MAX, newTeamToken, parseTeamInput, principalCompanyOf, teamAddProblem, teamLinkUrl } from "../vdr/team";
 import { defaultSummaryDeps, redraftOne, remainingToday, requestSummaries, type SummaryDeps } from "../vdr/buyer-summary";
 
 export type DataRoomRouteDeps = {
@@ -1031,7 +1034,7 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
         changes.push({ item, rows: v.rows, tick: v.tick });
       }
       const newly = changes.length ? await writeShares(d, req, deal.id, ctx, changes) : new Set<string>();
-      res.json({ changed: changes.length, skipped, newlyVisibleBuyers: newly.size, newlyVisible: newlyList(ctx, newly) } satisfies BulkShareResult);
+      res.json({ changed: changes.length, skipped, newlyVisibleBuyers: newly.size, newlyVisible: newlyList(ctx, newly), itemIds: changes.map((c) => c.item.id) } satisfies BulkShareResult & { itemIds: string[] });
     } catch (err) {
       send(res, err, "share them");
     }
@@ -1104,7 +1107,8 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       const d = await deps();
       const deal = res.locals.deal as Deal;
       const ctx = await loadBrokerContext(brokerDeps(d), deal);
-      res.json(buildBuyers(deal.id, ctx.groups, ctx.snap, ctx.views, { root: d.root(), now: ctx.now, privateMatters: ctx.pm }));
+      const team = await d.store.listTeamMembers(deal.id).catch(() => []);
+      res.json(buildBuyers(deal.id, ctx.groups, ctx.snap, ctx.views, { root: d.root(), now: ctx.now, privateMatters: ctx.pm, team }));
     } catch (err) {
       send(res, err, "load the buyers");
     }
@@ -1153,6 +1157,95 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       res.json({ documents: resolveForBroker(ids, deal.id, snap.docs, snap, replacements) });
     } catch (err) {
       send(res, err, "look up the documents");
+    }
+  });
+
+  // ── A buyer's team (vdr spec §5.7, §6.8): the link only on the broker's click ──
+
+  /** A fresh link for a member (only its hash is kept): emailed when asked, and returned once so it can be copied. */
+  async function issueTeamLink(d: DataRoomRouteDeps, req: Request, deal: Deal, memberId: string, principal: BuyerAccess, to: string, send: boolean) {
+    const { token, hash } = newTeamToken();
+    await d.store.updateTeamMember(memberId, { tokenHash: hash, status: "active", ...(send && !deal.demoKey ? { linkSentAt: d.now() } : {}) });
+    let emailed: { sent: boolean; demo: boolean } = { sent: false, demo: !!deal.demoKey };
+    if (send) {
+      emailed = await sendTeamLinkEmail(d.buyerEmail, { deal, brokerId: by(req), to, token, principalCompany: principalCompanyOf(principal) });
+      await logVdrQuietly(d.store, brokerLog(req, deal.id, "team_link_sent", { buyerEmail: buyerKey(principal.buyerEmail), detail: { memberId, sent: emailed.sent, demo: emailed.demo } }));
+    }
+    return { link: teamLinkUrl(d.buyerEmail.appUrl(), token), emailed };
+  }
+
+  /** The buyer's best room link (their team works through it), or a plain refusal. */
+  async function principalWithRoom(d: DataRoomRouteDeps, deal: Deal, principalEmail: string) {
+    const ctx = await loadBrokerContext(brokerDeps(d), deal);
+    const g = ctx.groups.find((x) => x.key === principalEmail);
+    if (!g?.eligible || !g.hasRoom) throw new VdrHttpError(409, { error: "Turn the data room on for this buyer first. Their team works through their access." });
+    return g.eligible;
+  }
+
+  app.post(`${BASE}/buyers/:accessId/team`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      await requireRoom(d, deal.id);
+      const link = await dealAccess(d, deal.id, req.params.accessId);
+      const input = parseTeamInput(req.body);
+      if ("error" in input) throw bad(input.error);
+      const key = buyerKey(link.buyerEmail);
+      const principal = await principalWithRoom(d, deal, key);
+      const members = await d.store.listTeamMembers(deal.id);
+      const problem = teamAddProblem(members, principal, input);
+      if (problem) throw new VdrHttpError(409, { error: problem });
+      // A person removed or declined before comes back on the same row.
+      const old = members.find((m) => m.principalEmail === key && m.email === input.email);
+      let member = old ?? null;
+      if (old) await d.store.updateTeamMember(old.id, { name: input.name, role: input.role, status: "active", ackAt: null, ackName: null, ackIpHash: null, createdBy: "broker", addedViaAccessId: principal.id });
+      else member = await d.store.insertTeamMember({ dealId: deal.id, principalEmail: key, addedViaAccessId: principal.id, name: input.name, email: input.email, role: input.role, status: "active", createdBy: "broker" });
+      if (!member) throw new VdrHttpError(409, { error: "They're already on this buyer's team." });
+      await logVdrQuietly(d.store, brokerLog(req, deal.id, "team_added", { buyerEmail: key, detail: { memberId: member.id, role: input.role } }));
+      const out = await issueTeamLink(d, req, deal, member.id, principal, input.email, req.body?.send === true);
+      res.json({ id: member.id, ...out });
+    } catch (err) {
+      send(res, err, "add them");
+    }
+  });
+
+  app.patch(`${BASE}/team/:memberId`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      if (!isId(req.params.memberId)) throw notFound();
+      const m = await d.store.getTeamMember(req.params.memberId);
+      if (!m || m.dealId !== deal.id) throw notFound();
+      const action = String(req.body?.action ?? "");
+      const send = req.body?.send === true;
+      if (action === "decline") {
+        if (m.status !== "requested") throw new VdrHttpError(409, { error: "There's nothing to decline." });
+        await d.store.updateTeamMember(m.id, { status: "declined", tokenHash: null });
+        await logVdrQuietly(d.store, brokerLog(req, deal.id, "team_removed", { buyerEmail: m.principalEmail, detail: { memberId: m.id, declined: true } }));
+        return res.json({ ok: true });
+      }
+      if (action === "remove") {
+        // The link stops working at once (its hash is cleared).
+        await d.store.updateTeamMember(m.id, { status: "removed", tokenHash: null });
+        await logVdrQuietly(d.store, brokerLog(req, deal.id, "team_removed", { buyerEmail: m.principalEmail, detail: { memberId: m.id } }));
+        return res.json({ ok: true });
+      }
+      if (action === "approve" || action === "resend" || action === "new_link") {
+        if (action === "approve" && m.status !== "requested") throw new VdrHttpError(409, { error: "They're already on the team." });
+        if (action !== "approve" && m.status !== "active") throw new VdrHttpError(409, { error: "Add them to the team first." });
+        const principal = await principalWithRoom(d, deal, m.principalEmail);
+        if (action === "approve") {
+          const members = await d.store.listTeamMembers(deal.id);
+          const others = members.filter((x) => x.id !== m.id);
+          if (others.filter((x) => x.principalEmail === m.principalEmail && x.status === "active").length >= TEAM_MAX) throw new VdrHttpError(409, { error: `A buyer can have up to ${TEAM_MAX} people on their team. Remove someone first.` });
+          await logVdrQuietly(d.store, brokerLog(req, deal.id, "team_added", { buyerEmail: m.principalEmail, detail: { memberId: m.id, role: m.role, approved: true } }));
+        }
+        const out = await issueTeamLink(d, req, deal, m.id, principal, m.email, action === "resend" ? true : send);
+        return res.json({ ok: true, ...out });
+      }
+      throw bad("Choose approve, decline, remove or send the link again.");
+    } catch (err) {
+      send(res, err, "update their access");
     }
   });
 

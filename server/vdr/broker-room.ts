@@ -13,7 +13,7 @@
  *    due-diligence only (gl's copy), needs-a-look flags must be ticked.
  */
 import fs from "fs";
-import type { BuyerAccess, BuyerQuestion, DealDocumentRequirement, Deal, Document, InsertVdrShare, VdrBuyerSettings, VdrFolder, VdrItem, VdrShare, VdrView } from "@shared/schema";
+import type { BuyerAccess, BuyerQuestion, DealDocumentRequirement, Deal, Document, InsertVdrShare, VdrBuyerSettings, VdrFolder, VdrItem, VdrShare, VdrTeamMember, VdrView } from "@shared/schema";
 import { accessLevelLabel, normalizeAccessLevel, parseAccessLevelInput, sameAccessLevel, DD_ACCESS_LEVEL } from "@shared/access-levels";
 import {
   DATA_ROOM_LEVELS,
@@ -50,6 +50,7 @@ import type {
   RoomFolderRow,
   RoomItemRow,
   RoomShareRow,
+  RoomTeamRow,
   ShareAudience,
   WaitingItem,
 } from "@shared/vdr-api";
@@ -187,7 +188,7 @@ export function buildBuyers(
   groups: ReadonlyArray<BuyerGroup>,
   snap: RoomSnapshot,
   views: ReadonlyArray<VdrView>,
-  i: { root: string; now: Date; privateMatters: ReadonlyMap<string, string[]>; fileExists?: (p: string) => boolean },
+  i: { root: string; now: Date; privateMatters: ReadonlyMap<string, string[]>; fileExists?: (p: string) => boolean; team?: ReadonlyArray<VdrTeamMember> },
 ): { eligible: RoomBuyerRow[]; notEligible: NotEligibleBuyerRow[] } {
   const eligible: RoomBuyerRow[] = [];
   const notEligible: NotEligibleBuyerRow[] = [];
@@ -229,12 +230,33 @@ export function buildBuyers(
       lastOpenedAt: last ? new Date(last).toISOString() : null,
       expiresAt: iso(link.expiresAt),
       endsInDays: exp == null ? null : Math.max(0, Math.ceil((exp - i.now.getTime()) / 86_400_000)),
+      team: teamRows(i.team ?? [], g.key, myViews),
     });
   }
   const byName = (a: { name: string | null; email: string }, b: { name: string | null; email: string }) => (a.name || a.email).localeCompare(b.name || b.email);
   eligible.sort((a, b) => Number(b.rule === "auto_on") - Number(a.rule === "auto_on") || Number(b.hasRoom) - Number(a.hasRoom) || byName(a, b));
   notEligible.sort(byName);
   return { eligible, notEligible };
+}
+
+/** A buyer's team for the broker (asked-for and active people; §5.7). */
+export function teamRows(team: ReadonlyArray<VdrTeamMember>, buyerKeyOf: string, views: ReadonlyArray<VdrView>): RoomTeamRow[] {
+  return team
+    .filter((m) => m.principalEmail === buyerKeyOf && (m.status === "active" || m.status === "requested"))
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    .map((m) => ({
+      id: m.id,
+      name: m.name,
+      email: m.email,
+      role: m.role,
+      status: m.status as RoomTeamRow["status"],
+      acknowledgedAt: iso(m.ackAt),
+      linkSentAt: iso(m.linkSentAt),
+      lastVisitAt: iso(m.lastVisitAt),
+      documentsOpened: new Set(views.filter((v) => v.teamMemberId === m.id && v.source !== "preview").map((v) => v.itemId)).size,
+      createdBy: m.createdBy === "buyer" ? "buyer" : "broker",
+      createdAt: new Date(m.createdAt).toISOString(),
+    }));
 }
 
 export async function loadBrokerContext(deps: BrokerDeps, deal: Deal) {
@@ -366,6 +388,8 @@ export async function roomAndWaiting(deps: BrokerDeps, deal: Deal): Promise<{ pa
   const ddShared = new Set(live.filter((i) => i.sharing.levels.includes(DD_ACCESS_LEVEL) && i.documentId).map((i) => i.documentId!));
   const citedIds = cited ? Array.from(new Set(cited)) : [];
   const ddNotShared = citedIds.filter((id) => !ddShared.has(id)).length;
+  const citedSet = new Set(citedIds);
+  for (const i of items) i.ddCited = !!i.documentId && citedSet.has(i.documentId);
   const payload: BrokerRoomPayload = {
     room: room ? { status: room.status === "closed" ? "closed" : "open", autoAddNew: room.autoAddNew, planAppliedAt: iso(room.planAppliedAt), setUpAt: new Date(room.setUpAt).toISOString(), closedAt: iso(room.closedAt) } : null,
     folders: room ? folderRows(snap.folders, snap.items, numbers.folders) : [],

@@ -18,7 +18,9 @@ import {
 } from "@shared/vdr";
 import type { BuyerQuestion } from "@shared/schema";
 import { approvedForSharing } from "@shared/buyer-qa-scope";
-import type { BuyerDocQuestion, BuyerItemAbout, BuyerRoomFolder, BuyerRoomItem, BuyerRoomPayload } from "@shared/vdr-api";
+import type { BuyerDocQuestion, BuyerItemAbout, BuyerRoomFolder, BuyerRoomItem, BuyerRoomPayload, BuyerTeamRow } from "@shared/vdr-api";
+import type { VdrTeamMember } from "@shared/schema";
+import { TEAM_MAX } from "./team";
 import { logVdrQuietly, type VdrStore } from "./store";
 import { listedItems, type ReaderItem, type RoomSnapshot, type VdrGate } from "./access";
 import { decisionFor, manifestFor } from "./serve";
@@ -120,7 +122,16 @@ export async function buyerRoomPayload(
     previousVisitAt = r.previousVisitAt;
     if (r.rolled) await logVdrQuietly(deps.store, buyerLog(gate, "buyer_opened_room", { ipHash: opts.ipHash ?? null }));
   }
-  const [views, requests] = await Promise.all([deps.store.listViews(gate.deal.id), deps.store.listRequests(gate.deal.id).catch(() => [])]);
+  const [views, requests, members] = await Promise.all([
+    deps.store.listViews(gate.deal.id),
+    deps.store.listRequests(gate.deal.id).catch(() => []),
+    gate.member ? Promise.resolve([] as VdrTeamMember[]) : deps.store.listTeamMembers(gate.deal.id).catch(() => [] as VdrTeamMember[]),
+  ]);
+  // "Your team" (the buyer only — a team member never sees the others or adds people).
+  const team: BuyerTeamRow[] = members
+    .filter((m) => m.principalEmail === gate.reader.buyerEmail && (m.status === "active" || m.status === "requested"))
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    .map((m) => ({ id: m.id, name: m.name, email: m.email, role: m.role, status: m.status as "requested" | "active", acknowledged: !!m.ackAt }));
   const items = buyerItems(gate, snap, decided, views, previousVisitAt);
   const visibleNumbers = new Map(items.map((i) => [i.id, i.number]));
   const folders = buyerFolders(snap, items);
@@ -143,6 +154,8 @@ export async function buyerRoomPayload(
     allowDownloads: !!gate.setting?.allowDownloads,
     requests: buyerRequestRows(requests, { buyerEmail: gate.reader.buyerEmail, teamMemberId: gate.viewer.teamMemberId }, (id) => visibleNumbers.get(id) ?? null),
     canRequest: !opts.preview,
+    team: gate.member ? undefined : team,
+    canInviteTeam: !opts.preview && !gate.member && team.length < TEAM_MAX,
   };
 }
 
@@ -233,5 +246,6 @@ export function buyerItemAbout(gate: VdrGate, snap: RoomSnapshot, decided: Reado
     folderTrail: trail,
     prevId: at > 0 ? listed[at - 1].id : null,
     nextId: at >= 0 && at < listed.length - 1 ? listed[at + 1].id : null,
+    reader: { name: gate.viewer.name, email: gate.viewer.email },
   };
 }

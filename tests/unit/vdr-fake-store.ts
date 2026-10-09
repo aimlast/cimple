@@ -150,6 +150,15 @@ export function fakeVdrStore(seed: { documents?: any[] } = {}) {
     async teamMemberByTokenHash(hash) { return team.find((t) => t.tokenHash === hash) ?? null; },
     async listTeamMembers(dealId) { return team.filter((t) => t.dealId === dealId); },
     async updateTeamMember(id, patch) { const t = team.find((x) => x.id === id); if (t) Object.assign(t, patch); },
+    async getTeamMember(id) { return team.find((x) => x.id === id) ?? null; },
+    async insertTeamMember(row) {
+      // Mirrors vdr_team_members_deal_email_uq (deal, principal, email) and the token's partial unique.
+      if (team.some((t) => t.dealId === row.dealId && t.principalEmail === row.principalEmail && t.email === row.email)) return null;
+      if (row.tokenHash && team.some((t) => t.tokenHash === row.tokenHash)) return null;
+      const r = { id: randomUUID(), status: "requested", tokenHash: null, ackAt: null, ackName: null, ackIpHash: null, lastVisitAt: null, previousVisitAt: null, linkSentAt: null, createdAt: now(), updatedAt: now(), ...row };
+      team.push(r);
+      return r;
+    },
     async listRequests(dealId) { return requests.filter((r) => r.dealId === dealId).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); },
     async getRequest(id) { return requests.find((r) => r.id === id) ?? null; },
     async insertRequests(rows) {

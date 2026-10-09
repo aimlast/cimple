@@ -26,6 +26,8 @@ import { RoomSwitch } from "@/components/vdr/RoomSwitch";
 import { RoomList, RoomRail, SearchBox, SearchResults, YourRequests, type RoomPlace } from "@/components/vdr/buyer/RoomBrowser";
 import { AboutPanel } from "@/components/vdr/buyer/AboutPanel";
 import { RequestDialog, type RequestPrefill } from "@/components/vdr/buyer/RequestDialog";
+import { YourTeam } from "@/components/vdr/buyer/YourTeam";
+import { TeamAcknowledge } from "@/components/vdr/buyer/TeamAcknowledge";
 import { DownloadControl, PrevNext, VdrViewer } from "@/components/vdr/VdrViewer";
 import { BuyerChatbot } from "@/components/buyer/BuyerChatbot";
 
@@ -135,6 +137,7 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
         <aside className="hidden w-[250px] shrink-0 lg:block">
           <div className="sticky top-20">
             <RoomRail folders={data.folders} items={data.items} place={nav.place} onPlace={(p) => go({ place: p, q: "" })} query={qInput} onQuery={setQInput} canSearch={canSearch} requests={data.requests ?? []} onAsk={openAsk ? () => openAsk(null) : null} />
+            {token && !isTeam && data.team && <div className="mt-6"><YourTeam token={token} team={data.team} canInvite={!!data.canInviteTeam} /></div>}
           </div>
         </aside>
         <main className="min-w-0 flex-1">
@@ -187,6 +190,8 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
           {(openAsk || (data.requests?.length ?? 0) > 0) && !(empty && (data.requests?.length ?? 0) === 0) && (
             <div className="mt-6 lg:hidden"><YourRequests requests={data.requests ?? []} onAsk={openAsk ? () => openAsk(null) : null} /></div>
           )}
+          {/* Phones: your team. */}
+          {token && !isTeam && data.team && <div className="mt-6 lg:hidden"><YourTeam token={token} team={data.team} canInvite={!!data.canInviteTeam} /></div>}
         </main>
       </div>
       {askDialog}
@@ -410,9 +415,12 @@ function RoomError({ error, source, embedded, onRetry }: { error: VdrRequestErro
   } else if (code === "team_ended") {
     title = "Access has ended";
     body = String(error?.body?.error ?? "This data room is no longer open to you.") + ". Contact the broker if you need anything.";
+  } else if (code === "ack_required" && token) {
+    // A team member's first visit: the confidentiality step (§6.8).
+    return <TeamAcknowledge token={token} principalCompany={(error?.body?.principalCompany as string) ?? null} role={(error?.body?.role as string) ?? null} name={(error?.body?.name as string) ?? null} onDone={onRetry} />;
   } else if (code === "ack_required") {
     title = "Please confirm before opening the data room.";
-    body = "Your broker will send you a fresh link.";
+    body = "Open the link your broker sent you.";
   } else if (!error || (error.status >= 500)) {
     title = "Couldn't load the data room";
     body = "This is a loading problem. Try again.";

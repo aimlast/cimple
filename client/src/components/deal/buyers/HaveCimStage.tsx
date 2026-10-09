@@ -16,6 +16,7 @@ import { formatReadingTime } from "@shared/analytics-v2";
 import { useEngagementBuyers } from "@/hooks/useEngagement";
 import { PageStrip, StatusChip, stripScale } from "@/components/engagement/buyers/parts";
 import { AccessLevelSelect } from "@/components/cim-builder/AccessLevelSelect";
+import { useDdRoomNudge } from "@/components/vdr/cim-slots";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -140,6 +141,8 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
   const qc = useQueryClient();
   const [revokeTarget, setRevokeTarget] = useState<any | null>(null);
   const [fitFor, setFitFor] = useState<any | null>(null);
+  // vdr §5.12: a buyer moved to due diligence → "N documents the DD CIM points to aren't shared yet · Share them".
+  useDdRoomNudge(dealId, buyers);
 
   // How each buyer read the CIM (the reading tracker — the same judgement
   // as the Engagement tab). Enriches the table but isn't essential: degrades quietly.

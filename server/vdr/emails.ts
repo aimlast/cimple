@@ -158,3 +158,28 @@ export function letBuyersKnowDraft(dealName: string, titles: ReadonlyArray<strin
     message: `New documents are in the data room for ${dealName}: ${list}.${sender ? `\n\n${sender}` : ""}`,
   };
 }
+
+/**
+ * A team member's link (§6.8) — only ever on the broker's click ("Send the
+ * link"). Their own link at the end; Reply-To is the broker; never the
+ * business's name. Demo deals record and never send.
+ */
+export async function sendTeamLinkEmail(
+  deps: BuyerEmailDeps,
+  i: { deal: { id: string; demoKey?: string | null }; brokerId: string; to: string; token: string; principalCompany: string },
+): Promise<{ sent: boolean; demo: boolean }> {
+  if (i.deal.demoKey) {
+    console.log(`[vdr] demo deal ${i.deal.id}: a team link email recorded, not sent`);
+    return { sent: false, demo: true };
+  }
+  const { teamLinkEmail, teamLinkUrl } = await import("./team");
+  const who = await deps.broker(i.brokerId).catch(() => ({ name: null, email: null, company: null }));
+  const replyTo = who.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(who.email) ? who.email : null;
+  const sender = (who.name && who.name.trim()) || (who.company && who.company.trim()) || null;
+  const words = teamLinkEmail(i.principalCompany);
+  const footer = `Sent via Cimple on behalf of ${who.company || who.name || "the broker"}`;
+  const ok = await deps
+    .sendDirect(i.to, words.subject, messageHtml(words.message, teamLinkUrl(deps.appUrl(), i.token), "Open the data room", footer), undefined, { replyTo, fromName: sender ? `${sender} via Cimple` : null })
+    .catch(() => false);
+  return { sent: !!ok, demo: false };
+}

@@ -6,7 +6,8 @@
  * then four tabs, one visible at a time — Documents · Buyers · To do ·
  * Activity. Everything is in the URL:
  *   ?view=documents|buyers|todo|activity  &folder= &item= (drawer) &open= (viewer)
- *   &q= &filter=all|shared|not_shared|new|attention  &todo=waiting|requests|checklist
+ *   &q= &filter=all|shared|not_shared|new|attention|dd_cited  &todo=waiting|requests|checklist
+ *   &dd=1 ("Share what the DD CIM cites" dialog)
  *   &activity=buyers|documents  &buyer=<accessId>  &as=<accessId> (View as a buyer)  &plan=1
  *
  * Before set-up: the "Set up the data room" card (and the deal's documents),
@@ -35,6 +36,7 @@ import { TodoView, type TodoSegment } from "@/components/vdr/broker/TodoView";
 import { ActivityView, type ActivitySegment } from "@/components/vdr/broker/ActivityView";
 import { RoomSettingsDialog } from "@/components/vdr/broker/RoomSettingsDialog";
 import { SetUpCard, SharingPlan } from "@/components/vdr/broker/SetUp";
+import { DdCitedDialog } from "@/components/vdr/broker/DdCitedDialog";
 import { useRoomActions } from "@/components/vdr/broker/actions";
 import { VdrViewer } from "@/components/vdr/VdrViewer";
 import { BuyerDataRoom } from "@/pages/buyer/BuyerDataRoom";
@@ -57,10 +59,11 @@ export function DataRoomTab() {
   const asId = okId(params.get("as"));
   const buyerFocus = okId(params.get("buyer"));
   const q = (params.get("q") ?? "").slice(0, 100);
-  const filter = (["all", "shared", "not_shared", "new", "attention"].includes(params.get("filter") ?? "") ? params.get("filter") : "all") as DocFilter;
+  const filter = (["all", "shared", "not_shared", "new", "attention", "dd_cited"].includes(params.get("filter") ?? "") ? params.get("filter") : "all") as DocFilter;
   const todo = (["waiting", "requests", "checklist"].includes(params.get("todo") ?? "") ? params.get("todo") : "waiting") as TodoSegment;
   const activity = (params.get("activity") === "documents" ? "documents" : params.get("activity") === "log" ? "log" : "buyers") as ActivitySegment;
   const showPlan = params.get("plan") === "1";
+  const showDdCited = params.get("dd") === "1";
 
   const go = useCallback((patch: Record<string, string | null>, opts: { push?: boolean } = {}) => {
     const next = new URLSearchParams(search);
@@ -195,11 +198,11 @@ export function DataRoomTab() {
           onShare={setShare}
           onViewAs={() => { if (roomBuyers.length === 1) go({ as: roomBuyers[0].accessId }); else go({ view: "buyers" }, { push: true }); }}
           onUpload={(entries, folderId) => uploads.start(entries, folderId, data.folders)}
-          onDdCited={() => go({ filter: "not_shared" })}
+          onDdCited={() => go({ dd: "1" }, { push: true })}
         />
       )}
       {view === "buyers" && <BuyersView dealId={dealId} focusAccessId={buyerFocus} onViewAs={(id) => go({ as: id }, { push: true })} />}
-      {view === "todo" && <TodoView dealId={dealId} data={data} segment={todo} onSegment={(s) => go({ todo: s })} onOpenItem={(id) => go({ view: "documents", item: id }, { push: true })} onBuyer={(id) => go({ view: "buyers", buyer: id }, { push: true })} onDocuments={(f) => go({ view: "documents", filter: f }, { push: true })} />}
+      {view === "todo" && <TodoView dealId={dealId} data={data} segment={todo} onSegment={(s) => go({ todo: s })} onOpenItem={(id) => go({ view: "documents", item: id }, { push: true })} onBuyer={(id) => go({ view: "buyers", buyer: id }, { push: true })} onDocuments={(f) => (f === "dd_cited" ? go({ dd: "1" }, { push: true }) : go({ view: "documents", filter: f }, { push: true }))} />}
       {view === "activity" && <ActivityView dealId={dealId} data={data} segment={activity} onSegment={(s) => go({ activity: s })} buyer={buyerFocus} onBuyer={(id) => go({ buyer: id })} onOpenItem={(id) => go({ view: "documents", item: id }, { push: true })} onViewAs={(id) => go({ as: id }, { push: true })} />}
 
       <DocumentDrawer dealId={dealId} item={drawerItem} onClose={() => go({ item: null })} onOpenViewer={(id) => go({ open: id }, { push: true })} onViewAs={() => { if (roomBuyers.length > 0) go({ as: roomBuyers[0].accessId, item: null }); else go({ view: "buyers", item: null }); }} />
@@ -207,6 +210,7 @@ export function DataRoomTab() {
       <BrokerViewerDialog dealId={dealId} itemId={openId} title={openId ? data.items.find((i) => i.id === openId)?.title ?? "" : ""} number={openId ? data.items.find((i) => i.id === openId)?.number ?? null : null} onClose={() => go({ open: null })} onRetry={(id) => actions.retry(id)} />
       <RoomSettingsDialog dealId={dealId} room={data.room} open={settingsOpen} onOpenChange={setSettingsOpen} onPlan={() => go({ plan: "1" })} />
       <UploadPanel jobs={uploads.jobs} onClose={uploads.clear} question={uploads.question} />
+      <DdCitedDialog dealId={dealId} open={showDdCited} onOpenChange={(o) => { if (!o) go({ dd: null }); }} />
     </div>
   );
 }

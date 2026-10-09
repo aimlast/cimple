@@ -39,6 +39,7 @@ import {
   type VdrRoom,
   type VdrShare,
   type VdrTeamMember,
+  type InsertVdrTeamMember,
   type VdrView,
 } from "@shared/schema";
 
@@ -123,6 +124,10 @@ export interface VdrStore {
   teamMemberByTokenHash(hash: string): Promise<VdrTeamMember | null>;
   listTeamMembers(dealId: string): Promise<VdrTeamMember[]>;
   updateTeamMember(id: string, patch: Partial<VdrTeamMember>): Promise<void>;
+  // ── Pass 4: a buyer's team ──
+  getTeamMember(id: string): Promise<VdrTeamMember | null>;
+  /** null when this buyer already has this person (the (deal, buyer, email) row exists). */
+  insertTeamMember(row: InsertVdrTeamMember): Promise<VdrTeamMember | null>;
 
   // ── Pass 3: requests and buyer descriptions ──
   listRequests(dealId: string): Promise<VdrRequest[]>;
@@ -373,6 +378,16 @@ export const dbVdrStore: VdrStore = {
   async updateTeamMember(id, patch) {
     const db = await getDb();
     await db.update(vdrTeamMembers).set({ ...patch, updatedAt: new Date() }).where(eq(vdrTeamMembers.id, id));
+  },
+  async getTeamMember(id) {
+    const db = await getDb();
+    const [r] = await db.select().from(vdrTeamMembers).where(eq(vdrTeamMembers.id, id));
+    return r ?? null;
+  },
+  async insertTeamMember(row) {
+    const db = await getDb();
+    const [r] = await db.insert(vdrTeamMembers).values(row).onConflictDoNothing().returning();
+    return r ?? null;
   },
 
   async listRequests(dealId) {

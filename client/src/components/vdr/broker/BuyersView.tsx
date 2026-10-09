@@ -3,7 +3,8 @@
  * — their access, whether the room is on for them, downloads, how many
  * documents they can see, when they last opened one, when their link ends —
  * and, folded, the buyers who can't have it yet with the plain reason
- * (Blind CIM buyers get "Move to Full CIM").
+ * (Blind CIM buyers get "Move to Full CIM"). Each buyer's team sits under
+ * them (§6.8): add someone, approve the buyer's ask, send a new link, remove.
  */
 import { useState } from "react";
 import { useLocation } from "wouter";
@@ -22,6 +23,7 @@ import type { NotEligibleBuyerRow, RoomBuyerRow } from "@shared/vdr-api";
 import { invalidateRoom, shortDate, useRoomBuyers, vdrFetch } from "@/hooks/useDataRoom";
 import { PanelError } from "@/components/deal/PanelError";
 import { useRoomActions } from "./actions";
+import { AddTeamMemberDialog, TeamRows } from "./TeamParts";
 
 export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string; focusAccessId: string | null; onViewAs: (accessId: string) => void }) {
   const { data, isLoading, error, refetch } = useRoomBuyers(dealId);
@@ -30,6 +32,8 @@ export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string
   const [, setLocation] = useLocation();
   const [showOthers, setShowOthers] = useState(false);
   const [moving, setMoving] = useState<NotEligibleBuyerRow | null>(null);
+  const [addingTo, setAddingTo] = useState<RoomBuyerRow | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   const extend = useMutation({
     mutationFn: async (b: RoomBuyerRow) => {
@@ -74,7 +78,8 @@ export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string
     <DropdownMenu>
       <DropdownMenuTrigger asChild><Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`More for ${b.company || b.name || b.email}`}><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => onViewAs(b.accessId)}>View as this buyer</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onViewAs(b.accessId)} disabled={!b.hasRoom}>View as this buyer</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => { setAddingTo(b); setAddOpen(true); }} disabled={!b.hasRoom || (b.team ?? []).length >= 5} data-testid={`buyer-add-team-${b.accessId}`}>Add someone from their team…</DropdownMenuItem>
         <DropdownMenuItem onClick={() => setLocation(`/deal/${dealId}/buyers`)}>Open the Buyers tab</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -121,7 +126,18 @@ export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string
                   <td className="px-2 py-2.5">{ends(b)}</td>
                   <td className="px-2 py-2.5">{menu(b)}</td>
                 </tr>
-              ))}
+              )).flatMap((row, idx) => {
+                const b = data.eligible[idx];
+                const team = b.team ?? [];
+                return team.length === 0 ? [row] : [row, (
+                  <tr key={`${b.key}-team`} className="border-b border-border bg-muted/10 last:border-0">
+                    <td colSpan={8} className="px-3 pb-2.5 pt-0">
+                      <p className="mb-1 text-[11px] uppercase tracking-wider text-muted-foreground/70">Their team</p>
+                      <TeamRows dealId={dealId} team={team} />
+                    </td>
+                  </tr>
+                )];
+              })}
             </tbody>
           </table>
           <div className="lg:hidden">
@@ -134,6 +150,7 @@ export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string
                   <label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={b.allowDownloads} onCheckedChange={(v) => actions.buyer(b.accessId, { allowDownloads: v }, v ? "Downloads allowed" : "View only")} aria-label="Allow downloads" />Allow downloads</label>
                 </div>
                 <div className="flex items-center justify-between gap-2">{ends(b)}{b.hasRoom && <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onViewAs(b.accessId)}><Eye className="mr-1 h-3 w-3" /> View as them</Button>}</div>
+                {(b.team ?? []).length > 0 && <div className="pt-1"><p className="mb-1 text-[11px] uppercase tracking-wider text-muted-foreground/70">Their team</p><TeamRows dealId={dealId} team={b.team ?? []} phone /></div>}
               </div>
             ))}
           </div>
@@ -158,6 +175,9 @@ export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string
           )}
         </div>
       )}
+
+      {/* Stays mounted after closing so the new link can be shown once. */}
+      {addingTo && <AddTeamMemberDialog key={addingTo.accessId} dealId={dealId} accessId={addingTo.accessId} buyerLabel={addingTo.company || addingTo.name || addingTo.email} open={addOpen} onOpenChange={setAddOpen} />}
 
       <AlertDialog open={!!moving} onOpenChange={(o) => { if (!o) setMoving(null); }}>
         <AlertDialogContent>

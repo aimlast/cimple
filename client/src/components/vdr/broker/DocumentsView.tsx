@@ -26,7 +26,7 @@ import { useRoomActions, uploadCleanCopy } from "./actions";
 import type { ShareTarget } from "./ShareDialog";
 import { UPLOAD_ACCEPT, droppedEntries, type UploadEntry } from "./UploadPanel";
 
-export type DocFilter = "all" | "shared" | "not_shared" | "new" | "attention";
+export type DocFilter = "all" | "shared" | "not_shared" | "new" | "attention" | "dd_cited";
 
 export type DocumentsViewProps = {
   dealId: string;
@@ -84,6 +84,7 @@ export function DocumentsView(p: DocumentsViewProps) {
         case "not_shared": return !i.sharing.shared;
         case "new": return Date.now() - new Date(i.addedAt).getTime() < WEEK;
         case "attention": return needsALook(i);
+        case "dd_cited": return !!i.ddCited;
         default: return true;
       }
     })
@@ -197,9 +198,9 @@ export function DocumentsView(p: DocumentsViewProps) {
             <Input value={p.q} onChange={(e) => p.onQ(e.target.value)} placeholder="Search the room" className="h-8 pl-8 text-sm" data-testid="room-doc-search" />
           </label>
           <div className="flex max-w-full overflow-x-auto rounded-md border border-border p-0.5 text-xs" role="tablist" aria-label="Filter">
-            {(["all", "shared", "not_shared", "new", "attention"] as DocFilter[]).map((f) => (
-              <button key={f} role="tab" aria-selected={p.filter === f} onClick={() => p.onFilter(f)} className={cn("shrink-0 rounded-[5px] px-2.5 py-1", p.filter === f ? "bg-teal/15 text-teal" : "text-muted-foreground hover:text-foreground")}>
-                {f === "all" ? "All" : f === "shared" ? "Shared" : f === "not_shared" ? "Not shared" : f === "new" ? "New" : `Needs a look (${attention})`}
+            {(["all", "shared", "not_shared", "new", "attention", ...(data.ddCited.available ? ["dd_cited"] : [])] as DocFilter[]).map((f) => (
+              <button key={f} role="tab" aria-selected={p.filter === f} onClick={() => p.onFilter(f)} className={cn("shrink-0 rounded-[5px] px-2.5 py-1", p.filter === f ? "bg-teal/15 text-teal" : "text-muted-foreground hover:text-foreground")} data-testid={`room-filter-${f}`}>
+                {f === "all" ? "All" : f === "shared" ? "Shared" : f === "not_shared" ? "Not shared" : f === "new" ? "New" : f === "dd_cited" ? "In the DD CIM" : `Needs a look (${attention})`}
               </button>
             ))}
           </div>
