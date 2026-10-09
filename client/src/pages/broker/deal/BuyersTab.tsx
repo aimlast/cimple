@@ -1,16 +1,18 @@
 /**
- * BuyersTab — one buyer pipeline, four stages in the order a buyer moves:
+ * BuyersTab — one buyer pipeline, five stages in the order a buyer moves:
  *
  *   1. Find new buyers      — outside acquirers found on the web (ExternalAcquirersPanel)
- *   2. Send it to next      — people in the broker's list without this CIM (SuggestedBuyersPanel)
- *   3. Waiting for approval — submitted buyers, broker then seller sign-off (BuyerApprovalsPanel)
- *   4. Have the CIM         — access holders: fit, decision, engagement, link actions (HaveCimStage)
+ *   2. Send it to next      — people in the broker's list without this deal (SuggestedBuyersPanel)
+ *   3. Have the teaser      — teaser links: who read it, who asked for the CIM (HaveTeaserStage)
+ *   4. Waiting for approval — requests from the teaser and submitted buyers (BuyerApprovalsPanel)
+ *   5. Have the CIM         — access holders: fit, decision, engagement, link actions (HaveCimStage)
  *
  * One stage shows at a time; the stage lives in the URL (?stage=) so links
- * and Back work. Every change that moves a buyer refreshes all four lists
- * (invalidateBuyerPipeline), so a buyer granted access or approved moves on
- * by itself. "Grant access" and the deal's NDA terms sit at the top of the
- * tab, whatever the stage.
+ * and Back work (the old four keys keep working). Every change that moves a
+ * buyer refreshes all the lists (invalidateBuyerPipeline), so a buyer granted
+ * access or approved moves on by itself. "Give access" (any level: Teaser ·
+ * Blind CIM · Full CIM · Due diligence) and the deal's NDA terms sit at the
+ * top of the tab, whatever the stage.
  */
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -22,6 +24,12 @@ import { SuggestedBuyersPanel } from "@/components/deal/SuggestedBuyersPanel";
 import { ExternalAcquirersPanel } from "@/components/deal/ExternalAcquirersPanel";
 import { BuyerNdaTermsCard } from "@/components/deal/BuyerNdaTermsCard";
 import { HaveCimStage, copyToClipboard, viewLinkFor } from "@/components/deal/buyers/HaveCimStage";
+import { HaveTeaserStage } from "@/components/deal/buyers/HaveTeaserStage";
+import { LevelRadio, LEVEL_TERMS } from "@/components/deal/buyers/LevelRadio";
+import { useTeaserSummary, teaserIsPublished } from "@/components/teaser/useTeaserSummary";
+import {
+  BLIND_ACCESS_LEVEL, DD_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, TEASER_ACCESS_LEVEL, accessLevelLabel, isTeaserOnly, seesCim, type AccessLevel,
+} from "@shared/access-levels";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,10 +38,10 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { UserPlus, Loader2, Copy, FileSignature, Lock, Globe, Send, Hourglass, FileCheck2 } from "lucide-react";
+import { UserPlus, Loader2, Copy, FileSignature, Lock, Globe, Send, Hourglass, FileCheck2, Megaphone } from "lucide-react";
 import {
-  BUYER_STAGES, WAITING_APPROVAL_STATUSES, defaultBuyerStage, invalidateBuyerPipeline, isBuyerStage, revokedWithoutNewLink,
-  type BuyerStage,
+  BUYER_STAGES, WAITING_APPROVAL_STATUSES, approvalStageSubline, defaultBuyerStage, invalidateBuyerPipeline, isBuyerStage, revokedWithoutNewLink,
+  teaserStageSubline, type BuyerStage,
 } from "@/lib/buyer-pipeline";
 
 /** Read the server's JSON error body, falling back to a readable default. */
@@ -45,8 +53,15 @@ async function readError(res: Response, fallback: string): Promise<string> {
 const STAGE_ICONS: Record<BuyerStage, typeof Globe> = {
   find: Globe,
   send: Send,
+  teaser: Megaphone,
   approval: Hourglass,
   have: FileCheck2,
+};
+
+const TEASER_LIFETIME_WORDS: Record<string, string> = {
+  until_offline: "lasts until you take the teaser offline",
+  "30": "30 days",
+  "90": "90 days",
 };
 
 export function BuyersTab() {
@@ -60,7 +75,10 @@ export function BuyersTab() {
 
   const [grantOpen, setGrantOpen] = useState(false);
   const [grantForm, setGrantForm] = useState({ email: "", name: "", company: "" });
-  const [grantResult, setGrantResult] = useState<{ url: string; email: string } | null>(null);
+  const [grantLevel, setGrantLevel] = useState<AccessLevel>(BLIND_ACCESS_LEVEL);
+  const [grantResult, setGrantResult] = useState<{ url: string; email: string; level: AccessLevel } | null>(null);
+  const { data: teaser } = useTeaserSummary(dealId);
+  const teaserLive = teaserIsPublished(teaser);
   const [ndaOpen, setNdaOpen] = useState(false);
 
   // ── The four lists (shared cache with the panels, so counts and lists agree) ──
@@ -83,7 +101,7 @@ export function BuyersTab() {
     queryKey: ["/api/deals", dealId, "suggested-buyers"],
     ...LIVE,
   });
-  const { data: approvals } = useQuery<Array<{ status: string }>>({
+  const { data: approvals } = useQuery<Array<{ status: string; source?: string | null }>>({
     queryKey: [`/api/deals/${dealId}/buyer-approvals`],
     ...LIVE,
     refetchInterval: 30_000,
@@ -94,7 +112,10 @@ export function BuyersTab() {
   });
 
   const allAccess = buyerAccessList ?? [];
-  const activeBuyers = allAccess.filter((b: any) => !b.revokedAt);
+  const activeRows = allAccess.filter((b: any) => !b.revokedAt);
+  // Teaser links have their own stage; "Have the CIM" counts links that open a CIM.
+  const activeBuyers = activeRows.filter((b: any) => seesCim(b.accessLevel));
+  const teaserLinks = activeRows.filter((b: any) => isTeaserOnly(b.accessLevel));
   // Revoked links stay findable (under "Have the CIM") unless the buyer has since been given a new one.
   const revokedBuyers = revokedWithoutNewLink(allAccess);
   // "Find" has no count until a search has run (0 would read as "found nobody").
@@ -102,15 +123,20 @@ export function BuyersTab() {
   const counts: Record<BuyerStage, number | null | undefined> = {
     find: !outside ? null : searched ? (outside.results ?? []).filter((a) => !a.inYourList).length : undefined,
     send: suggested ? suggested.suggested.filter((b) => !b.alreadyHasAccess && !b.inApproval && !b.excluded).length : null,
+    teaser: buyerAccessList ? (teaser?.counts.links ?? teaserLinks.length) : null,
     approval: approvals ? approvals.filter((r) => WAITING_APPROVAL_STATUSES.has(r.status)).length : null,
     have: buyerAccessList ? activeBuyers.length : null,
+  };
+  const sublines: Partial<Record<BuyerStage, string | null>> = {
+    teaser: teaserStageSubline(teaser?.counts),
+    approval: approvalStageSubline(approvals),
   };
 
   // ── Stage: from the URL, else a sensible default once buyers have loaded ──
   const urlStage = new URLSearchParams(search).get("stage");
   const stage: BuyerStage | null = isBuyerStage(urlStage)
     ? urlStage
-    : buyerAccessList ? defaultBuyerStage(published, activeBuyers.length) : null;
+    : buyerAccessList ? defaultBuyerStage(published, activeBuyers.length, teaser?.counts.links ?? teaserLinks.length) : null;
   const goTo = (s: BuyerStage) => {
     if (s !== stage) setLocation(`${location}?stage=${s}`);
   };
@@ -130,9 +156,9 @@ export function BuyersTab() {
     lastStage.current = stage;
   }, [stage, dealId, queryClient]);
 
-  // ── Grant access directly (no email — the broker shares the link) ──
+  // ── Give access directly (no email — the broker shares the link) ──
   const grant = useMutation({
-    mutationFn: async (form: { email: string; name: string; company: string }) => {
+    mutationFn: async (form: { email: string; name: string; company: string; level: AccessLevel }) => {
       const res = await fetch(`/api/deals/${dealId}/buyers`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -141,18 +167,19 @@ export function BuyersTab() {
           buyerEmail: form.email.trim(),
           buyerName: form.name.trim() || null,
           buyerCompany: form.company.trim() || null,
+          accessLevel: form.level,
         }),
       });
-      if (!res.ok) throw new Error(await readError(res, "Couldn't grant access"));
-      return res.json();
+      if (!res.ok) throw new Error(await readError(res, "Couldn't create the link"));
+      return { access: await res.json(), level: form.level };
     },
-    onSuccess: (access) => {
+    onSuccess: ({ access, level }) => {
       invalidateBuyerPipeline(queryClient, dealId);
-      setGrantResult({ url: viewLinkFor(access.accessToken), email: access.buyerEmail });
-      toast({ title: "Access granted", description: `Share the secure link with ${access.buyerEmail}.` });
+      setGrantResult({ url: viewLinkFor(access.accessToken), email: access.buyerEmail, level });
+      toast({ title: "Link created", description: `Share it with ${access.buyerEmail} yourself — nothing was emailed.` });
     },
     onError: (err: Error) =>
-      toast({ title: "Couldn't grant access", description: err.message, variant: "destructive" }),
+      toast({ title: "Couldn't create the link", description: err.message, variant: "destructive" }),
   });
 
   const copyLink = async (url: string) => {
@@ -162,16 +189,33 @@ export function BuyersTab() {
       : { title: "Copy the link manually", description: url });
   };
 
-  const openGrant = (prefill?: { buyerEmail?: string | null; buyerName?: string | null; buyerCompany?: string | null }) => {
+  const openGrant = (prefill?: { buyerEmail?: string | null; buyerName?: string | null; buyerCompany?: string | null }, level?: AccessLevel) => {
     setGrantForm({ email: prefill?.buyerEmail ?? "", name: prefill?.buyerName ?? "", company: prefill?.buyerCompany ?? "" });
+    // The Blind CIM by default; the teaser when only the teaser can be given.
+    setGrantLevel(level ?? (published ? BLIND_ACCESS_LEVEL : teaserLive ? TEASER_ACCESS_LEVEL : BLIND_ACCESS_LEVEL));
     setGrantResult(null);
     setGrantOpen(true);
   };
   const closeGrant = (open: boolean) => {
     setGrantOpen(open);
-    // A new link means a buyer who has the CIM — show them there.
-    if (!open && grantResult) goTo("have");
+    // A new link: show the buyer where they now are (the teaser, or the CIM).
+    if (!open && grantResult) goTo(isTeaserOnly(grantResult.level) ? "teaser" : "have");
   };
+  const canGive = published || teaserLive;
+  const levelOptions = [
+    {
+      level: TEASER_ACCESS_LEVEL,
+      line: `Short anonymous summary · no NDA · ${TEASER_LIFETIME_WORDS[teaser?.linkLifetime ?? "until_offline"] ?? TEASER_LIFETIME_WORDS.until_offline}`,
+      disabled: teaserLive ? null : "Publish the teaser first",
+      action: teaserLive ? null : { label: "Go to the teaser", onClick: () => { setGrantOpen(false); setLocation(`/deal/${dealId}/cim?view=teaser`); } },
+    },
+    ...[BLIND_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, DD_ACCESS_LEVEL].map((l) => ({
+      level: l as AccessLevel,
+      line: LEVEL_TERMS[l as AccessLevel],
+      disabled: published ? null : "Publish the CIM first",
+      action: null,
+    })),
+  ];
 
   if (buyersError) {
     return (
@@ -207,11 +251,16 @@ export function BuyersTab() {
             size="sm"
             className="h-9 gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90"
             onClick={() => openGrant()}
-            disabled={!published}
-            title={published ? "Give a buyer a secure link to the CIM" : "Publish the CIM first — buyers can only open a published CIM"}
+            disabled={!canGive}
+            title={
+              published && teaserLive ? "Give a buyer a private link to the teaser or the CIM"
+                : published ? "Give a buyer a private link to the CIM"
+                : teaserLive ? "Give a buyer a private link to the teaser (publish the CIM to give the CIM)"
+                : "Publish the teaser or the CIM first — buyers can only open what's published"
+            }
             data-testid="button-grant-access"
           >
-            <UserPlus className="h-3.5 w-3.5" /> Grant access
+            <UserPlus className="h-3.5 w-3.5" /> Give access
           </Button>
         </div>
       </div>
@@ -226,43 +275,48 @@ export function BuyersTab() {
         </div>
       )}
 
-      {/* The pipeline — four stages, one visible at a time */}
-      <nav aria-label="Buyer stages" className="grid grid-cols-2 gap-2 md:grid-cols-4" data-testid="buyer-stages">
-        {BUYER_STAGES.map((s) => {
-          const Icon = STAGE_ICONS[s.key];
-          const active = s.key === stage;
-          const count = counts[s.key];
-          return (
-            <button
-              key={s.key}
-              type="button"
-              onClick={() => goTo(s.key)}
-              aria-current={active ? "step" : undefined}
-              className={`relative flex min-h-[64px] items-start gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-colors ${
-                active
-                  ? "border-teal/60 bg-teal/10"
-                  : "border-border bg-card hover:border-foreground/20 hover:bg-muted/30"
-              }`}
-              data-testid={`stage-${s.key}`}
-            >
-              <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${active ? "text-teal" : "text-muted-foreground"}`} />
-              <span className="min-w-0 flex-1">
-                <span className={`block text-[11px] ${active ? "text-teal" : "text-muted-foreground"}`}>Step {s.step}</span>
-                <span className={`block text-sm font-medium leading-tight ${active ? "text-foreground" : "text-foreground/85"}`}>{s.label}</span>
-              </span>
-              {count !== undefined && (
-                <span
-                  className={`ml-1 shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${
-                    active ? "bg-teal text-teal-foreground" : "bg-muted text-muted-foreground"
-                  }`}
-                  data-testid={`stage-count-${s.key}`}
-                >
-                  {count === null ? "·" : count}
+      {/* The pipeline — five stages, one visible at a time (phones: a strip that scrolls and snaps) */}
+      <nav aria-label="Buyer stages" className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0" data-testid="buyer-stages">
+        <div className="flex snap-x snap-mandatory gap-2 lg:grid lg:grid-cols-5">
+          {BUYER_STAGES.map((s) => {
+            const Icon = STAGE_ICONS[s.key];
+            const active = s.key === stage;
+            const count = counts[s.key];
+            const sub = sublines[s.key];
+            return (
+              <button
+                key={s.key}
+                type="button"
+                onClick={() => goTo(s.key)}
+                aria-current={active ? "step" : undefined}
+                ref={active ? (el) => el?.scrollIntoView({ block: "nearest", inline: "nearest" }) : undefined}
+                className={`relative flex min-h-[64px] w-[160px] shrink-0 snap-start items-start gap-2 rounded-lg border px-3 py-2.5 text-left transition-colors lg:w-auto ${
+                  active
+                    ? "border-teal/60 bg-teal/10"
+                    : "border-border bg-card hover:border-foreground/20 hover:bg-muted/30"
+                }`}
+                data-testid={`stage-${s.key}`}
+              >
+                <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${active ? "text-teal" : "text-muted-foreground"}`} />
+                <span className="min-w-0 flex-1">
+                  <span className={`block text-[11px] ${active ? "text-teal" : "text-muted-foreground"}`}>Step {s.step}</span>
+                  <span className={`block text-sm font-medium leading-tight ${active ? "text-foreground" : "text-foreground/85"}`}>{s.label}</span>
+                  {sub && <span className="mt-0.5 block truncate text-[11px] text-teal" data-testid={`stage-sub-${s.key}`}>{sub}</span>}
                 </span>
-              )}
-            </button>
-          );
-        })}
+                {count !== undefined && (
+                  <span
+                    className={`ml-1 shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${
+                      active ? "bg-teal text-teal-foreground" : "bg-muted text-muted-foreground"
+                    }`}
+                    data-testid={`stage-count-${s.key}`}
+                  >
+                    {count === null ? "·" : count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
       </nav>
 
       {current && (
@@ -279,6 +333,16 @@ export function BuyersTab() {
           <ExternalAcquirersPanel dealId={dealId} embedded />
         ) : stage === "send" ? (
           <SuggestedBuyersPanel dealId={dealId} embedded />
+        ) : stage === "teaser" ? (
+          <HaveTeaserStage
+            dealId={dealId}
+            published={teaserLive}
+            cimLive={published}
+            accessRows={allAccess}
+            onGoToApproval={() => goTo("approval")}
+            onGoToTeaser={() => setLocation(`/deal/${dealId}/cim?view=teaser`)}
+            onGrantTeaser={() => openGrant(undefined, TEASER_ACCESS_LEVEL)}
+          />
         ) : stage === "approval" ? (
           <BuyerApprovalsPanel dealId={dealId} embedded onShowHaveCim={() => goTo("have")} />
         ) : (
@@ -306,19 +370,17 @@ export function BuyersTab() {
 
       {/* Grant access dialog */}
       <Dialog open={grantOpen} onOpenChange={closeGrant}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-h-[92vh] max-w-xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Grant CIM access</DialogTitle>
+            <DialogTitle>Give a buyer access</DialogTitle>
             <DialogDescription>
-              Creates a secure view link for this buyer. Nothing is emailed —
-              you share the link yourself. The link expires in 30 days unless
-              you extend it.
+              Creates a private link for this buyer. Nothing is emailed — you send the link yourself.
             </DialogDescription>
           </DialogHeader>
           {grantResult ? (
             <div className="space-y-3 py-1">
               <p className="text-sm text-muted-foreground">
-                Link for <span className="text-foreground">{grantResult.email}</span>
+                Link for <span className="text-foreground">{grantResult.email}</span> · {accessLevelLabel(grantResult.level)}
               </p>
               <div className="flex items-center gap-2">
                 <Input readOnly value={grantResult.url} className="h-9 text-xs font-mono" />
@@ -344,9 +406,13 @@ export function BuyersTab() {
               onSubmit={(e) => {
                 e.preventDefault();
                 if (!grantForm.email.trim() || grant.isPending) return;
-                grant.mutate(grantForm);
+                grant.mutate({ ...grantForm, level: grantLevel });
               }}
             >
+              <div className="space-y-1.5">
+                <Label className="text-xs">What should they get?</Label>
+                <LevelRadio name="What should they get" options={levelOptions} value={grantLevel} onChange={setGrantLevel} />
+              </div>
               <div className="space-y-1.5">
                 <Label htmlFor="grant-email" className="text-xs">Buyer email</Label>
                 <Input
@@ -390,7 +456,7 @@ export function BuyersTab() {
                   type="submit"
                   size="sm"
                   className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
-                  disabled={!grantForm.email.trim() || grant.isPending}
+                  disabled={!grantForm.email.trim() || grant.isPending || !!levelOptions.find((o) => o.level === grantLevel)?.disabled}
                   data-testid="button-grant-access-confirm"
                 >
                   {grant.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}

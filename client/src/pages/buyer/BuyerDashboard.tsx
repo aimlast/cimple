@@ -27,7 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BuyerNav, readErrorBody } from "./shared";
-import { seesNamedCim } from "@shared/access-levels";
+import { buyerFacingLevelLabel, isTeaserOnly, seesNamedCim } from "@shared/access-levels";
 
 interface DashboardDeal {
   dealId: string;
@@ -366,6 +366,8 @@ function DealCard({ deal }: { deal: DashboardDeal }) {
   const matchCount = deal.match?.criteriaMatched ?? 0;
   const topDimensions = deal.match?.topDimensions ?? [];
   const blind = isBlindAccess(deal.accessLevel);
+  // A teaser link: the anonymous summary (the CIM comes after the buyer asks for it).
+  const summary = isTeaserOnly(deal.accessLevel);
   const name = (deal.businessName || "").trim() || FALLBACK_NAME;
   const inactive = deal.accessStatus === "expired" || deal.accessStatus === "revoked";
 
@@ -381,7 +383,11 @@ function DealCard({ deal }: { deal: DashboardDeal }) {
           <div className="min-w-0 flex-1">
             <div className="font-semibold text-lg truncate flex items-center gap-2">
               <span className="truncate">{name}</span>
-              {blind && (
+              {summary ? (
+                <Badge variant="outline" className="text-[10px] h-4 shrink-0 font-normal" data-testid={`badge-summary-${deal.dealId}`}>
+                  {buyerFacingLevelLabel(deal.accessLevel)}
+                </Badge>
+              ) : blind && (
                 <Badge variant="outline" className="text-[10px] h-4 shrink-0 font-normal">
                   <Lock className="h-2.5 w-2.5 mr-1" />
                   Confidential
@@ -397,7 +403,11 @@ function DealCard({ deal }: { deal: DashboardDeal }) {
           {!inactive && <ChevronRight className="h-4 w-4 text-muted-foreground mt-1 flex-shrink-0" />}
         </div>
 
-        {deal.description ? (
+        {summary ? (
+          <p className="text-xs text-muted-foreground/70">
+            A short anonymous summary. Read it, then ask for the CIM from the same page.
+          </p>
+        ) : deal.description ? (
           <p className="text-xs text-muted-foreground line-clamp-2">{deal.description}</p>
         ) : blind ? (
           <p className="text-xs text-muted-foreground/70">
@@ -448,6 +458,8 @@ function DealCard({ deal }: { deal: DashboardDeal }) {
             <span className="text-destructive/80">
               {deal.accessStatus === "revoked" ? "Access revoked" : "Access expired"} — contact your broker
             </span>
+          ) : summary ? (
+            <span className="font-medium text-teal">Read the summary</span>
           ) : (
             <span>{deal.ndaSigned ? "NDA signed" : "NDA required"}</span>
           )}

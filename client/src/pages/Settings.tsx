@@ -32,6 +32,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { BrandingSettings } from "@shared/schema";
 import { BrandSettingsCard } from "@/components/cim-design/BrandSettingsCard";
 import { TemplateGallery } from "@/components/cim-design/TemplateGallery";
+import { TeaserBrandCard } from "@/components/teaser/TeaserBrandCard";
 
 /**
  * Broker email preferences. Every switch here controls real events — the
@@ -532,6 +533,7 @@ export default function Settings() {
             contactName={(me?.user as { name?: string | null } | undefined)?.name ?? null}
           />
           <TemplateGallery />
+          <TeaserBrandCard />
         </TabsContent>
 
         <TabsContent value="defaults" className="mt-6 space-y-6">

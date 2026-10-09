@@ -93,6 +93,7 @@ import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysi
 import { CimStaleNotice, CimSummaryCard, useBuilderState } from "@/components/cim-builder/CimSummaryCard";
 import { regenerateBuyerImpact, reviewingUpdate } from "@shared/cim-generation-warnings";
 import { PublishedVersionBanner } from "@/components/deal/PublishedVersionBanner";
+import { TeaserAttentionNote } from "@/components/teaser/TeaserAttentionNote";
 import { publishReadiness, sectionsAwaitingApproval } from "@shared/cim-approvals";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { ReadyToBuildCta } from "@/components/deal/ReadyToBuildCta";
@@ -2502,6 +2503,7 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
   return (
     <div className="max-w-4xl mx-auto px-6 py-6 space-y-3">
       <PublishedVersionBanner deal={deal} />
+      <TeaserAttentionNote dealId={dealId} />
       {PHASES.map((phase, idx) => {
         const isCurrentPhase = deal.phase === phase.key;
         const isComplete = currentPhaseIdx > idx;

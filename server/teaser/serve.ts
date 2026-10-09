@@ -67,7 +67,7 @@ export async function buyerTeaserFor(deal: Deal, row: TeaserRow, opts: { draft?:
   return { teaser, design, contact, codename };
 }
 
-export const TEASER_NOT_PUBLISHED = { code: "not_published", error: "This summary isn't available right now." } as const;
+export const TEASER_NOT_PUBLISHED = { code: "not_published", teaser: true, error: "This summary isn't available right now." } as const;
 
 type RenditionWriterLike = import("../analytics/renditions").RenditionWriter;
 let renditionWriter: RenditionWriterLike | undefined;

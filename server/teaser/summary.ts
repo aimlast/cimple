@@ -67,7 +67,7 @@ export async function teaserSummary(deal: Deal, row: TeaserRow | null, opts: { c
   const counts = opts.counts === false ? emptyCounts() : await countsFor(deal.id, opts.now);
   if (!row) {
     return {
-      status: "none", templateKey: null, publishedAt: null, unpublishedAt: null, draftRev: 0, publishedRev: 0, changedSincePublish: 0,
+      status: "none", templateKey: null, linkLifetime: null, autoGrant: null, publishedAt: null, unpublishedAt: null, draftRev: 0, publishedRev: 0, changedSincePublish: 0,
       heldBlocks: [], draftHeldBlocks: [], pinpointCount: 0, seller: { state: "none", at: null, note: null }, generation: null, reviewNeeded: false, counts,
     };
   }
@@ -95,6 +95,8 @@ export async function teaserSummary(deal: Deal, row: TeaserRow | null, opts: { c
   return {
     status: statusOf(r),
     templateKey: r.templateKey,
+    linkLifetime: r.linkLifetime,
+    autoGrant: r.autoGrant,
     publishedAt: r.publishedAt ? r.publishedAt.toISOString() : null,
     unpublishedAt: r.unpublishedAt ? r.unpublishedAt.toISOString() : null,
     draftRev: r.draftRev,
@@ -178,6 +180,15 @@ export interface TeaserStateView {
   engagementCounts: TeaserSummary["counts"];
   /** Quiet notes (an open question that doesn't change what the teaser shows). */
   notes: string[];
+  /**
+   * What {price} / {contact} / {firm} become for buyers right now (the editor
+   * fills them the same way, so the broker reads what buyers will read).
+   */
+  fill: { price: string | null; contact: string | null; firm: string } | null;
+  /** The teaser's look: the blind design payload (brokerage brand only, never the business's). */
+  design: unknown;
+  /** The seller-team owner who can check the teaser (null = nobody to send it to yet). */
+  sellerOwner: string | null;
 }
 
 /** The full state for the Teaser tab and the editor. */
@@ -205,6 +216,27 @@ export async function teaserState(deal: Deal, row: TeaserRow, opts: { staleness?
     } catch (err) {
       console.warn(`[teaser] staleness failed for deal ${deal.id}:`, (err as Error)?.message);
     }
+  }
+  // The serve-time fill and the look (best effort: the editor still works without them).
+  let fill: TeaserStateView["fill"] = null;
+  let design: unknown = null;
+  try {
+    const { teaserDesign, contactFromDesign } = await import("./serve");
+    const { listedAskingPrice } = await import("../information/deal-mirror");
+    const { teaserFill } = await import("@shared/teaser-view");
+    const d = await teaserDesign(deal, r);
+    design = d;
+    fill = teaserFill({ askingPrice: listedAskingPrice(deal), showAskingPrice: r.showAskingPrice, numbers: r.numbers, contact: contactFromDesign(d) }, terms);
+  } catch (err) {
+    console.warn(`[teaser] fill/design failed for deal ${deal.id}:`, (err as Error)?.message);
+  }
+  let owner: string | null = null;
+  try {
+    const { sellerOwner } = await import("./seller-check");
+    const o = await sellerOwner(deal.id);
+    owner = o ? (o.name || "the seller") : null;
+  } catch {
+    owner = null;
   }
   const s = r.sellerCheck;
   return {
@@ -237,6 +269,9 @@ export async function teaserState(deal: Deal, row: TeaserRow, opts: { staleness?
     staleness,
     engagementCounts: summary.counts,
     notes,
+    fill,
+    design,
+    sellerOwner: owner,
   };
 }
 

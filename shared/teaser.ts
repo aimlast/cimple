@@ -180,6 +180,10 @@ export type TeaserRequestState = "none" | "requested" | "approved_waiting" | "de
 export interface TeaserSummary {
   status: TeaserStatus;
   templateKey: string | null;
+  /** How long new teaser links last (the grant dialog says it). */
+  linkLifetime?: TeaserLinkLifetime | null;
+  /** What a buyer gets automatically after the NDA from the teaser ("off" = the broker decides). */
+  autoGrant?: TeaserAutoGrant | null;
   publishedAt: string | null;
   unpublishedAt: string | null;
   draftRev: number;

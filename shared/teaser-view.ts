@@ -199,12 +199,12 @@ export interface BuyerTeaser {
   leakReasons: Record<string, string>;
 }
 
-export function buildBuyerTeaser(input: BuyerTeaserInput): BuyerTeaser {
-  const codename = input.codename || NO_CODENAME;
-  const terms = teaserTerms(input.deal, codename);
-  const doc = swapCodename(input.doc, input.codenameUsed, codename);
-  const header = servedHeader(doc.header, codename, terms, input.deal.industry ?? null);
-  const fill: TeaserFill = {
+/**
+ * What the serve-time tokens become ({price} in the number style, {contact},
+ * {firm}) — the buyer's teaser and the broker's editor fill them the same way.
+ */
+export function teaserFill(input: Pick<BuyerTeaserInput, "askingPrice" | "showAskingPrice" | "numbers" | "contact">, terms: BlindTerm[]): TeaserFill {
+  return {
     price: priceForTeaser(input.askingPrice, { show: input.showAskingPrice, numbers: input.numbers, terms }),
     contact: (() => {
       const line = contactLine(input.contact);
@@ -212,6 +212,14 @@ export function buildBuyerTeaser(input: BuyerTeaserInput): BuyerTeaser {
     })(),
     firm: input.contact.firm?.trim() || "the broker",
   };
+}
+
+export function buildBuyerTeaser(input: BuyerTeaserInput): BuyerTeaser {
+  const codename = input.codename || NO_CODENAME;
+  const terms = teaserTerms(input.deal, codename);
+  const doc = swapCodename(input.doc, input.codenameUsed, codename);
+  const header = servedHeader(doc.header, codename, terms, input.deal.industry ?? null);
+  const fill = teaserFill(input, terms);
   const blocks: BuyerSection[] = [];
   const leaked: string[] = [];
   const leakReasons: Record<string, string> = {};

@@ -25,6 +25,8 @@ import { CimGenerationWatcher } from "@/components/broker/CimGenerationWatcher";
 import CIMInterview from "@/pages/CIMInterview";
 import CIMDesigner from "@/pages/CIMDesigner";
 import CimPrintPreview from "@/pages/CimPrintPreview";
+import TeaserEditor from "@/pages/TeaserEditor";
+import TeaserPrintPreview from "@/pages/TeaserPrintPreview";
 import SellerApprovalPage from "@/pages/SellerApprovalPage";
 import SellerNdaPage from "@/pages/SellerNdaPage";
 import Integrations from "@/pages/Integrations";
@@ -73,6 +75,7 @@ function Routes() {
 
       {/* Deal routes (already namespaced — no move needed) */}
       <Route path="/deal/:dealId/design" component={CIMDesigner} />
+      <Route path="/deal/:dealId/teaser" component={TeaserEditor} />
       <Route path="/deal/:id/:tab" component={DealShell} />
       <Route path="/deal/:id" component={DealShell} />
 
@@ -113,6 +116,8 @@ function isFullscreen(path: string) {
   if (path.endsWith("/interview/together")) return true;
   // CIM print preview (broker only, no app chrome so it prints clean)
   if (/^\/deal\/[^/]+\/print$/.test(path)) return true;
+  // Teaser print preview (broker only, no app chrome)
+  if (/^\/deal\/[^/]+\/teaser\/print$/.test(path)) return true;
   // Seller's side of the in-Cimple video call
   if (/^\/seller\/[^/]+\/call$/.test(path)) return true;
   // Legacy seller invite redirect
@@ -294,6 +299,14 @@ function FullscreenLayout() {
           {() => (
             <BrokerAuthGate>
               <CimPrintPreview />
+            </BrokerAuthGate>
+          )}
+        </Route>
+        {/* Teaser print preview — broker-only */}
+        <Route path="/deal/:dealId/teaser/print">
+          {() => (
+            <BrokerAuthGate>
+              <TeaserPrintPreview />
             </BrokerAuthGate>
           )}
         </Route>

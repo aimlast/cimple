@@ -5,6 +5,11 @@
  * Step 1 "About you": buyer type, then a short set of questions for that
  * type. Step 2: the confidentiality agreement and "I agree". A returning
  * buyer whose profile is already on file just confirms it (or updates it).
+ *
+ * From a teaser link the same two steps ask for the CIM (purpose "request"):
+ * the signature IS the request (POST …/sign-nda answers with the request's
+ * state). On a deal without an NDA (skipNda) step 1 ends with "Send request"
+ * (POST …/cim-request with the profile). onCancel goes back to the summary.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -76,7 +81,21 @@ function Field({ label, hint, children, required }: { label: string; hint?: stri
 
 const priceSelect = "h-9 w-full rounded-md border border-input bg-background px-2 text-sm";
 
-export function NdaBuyerProfileGate({ dealName, token, onAccepted }: { dealName: string; token: string; onAccepted: () => void }) {
+export function NdaBuyerProfileGate({
+  dealName, token, onAccepted, purpose = "cim", onCancel, skipNda = false,
+}: {
+  dealName: string;
+  token: string;
+  /** The server's answer (a request from the teaser: `{ request: { state }, autoGranted }` or `{ retry: true }`). */
+  onAccepted: (result?: Record<string, any>) => void;
+  /** "request": asking for the CIM from the teaser (copy changes; nothing opens here). */
+  purpose?: "cim" | "request";
+  /** Back to the summary (request flow). */
+  onCancel?: () => void;
+  /** The deal has no NDA: step 1 sends the request with the profile. */
+  skipNda?: boolean;
+}) {
+  const request = purpose === "request";
   const { data, isLoading, refetch } = useQuery<ProfileResponse>({
     queryKey: ["/api/view", token, "buyer-profile"],
     queryFn: async () => {
@@ -172,16 +191,41 @@ export function NdaBuyerProfileGate({ dealName, token, onAccepted }: { dealName:
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         // Signed already (another tab, a double click): that signature stands — carry on.
-        if (body?.code === "nda_already_signed") { setSigned(true); onAccepted(); return; }
+        if (body?.code === "nda_already_signed") { setSigned(true); onAccepted(request ? { retry: true } : undefined); return; }
         if (body?.code === "profile_required") { setStep("about"); setEditing(true); }
         // The terms changed since the page loaded — load the current text to read.
         if (body?.code === "nda_terms_changed") await refetch();
         throw new Error(body.error || "Could not record your signature — please try again.");
       }
       setSigned(true);
-      onAccepted();
+      onAccepted(request ? await res.json().catch(() => ({ retry: true })) : undefined);
     } catch (err) {
       setError(err instanceof Error && err.message ? err.message : "Could not record your signature — please try again.");
+    } finally {
+      setSigning(false);
+    }
+  };
+
+  // No NDA on this deal: the profile goes with the request itself.
+  const sendRequest = async (confirmOnly: boolean) => {
+    setSigning(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/view/${token}/cim-request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(confirmOnly ? { confirmProfile: true } : { profile: payload() }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (body?.code === "profile_required") { setStep("about"); setEditing(true); }
+        if (body?.code === "has_cim_link" || body?.code === "already_cim") throw new Error("You already have access to the CIM. Use the link your broker sent you.");
+        throw new Error(body.error || "Couldn't send your request. Try again.");
+      }
+      setSigned(true);
+      onAccepted(body);
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : "Couldn't send your request. Try again.");
     } finally {
       setSigning(false);
     }
@@ -194,9 +238,13 @@ export function NdaBuyerProfileGate({ dealName, token, onAccepted }: { dealName:
       </div>
       <div className="min-w-0">
         <h2 className="font-semibold text-base">
-          {step === "agree" || step === "confirm" ? "Non-Disclosure Agreement" : "Before you view the CIM"}
+          {request
+            ? (step === "agree" || (step === "confirm" && !skipNda) ? "The NDA" : `Ask for the CIM — ${dealName}`)
+            : step === "agree" || step === "confirm" ? "Non-Disclosure Agreement" : "Before you view the CIM"}
         </h2>
-        <p className="text-xs text-muted-foreground truncate">{dealName} — Confidential Information Memorandum</p>
+        <p className="text-xs text-muted-foreground truncate">
+          {request ? (step === "agree" || (step === "confirm" && !skipNda) ? `Ask for the CIM — ${dealName}` : "About you · takes about a minute") : `${dealName} — Confidential Information Memorandum`}
+        </p>
       </div>
     </div>
   );
@@ -259,13 +307,18 @@ export function NdaBuyerProfileGate({ dealName, token, onAccepted }: { dealName:
     <div className="fixed inset-0 z-50 overflow-y-auto bg-background" data-testid="nda-gate">
       <div className="flex min-h-full items-start justify-center p-4 sm:items-center sm:p-6">
         <div className="w-full max-w-xl space-y-5 rounded-xl border border-border bg-card p-5 shadow-lg sm:p-8">
+          {onCancel && (
+            <button type="button" onClick={onCancel} className="-mt-1 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" data-testid="button-nda-back-to-summary">
+              <ArrowLeft className="h-3.5 w-3.5" /> Back to the summary
+            </button>
+          )}
           {header}
           <Separator />
 
           {signed ? (
             <div className="flex flex-col items-center gap-2 py-8 text-sm text-muted-foreground" data-testid="nda-signed-opening">
               <Loader2 className="h-5 w-5 animate-spin" />
-              Signed — opening the CIM…
+              {request ? "Sending your request…" : "Signed — opening the CIM…"}
             </div>
           ) : isLoading ? (
             <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
@@ -280,16 +333,24 @@ export function NdaBuyerProfileGate({ dealName, token, onAccepted }: { dealName:
                   Update my profile
                 </button>
               </div>
-              {agreement}
-              <Button className="w-full bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => sign(true)} disabled={signing || !canSign} data-testid="button-sign-nda">
-                {signing ? "Signing…" : "I agree — View the CIM"}
-              </Button>
+              {skipNda ? (
+                <Button className="w-full bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => sendRequest(true)} disabled={signing} data-testid="button-send-cim-request">
+                  {signing ? "Sending…" : "Send request"}
+                </Button>
+              ) : (
+                <>
+                  {agreement}
+                  <Button className="w-full bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => sign(true)} disabled={signing || !canSign} data-testid="button-sign-nda">
+                    {signing ? "Signing…" : request ? "I agree — send my request" : "I agree — View the CIM"}
+                  </Button>
+                </>
+              )}
               {errorBox}
             </>
           ) : step === "about" ? (
             <>
               <p className="text-sm text-muted-foreground">
-                A few questions so the broker knows who's looking — and can send you other businesses that fit what you want. Takes about a minute.
+                A few questions so the broker knows who's {request ? "asking" : "looking"} — and can send you other businesses that fit what you want. Takes about a minute.
               </p>
 
               <Field label="I'm buying as" required>
@@ -414,20 +475,32 @@ export function NdaBuyerProfileGate({ dealName, token, onAccepted }: { dealName:
               {missing.length > 0 && t && (
                 <p className="text-[11px] text-muted-foreground">Still needed: {missing.join(", ")}.</p>
               )}
-              <Button
-                className="w-full bg-teal text-teal-foreground hover:bg-teal/90"
-                disabled={missing.length > 0}
-                onClick={() => { setError(null); setStep("agree"); }}
-                data-testid="button-nda-continue"
-              >
-                Continue to the NDA
-              </Button>
+              {skipNda ? (
+                <Button
+                  className="w-full bg-teal text-teal-foreground hover:bg-teal/90"
+                  disabled={missing.length > 0 || signing}
+                  onClick={() => sendRequest(false)}
+                  data-testid="button-send-cim-request"
+                >
+                  {signing ? "Sending…" : "Send request"}
+                </Button>
+              ) : (
+                <Button
+                  className="w-full bg-teal text-teal-foreground hover:bg-teal/90"
+                  disabled={missing.length > 0}
+                  onClick={() => { setError(null); setStep("agree"); }}
+                  data-testid="button-nda-continue"
+                >
+                  Continue to the NDA
+                </Button>
+              )}
+              {errorBox}
             </>
           ) : (
             <>
               {agreement}
               <Button className="w-full bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => sign(false)} disabled={signing || !canSign} data-testid="button-sign-nda">
-                {signing ? "Signing…" : "I agree — View the CIM"}
+                {signing ? "Signing…" : request ? "I agree — send my request" : "I agree — View the CIM"}
               </Button>
               <button type="button" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" onClick={() => setStep("about")}>
                 <ArrowLeft className="h-3 w-3" /> Back to your details

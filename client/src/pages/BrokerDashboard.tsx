@@ -34,7 +34,10 @@ interface DashboardData {
     deals: Array<{ id: string; businessName: string; industry: string; updatedAt: string }>;
   }>;
   actions: {
-    pendingApprovals: Array<{ dealId: string; dealName: string; buyerName: string; buyerCompany: string | null; submittedAt: string }>;
+    /** source "teaser_request" = the buyer asked for the CIM from the teaser. */
+    pendingApprovals: Array<{ dealId: string; dealName: string; buyerName: string; buyerCompany: string | null; submittedAt: string; source?: string | null }>;
+    /** The teaser: a published block now hidden from buyers, or a buyer asking for a fresh teaser link. */
+    teaserAttention?: Array<{ dealId: string; dealName: string; kind: "held_block" | "fresh_link"; title: string; detail: string | null; count: number }>;
     unansweredQuestions: Array<{ dealId: string; dealName: string; questionPreview: string; askedAt: string }>;
     stalledInterviews: Array<{ dealId: string; dealName: string; lastActivity: string; daysSinceActivity: number }>;
     /** Deals whose next step is the broker's (shared/deal-progress computeNextStep). */
@@ -174,16 +177,32 @@ export default function BrokerDashboard() {
   // Wording follows the deal list's owners: "Your move: …" is the broker's
   // step, "Waiting on the seller: …" is a nudge-worthy wait.
   const actionRows: ActionRow[] = [
+    ...(actions.teaserAttention ?? []).filter((t) => t.kind === "held_block").map((t): ActionRow => ({
+      key: `teaser-held-${t.dealId}`,
+      icon: ShieldCheck,
+      tint: "amber",
+      label: "Your move: fix the teaser — a block is hidden from buyers",
+      detail: `${t.dealName}${t.detail ? ` · ${t.detail}` : ""}`,
+      href: `/deal/${t.dealId}/cim?view=attention`,
+    })),
     ...actions.pendingApprovals.map((a): ActionRow => ({
       key: `approval-${a.dealId}-${a.buyerName}`,
       icon: ShieldCheck,
       tint: "brass",
-      label: "Your move: approve a buyer",
+      label: a.source === "teaser_request" ? "Your move: a buyer asked for the CIM" : "Your move: approve a buyer",
       detail: `${a.buyerName}${a.buyerCompany ? ` (${a.buyerCompany})` : ""} · ${a.dealName}`,
       // Straight to the approval stage — the tab otherwise opens on
       // "Have the CIM" for a live deal with buyers.
       href: `/deal/${a.dealId}/buyers?stage=approval`,
       time: a.submittedAt,
+    })),
+    ...(actions.teaserAttention ?? []).filter((t) => t.kind === "fresh_link").map((t): ActionRow => ({
+      key: `teaser-fresh-${t.dealId}`,
+      icon: ArrowRight,
+      tint: "brass",
+      label: "Your move: a buyer asked for a fresh teaser link",
+      detail: `${t.dealName}${t.count > 1 ? ` · ${t.count} buyers` : ""}`,
+      href: `/deal/${t.dealId}/buyers?stage=teaser`,
     })),
     ...actions.unansweredQuestions.map((q, i): ActionRow => ({
       key: `qa-${q.dealId}-${i}`,
