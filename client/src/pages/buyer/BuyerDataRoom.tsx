@@ -268,7 +268,8 @@ function RoomHeader({ data, token, isTeam, embedded, onIndex }: { data: BuyerRoo
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{isTeam ? `${data.reader.principalCompany ?? "The buyer"}'s data room` : "Data room"}</p>
           </div>
         </div>
-        {token && !isTeam && <RoomSwitch token={token} active="room" className="hidden md:inline-flex" />}
+        {/* The switch only when the memorandum opens for this link (an unpublished CIM would land on "Not available yet"). */}
+        {token && !isTeam && data.memorandumAvailable && <RoomSwitch token={token} active="room" className="hidden md:inline-flex" />}
         <div className="flex shrink-0 items-center gap-2">
           <p className="hidden text-xs text-muted-foreground sm:block">{data.reader.email}</p>
           {onIndex && (
@@ -283,7 +284,7 @@ function RoomHeader({ data, token, isTeam, embedded, onIndex }: { data: BuyerRoo
           )}
         </div>
       </div>
-      {token && !isTeam && (
+      {token && !isTeam && data.memorandumAvailable && (
         <div className="border-t border-border px-4 py-2 md:hidden"><RoomSwitch token={token} active="room" full /></div>
       )}
     </header>

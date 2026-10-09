@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import type { RoomItemRow } from "@shared/vdr-api";
+import { figureLines } from "@shared/vdr";
 import { durationLabel, invalidateRoom, roomBase, shortDate, useItemActivity, useItemNotes, vdrFetch } from "@/hooks/useDataRoom";
 import { useToast } from "@/hooks/use-toast";
 import { FlagChip, ItemMeta, SharingChip } from "./parts";
@@ -191,7 +192,14 @@ function NotesBody({ dealId, n, loading, error, onRetry }: { dealId: string; n: 
             {n.keyFigures.map((f) => (
               <div key={f.key} className="flex items-start gap-3 px-3 py-1.5">
                 <dt className="w-[42%] shrink-0 text-xs text-muted-foreground">{f.label}</dt>
-                <dd className="min-w-0 flex-1 text-xs text-foreground/90">{f.value}{f.inCim && <span className="ml-1.5 inline-flex items-center gap-0.5 whitespace-nowrap text-[11px] text-teal"><Check className="h-3 w-3" />In the CIM</span>}</dd>
+                <dd className="min-w-0 flex-1 text-xs text-foreground/90">
+                  {figureLines(f.value).map((l, j, all) => (
+                    <span key={j} className="block">
+                      {l}
+                      {j === all.length - 1 && f.inCim && <span className="ml-1.5 inline-flex items-center gap-0.5 whitespace-nowrap text-[11px] text-teal"><Check className="h-3 w-3" />In the CIM</span>}
+                    </span>
+                  ))}
+                </dd>
               </div>
             ))}
           </dl>

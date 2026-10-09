@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import type { BuyerItemAbout } from "@shared/vdr-api";
+import { figureLines, hasPages } from "@shared/vdr";
 import { shortDate, sourceKey, vdrFetch, vdrUrls, type VdrSource } from "@/hooks/useDataRoom";
 
 export function AboutPanel({ about, source, page, memoHref }: { about: BuyerItemAbout; source?: VdrSource; page?: number | null; memoHref?: (sectionId: string) => string }) {
@@ -39,7 +40,7 @@ export function AboutPanel({ about, source, page, memoHref }: { about: BuyerItem
             {about.keyFigures!.map((f, i) => (
               <div key={i} className="flex items-start justify-between gap-3 text-xs">
                 <dt className="text-muted-foreground">{f.label}</dt>
-                <dd className="text-right text-foreground/90">{f.value}</dd>
+                <dd className="text-right text-foreground/90">{figureLines(f.value).map((l, j, all) => <span key={j} className={all.length > 1 ? "block whitespace-nowrap" : "block"}>{l}</span>)}</dd>
               </div>
             ))}
           </dl>
@@ -73,7 +74,8 @@ export function AboutPanel({ about, source, page, memoHref }: { about: BuyerItem
         </section>
       )}
 
-      {about.questions && <Questions about={about} source={source} page={page ?? null} />}
+      {/* Only a document with pages (PDF, photo) names one: a sheet's or a Word file's question is never "about page 1". */}
+      {about.questions && <Questions about={about} source={source} page={hasPages(about.manifest.kind) ? page ?? null : null} />}
     </div>
   );
 }
@@ -121,7 +123,7 @@ function Questions({ about, source, page }: { about: BuyerItemAbout; source?: Vd
             <p className="rounded-md bg-muted/30 px-2.5 py-2 text-xs text-foreground/90" data-testid="vdr-ask-sent">Sent to the broker. You'll see the answer here and in Questions. <button className="underline" onClick={() => setSent(false)}>Ask another</button></p>
           ) : (
             <>
-              <Textarea value={text} onChange={(e) => setText(e.target.value)} maxLength={1000} rows={3} placeholder={page ? `Your question about page ${page}…` : "Your question…"} className="text-xs" data-testid="vdr-ask-input" />
+              <Textarea value={text} onChange={(e) => setText(e.target.value)} maxLength={1000} rows={3} placeholder={page ? `Your question about page ${page}…` : about.manifest.kind === "sheet" ? "Your question about this spreadsheet…" : "Your question about this document…"} className="text-xs" data-testid="vdr-ask-input" />
               <div className="mt-1.5 flex items-center justify-between gap-2">
                 <span className="text-[11px] text-muted-foreground">It goes to your broker.</span>
                 <Button size="sm" onClick={ask} disabled={busy || !text.trim()} data-testid="vdr-ask-send">{busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />} Send to the broker</Button>

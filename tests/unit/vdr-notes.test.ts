@@ -56,13 +56,13 @@ const facts = documentFacts(info, "t2-2023");
 assert.deepEqual(facts.map((f) => f.key).sort(), ["ebitdaMargin", "employees", "loiPrice", "netIncome", "ownerHealth", "revenueByYear", "taxableIncome"]);
 assert.equal(facts.find((f) => f.key === "revenueByYear")!.text, "2023: $29,180,000", "only the year this document stated");
 assert.deepEqual(documentFacts(info, "t2-2022").map((f) => f.text), ["2022: $27,400,000"]);
-assert.equal(factLabel("revenueByYear"), "Revenue by year");
+assert.equal(factLabel("revenueByYear"), "Revenue", "a by-year map is labelled by what it is (checker F3)");
 assert.equal(valueText(29180000), "29,180,000");
 
 // ── Buyers' key figures ──
 const kf = buyerKeyFigures(deal, "t2-2023", new Set());
 const labels = kf.map((f) => f.label);
-assert.ok(labels.includes("Revenue by year") && labels.includes("Net income") && labels.includes("Taxable income"), JSON.stringify(kf));
+assert.ok(labels.includes("Revenue (2023)") && labels.includes("Net income") && labels.includes("Taxable income"), JSON.stringify(kf));
 assert.ok(!labels.includes("Loi price"), "never from a broker-only source");
 assert.ok(!labels.includes("Owner health"), "never a sensitive detail");
 assert.ok(!labels.includes("Employees"), "never naming a held person");
@@ -101,7 +101,7 @@ const checks = brokerChecks({ id: "t2-2023", name: "T2 2023" }, facts, discrepan
 assert.deepEqual(checks.map((c) => c.tone), ["resolved", "open", "match"]);
 assert.equal(checks[0].text, "Net income 2023: $665,915 vs $701,200. Resolved Jul 2: Tax adjustments for capital cost allowance.");
 assert.equal(checks[1].text, "Open difference: Interest expense 2023. See the Financials tab.");
-assert.equal(checks[2].text, "Revenue by year matches Financial statements FY2023.");
+assert.equal(checks[2].text, "Revenue matches Financial statements FY2023.");
 
 // ── Over HTTP ──
 fs.mkdirSync(path.join(root, "docs"), { recursive: true });

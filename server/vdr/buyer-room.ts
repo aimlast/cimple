@@ -7,10 +7,12 @@
  */
 import type { VdrFolder, VdrView } from "@shared/schema";
 import { sameAccessLevel } from "@shared/access-levels";
+import { dealPublishedForBuyers } from "@shared/buyer-publish-gate";
 import {
   basicDescription,
   buyerDescriptionFor,
   fileSizeLabel,
+  shownQuestionPage,
   indexNumbers,
   isNewForBuyer,
   rollVisitStamps,
@@ -26,7 +28,7 @@ import { listedItems, type ReaderItem, type RoomSnapshot, type VdrGate } from ".
 import { decisionFor, manifestFor } from "./serve";
 import { buyerLog } from "./activity";
 import { buyerRequestRows } from "./requests";
-import { buyerKeyFigures, documentCimLinks, documentFacts, servedSectionsFor } from "./analysis";
+import { buyerKeyFigureRows, documentCimLinks, documentFacts, servedSectionsFor } from "./analysis";
 import { ddDocumentChecks } from "./dd-adapter";
 
 export type BuyerRoomDeps = {
@@ -156,6 +158,8 @@ export async function buyerRoomPayload(
     canRequest: !opts.preview,
     team: gate.member ? undefined : team,
     canInviteTeam: !opts.preview && !gate.member && team.length < TEAM_MAX,
+    // The CIM itself opens only once published (the same rule as the view room); a team member never reads it.
+    memorandumAvailable: !gate.member && dealPublishedForBuyers(gate.deal),
   };
 }
 
@@ -176,12 +180,14 @@ export async function buyerAboutExtras(
 ): Promise<Pick<BuyerItemAbout, "keyFigures" | "checks" | "usedIn" | "questions" | "canAsk">> {
   const doc = one.doc;
   const brokerOnly = new Set(Array.from(snap.docs.values()).filter((d) => d.visibility === "broker_only").map((d) => d.id));
-  const keyFigures = doc ? buyerKeyFigures(gate.deal, doc.id, brokerOnly) : [];
+  const figureRows = doc ? buyerKeyFigureRows(gate.deal, doc.id, brokerOnly) : [];
+  const keyFigures = figureRows.map(({ label, value }) => ({ label, value }));
+  const figureKeys = new Set(figureRows.flatMap((r) => r.keys));
   let usedIn: Array<{ sectionId: string; title: string }> = [];
   if (doc && !gate.member) {
     const sections = await (deps.servedSections ?? servedSectionsFor)(gate.deal, gate.access.accessLevel);
     // Only the figures a buyer may see link a page.
-    const facts = documentFacts((gate.deal.extractedInfo ?? {}) as Record<string, unknown>, doc.id).filter((f) => keyFigures.some((k) => k.label === f.label));
+    const facts = documentFacts((gate.deal.extractedInfo ?? {}) as Record<string, unknown>, doc.id).filter((f) => figureKeys.has(f.key));
     usedIn = documentCimLinks(facts, sections).links.map((l) => ({ sectionId: l.sectionId, title: l.title }));
   }
   let checks: Array<{ ok: boolean; text: string }> = [];
@@ -212,7 +218,7 @@ export async function buyerAboutExtras(
     .map((q) => {
       const mine = !!q.buyerAccessId && ownLinks.has(q.buyerAccessId);
       const answered = q.status === "published" && !!(q.publishedAnswer || q.brokerDraft);
-      return { id: q.id, question: q.question, answer: answered ? (q.publishedAnswer || q.brokerDraft || null) : null, status: answered ? "answered" : "waiting", mine, page: q.vdrPage ?? null, at: new Date(q.createdAt).toISOString() };
+      return { id: q.id, question: q.question, answer: answered ? (q.publishedAnswer || q.brokerDraft || null) : null, status: answered ? "answered" : "waiting", mine, page: shownQuestionPage(one.item.prepared?.kind, q.vdrPage), at: new Date(q.createdAt).toISOString() };
     });
   return { keyFigures, checks, usedIn, questions, canAsk: !opts.preview };
 }

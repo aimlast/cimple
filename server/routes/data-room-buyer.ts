@@ -27,7 +27,7 @@
  */
 import express, { type Express, type Request, type Response } from "express";
 import type { BuyerQuestion, InsertBuyerQuestion } from "@shared/schema";
-import { watermarkFooter, watermarkLine, VDR_LIMITS, fileSizeLabel } from "@shared/vdr";
+import { watermarkFooter, watermarkLine, VDR_LIMITS, fileSizeLabel, questionPage } from "@shared/vdr";
 import type { ViewStart } from "@shared/vdr-api";
 import { logVdrQuietly } from "../vdr/store";
 import { assertBuyerDocumentAccess, decideForGate, defaultGateDeps, itemFor, listedItems, vdrBuyerGate, VdrHttpError, type GateDeps, type VdrGate } from "../vdr/access";
@@ -352,9 +352,8 @@ export function registerDataRoomBuyerRoutes(app: Express, overrides?: Partial<Bu
       const question = typeof req.body?.question === "string" ? req.body.question.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, " ").trim() : "";
       if (!question) return res.status(400).json({ error: "Type your question." });
       if (question.length > VDR_LIMITS.questionText) return res.status(400).json({ error: `Keep it under ${VDR_LIMITS.questionText} characters.` });
-      const pages = one.item.prepared?.pages?.length ?? 0;
-      const pageN = Number(req.body?.page);
-      const page = Number.isInteger(pageN) && pageN >= 1 && (pages === 0 || pageN <= pages) ? pageN : null;
+      // A page only for a document with pages (PDF, photo): a sheet's or a Word file's question is never "about page 1".
+      const page = questionPage(one.item.prepared?.kind ?? null, one.item.prepared?.pages?.length ?? 0, req.body?.page);
       // No AI: straight to the broker, answer private to this buyer unless the broker shares it (V11).
       const q = await d.createQuestion({
         dealId: gate.deal.id,

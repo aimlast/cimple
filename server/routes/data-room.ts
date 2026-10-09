@@ -47,6 +47,7 @@ import {
   dataRoomLevelRule,
   extensionOf,
   folderDepth,
+  shownQuestionPage,
   isRoomMaterial,
   notRoomMaterialReason,
   presetFolder,
@@ -87,7 +88,7 @@ import { fileDocumentIntoRoom, restoreItem, setUpRoom, shareLikeReplaced, defaul
 import { ensurePrepared, enqueuePrepare } from "../vdr/prepare";
 import { cleanCopyPath, cleanCopyRelPath, newPrivateName, removeCleanCopy, removeItemCache } from "../vdr/files";
 import { decisionFor, docHtml, docText, kickPrepare, manifestFor, pageImage, ServeError, sheetRows, defaultServeDeps, type ServeDeps } from "../vdr/serve";
-import { brokerChecks, documentCimLinks, documentFacts, documentQuestions, keyFigureRank, privateMattersByDocument, sectionText } from "../vdr/analysis";
+import { brokerChecks, documentCimLinks, documentFacts, documentQuestions, keyFigureRank, presentKeyFigures, privateMattersByDocument, sectionText } from "../vdr/analysis";
 import { ddCitedDocumentIds, ddCitedSections, ddDocumentChecks } from "../vdr/dd-adapter";
 import { parseDocumentIds, replacementsFor, resolveForBroker } from "../vdr/resolve";
 import { focusFor } from "../vdr/locate";
@@ -1776,7 +1777,7 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
           itemId: it && !it.removedAt ? it.id : null,
           number: it ? numbers.get(it.id) ?? null : null,
           title: it?.title ?? "A document no longer in the room",
-          page: q.vdrPage ?? null,
+          page: shownQuestionPage(it?.prepared?.kind, q.vdrPage),
           buyer,
           askedBy: askerLabel(buyer, m ?? null),
           scope: q.answerScope === "room" ? "room" : "private",
@@ -1860,7 +1861,8 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       const facts = doc ? documentFacts((deal.extractedInfo ?? {}) as Record<string, unknown>, doc.id) : [];
       const visibleSections = sections.filter((s) => s.isVisible !== false).map((s) => sectionText(s));
       const { links, inCim } = documentCimLinks(facts, visibleSections);
-      const keyFigures = facts.slice().sort((a, b) => keyFigureRank(a) - keyFigureRank(b)).slice(0, 12).map((f) => ({ key: f.key, label: f.label, value: f.text.length > 160 ? `${f.text.slice(0, 159)}…` : f.text, inCim: inCim.has(f.key) }));
+      // One readable row per figure (a duplicate folds into the fuller row; "In the CIM" if any of its facts is).
+      const keyFigures = presentKeyFigures(facts).sort((a, b) => keyFigureRank(a) - keyFigureRank(b)).slice(0, 12).map((f) => ({ key: f.key, label: f.label, value: f.text.length > 160 ? `${f.text.slice(0, 159)}…` : f.text, inCim: f.keys.some((k) => inCim.has(k)) }));
       let checks: ItemNotesPayload["checks"] = [];
       if (doc) {
         const dd = await ddDocumentChecks(deal.id, doc.id).catch(() => null);
@@ -1894,7 +1896,7 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
         cimLinks: links.map((l) => ({ sectionId: l.sectionId, title: l.title })),
         ddCitedIn: item.documentId ? await ddCitedSections(deal.id, item.documentId).catch(() => []) : [],
         checks,
-        questions: documentQuestions(questions, item.id, labelFor),
+        questions: documentQuestions(questions, item.id, labelFor).map((q) => ({ ...q, page: shownQuestionPage(item.prepared?.kind, q.page) })),
         summary: { remainingToday: left, capped: left === 0, running: item.buyerSummaryStatus === "pending", note },
       };
       res.setHeader("Cache-Control", "no-store");

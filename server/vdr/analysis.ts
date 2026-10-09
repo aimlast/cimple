@@ -90,15 +90,31 @@ export function privateMattersFor(deal: Deal, documentId: string): string[] {
 
 export type DocFact = { key: string; label: string; value: unknown; text: string };
 
-/** "otherCurrentAssets" → "Other current assets". */
+/** Words a reader knows in capitals (whole words only). */
+const ACRONYMS: Record<string, string> = {
+  ebitda: "EBITDA", sde: "SDE", cogs: "COGS", ltd: "LTD", ltc: "LTC", odb: "ODB", fy: "FY", ytd: "YTD", ttm: "TTM",
+  cca: "CCA", hst: "HST", gst: "GST", pst: "PST", qst: "QST", cra: "CRA", wsib: "WSIB", nwc: "NWC", kpi: "KPI",
+  hr: "HR", ar: "AR", ap: "AP", rx: "Rx", usd: "USD", cad: "CAD", ceo: "CEO", cfo: "CFO",
+};
+
+/** A by-year map's key without its "by year" ("revenueByYear" → "revenue"). */
+export function baseFactKey(key: string): string {
+  return key.replace(/(?:ByYear|_by_year|ByYr)$/, "") || key;
+}
+
+/** "otherCurrentAssets" → "Other current assets"; "taxableIncomeByYear" → "Taxable income"; "fy2024StaffT4Earnings" → "FY2024 staff T4 earnings". */
 export function factLabel(key: string): string {
-  const words = key
+  const words = baseFactKey(key)
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
-    .replace(/([a-zA-Z])(\d)/g, "$1 $2")
+    .replace(/([a-zA-Z]{2,})(\d)/g, "$1 $2")
     .replace(/[_\-.]+/g, " ")
     .toLowerCase()
-    .trim();
+    .trim()
+    .split(/\s+/)
+    .map((w) => ACRONYMS[w] ?? (/^[a-z]\d{1,2}$/.test(w) ? w.toUpperCase() : w))
+    .join(" ")
+    .replace(/\bFY (\d{2,4})\b/g, "FY$1");
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
@@ -171,6 +187,80 @@ export function keyFigureRank(f: { key: string; text: string }): number {
 }
 const figureRank = keyFigureRank;
 
+// ── Key figures as a reader reads them (checker F3) ──────────────────────
+
+/** A key-figure row: what it shows, and every fact key it stands for (a duplicate folded into it). */
+export type KeyFigureRow = DocFact & { keys: string[] };
+
+type Token = { year: string | null; value: number };
+type Shown = { f: DocFact; label: string; text: string; tokens: Token[]; years: number; base: string; order: number };
+
+const YEAR_KEY = /^(?:19|20)\d{2}$/;
+const isYearMap = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === "object" && !Array.isArray(v) && Object.keys(v as object).length > 0 && Object.keys(v as object).every((k) => YEAR_KEY.test(k));
+const money = (text: string) => /\$\s?\d/.test(text) && !/\d\s?%/.test(text);
+
+/** One fact as a row: "Taxable income (2023)  $459,201", never "Taxable income by year  2023: $459,201". */
+function shownFact(f: DocFact, order: number): Shown {
+  let label = factLabel(f.key);
+  let text = f.text;
+  let tokens: Token[] = [];
+  let years = 0;
+  if (isYearMap(f.value)) {
+    const ys = Object.keys(f.value).sort((a, b) => Number(b) - Number(a));
+    years = ys.length;
+    for (const y of ys) for (const g of strongFigures(valueText(f.value[y]))) tokens.push({ year: y, value: g.value });
+    if (ys.length === 1) {
+      label = `${label} (${ys[0]})`;
+      text = valueText(f.value[ys[0]]);
+    }
+  } else {
+    // "$820,800 (2024)" / "$464,201 (FY2023)": the year goes to the label.
+    const m = /^(.*\S)\s*\((?:FY\s?)?((?:19|20)\d{2})\)$/i.exec(text);
+    const year = m && !/\(\d{4}\)$/.test(label) ? m[2] : null;
+    if (m && year) {
+      label = `${label} (${year})`;
+      text = m[1];
+    }
+    tokens = strongFigures(text).map((g) => ({ year, value: g.value }));
+  }
+  // A dollar amount is never a "share" ("Compounding revenue share  $820,800" → "Compounding revenue").
+  // Only a trailing "share" ("Share capital" and "Shareholder loans" are real names).
+  const SHARE_TAIL = /\s+share(?=(?:\s+\((?:19|20)\d{2}\))?$)/i;
+  if (money(text) && SHARE_TAIL.test(label)) label = label.replace(SHARE_TAIL, "");
+  return { f, label, text, tokens, years, base: baseFactKey(f.key), order };
+}
+
+/** Every figure of `b` is in `a` (same amount; same year unless `b` names none). */
+function covers(a: Shown, b: Shown): boolean {
+  return b.tokens.length > 0 && b.tokens.every((t) => a.tokens.some((u) => u.value === t.value && (t.year === null || u.year === t.year)));
+}
+
+/**
+ * A document's facts as key-figure rows a buyer can read at a glance (F3):
+ * by-year labels as "Taxable income (2023)", a year printed after a figure
+ * moved to its label, a money value never called a "share", and a row whose
+ * every figure another row already shows dropped ("Net income for tax
+ * purposes" beside "Net income for tax purposes by year 2023: …", or "Cash"
+ * beside "Cash and deposits" with the same amounts). Across different facts
+ * only distinctive amounts fold (≥ 3 significant digits) — two different
+ * $30,000 lines stay. Keeps the input's order.
+ */
+export function presentKeyFigures(facts: ReadonlyArray<DocFact>): KeyFigureRow[] {
+  const shown = facts.map((f, i) => shownFact(f, i));
+  // Rows that say more come first (a by-year map over its headline, more years over fewer), so the fuller one is kept.
+  const byFullness = shown.slice().sort((a, b) => b.years - a.years || b.tokens.length - a.tokens.length || a.order - b.order);
+  const kept: Array<Shown & { keys: string[] }> = [];
+  for (const s of byFullness) {
+    const into = kept.find((k) => covers(k, s) && (k.base === s.base || s.tokens.every((t) => significantDigits(t.value) >= 3)));
+    if (into) { into.keys.push(s.f.key); continue; }
+    kept.push({ ...s, keys: [s.f.key] });
+  }
+  return kept
+    .sort((a, b) => a.order - b.order)
+    .map((k) => ({ key: k.f.key, label: k.label, value: k.f.value, text: k.text, keys: k.keys }));
+}
+
 /** The names a buyer-facing text must never mention: held parties and staff with a private matter. */
 export function heldNamesFor(deal: Pick<Deal, "id" | "extractedInfo" | "cimGeneration">): string[] {
   const info = ((deal.extractedInfo ?? {}) as Info) || {};
@@ -187,7 +277,16 @@ export function heldNamesFor(deal: Pick<Deal, "id" | "extractedInfo" | "cimGener
  * clause, never naming a held person.
  */
 export function buyerKeyFigures(deal: Pick<Deal, "id" | "extractedInfo" | "cimGeneration">, documentId: string, brokerOnlyDocIds: ReadonlySet<string> = new Set()): Array<{ label: string; value: string }> {
-  return buyerSafeFacts(deal, documentId, brokerOnlyDocIds, { figuresOnly: true, limit: 6, maxLen: 160 });
+  return buyerKeyFigureRows(deal, documentId, brokerOnlyDocIds).map(({ label, value }) => ({ label, value }));
+}
+
+/** The same rows with the fact keys each stands for (the About panel's "Used in the memorandum" matches by key). */
+export function buyerKeyFigureRows(deal: Pick<Deal, "id" | "extractedInfo" | "cimGeneration">, documentId: string, brokerOnlyDocIds: ReadonlySet<string> = new Set()): Array<{ label: string; value: string; keys: string[] }> {
+  const safe = buyerSafeFactRows(deal, documentId, brokerOnlyDocIds, { figuresOnly: true, maxLen: 160 });
+  return presentKeyFigures(safe)
+    .sort((a, b) => figureRank(a) - figureRank(b))
+    .slice(0, 6)
+    .map((f) => ({ label: f.label, value: f.text, keys: f.keys }));
 }
 
 /** A document's facts screened for buyers (and for the description model's input, ≤ 25). */
@@ -197,6 +296,19 @@ export function buyerSafeFacts(
   brokerOnlyDocIds: ReadonlySet<string>,
   opts: { figuresOnly: boolean; limit: number; maxLen: number },
 ): Array<{ label: string; value: string }> {
+  return buyerSafeFactRows(deal, documentId, brokerOnlyDocIds, opts)
+    .sort((a, b) => figureRank(a) - figureRank(b))
+    .slice(0, opts.limit)
+    .map((f) => ({ label: f.label, value: f.text }));
+}
+
+/** The screened facts themselves (unsorted, every one). Never throws. */
+function buyerSafeFactRows(
+  deal: Pick<Deal, "id" | "extractedInfo" | "cimGeneration">,
+  documentId: string,
+  brokerOnlyDocIds: ReadonlySet<string>,
+  opts: { figuresOnly: boolean; maxLen: number },
+): DocFact[] {
   try {
     const info = ((deal.extractedInfo ?? {}) as Info) || {};
     const facts = documentFacts(info, documentId);
@@ -229,7 +341,7 @@ export function buyerSafeFacts(
       if (hasSensitiveDetail(text) || mentionsHeldPerson(`${f.label} ${text}`, heldNames)) continue;
       out.push({ ...f, value, text });
     }
-    return out.sort((a, b) => figureRank(a) - figureRank(b)).slice(0, opts.limit).map((f) => ({ label: f.label, value: f.text }));
+    return out;
   } catch (err: any) {
     console.warn(`[vdr] key figures couldn't be read for document ${documentId}:`, err?.message ?? err);
     return [];

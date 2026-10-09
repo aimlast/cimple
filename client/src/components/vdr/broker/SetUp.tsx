@@ -128,11 +128,14 @@ export function SharingPlan({ dealId, data, onDone }: { dealId: string; data: Br
       <div className="overflow-hidden rounded-lg border border-border bg-card">
         {plan.folders.length === 0 && <p className="px-4 py-8 text-center text-sm text-muted-foreground">No folder holds documents yet.</p>}
         {plan.folders.map((f) => (
-          <div key={f.folderId} className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3 last:border-0">
-            <span className="w-9 font-mono text-[11px] text-muted-foreground">{f.number}</span>
-            <span className="min-w-0 flex-1 text-sm">{f.name} <span className="text-muted-foreground">({f.documents})</span></span>
+          // Phones: the folder's name on its own line, the choice full width under it (names never squeezed or cut).
+          <div key={f.folderId} className="flex flex-col gap-2 border-b border-border px-4 py-3 last:border-0 sm:flex-row sm:items-center sm:gap-3" data-testid={`plan-row-${f.folderId}`}>
+            <div className="flex min-w-0 flex-1 items-baseline gap-3">
+              <span className="w-9 shrink-0 font-mono text-[11px] text-muted-foreground">{f.number}</span>
+              <span className="min-w-0 flex-1 break-words text-sm">{f.name} <span className="whitespace-nowrap text-muted-foreground">({f.documents})</span></span>
+            </div>
             <Select value={levels[f.folderId] ?? "not_yet"} onValueChange={(v) => setLevels((l) => ({ ...l, [f.folderId]: v as "dd" | "not_yet" }))}>
-              <SelectTrigger className="h-8 w-[200px] text-xs" data-testid={`plan-${f.folderId}`}><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-8 w-full shrink-0 text-xs sm:w-[200px]" data-testid={`plan-${f.folderId}`} aria-label={`Who sees ${f.name}`}><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="dd" className="text-xs">Due diligence buyers</SelectItem>
                 <SelectItem value="not_yet" className="text-xs">Not yet</SelectItem>

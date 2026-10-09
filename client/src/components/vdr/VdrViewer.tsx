@@ -297,6 +297,13 @@ function PagesView(props: {
 
 // ── Sheets ─────────────────────────────────────────────────────────────────
 
+/** A cell's width rule: words wrap inside a capped column; figures, dates and short codes stay on one line. */
+export function sheetCellClass(v: string): string {
+  if (!v) return "whitespace-nowrap";
+  if (v.length <= 24 && /^[\s$€£(+−-]*[\d.,]+[\d.,%)\s]*$|^[\d/.:-]+$/.test(v)) return "whitespace-nowrap tabular-nums";
+  return v.length > 32 ? "min-w-[180px] max-w-[320px] whitespace-normal break-words" : "max-w-[320px] whitespace-normal break-words";
+}
+
 function SheetView(props: { source: VdrSource; urls: ReturnType<typeof vdrUrls>; itemId: string; sheets: VdrManifest["sheets"]; reader?: { name: string | null; email: string } | null; className?: string; initialSheet?: string | null; highlightRows?: number[] | null; onSheet: (i: number) => void }) {
   const cited = props.initialSheet ? props.sheets.find((s) => s.name === props.initialSheet) : undefined;
   const [sheet, setSheet] = useState(cited?.index ?? props.sheets[0]?.index ?? 0);
@@ -357,7 +364,8 @@ function SheetView(props: { source: VdrSource; urls: ReturnType<typeof vdrUrls>;
                   {cols.map((c, ci) => {
                     const v = row.v[ci] ?? "";
                     const isCovered = covered.has(`${row.r}:${c}`);
-                    return <td key={c} className={cn("max-w-[260px] truncate border border-[#EEEBE4] px-2 py-1 align-top", isCovered && "bg-[#201D18]/5 font-mono")} title={v || undefined}>{v}</td>;
+                    // Long words wrap inside a capped column (a phone can't hover for a tooltip); figures stay on one line.
+                    return <td key={c} className={cn("border border-[#EEEBE4] px-2 py-1 align-top", sheetCellClass(v), isCovered && "bg-[#201D18]/5 font-mono")} title={v || undefined}>{v}</td>;
                   })}
                 </tr>
               ))}

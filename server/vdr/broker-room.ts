@@ -13,7 +13,7 @@
  *    due-diligence only (gl's copy), needs-a-look flags must be ticked.
  */
 import fs from "fs";
-import type { BuyerAccess, BuyerQuestion, DealDocumentRequirement, Deal, Document, InsertVdrShare, VdrBuyerSettings, VdrFolder, VdrItem, VdrShare, VdrTeamMember, VdrView } from "@shared/schema";
+import type { BuyerAccess, BuyerQuestion, DealDocumentRequirement, Deal, Document, InsertVdrShare, VdrBuyerSettings, VdrFolder, VdrItem, VdrRequest, VdrShare, VdrTeamMember, VdrView } from "@shared/schema";
 import { accessLevelLabel, normalizeAccessLevel, parseAccessLevelInput, sameAccessLevel, DD_ACCESS_LEVEL } from "@shared/access-levels";
 import {
   DATA_ROOM_LEVELS,
@@ -283,7 +283,8 @@ export function itemRow(
 ): RoomItemRow {
   const doc = item.documentId ? snap.docs.get(item.documentId) ?? null : null;
   const shares = snap.shares.filter((s) => s.itemId === item.id);
-  const path = doc ? servedFilePath(item, doc, ctx.root) : null;
+  // A tombstone's file is never checked (it has no flags to show).
+  const path = doc && !item.removedAt ? servedFilePath(item, doc, ctx.root) : null;
   const exists = !!path && ctx.fileExists(path);
   const isLedger = isLedgerItemDoc(doc);
   const { flags, unchecked } = item.removedAt ? { flags: [] as VdrFlag[], unchecked: [] as VdrFlagKey[] } : flagsFor(item, doc, { privateMatters: doc ? ctx.pm.get(doc.id) ?? [] : [], fileMissing: !exists, isLedger });
@@ -347,12 +348,50 @@ export async function roomPayload(deps: BrokerDeps, deal: Deal): Promise<BrokerR
   return (await roomAndWaiting(deps, deal)).payload;
 }
 
-/** The tab's payload and its "Waiting on you" list, from one load (GET …/todo uses the list). */
+/** One answer per file for the whole load (every buyer's decision asks about the same files). */
+export function memoFileExists(fileExists: (p: string) => boolean): (p: string) => boolean {
+  const seen = new Map<string, boolean>();
+  return (p) => {
+    let v = seen.get(p);
+    if (v === undefined) { v = fileExists(p); seen.set(p, v); }
+    return v;
+  };
+}
+
+/** What "Waiting on you" reads besides the room itself. */
+export type WaitingInputs = {
+  requests: VdrRequest[];
+  questions: BuyerQuestion[];
+  team: VdrTeamMember[];
+  dismissed: Set<string>;
+};
+
+async function loadWaitingInputs(deps: BrokerDeps, dealId: string): Promise<WaitingInputs> {
+  const [requests, questions, team, dismissed] = await Promise.all([
+    deps.store.listRequests(dealId).catch(() => [] as VdrRequest[]),
+    deps.questionsForDeal ? deps.questionsForDeal(dealId).catch(() => [] as BuyerQuestion[]) : Promise.resolve([] as BuyerQuestion[]),
+    deps.store.listTeamMembers(dealId).catch(() => [] as VdrTeamMember[]),
+    dismissedKeys(deps.store, dealId),
+  ]);
+  return { requests, questions, team, dismissed };
+}
+
+/**
+ * The tab's payload and its "Waiting on you" list, from one load (GET …/todo
+ * uses the list). Every read starts at once — the room, its buyers, views,
+ * the checklist, what the DD CIM cites and what's waiting — so the tab costs
+ * one round of database reads, not five one after another (checker F6).
+ */
 export async function roomAndWaiting(deps: BrokerDeps, deal: Deal): Promise<{ payload: BrokerRoomPayload; waiting: WaitingItem[] }> {
-  const ctx = await loadBrokerContext(deps, deal);
+  const [ctx, room, requirements, cited, inputs] = await Promise.all([
+    loadBrokerContext(deps, deal),
+    deps.store.getRoom(deal.id),
+    deps.requirementsForDeal(deal.id).catch(() => [] as DealDocumentRequirement[]),
+    deps.ddCitedDocumentIds(deal.id).catch(() => null),
+    loadWaitingInputs(deps, deal.id),
+  ]);
   const { snap, groups, views, now, pm, rows } = ctx;
-  const room = await deps.store.getRoom(deal.id);
-  const fileExists = deps.fileExists ?? fs.existsSync;
+  const fileExists = memoFileExists(deps.fileExists ?? fs.existsSync);
   const numbers = indexNumbers(snap.folders, snap.items);
   const stats = viewStats(views);
   // Tombstones a broker took out ("broker") live in "Not in the room"; the others show greyed in their folder.
@@ -372,7 +411,6 @@ export async function roomAndWaiting(deps: BrokerDeps, deal: Deal): Promise<{ pa
     : [];
   const documents: DealDocumentRow[] = allDocs.map((d) => ({ id: d.id, name: d.name, typeLabel: typeLabelOf(d), uploadedBy: d.uploadedBy, createdAt: new Date(d.createdAt).toISOString(), roomMaterial: isRoomMaterial(d) }));
   const buyers = buildBuyers(deal.id, groups, snap, views, { root: deps.root, now, privateMatters: pm, fileExists });
-  const requirements = await deps.requirementsForDeal(deal.id).catch(() => [] as DealDocumentRequirement[]);
   const live = items.filter((i) => !i.removed);
   const sharedByLevel: Record<string, number> = {};
   const roomBuyersByLevel: Record<string, number> = {};
@@ -381,11 +419,10 @@ export async function roomAndWaiting(deps: BrokerDeps, deal: Deal): Promise<{ pa
     roomBuyersByLevel[level] = buyers.eligible.filter((b) => b.hasRoom && sameAccessLevel(b.level, level)).length;
   }
   const waiting = room
-    ? await waitingFor(deps, deal, ctx, items, buyers.eligible, folderRows(snap.folders, snap.items, numbers.folders))
+    ? waitingFromInputs(ctx, items, buyers.eligible, folderRows(snap.folders, snap.items, numbers.folders), inputs, cited)
     : [];
   const weekAgo = now.getTime() - 7 * 86_400_000;
   const recent = views.filter((v) => v.source !== "preview" && new Date(v.lastSeenAt).getTime() >= weekAgo);
-  const cited = await deps.ddCitedDocumentIds(deal.id).catch(() => null);
   const ddShared = new Set(live.filter((i) => i.sharing.levels.includes(DD_ACCESS_LEVEL) && i.documentId).map((i) => i.documentId!));
   const citedIds = cited ? Array.from(new Set(cited)) : [];
   const ddNotShared = citedIds.filter((id) => !ddShared.has(id)).length;
@@ -423,13 +460,20 @@ export async function waitingFor(
   buyers: ReadonlyArray<RoomBuyerRow>,
   folders: ReadonlyArray<RoomFolderRow>,
 ): Promise<WaitingItem[]> {
-  const [requests, questions, team, dismissed, cited] = await Promise.all([
-    deps.store.listRequests(deal.id).catch(() => []),
-    deps.questionsForDeal ? deps.questionsForDeal(deal.id).catch(() => [] as BuyerQuestion[]) : Promise.resolve([] as BuyerQuestion[]),
-    deps.store.listTeamMembers(deal.id).catch(() => []),
-    dismissedKeys(deps.store, deal.id),
-    deps.ddCitedDocumentIds(deal.id).catch(() => null),
-  ]);
+  const [inputs, cited] = await Promise.all([loadWaitingInputs(deps, deal.id), deps.ddCitedDocumentIds(deal.id).catch(() => null)]);
+  return waitingFromInputs(ctx, items, buyers, folders, inputs, cited);
+}
+
+/** "Waiting on you" from what's already read (no I/O). */
+export function waitingFromInputs(
+  ctx: BrokerContext,
+  items: ReadonlyArray<RoomItemRow>,
+  buyers: ReadonlyArray<RoomBuyerRow>,
+  folders: ReadonlyArray<RoomFolderRow>,
+  inputs: WaitingInputs,
+  cited: ReadonlyArray<string> | null,
+): WaitingItem[] {
+  const { requests, questions, team, dismissed } = inputs;
   const live = items.filter((i) => !i.removed);
   const ddShared = new Set(live.filter((i) => i.sharing.levels.includes(DD_ACCESS_LEVEL) && i.documentId).map((i) => i.documentId!));
   const citedIds = cited ? Array.from(new Set(cited)) : [];

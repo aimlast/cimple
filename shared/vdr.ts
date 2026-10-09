@@ -73,6 +73,34 @@ export interface VdrPrepared {
   servedCopy?: "sanitised" | "original";
 }
 
+/** Kinds a reader turns pages in (a question can name a page); sheets, Word and text have no pages. */
+export function hasPages(kind: VdrPreparedKind | null | undefined): boolean {
+  return kind === "pdf" || kind === "image";
+}
+
+/**
+ * The page a document question is about: only for a kind with pages, and
+ * only a page the document has (else null — a spreadsheet's question is
+ * never "about page 1").
+ */
+export function questionPage(kind: VdrPreparedKind | null | undefined, pageCount: number, page: unknown): number | null {
+  if (!hasPages(kind)) return null;
+  const n = Number(page);
+  if (!Number.isInteger(n) || n < 1) return null;
+  return pageCount > 0 && n > pageCount ? null : n;
+}
+
+/** A key figure's value as lines: "2023: $297,642 · 2022: $309,386" → one line per year; anything else stays one line. */
+export function figureLines(value: string): string[] {
+  const parts = value.split(" · ");
+  return parts.length > 1 && parts.every((p) => /^(?:19|20)\d{2}: \S/.test(p)) ? parts : [value];
+}
+
+/** A stored question's page as shown: dropped for a kind known to have no pages (a sheet's "page 1"). */
+export function shownQuestionPage(kind: VdrPreparedKind | null | undefined, page: number | null | undefined): number | null {
+  return kind && !hasPages(kind) ? null : page ?? null;
+}
+
 /** Plain words for a failed preparation (broker copy, §5.3). */
 export function preparedErrorCopy(code: VdrErrorCode | undefined | null): string {
   switch (code) {

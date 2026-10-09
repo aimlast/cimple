@@ -12,7 +12,7 @@
  * set aside: their keys are in `dismissed`.
  */
 import type { BuyerAccess, BuyerQuestion, VdrItem, VdrRequest, VdrShare, VdrTeamMember } from "@shared/schema";
-import { VDR_LIMITS, buyerKey } from "@shared/vdr";
+import { VDR_LIMITS, buyerKey, shownQuestionPage } from "@shared/vdr";
 import type { RoomBuyerRow, RoomItemRow, WaitingItem } from "@shared/vdr-api";
 import { newInHintedFolder } from "./auto-file";
 import { readersOf, type BuyerGroup } from "./broker-room";
@@ -108,7 +108,7 @@ export function waitingItems(i: WaitingInput): WaitingItem[] {
     const member = q.vdrTeamMemberId ? i.team.find((t) => t.id === q.vdrTeamMemberId) : null;
     const who = askerLabel(key ? label(key) : "A buyer", member);
     const where = item ? `${item.number ? `${item.number} ` : ""}${item.title}` : "a document";
-    out.push({ key: `q:${q.id}`, kind: "question", text: `${who} asked about ${where}${q.vdrPage ? ` page ${q.vdrPage}` : ""}`, at: iso(q.createdAt), questionId: q.id, itemId: item?.id ?? null });
+    out.push({ key: `q:${q.id}`, kind: "question", text: `${who} asked about ${where}${shownQuestionPage(item?.prepared?.kind, q.vdrPage) ? ` page ${q.vdrPage}` : ""}`, at: iso(q.createdAt), questionId: q.id, itemId: item?.id ?? null });
   }
 
   // 4. A new version from the seller whose old version buyers could open.

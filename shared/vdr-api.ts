@@ -287,6 +287,8 @@ export type BuyerRoomPayload = {
   /** The buyer's team (principal only; pass 4) and whether they may ask to add someone. */
   team?: BuyerTeamRow[];
   canInviteTeam?: boolean;
+  /** The memorandum is published for this link (the header's "Memorandum | Data room" switch shows only then; never for a team member). */
+  memorandumAvailable: boolean;
 };
 
 export type BuyerItemAbout = {
