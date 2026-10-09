@@ -651,7 +651,8 @@ export async function recoverInterruptedLedgerReads(now: Date = new Date()): Pro
       failed++;
     }
   }
-  if (requeued || failed) console.warn(`[gl] ${requeued} ledger read(s) a restart cut off were queued again${failed ? `, ${failed} marked "Read it again"` : ""}`);
+  if (requeued) console.warn(`[gl] ${requeued} ledger read(s) a restart cut off were queued again`);
+  if (failed) console.warn(`[gl] ${failed} ledger read(s) cut off by restarts too often were marked "Read it again"`);
   return { requeued, failed };
 }
 
@@ -760,4 +761,13 @@ export async function rereadLedgerDocument(documentId: string): Promise<void> {
   }
   const keep = ledger.layoutBy === "broker" || ledger.layoutBy === "ai";
   await rereadWithLayout(ledger, keep ? (ledger.layout as GlLayout) : null, (ledger.layoutBy as "broker" | "ai") ?? "broker");
+}
+
+/** Resolves when every queued ledger read has finished (tests, scripts). */
+export async function glQueueIdle(): Promise<void> {
+  for (let i = 0; i < 1000; i++) {
+    const before = tail;
+    await before;
+    if (before === tail && queued.size === 0 && running.size === 0) return;
+  }
 }

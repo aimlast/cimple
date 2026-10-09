@@ -11,6 +11,8 @@
  */
 import type { Express, NextFunction, Request, Response } from "express";
 import multer from "multer";
+import rateLimit from "express-rate-limit";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 import { storage } from "../storage";
@@ -292,6 +294,43 @@ export function layoutFromBody(body: unknown): { layout: GlLayout } | { error: s
   const dateOrder = b.dateOrder === "dmy" || b.dateOrder === "ymd" || b.dateOrder === "mdy" ? b.dateOrder : "mdy";
   const amountMode = count("debit") || count("credit") ? "debit_credit" : "single";
   return { layout: { headerRow, columns, accountMode, dateOrder, amountMode, sheet: typeof b.sheet === "string" ? b.sheet.slice(0, 120) : null } };
+}
+
+// ── Rate limits (registered from server/index.ts, before the routes) ─────
+
+/** Only a POST to the mount itself (the upload), never the GETs under it. */
+const uploadOnly = (limiter: ReturnType<typeof rateLimit>) => (req: Request, res: Response, next: NextFunction) =>
+  req.method === "POST" && (req.path === "/" || req.path === "") ? limiter(req, res, next) : next();
+const sellerKey = (req: Request) => `gl:${createHash("sha256").update(String(req.params.token ?? "")).digest("hex").slice(0, 32)}`;
+
+export const GL_UPLOADS_PER_IP_PER_HOUR = 20;
+
+export function applyGlRateLimits(app: Express): void {
+  const perIp = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: GL_UPLOADS_PER_IP_PER_HOUR,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many uploads. Please try again in a while." },
+  });
+  app.use("/api/deals/:dealId/gl/ledgers", uploadOnly(perIp));
+  app.use("/api/seller/:token/gl/ledgers", uploadOnly(perIp));
+  app.use("/api/seller/:token/gl", rateLimit({
+    windowMs: 60 * 1000,
+    limit: (req) => (req.method === "GET" ? 120 : 240),
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: sellerKey,
+    message: { error: "Too many requests" },
+  }));
+  app.use("/api/seller/:token/gl/ledgers", uploadOnly(rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: sellerKey,
+    message: { error: "Too many uploads. Please try again in a while." },
+  })));
 }
 
 // ── Registration ─────────────────────────────────────────────────────────

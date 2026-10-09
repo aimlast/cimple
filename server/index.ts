@@ -13,6 +13,7 @@ import { startReminderScheduler } from "./reminders/decision-reminders";
 import { formatRequestLogLine, scrubSentryEvent } from "./log-redact";
 import { AI_LIMIT, applyInterviewRateLimits } from "./rate-limit-scope";
 import { applyBulkRateLimits } from "./security/bulk-limits";
+import { applyGlRateLimits } from "./routes/gl";
 
 // Error monitoring — activates only when SENTRY_DSN is set (free tier is
 // plenty for beta). Without it this is a no-op.
@@ -197,39 +198,11 @@ app.use("/api/view/:token/reading", rateLimit({
   message: { error: "Too many requests" },
 }));
 
-// ── gl limiters (Add-backs in the books, server/routes/gl.ts) ──
-// Ledger uploads: 20 an hour per IP, shared by the broker's and the seller's
-// GL upload routes, checked before a byte is written (the gate in gl.ts then
-// checks the caller, the size and the uploads in flight). Seller GL routes
-// are keyed by a hash of the link, never the raw token.
-const glUploadIpLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  limit: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Too many uploads. Please try again in a while." },
-});
-const glUploadOnly = (limiter: ReturnType<typeof rateLimit>) => (req: Request, res: Response, next: NextFunction) =>
-  req.method === "POST" && (req.path === "/" || req.path === "") ? limiter(req, res, next) : next();
-app.use("/api/deals/:dealId/gl/ledgers", glUploadOnly(glUploadIpLimiter));
-app.use("/api/seller/:token/gl/ledgers", glUploadOnly(glUploadIpLimiter));
-const glSellerKey = (req: Request) => `gl:${createHash("sha256").update(String(req.params.token ?? "")).digest("hex").slice(0, 32)}`;
-app.use("/api/seller/:token/gl", rateLimit({
-  windowMs: 60 * 1000,
-  limit: (req) => (req.method === "GET" ? 120 : 240),
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: glSellerKey,
-  message: { error: "Too many requests" },
-}));
-app.use("/api/seller/:token/gl/ledgers", glUploadOnly(rateLimit({
-  windowMs: 60 * 60 * 1000,
-  limit: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: glSellerKey,
-  message: { error: "Too many uploads. Please try again in a while." },
-})));
+// ── gl limiters (Add-backs in the books) ──
+// Ledger uploads: 20 an hour per IP (broker and seller GL upload routes
+// together), checked before a byte is written; seller GL routes keyed by a
+// hash of the link. Defined in server/routes/gl.ts (applyGlRateLimits).
+applyGlRateLimits(app);
 
 // Session type augmentation
 declare module "express-session" {
