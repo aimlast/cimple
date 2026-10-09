@@ -2829,3 +2829,193 @@ export const readingBenchmarks = pgTable("reading_benchmarks", {
   index("reading_benchmarks_industry_idx").on(t.industry, t.pageRole),
 ]);
 export type ReadingBenchmark = typeof readingBenchmarks.$inferSelect;
+
+// @anchor:schema-tail:oct-gl
+// ── General ledger: add-backs found in the books (server/gl/*, shared/gl-types.ts) ──
+// A seller's (or broker's) general-ledger export is read deterministically
+// into one row per entry; each add-back the broker kept is traced to the
+// entries (or the T4 / invoice) that make it up. All five tables carry
+// deal_id and go with the deal (DEAL_CHILD_TABLES). Nothing here reaches a
+// buyer except through the broker's published snapshot (gl_tracing.published).
+
+/** One ledger file (a documents row with subcategory general_ledger) and how it was read. */
+export const glLedgers = pgTable("gl_ledgers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  documentId: varchar("document_id").notNull(),            // documents.id (subcategory general_ledger)
+  role: text("role").notNull().default("ledger"),           // ledger | adjustments (accountant's year-end entries)
+  status: text("status").notNull().default("reading"),      // reading | needs_columns | ready | failed
+  software: text("software"),                                // quickbooks_online | quickbooks_desktop | xero | sage50 | wave | freshbooks | other
+  basis: text("basis"),                                      // accrual | cash | null (from title/footer rows)
+  layout: jsonb("layout").$type<import("./gl-types").GlLayout>(),
+  layoutBy: text("layout_by"),                               // detector | ai | broker
+  headerFingerprint: text("header_fingerprint"),
+  fiscalYearEndUsed: text("fiscal_year_end_used").notNull().default("12-31"), // the deal's FYE when rows were assigned (audit)
+  periodStart: text("period_start"),
+  periodEnd: text("period_end"),
+  years: jsonb("years").$type<Record<string, import("./gl-types").GlYearSummary>>(),
+  rowCount: integer("row_count").notNull().default(0),
+  accountCount: integer("account_count").notNull().default(0),
+  duplicateCount: integer("duplicate_count").notNull().default(0),
+  skippedCount: integer("skipped_count").notNull().default(0),
+  progress: jsonb("progress").$type<{ rowsRead: number; rowsSaved: number; at: string }>(),
+  attempts: integer("attempts").notNull().default(0),        // automatic re-reads after an interrupted read (max 2)
+  problems: jsonb("problems").$type<import("./gl-types").GlProblem[]>().default(sql`'[]'::jsonb`),
+  failure: text("failure"),
+  uploadedBy: text("uploaded_by").notNull().default("broker"), // broker | seller
+  sharedWithSellerByBroker: boolean("shared_with_seller_by_broker").notNull().default(false), // D25 (CRM ledger made seller-visible)
+  showStaffNames: boolean("show_staff_names").notNull().default(false),
+  allowOriginalDownload: boolean("allow_original_download").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("gl_ledgers_deal_idx").on(t.dealId),
+  uniqueIndex("gl_ledgers_document_uq").on(t.documentId),
+]);
+export type GlLedger = typeof glLedgers.$inferSelect;
+export type InsertGlLedger = typeof glLedgers.$inferInsert;
+
+/** One ledger entry (one line of the file). amount_cents = debit − credit. */
+export const glTransactions = pgTable("gl_transactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ledgerId: varchar("ledger_id").notNull(),
+  dealId: varchar("deal_id").notNull(),
+  rowNo: integer("row_no").notNull(),          // 1-based line in the file (across sheets) — the citation
+  sheet: text("sheet"),
+  txnDate: text("txn_date").notNull(),         // YYYY-MM-DD
+  fiscalYear: text("fiscal_year").notNull(),   // "2024" = the fiscal year ENDING in 2024
+  account: text("account").notNull(),          // with parent path ("Automobile Expense:Fuel")
+  accountKey: text("account_key").notNull(),   // lower-case, number prefix and punctuation stripped
+  accountNumber: text("account_number"),
+  accountType: text("account_type"),           // when the export has an account-type column (Xero, some QBO)
+  name: text("name"),
+  memo: text("memo"),
+  txnType: text("txn_type"),
+  txnNumber: text("txn_number"),
+  debitCents: bigint("debit_cents", { mode: "number" }),
+  creditCents: bigint("credit_cents", { mode: "number" }),
+  amountCents: bigint("amount_cents", { mode: "number" }).notNull(), // debit − credit
+  duplicate: boolean("duplicate").notNull().default(false),
+  sensitiveHint: text("sensitive_hint"),       // null | personal | staff — ingest-time hint only; buyers are masked at serve time
+}, (t) => [
+  uniqueIndex("gl_transactions_ledger_row_uq").on(t.ledgerId, t.rowNo),
+  index("gl_transactions_deal_year_account_idx").on(t.dealId, t.fiscalYear, t.accountKey),
+  index("gl_transactions_deal_amount_idx").on(t.dealId, t.amountCents),
+]);
+export type GlTransaction = typeof glTransactions.$inferSelect;
+export type InsertGlTransaction = typeof glTransactions.$inferInsert;
+
+/** One row per deal: the fiscal year end, the request to the seller, tie-out, publish state and AI day counters. */
+export const glTracing = pgTable("gl_tracing", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  fiscalYearEnd: text("fiscal_year_end").notNull().default("12-31"), // the one place (D26)
+  analysisId: varchar("analysis_id"),
+  syncedFingerprint: text("synced_fingerprint"),          // analysis id + updatedAt + FYE: skip identical syncs
+  requestedAt: timestamp("requested_at"),
+  requestedBy: varchar("requested_by"),
+  recipients: jsonb("recipients").$type<Array<{ memberId: string | null; inviteId: string | null; role: string }>>(),
+  sellerMessage: text("seller_message"),
+  lastRemindedAt: timestamp("last_reminded_at"),
+  withdrawnAt: timestamp("withdrawn_at"),
+  sellerDoneAt: timestamp("seller_done_at"),
+  sellerConfirmation: jsonb("seller_confirmation").$type<{ role: "owner" | "accountant"; memberId: string | null; name: string | null; at: string } | null>(),
+  cantGetLedger: jsonb("cant_get_ledger").$type<{ reason: string; note?: string; at: string } | null>(),
+  accountantRequest: jsonb("accountant_request").$type<{ memberId: string; name: string; email: string; at: string; sentAt?: string; declinedAt?: string } | null>(),
+  sellerSuggestions: jsonb("seller_suggestions").$type<import("./gl-types").GlSellerSuggestion[]>().default(sql`'[]'::jsonb`),
+  emailLinkSends: jsonb("email_link_sends").$type<{ day: string; count: number } | null>(),
+  tieOut: jsonb("tie_out").$type<Record<string, import("./gl-types").GlTieOutYear>>(),
+  tieOutAccepted: jsonb("tie_out_accepted").$type<Record<string, { note: string; at: string; by: string }>>().default(sql`'{}'::jsonb`),
+  accountClasses: jsonb("account_classes").$type<Record<string, "revenue" | "expense" | "balance_sheet">>().default(sql`'{}'::jsonb`),
+  waived: jsonb("waived").$type<{ reason: string; at: string; by: string } | null>(), // "go ahead without the ledger"
+  reviewedAt: timestamp("reviewed_at"),
+  requireBeforeCim: boolean("require_before_cim").notNull().default(false), // hold the whole CIM (D16)
+  published: jsonb("published").$type<import("./gl-types").GlPublishedEvidence | null>(),
+  publishedAt: timestamp("published_at"),
+  publishedBy: varchar("published_by"),
+  aiDay: text("ai_day"),                                   // UTC day of the counters below
+  aiBrokerMapping: integer("ai_broker_mapping").notNull().default(0),
+  aiBrokerRanking: integer("ai_broker_ranking").notNull().default(0),
+  aiSellerMapping: integer("ai_seller_mapping").notNull().default(0),
+  aiSellerRanking: integer("ai_seller_ranking").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [uniqueIndex("gl_tracing_deal_uq").on(t.dealId)]);
+export type GlTracing = typeof glTracing.$inferSelect;
+export type InsertGlTracing = typeof glTracing.$inferInsert;
+
+/** One add-back the broker kept, as traced in the books (keyed by its normalised label — analysis ids change per run). */
+export const glAddbackTraces = pgTable("gl_addback_traces", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  addbackKey: text("addback_key").notNull(),     // normalizeLabel(baseLabel(label))
+  analysisId: varchar("analysis_id"),
+  analysisAddbackId: varchar("analysis_addback_id"),
+  label: text("label").notNull(),
+  category: text("category"),
+  proof: text("proof").notNull().default("ledger"),  // ledger | payroll | one_off | statement
+  proofByBroker: boolean("proof_by_broker").notNull().default(false),
+  sharePct: integer("share_pct"),
+  shareBasis: text("share_basis"),                // estimate | documented
+  shareBasisDoc: text("share_basis_doc"),
+  claims: jsonb("claims").$type<Record<string, number>>().notNull(), // fiscalYearKey → cents (owner pay: actual pay)
+  yearLabels: jsonb("year_labels").$type<Record<string, string>>(),
+  sellerLabel: text("seller_label").notNull(),
+  sellerHint: text("seller_hint"),
+  privateEvidence: boolean("private_evidence").notNull().default(false),
+  sentAt: timestamp("sent_at"),
+  sellerStatus: text("seller_status").notNull().default("not_started"),
+  reopenedNote: text("reopened_note"),
+  sellerNote: text("seller_note"),
+  sellerNoteShown: boolean("seller_note_shown").notNull().default(false),
+  notInLedger: jsonb("not_in_ledger").$type<{ reason: "personal" | "other_document" | "unsure"; at: string } | null>(),
+  question: jsonb("question").$type<{ text: string; askedAt: string; answer?: string; answeredAt?: string } | null>(),
+  brokerVerdict: text("broker_verdict"),          // found | partly_found | not_found
+  reviewedAt: timestamp("reviewed_at"),
+  brokerNote: text("broker_note"),
+  brokerNoteShown: boolean("broker_note_shown").notNull().default(false),
+  buyerReason: text("buyer_reason"),
+  leftOut: jsonb("left_out").$type<{ years: string[]; reason: string } | null>(),
+  includeInCim: boolean("include_in_cim").notNull().default(true),
+  computed: jsonb("computed").$type<import("./gl-types").GlTraceComputed>(),
+  proposalFingerprint: text("proposal_fingerprint"),
+  removedAt: timestamp("removed_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [uniqueIndex("gl_addback_traces_deal_key_uq").on(t.dealId, t.addbackKey)]);
+export type GlAddbackTrace = typeof glAddbackTraces.$inferSelect;
+export type InsertGlAddbackTrace = typeof glAddbackTraces.$inferInsert;
+
+/** A ledger entry (pointer + snapshot) or a supporting document linked to a traced add-back for one fiscal year. */
+export const glTraceLinks = pgTable("gl_trace_links", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  traceId: varchar("trace_id").notNull(),
+  dealId: varchar("deal_id").notNull(),
+  fiscalYear: text("fiscal_year").notNull(),
+  ledgerId: varchar("ledger_id"),                 // ledger entry: pointer + snapshot (D12)
+  rowNo: integer("row_no"),
+  documentId: varchar("document_id"),             // document support (T4, payroll summary, invoice)
+  docAmountCheck: text("doc_amount_check"),       // found_in_document | not_found | unreadable
+  txnDate: text("txn_date"),
+  account: text("account"),
+  name: text("name"),
+  memo: text("memo"),
+  amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+  state: text("state").notNull(),                 // proposed | confirmed | rejected | orphaned
+  proposedBy: text("proposed_by"),                // rules | ai | seller_search | broker | seller_document
+  confidence: text("confidence"),
+  reason: text("reason"),
+  decidedBy: text("decided_by"),                  // seller | broker
+  decidedByMember: varchar("decided_by_member"),
+  decidedAt: timestamp("decided_at"),
+  showDetails: boolean("show_details"),           // null = default by serve-time masking; broker override
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("gl_trace_links_trace_idx").on(t.traceId, t.fiscalYear),
+  index("gl_trace_links_deal_idx").on(t.dealId),
+  uniqueIndex("gl_trace_links_entry_uq").on(t.traceId, t.ledgerId, t.rowNo).where(sql`${t.ledgerId} IS NOT NULL`),
+  uniqueIndex("gl_trace_links_doc_uq").on(t.traceId, t.documentId, t.fiscalYear).where(sql`${t.documentId} IS NOT NULL`),
+]);
+export type GlTraceLink = typeof glTraceLinks.$inferSelect;
+export type InsertGlTraceLink = typeof glTraceLinks.$inferInsert;

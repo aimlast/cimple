@@ -21,6 +21,7 @@ import {
   cimSectionOverrides, discrepancies, dealMembers, notifications, buyerApprovalRequests, dealOutreach,
   dealDocumentRequirements, buyerEmails, dealMedia, buyerUsers, cimPublishedSnapshots,
   cimRenditions, buyerVisits, readingRollups, readingBenchmarks,
+  glLedgers, glTransactions, glTracing, glAddbackTraces, glTraceLinks,
 } from "@shared/schema";
 import { resolveDocumentPath } from "../documents/document-path";
 
@@ -61,6 +62,13 @@ export const DEAL_CHILD_TABLES = {
   buyer_visits: { table: buyerVisits, column: buyerVisits.dealId, mode: "delete" },
   cim_renditions: { table: cimRenditions, column: cimRenditions.dealId, mode: "delete" },
   reading_benchmarks: { table: readingBenchmarks, column: readingBenchmarks.dealId, mode: "delete" },
+  // Add-backs in the books (server/gl/*): the ledgers, their entries, the
+  // deal's tracing row, the traced add-backs and their links.
+  gl_ledgers: { table: glLedgers, column: glLedgers.dealId, mode: "delete" },
+  gl_transactions: { table: glTransactions, column: glTransactions.dealId, mode: "delete" },
+  gl_tracing: { table: glTracing, column: glTracing.dealId, mode: "delete" },
+  gl_addback_traces: { table: glAddbackTraces, column: glAddbackTraces.dealId, mode: "delete" },
+  gl_trace_links: { table: glTraceLinks, column: glTraceLinks.dealId, mode: "delete" },
   buyer_emails: { table: buyerEmails, column: buyerEmails.dealId, mode: "detach", field: "dealId" },
   buyer_users: { table: buyerUsers, column: buyerUsers.invitedByDeal, mode: "detach", field: "invitedByDeal" },
 } as const;
