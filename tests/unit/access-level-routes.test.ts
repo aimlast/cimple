@@ -53,6 +53,9 @@ async function main() {
   const { storage } = await import("../../server/storage");
   const { db } = await import("../../server/db");
   const { registerRoutes } = await import("../../server/routes");
+  // No teaser on these deals (in memory — no DB).
+  const { _setTeaserStoreForTests, memoryTeaserStore } = await import("../../server/teaser/store");
+  _setTeaserStoreForTests(memoryTeaserStore());
   delete process.env.ANTHROPIC_API_KEY;
 
   const S = storage as any;

@@ -17,7 +17,7 @@ import { riskLevelForCategory } from "@shared/schema";
 import { isTeaserOnly, seesCim, normalizeAccessLevel, TEASER_ACCESS_LEVEL } from "@shared/access-levels";
 import { dealPublishedForBuyers } from "@shared/buyer-publish-gate";
 import { FUNDING_OPTIONS, TIMELINE_OPTIONS, formatPrice, type NdaBuyerProfile } from "@shared/nda-buyer-profile";
-import { TEASER_PASS_REASONS, type TeaserPassReason, type TeaserRequestState } from "@shared/teaser";
+import { TEASER_PASS_REASONS, autoGrantLevel, type TeaserPassReason, type TeaserRequestState } from "@shared/teaser";
 import { viewLinkProblem } from "../buyers/view-access";
 
 export const TEASER_REQUEST_SOURCE = "teaser_request";
@@ -211,11 +211,11 @@ export async function ensureTeaserRequest(
     await storage.updateBuyerAccess(fresh.id, { accessEvents: events.slice(-50) } as never);
 
     // Auto-grant: only when the broker switched it on, the CIM is live, and the signer is the link's recipient.
-    const level = deps.autoGrantLevel ?? "off";
+    const level = autoGrantLevel(deps.autoGrantLevel);
     let autoGranted = false;
-    if ((level === "blind" || level === "named") && dealPublishedForBuyers(deal) && !info.mismatch && deps.autoGrant) {
+    if (level && dealPublishedForBuyers(deal) && !info.mismatch && deps.autoGrant) {
       try {
-        await deps.autoGrant(request, normalizeAccessLevel(level));
+        await deps.autoGrant(request, level);
         autoGranted = true;
       } catch (err) {
         console.error(`[teaser] auto-grant failed for request ${request.id}:`, err);

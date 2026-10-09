@@ -93,7 +93,8 @@ export function reachedBuyers(
   const emails = (rows: typeof outreach) => new Set(rows.map((r) => norm(r.buyerEmail)).filter(Boolean));
   const accessIds = ids(access), accessEmails = emails(access);
   // A buyer whose only link here is a Teaser link has the summary, not the CIM ("Have the teaser").
-  const cimAccess = access.filter((a) => !isTeaserOnly(a.accessLevel));
+  // (A row passed without its level is never counted as a teaser link.)
+  const cimAccess = access.filter((a) => a.accessLevel == null || !isTeaserOnly(a.accessLevel));
   const cimIds = ids(cimAccess), cimEmails = emails(cimAccess);
   const contactedIds = ids(outreach), contactedEmails = emails(outreach);
   // Submitted for approval (waiting on the broker or the seller, approved, or

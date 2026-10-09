@@ -1045,7 +1045,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // A published teaser: each draft carries the buyer's own link, filled in at send.
       const { getDealTeaser, teaserPublished } = await import("./teaser/store");
       const { TEASER_LINK_TOKEN, TEASER_LINK_LINE, TEASER_NEXT_STEP, withTeaserLink } = await import("./teaser/outreach");
-      const teaserLink = teaserPublished(await getDealTeaser(deal.id));
+      const teaserLink = await getDealTeaser(deal.id).then(teaserPublished).catch((err) => {
+        console.warn("[outreach] teaser state unavailable:", (err as Error)?.message);
+        return false;
+      });
 
       // A few drafts at a time, each retried on a rate limit or overload:
       // one parallel call per selected buyer (81 at once) tripped the rate
@@ -1221,8 +1224,8 @@ Return JSON only.`,
       // Emails that link to the teaser need it published — refused before anything is sent.
       const { getDealTeaser, teaserPublished } = await import("./teaser/store");
       const { hasTeaserToken, ensureTeaserLinkFor, paragraphHtml } = await import("./teaser/outreach");
-      const teaserRow = await getDealTeaser(dealId);
       const wantsTeaser = outreach.some((o) => hasTeaserToken(o.body));
+      const teaserRow = wantsTeaser ? await getDealTeaser(dealId) : null;
       if (wantsTeaser && !teaserPublished(teaserRow)) {
         return res.status(409).json({ code: "teaser_not_published", error: "Publish the teaser before sending — the emails link to it." });
       }
@@ -5759,7 +5762,9 @@ Return JSON only.`,
       } else {
         const { getDealTeaser } = await import("./teaser/store");
         const t = await getDealTeaser(deal.id).catch(() => null);
-        if (t && (t.autoGrant === "blind" || t.autoGrant === "named")) grantLevel = normalizeAccessLevel(t.autoGrant);
+        const { autoGrantLevel } = await import("@shared/teaser");
+        const auto = autoGrantLevel(t?.autoGrant);
+        if (auto) grantLevel = auto;
       }
       const notifyBuyer = typeof req.body?.notifyBuyer === "boolean" ? req.body.notifyBuyer : (action === "reject" ? fromTeaser : true);
 

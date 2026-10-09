@@ -20,6 +20,7 @@ import { eq, sql } from "drizzle-orm";
 import { dealTeasers, type DealTeaser } from "@shared/schema";
 import {
   EMPTY_TEASER_DOC,
+  autoGrantLevel,
   type TeaserAutoGrant,
   type TeaserBlock,
   type TeaserDoc,
@@ -101,7 +102,7 @@ export function rowFromDb(r: DealTeaser): TeaserRow {
     numbers: (r.numbers === "rounded" ? "rounded" : "ranges") as NumberStyle,
     showAskingPrice: r.showAskingPrice,
     linkLifetime: (["30", "90"].includes(r.linkLifetime) ? r.linkLifetime : "until_offline") as TeaserLinkLifetime,
-    autoGrant: (["blind", "named"].includes(r.autoGrant) ? r.autoGrant : "off") as TeaserAutoGrant,
+    autoGrant: (autoGrantLevel(r.autoGrant) ?? "off") as TeaserAutoGrant,
     draft: asDoc(r.draft),
     draftRev: r.draftRev,
     history: Array.isArray(r.history) ? (r.history as TeaserHistoryEntry[]) : [],

@@ -8,6 +8,7 @@
  */
 import { resolveTwoColumnColumn } from "./cim-layouts";
 import type { NumberStyle } from "./deal-bands";
+import { BLIND_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, sameAccessLevel } from "./access-levels";
 
 /** Layouts a teaser block may use: no tables, money charts, maps, photos or org charts. */
 export const TEASER_LAYOUTS = [
@@ -99,8 +100,14 @@ export const TEASER_PAGE_MARGIN = 48;
 export type TeaserLinkLifetime = "until_offline" | "30" | "90";
 export const TEASER_LINK_LIFETIMES: readonly TeaserLinkLifetime[] = ["until_offline", "30", "90"];
 /** What a buyer gets automatically after confirming their email and signing the NDA from the teaser. */
-export type TeaserAutoGrant = "off" | "blind" | "named";
-export const TEASER_AUTO_GRANTS: readonly TeaserAutoGrant[] = ["off", "blind", "named"];
+export type TeaserAutoGrant = "off" | typeof BLIND_ACCESS_LEVEL | typeof NAMED_ACCESS_LEVEL;
+export const TEASER_AUTO_GRANTS: readonly TeaserAutoGrant[] = ["off", BLIND_ACCESS_LEVEL, NAMED_ACCESS_LEVEL];
+/** The level an auto_grant setting gives (null = off / unreadable). */
+export function autoGrantLevel(v: unknown): typeof BLIND_ACCESS_LEVEL | typeof NAMED_ACCESS_LEVEL | null {
+  if (sameAccessLevel(v, BLIND_ACCESS_LEVEL)) return BLIND_ACCESS_LEVEL;
+  if (sameAccessLevel(v, NAMED_ACCESS_LEVEL)) return NAMED_ACCESS_LEVEL;
+  return null;
+}
 
 export interface TeaserSettings {
   templateKey: string;

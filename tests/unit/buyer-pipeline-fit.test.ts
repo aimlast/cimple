@@ -182,7 +182,7 @@ async function main() {
     [{ buyerUserId: null, buyerEmail: "a@x.invalid" }],
     [{ buyerEmail: "B@X.invalid", status: "pending_seller_review" }, { buyerEmail: "d@x.invalid", status: "rejected" }],
   );
-  assert.deepEqual(reached({ id: "U1", email: "a@x.invalid" }), { alreadyHasAccess: true, alreadyContacted: false, inApproval: false });
+  assert.deepEqual(reached({ id: "U1", email: "a@x.invalid" }), { alreadyHasAccess: true, alreadyContacted: false, inApproval: false, teaserOnly: false });
   assert.equal(reached({ id: "U2", email: "b@x.invalid" }).inApproval, true);
   assert.equal(reached({ id: "U4", email: "d@x.invalid" }).inApproval, true, "a buyer the seller turned down isn't suggested again");
   assert.equal(reached({ id: "U3", email: "c@x.invalid" }).alreadyContacted, true);
