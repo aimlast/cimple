@@ -135,6 +135,7 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
         <div className="mx-auto max-w-md px-6 py-20 text-center" data-testid="vdr-doc-missing">
           <AlertCircle className="mx-auto h-7 w-7 text-muted-foreground/60" />
           <p className="mt-3 text-sm font-medium">This document isn't in your data room yet.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Your broker shares documents as the process moves forward. You can ask for this one.</p>
           <div className="mt-4 flex flex-wrap justify-center gap-2">
             {openAsk && <Button size="sm" onClick={() => openAsk({ text: "The document the memorandum points to", documentId: byDocument })}>Ask your broker for it</Button>}
             <Button variant="outline" size="sm" onClick={() => setLocation(location.split("?")[0], { replace: true })}><ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Back to the data room</Button>
@@ -464,7 +465,7 @@ function RoomError({ error, source, embedded, onRetry }: { error: VdrRequestErro
     body = String(error?.body?.error ?? "This data room is no longer open to you.") + ". Contact the broker if you need anything.";
   } else if (code === "ack_required" && token) {
     // A team member's first visit: the confidentiality step (§6.8).
-    return <TeamAcknowledge token={token} principalCompany={(error?.body?.principalCompany as string) ?? null} role={(error?.body?.role as string) ?? null} name={(error?.body?.name as string) ?? null} onDone={onRetry} />;
+    return <TeamAcknowledge token={token} principalCompany={(error?.body?.principalCompany as string) ?? null} role={(error?.body?.role as string) ?? null} name={(error?.body?.name as string) ?? null} firmName={(error?.body?.firmName as string) ?? null} onDone={onRetry} />;
   } else if (code === "ack_required") {
     title = "Please confirm before opening the data room.";
     body = "Open the link your broker sent you.";

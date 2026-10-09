@@ -157,7 +157,7 @@ export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string
                   {roomSelect(b)}
                   <label className="flex items-center gap-2 text-xs text-muted-foreground"><Switch checked={b.allowDownloads} onCheckedChange={(v) => actions.buyer(b.accessId, { allowDownloads: v }, v ? "Downloads allowed" : "View only")} aria-label="Allow downloads" />Allow downloads</label>
                 </div>
-                <div className="flex items-center justify-between gap-2">{ends(b)}{b.hasRoom && <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onViewAs(b.accessId)}><Eye className="mr-1 h-3 w-3" /> View as them</Button>}</div>
+                <div className="flex items-center justify-between gap-2"><span className="flex items-center gap-1 text-xs text-muted-foreground">Link ends {ends(b)}</span>{b.hasRoom && <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onViewAs(b.accessId)}><Eye className="mr-1 h-3 w-3" /> View as them</Button>}</div>
                 {(b.team ?? []).length > 0 && <div className="pt-1"><p className="mb-1 text-[11px] uppercase tracking-wider text-muted-foreground/70">Their team</p><TeamRows dealId={dealId} team={b.team ?? []} phone /></div>}
               </div>
             ))}

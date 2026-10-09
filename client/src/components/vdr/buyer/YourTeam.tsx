@@ -25,7 +25,7 @@ export const TEAM_ROLE_OPTIONS = [
 
 function statusLine(m: BuyerTeamRow): string {
   if (m.status === "requested") return "Waiting for your broker";
-  return m.acknowledged ? "Has access" : "Link sent · not opened yet";
+  return m.acknowledged ? "Has access" : "Has access · hasn't opened it yet";
 }
 
 export function YourTeam({ token, team, canInvite }: { token: string; team: BuyerTeamRow[]; canInvite: boolean }) {

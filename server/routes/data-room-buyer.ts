@@ -122,7 +122,8 @@ export function registerDataRoomBuyerRoutes(app: Express, overrides?: Partial<Bu
       res.setHeader("Cache-Control", "no-store");
       if (gate.member && !gate.member.ackAt) {
         // Team members confirm confidentiality first (their acknowledgement screen ships with team access).
-        return res.status(403).json({ code: "ack_required", principalCompany: gate.access.buyerCompany || gate.access.buyerName || null, role: gate.member.role, name: gate.member.name });
+        const brand = await d.brand(gate.deal.brokerId ?? null).catch(() => ({ firmName: null, logoUrl: null }));
+        return res.status(403).json({ code: "ack_required", principalCompany: gate.access.buyerCompany || gate.access.buyerName || null, role: gate.member.role, name: gate.member.name, firmName: brand.firmName });
       }
       res.json(await buyerRoomPayload({ store: d.store, brand: d.brand, now: d.now }, gate, snap, decided, { preview: ownerPreview(req, gate), ipHash: ipHashFor(gate.deal.id, req) }));
     } catch (err) {

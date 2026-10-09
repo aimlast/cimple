@@ -239,12 +239,17 @@ function PagesView(props: {
 
   useEffect(() => {
     if (scrolled.current) return;
-    // A cited figure: bring its box to the middle of the view.
-    const box = holder.current?.querySelector("[data-vdr-focus]");
-    if (box) { box.scrollIntoView({ block: "center" }); scrolled.current = true; return; }
-    if (!props.initialPage || props.initialPage < 2) return;
-    const el = holder.current?.querySelector(`[data-page="${props.initialPage}"]`);
-    if (el) { el.scrollIntoView({ block: "start" }); scrolled.current = true; }
+    // Once the page sizes have settled (the width is measured after the first paint): a cited
+    // figure's box to the middle of the view, else the opening page to the top.
+    const t = setTimeout(() => {
+      if (scrolled.current) return;
+      const box = holder.current?.querySelector("[data-vdr-focus]");
+      if (box) { box.scrollIntoView({ block: "center" }); scrolled.current = true; return; }
+      if (!props.initialPage || props.initialPage < 2) return;
+      const el = holder.current?.querySelector(`[data-page="${props.initialPage}"]`);
+      if (el) { el.scrollIntoView({ block: "start" }); scrolled.current = true; }
+    }, 300);
+    return () => clearTimeout(t);
   }, [props.initialPage, holderW, props.focus]);
 
   return (

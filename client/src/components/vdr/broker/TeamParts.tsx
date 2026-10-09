@@ -147,7 +147,7 @@ export function TeamRows({ dealId, team, phone }: { dealId: string; team: RoomTe
     <div className={phone ? "space-y-1.5 border-l-2 border-border pl-3" : "space-y-1"} data-testid="team-rows">
       {team.map((m) => (
         <div key={m.id} className="flex flex-wrap items-center gap-2 text-xs" data-testid={`team-row-${m.id}`}>
-          <span className="min-w-0 flex-1 truncate">
+          <span className={phone ? "w-full min-w-0 break-words" : "min-w-0 flex-1 truncate"}>
             <span className="font-medium text-foreground">{m.name}</span>
             <span className="text-muted-foreground"> · {roleWord(m.role)} · {m.email} · {teamStatusLine(m)}</span>
           </span>
