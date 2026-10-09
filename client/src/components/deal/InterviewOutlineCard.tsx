@@ -198,7 +198,7 @@ export function InterviewOutlineCard({ dealId, interviewStarted }: { dealId: str
   return (
     <div className="rounded-lg border border-border bg-card p-5" data-testid="interview-outline-card">
       <div className="flex items-start gap-3">
-        <ListChecks className="h-[1.125rem] w-[1.125rem] text-muted-foreground/40 mt-0.5 shrink-0" />
+        <ListChecks className="hidden sm:block h-[1.125rem] w-[1.125rem] text-muted-foreground/40 mt-0.5 shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
             <p className="text-sm font-medium">The CIM checklist</p>

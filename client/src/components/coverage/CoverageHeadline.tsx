@@ -10,6 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import {
   COVERAGE_STATUSES,
   QUALITY_TOOLTIP,
+  QUALITY_TOOLTIP_SELLER,
   headline,
   type CoverageBoard,
   type CoverageFilter,
@@ -31,7 +32,7 @@ export function CoverageBar({ board, className = "", height = 6 }: { board: Pick
   );
 }
 
-function QualityLabel({ label, className = "" }: { label: string; className?: string }) {
+function QualityLabel({ label, className = "", seller }: { label: string; className?: string; seller?: boolean }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -40,7 +41,7 @@ function QualityLabel({ label, className = "" }: { label: string; className?: st
           <Info className="h-3 w-3" aria-label="How quality differs from the percent" />
         </button>
       </TooltipTrigger>
-      <TooltipContent className="max-w-xs text-xs leading-relaxed">{QUALITY_TOOLTIP}</TooltipContent>
+      <TooltipContent className="max-w-xs text-xs leading-relaxed">{seller ? QUALITY_TOOLTIP_SELLER : QUALITY_TOOLTIP}</TooltipContent>
     </Tooltip>
   );
 }
@@ -51,8 +52,11 @@ export function CoverageHeadline({
   onFilter,
   sessionFiled,
   activeFilter,
+  seller,
 }: {
   board: Pick<CoverageBoard, "totals" | "percentCollected" | "quality">;
+  /** The seller's own view (wording for someone without a deal Overview). */
+  seller?: boolean;
   variant?: "strip" | "phone" | "compact";
   onFilter?: (f: CoverageFilter) => void;
   /** Live sessions: "This session: N filed". */
@@ -119,8 +123,8 @@ export function CoverageHeadline({
         </div>
         <CoverageBar board={board} />
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-          {COVERAGE_STATUSES.map((s) => countLink(s, board.totals[s], true))}
-          <QualityLabel label={board.quality.label} className="text-[11px]" />
+          {COVERAGE_STATUSES.map((s) => countLink(s, board.totals[s]))}
+          <QualityLabel label={board.quality.label} className="text-[11px]" seller={seller} />
         </div>
       </div>
     );

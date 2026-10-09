@@ -449,3 +449,26 @@ const mark = (itemId: string, kind: string, extra: Partial<CoverageMarkLike> = {
 }
 
 console.log(`\n${n} checks passed`);
+
+// ── Template asks keep proper names ────────────────────────────────────
+import("../../server/interview/coverage-asks").then(({ templateAsk }) => {
+  assert.equal(templateAsk("Retention plan for licensed technicians"), "Can you tell me about retention plan for licensed technicians?");
+  assert.equal(templateAsk("Comfort Club membership trend (last 3 years)"), "Can you tell me about Comfort Club membership trend (last 3 years)?");
+  assert.equal(templateAsk("WSIB experience rating (EMR)"), "Can you tell me about WSIB experience rating (EMR)?");
+  console.log("✓ template asks keep acronyms and proper names");
+});
+
+// ── One primary button per row ─────────────────────────────────────────
+import("../../client/src/components/coverage/CoverageItemRow").then(({ primaryActionFor }) => {
+  const base: any = { id: "x:y", sectionKey: "x", label: "Y", members: [{ key: "y", label: "y", writable: true }], readKeys: ["y"], valueKey: null, critical: false, origin: "generic", status: "missing", reason: null, value: null, source: null, ask: "", why: "", marks: [] };
+  assert.equal(primaryActionFor(base, "checklist"), "add");
+  assert.equal(primaryActionFor({ ...base, status: "partial" }, "checklist"), "add");
+  assert.equal(primaryActionFor({ ...base, status: "verify", reason: { code: "estimate" } }, "checklist"), "confirm");
+  assert.equal(primaryActionFor({ ...base, status: "verify", reason: { code: "lead", leadKind: "crm" } }, "checklist"), "confirm");
+  assert.equal(primaryActionFor({ ...base, status: "verify", reason: { code: "conflict", privateSide: false }, conflictId: "d1" }, "checklist"), "resolve");
+  assert.equal(primaryActionFor({ ...base, status: "verify", reason: null, moneyTalk: true, conflictId: "d2" }, "checklist"), "resolve", "a hidden conflict still resolves");
+  assert.equal(primaryActionFor({ ...base, status: "on_file" }, "checklist"), null);
+  assert.equal(primaryActionFor({ ...base, members: [{ key: "sde", label: "SDE", writable: false }] }, "checklist"), null, "the broker's own calculation has no Add answer");
+  assert.equal(primaryActionFor({ ...base }, "panel"), null, "the AI-interview panel is read-only");
+  console.log("✓ one context-aware primary button per row");
+});

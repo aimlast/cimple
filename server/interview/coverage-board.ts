@@ -485,9 +485,9 @@ function itemStatus(
       reason: {
         code: "conflict",
         privateSide,
-        ...(d.interviewValue ? { a: clip(d.interviewValue, 80) } : {}),
+        ...(d.interviewValue ? { a: clip(d.interviewValue, 56) } : {}),
         aSource: sideLabel(sides.interview, ctx.docName, "what was said"),
-        ...(d.documentValue ? { b: clip(d.documentValue, 80) } : {}),
+        ...(d.documentValue ? { b: clip(d.documentValue, 56) } : {}),
         bSource: sideLabel(sides.document, ctx.docName, d.documentName || "a document"),
       },
     });

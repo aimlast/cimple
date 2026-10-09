@@ -394,6 +394,11 @@ export default function SellerProgress() {
               )}
             </div>
 
+            {step.id === "interview" && step.status === "completed" && interview.sections.length > 0 && (
+              <p className="mt-2 pl-9 text-xs text-muted-foreground" data-testid="seller-progress-collected">
+                {interview.percentage}% of the information collected{interview.readiness ? ` · quality: ${interview.readiness.label}` : ""}
+              </p>
+            )}
             {/* Conversation section detail: "x of y on file" per CIM section (no values) */}
             {step.id === "interview" && step.status === "current" && interview.sections.length > 0 && (
               <div className="mt-3 pl-9 space-y-2" data-testid="seller-progress-sections">

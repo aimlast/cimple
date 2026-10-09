@@ -6,7 +6,7 @@
  * window, or in person on one laptop. Navigates to the together-interview
  * page with the choice in the URL.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Users, Video, MonitorSmartphone } from "lucide-react";
 
-type Via = "cimple" | "zoom" | "meet" | "teams" | "person";
+export type Via = "cimple" | "zoom" | "meet" | "teams" | "person";
 
 const OPTIONS: { via: Via; label: string; hint: string; soon?: boolean }[] = [
   { via: "cimple", label: "Video call in Cimple", hint: "One link for the seller; questions and progress beside the video. Who said what is exact." },
@@ -26,7 +26,7 @@ const OPTIONS: { via: Via; label: string; hint: string; soon?: boolean }[] = [
   { via: "person", label: "In person / phone", hint: "Same room or on speaker — one laptop, the mic captures the answers." },
 ];
 
-export function TogetherSetupDialog({ dealId, open, onOpenChange }: { dealId: string; open: boolean; onOpenChange: (o: boolean) => void }) {
+export function TogetherSetupDialog({ dealId, open, onOpenChange, initialVia }: { dealId: string; open: boolean; onOpenChange: (o: boolean) => void; initialVia?: Via }) {
   const [, setLocation] = useLocation();
   const { data: services } = useQuery<{ deepgram: boolean; daily: boolean; recall: boolean }>({
     queryKey: ["/api/calls/status"],
@@ -34,7 +34,11 @@ export function TogetherSetupDialog({ dealId, open, onOpenChange }: { dealId: st
     staleTime: 60_000,
   });
   const dailyReady = !!services?.daily;
-  const [via, setVia] = useState<Via>("zoom");
+  const [via, setVia] = useState<Via>(initialVia ?? "zoom");
+  // (Opened from a mode button: that mode is picked.)
+  useEffect(() => {
+    if (open && initialVia) setVia(initialVia);
+  }, [open, initialVia]);
   const effectiveVia: Via = via === "cimple" && !dailyReady ? "zoom" : via;
   const [link, setLink] = useState("");
   const needsLink = effectiveVia === "zoom" || effectiveVia === "meet" || effectiveVia === "teams";

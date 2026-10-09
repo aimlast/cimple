@@ -11,7 +11,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Eye, EyeOff, FileText, Loader2, MoreHorizontal, RefreshCw, Users } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, FileText, Loader2, MonitorSmartphone, MoreHorizontal, RefreshCw, Users, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -24,7 +24,7 @@ import { CoverageBoardView, type BoardState } from "@/components/coverage/Covera
 import { CoverageHeadline } from "@/components/coverage/CoverageHeadline";
 import { CoverageRail } from "@/components/coverage/CoverageRail";
 import { DocumentsNeeded } from "@/components/coverage/DocumentsNeeded";
-import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
+import { TogetherSetupDialog, type Via } from "@/components/deal/TogetherSetupDialog";
 import { CallSheetDialog } from "./CallSheet";
 import { viewCounts, type CoverageBoard, type CoverageFilter, type CoverageView } from "@shared/coverage-board";
 import type { Deal } from "@shared/schema";
@@ -93,17 +93,36 @@ function StatusBanner({ board, onRetry }: { board: CoverageBoard; onRetry: () =>
   return null;
 }
 
-function ChecklistSide({ dealId, board, onStart, onCallSheet }: { dealId: string; board: CoverageBoard; onStart: () => void; onCallSheet: () => void }) {
+function ChecklistSide({ dealId, board, onStart, onCallSheet }: { dealId: string; board: CoverageBoard; onStart: (via?: Via) => void; onCallSheet: () => void }) {
+  const modes: Array<{ via: Via; label: string; hint: string; Icon: typeof Users }> = [
+    { via: "person", label: "In person", hint: "Same room or on speaker — one laptop listens.", Icon: Users },
+    { via: "cimple", label: "Cimple video call", hint: "One link for the seller; the checklist beside the video.", Icon: Video },
+    { via: "zoom", label: "Zoom, Meet or Teams", hint: "Your own call — Cimple's notetaker joins it.", Icon: MonitorSmartphone },
+  ];
   return (
     <div className="space-y-4" data-testid="checklist-side">
       <div className="rounded-lg border border-border bg-card p-4">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Interview together</p>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Start interview together</p>
         <p className="text-sm mt-1.5">Talk to the seller in any order. Cimple listens, files their answers into this checklist, and shows what's still missing.</p>
-        <p className="text-xs text-muted-foreground mt-1.5">In person, on a Cimple video call, or with Cimple's notetaker in Zoom, Meet or Teams.</p>
-        <Button className="mt-3 w-full gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90" onClick={onStart} data-testid="button-start-together">
-          <Users className="h-4 w-4" /> Start interview together
-        </Button>
-        <Button variant="ghost" size="sm" className="mt-1.5 w-full gap-1.5 text-xs" onClick={onCallSheet} data-testid="button-call-sheet">
+        <ul className="mt-3 space-y-1.5">
+          {modes.map((m) => (
+            <li key={m.via}>
+              <button
+                type="button"
+                onClick={() => onStart(m.via)}
+                className="w-full text-left rounded-md border border-border px-3 py-2 hover:border-teal/50 hover:bg-teal/5 transition-colors flex items-start gap-2.5"
+                data-testid={`button-start-${m.via}`}
+              >
+                <m.Icon className="h-4 w-4 mt-0.5 text-teal shrink-0" />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium">{m.label}</span>
+                  <span className="block text-[11px] text-muted-foreground">{m.hint}</span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        <Button variant="ghost" size="sm" className="mt-2 w-full gap-1.5 text-xs" onClick={onCallSheet} data-testid="button-call-sheet">
           <FileText className="h-3.5 w-3.5" /> Copy or print a call sheet
         </Button>
       </div>
@@ -152,6 +171,16 @@ export function TogetherBoard({ dealId }: { dealId: string }) {
   const { data: deal } = useQuery<Deal>({ queryKey: ["/api/deals", dealId], enabled: !!dealId });
   const { data: board, isLoading, error, refetch, isFetching } = useCoverageBoard(dealId, audience);
   const [setupOpen, setSetupOpen] = useState(false);
+  const [setupVia, setSetupVia] = useState<Via | undefined>(undefined);
+  // In person needs nothing more — straight in; the others pick in the dialog (a meeting link, the call).
+  const startTogether = (via?: Via) => {
+    if (via === "person") {
+      setLocation(`/deal/${dealId}/interview/together?via=person`);
+      return;
+    }
+    setSetupVia(via);
+    setSetupOpen(true);
+  };
   const [sheetOpen, setSheetOpen] = useState(false);
   const onState = useCallback((patch: Partial<BoardState>) => setState(patch), [setState]);
 
@@ -201,7 +230,7 @@ export function TogetherBoard({ dealId }: { dealId: string }) {
         )}
         {menu}
         {!isPhone && (
-          <Button size="sm" className="h-8 gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => setSetupOpen(true)} data-testid="button-topbar-start">
+          <Button size="sm" className="h-8 gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90 lg:hidden" onClick={() => startTogether()} data-testid="button-topbar-start">
             <Users className="h-3.5 w-3.5" /> Start interview together
           </Button>
         )}
@@ -260,11 +289,11 @@ export function TogetherBoard({ dealId }: { dealId: string }) {
               <CoverageRail board={board} view={state.view} sectionKey={state.section} fullWidth onSelect={(view, section) => setState({ view, section, filter: "all", query: "", tab: "ask" })} />
             </div>
           )}
-          {state.tab === "side" && <div className="p-4"><ChecklistSide dealId={dealId} board={board} onStart={() => setSetupOpen(true)} onCallSheet={() => setSheetOpen(true)} /></div>}
+          {state.tab === "side" && <div className="p-4"><ChecklistSide dealId={dealId} board={board} onStart={startTogether} onCallSheet={() => setSheetOpen(true)} /></div>}
         </div>
         <div className="fixed bottom-0 inset-x-0 z-20 border-t border-border bg-card/95 backdrop-blur px-4 py-2.5 flex items-center gap-2" data-testid="board-bottom-bar">
           <span className="text-xs text-muted-foreground flex-1 min-w-0 truncate">{board.totals.criticalOpen > 0 ? `${board.totals.criticalOpen} critical still open` : "Every critical data point is on file"}</span>
-          <Button size="sm" className="gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => setSetupOpen(true)} data-testid="button-bottom-start"><Users className="h-3.5 w-3.5" /> Interview together</Button>
+          <Button size="sm" className="gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => startTogether()} data-testid="button-bottom-start"><Users className="h-3.5 w-3.5" /> Interview together</Button>
         </div>
       </div>
     );
@@ -284,7 +313,7 @@ export function TogetherBoard({ dealId }: { dealId: string }) {
             <CoverageBoardView variant="checklist" dealId={dealId} board={board} audience={audience} state={state} onState={onState} />
           </main>
           <aside className="hidden lg:block border-l border-border overflow-y-auto p-4">
-            <ChecklistSide dealId={dealId} board={board} onStart={() => setSetupOpen(true)} onCallSheet={() => setSheetOpen(true)} />
+            <ChecklistSide dealId={dealId} board={board} onStart={startTogether} onCallSheet={() => setSheetOpen(true)} />
           </aside>
         </div>
       </div>
@@ -295,7 +324,7 @@ export function TogetherBoard({ dealId }: { dealId: string }) {
     <div className="h-screen flex flex-col bg-background overflow-hidden" data-testid="together-board" data-audience={audience}>
       {topBar}
       {body}
-      <TogetherSetupDialog dealId={dealId} open={setupOpen} onOpenChange={setSetupOpen} />
+      <TogetherSetupDialog dealId={dealId} open={setupOpen} onOpenChange={setSetupOpen} initialVia={setupVia} />
       {board && <CallSheetDialog board={board} businessName={deal?.businessName} open={sheetOpen} onOpenChange={setSheetOpen} />}
     </div>
   );

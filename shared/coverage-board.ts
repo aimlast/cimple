@@ -246,6 +246,9 @@ export interface CoverageHeadline {
 
 export const QUALITY_TOOLTIP =
   "Quality weighs what buyers care about most, and a missing critical item caps it — it's the quality label on the deal's Overview. The percent counts every data point equally.";
+/** The seller's version (they have no deal Overview). */
+export const QUALITY_TOOLTIP_SELLER =
+  "Quality weighs what buyers care about most. The percent counts every data point equally.";
 
 export function headline(board: Pick<CoverageBoard, "totals" | "percentCollected" | "quality">): CoverageHeadline {
   const t = board.totals;

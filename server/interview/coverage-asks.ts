@@ -136,8 +136,12 @@ export const SHARED_KEY_HOME: Record<string, string> = {
 
 export function lowerFirst(s: string): string {
   if (!s) return s;
-  // Keep acronyms ("WSIB rating", "EMR") as they are.
-  return /^[A-Z]{2}/.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1);
+  // Keep acronyms ("WSIB rating", "EMR") and proper names ("Comfort Club
+  // membership trend" — the next word is capitalised too) as they are.
+  if (/^[A-Z]{2}/.test(s)) return s;
+  const words = s.split(/\s+/);
+  if (words.length > 1 && /^[A-Z][a-z]/.test(words[0]) && /^[A-Z]/.test(words[1])) return s;
+  return s.charAt(0).toLowerCase() + s.slice(1);
 }
 
 export const FALLBACK_WHY = "Buyers in this industry check this.";

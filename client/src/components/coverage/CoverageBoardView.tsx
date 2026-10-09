@@ -59,9 +59,9 @@ const FILTERS: Array<{ key: CoverageFilter; label: string; phone: string }> = [
 function SectionHeader({ section, sticky = true }: { section: CoverageSection; sticky?: boolean }) {
   const { onFile, items } = sectionOnFile(section);
   return (
-    <div className={`${sticky ? "sticky top-0 z-[1]" : ""} bg-background/95 backdrop-blur px-3 pt-4 pb-1.5 border-b border-border flex items-baseline gap-2`} data-testid={`group-${section.key}`}>
+    <div className={`${sticky ? "sticky top-0 z-[1]" : ""} bg-background/95 backdrop-blur px-3 pt-4 pb-1.5 border-b border-border flex flex-wrap items-baseline gap-x-2 gap-y-0.5`} data-testid={`group-${section.key}`}>
       <h3 className="text-sm font-semibold">{section.title}</h3>
-      <span className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+      <span className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground whitespace-nowrap">
         {section.importance === "critical" ? <span className="text-teal">Critical · </span> : null}
         {onFile} of {items} on file
       </span>
@@ -360,7 +360,7 @@ export function CoverageOutline({ board, actions }: { board: CoverageBoard; acti
   return (
     <div className="space-y-4" data-testid="coverage-outline">
       <CoverageHeadline board={board} variant="compact" />
-      <ul className="grid grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-2" aria-label="CIM sections">
+      <ul className="grid grid-cols-1 min-[480px]:grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-2" aria-label="CIM sections">
         {orderedSections(board).map((s) => {
           const { onFile, items } = sectionOnFile(s);
           return (
@@ -402,7 +402,7 @@ export function CoverageSeller({ board }: { board: CoverageBoard }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   return (
     <div className="space-y-4" data-testid="coverage-seller">
-      <CoverageHeadline board={board} variant="compact" />
+      <CoverageHeadline board={board} variant="compact" seller />
       <p className="text-xs text-muted-foreground">What your business overview already covers, section by section. Nothing you've told us is shown here — only what's done and what's left.</p>
       <ul className="divide-y divide-border rounded-md border border-border">
         {[...board.sections].sort((a, b) => a.order - b.order).map((s) => {

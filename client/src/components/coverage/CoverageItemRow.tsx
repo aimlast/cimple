@@ -52,7 +52,8 @@ export function primaryActionFor(item: CoverageItem, mode: RowMode): PrimaryActi
   if (item.status === "on_file") return null;
   if (item.status === "verify") {
     const code = item.reason?.code;
-    if (code === "conflict" || code === "routed") return item.conflictId ? "resolve" : null;
+    // (A conflict keeps its id on every audience, even when its reason is hidden.)
+    if (code === "conflict" || code === "routed" || item.conflictId) return item.conflictId ? "resolve" : null;
     if (code && CONFIRMABLE.has(code)) return "confirm";
     // (The screen audience drops some reasons' detail, never the code.)
     return item.moneyTalk ? "confirm" : null;
@@ -105,7 +106,7 @@ function SecondLine({ item, audience }: { item: CoverageItem; audience: BrokerAu
       return (
         <div className="space-y-0.5">
           {item.value && <p className="text-xs text-muted-foreground line-clamp-1">{item.value}</p>}
-          <p className="text-xs cov-text-verify">{reason || "To verify."}</p>
+          <p className="text-xs cov-text-verify line-clamp-2" title={reason}>{reason || "To verify."}</p>
         </div>
       );
     default:
@@ -297,7 +298,7 @@ export function CoverageItemRow({
         }}
         data-testid={`button-primary-${item.id}`}
       >
-        {busy && action === "confirm" ? <Loader2 className="h-3 w-3 animate-spin" /> : touch && action === "confirm" ? <Check className="h-3.5 w-3.5" aria-label="Confirmed" /> : touch && action === "resolve" ? "Resolve" : PRIMARY_LABEL[action]}
+        {busy && action === "confirm" ? <Loader2 className="h-3 w-3 animate-spin" /> : touch && action === "confirm" ? <Check className="h-3.5 w-3.5" aria-label="Confirmed" /> : touch && action === "resolve" ? "Resolve" : touch && action === "add" ? "Add" : PRIMARY_LABEL[action]}
       </Button>
     );
 
@@ -305,7 +306,7 @@ export function CoverageItemRow({
     mode === "panel" ? (
       <DropdownMenu onOpenChange={opened("menu")}>
         <DropdownMenuTrigger asChild>
-          <button type="button" className="h-6 w-6 inline-flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent shrink-0" aria-label={`More for ${item.label}`} onClick={(e) => e.stopPropagation()}>
+          <button type="button" className="h-6 w-6 inline-flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100" aria-label={`More for ${item.label}`} onClick={(e) => e.stopPropagation()}>
             <MoreHorizontal className="h-3.5 w-3.5" />
           </button>
         </DropdownMenuTrigger>
@@ -359,7 +360,14 @@ export function CoverageItemRow({
     </>
   );
 
-  const label = <span className={`font-medium ${mode === "panel" ? "text-xs" : "text-sm"} ${item.status === "on_file" ? "text-foreground/90" : ""}`}>{item.label || "Item your broker added"}</span>;
+  const label = (
+    <span
+      className={`font-medium ${mode === "panel" ? "text-xs" : "text-sm"} ${item.status === "on_file" ? "text-foreground/90" : ""}`}
+      title={mode === "panel" ? (item.privateValue ? MASKED_VALUE : item.value ?? item.ask) || undefined : undefined}
+    >
+      {item.label || "Item your broker added"}
+    </span>
+  );
 
   const body = (
     <div className="min-w-0 flex-1">
