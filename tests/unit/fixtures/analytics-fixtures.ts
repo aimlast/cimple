@@ -148,7 +148,15 @@ function visitRow(v: VisitSpec): RawVisit {
 export function factsOf(spec: DealSpec, filters: EngagementFilters = DEFAULT_ENGAGEMENT_FILTERS): CaptureFacts {
   const deal = dealOf(spec);
   const since = filterSince(filters, NOW);
-  const listed = spec.links.filter((l) => filters.buyers.length === 0 || filters.buyers.includes(l.id));
+  // Like the facts loader: the Buyers filters (ids, segment) choose the links.
+  const segmentOk = (l: LinkSpec) => {
+    const decision = l.decision ?? "under_review";
+    if (filters.segment === "all") return true;
+    if (filters.segment === "interested") return decision === "interested";
+    if (filters.segment === "undecided") return decision === "under_review";
+    return (l.buyerType ?? null) === filters.segment.slice("type:".length);
+  };
+  const listed = spec.links.filter((l) => (filters.buyers.length === 0 || filters.buyers.includes(l.id)) && segmentOk(l));
   const accesses = listed.map((l) => schemaRow(accessOf(spec.id, l), l));
   const listedIds = new Set(listed.map((l) => l.id));
   const visitSpecs = (spec.visits ?? []).filter((v) => listedIds.has(v.access));

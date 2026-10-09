@@ -119,8 +119,10 @@ export function dealKpisResponse(inputs: DealInputs, readingNow: ReadingNowDbRow
   const deal = inputs.deals[0];
   const facts = cimOnly(item.facts);
   const range = inputs.filters.range;
-  const { kpis } = computeKpis(inputs, { range, now, scope: "deal", filters: inputs.filters });
-  const callTop = buildCallList([{ deal, facts }], 3);
+  const { kpis, callable } = computeKpis(inputs, { range, now, scope: "deal", filters: inputs.filters });
+  // The first three of the call order (the same set as "Worth a call").
+  const allowed = new Set(callable);
+  const callTop = buildCallList([{ deal, facts }], Number.MAX_SAFE_INTEGER).filter((e) => allowed.has(e.accessId)).slice(0, 3);
   const groups = buyerGroups(inputs.groupFacts, item.facts);
   // Every listed link (teaser readers too: the shell says "reading the teaser"; no page for them).
   const listed = new Set(item.facts.buyers.map((b) => b.accessId));
