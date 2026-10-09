@@ -11,6 +11,7 @@
  * marks (shared/figure-compare.ts pageAt).
  */
 import { locatedIn } from "@shared/figure-compare";
+import { labelMeansLine } from "@shared/figure-lines";
 import type { FigureLocatedEntry } from "@shared/schema";
 import { locatedKey } from "./sources";
 
@@ -18,6 +19,13 @@ export interface LocateRequest {
   documentId: string;
   updatedAt: string;
   value: number;
+  /**
+   * A figure the broker typed ("Cimple read it wrong"): found only where the
+   * document's own label for it means this line ("Interest and bank charges"
+   * for interest) — never on "Inventories" because the number happens to be
+   * printed there (checker r2 R2-1).
+   */
+  line?: string | null;
 }
 
 /**
@@ -31,17 +39,18 @@ export function locateValues(
 ): Record<string, FigureLocatedEntry> {
   const out: Record<string, FigureLocatedEntry> = {};
   for (const r of requests) {
-    const key = locatedKey(r.documentId, r.updatedAt, r.value);
+    const key = locatedKey(r.documentId, r.updatedAt, r.value, r.line);
     if (known[key] || out[key]) continue;
-    const hit = locatedIn(textOf(r.documentId), r.value);
+    const line = r.line;
+    const hit = locatedIn(textOf(r.documentId), r.value, line ? (h) => labelMeansLine(h.sourceLabel, line) : undefined);
     out[key] = hit ? { index: hit.index, page: hit.page, sourceLabel: hit.sourceLabel } : { missing: true };
   }
   return out;
 }
 
-/** The stored result for a value in a document version, or null when it was never located (= not found). */
-export function locatedEntry(located: Record<string, FigureLocatedEntry>, documentId: string, updatedAt: string, value: number): { page: number | null; sourceLabel: string | null } | null {
-  const e = located[locatedKey(documentId, updatedAt, value)];
+/** The stored result for a value in a document version (on that line, when given), or null when it was never located (= not found). */
+export function locatedEntry(located: Record<string, FigureLocatedEntry>, documentId: string, updatedAt: string, value: number, line?: string | null): { page: number | null; sourceLabel: string | null } | null {
+  const e = located[locatedKey(documentId, updatedAt, value, line)];
   if (!e || "missing" in e) return null;
   return { page: e.page, sourceLabel: e.sourceLabel };
 }

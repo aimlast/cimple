@@ -27,7 +27,7 @@ import { cimModeForAccessLevel, isTeaserOnly } from "@shared/access-levels";
 import { cimFinancialsFor } from "../cim-financials";
 import { figureRegistry } from "./registry";
 import { financialSources, sourceKindOf, statementValuesByYear, sourceRef, sourceFor, type FinancialSource, type SourceDoc } from "./sources";
-import { buildChecks, type ChecksResult } from "./checks";
+import { buildChecks, type CheckDecision, type ChecksResult } from "./checks";
 import { analysisNoteSentences, hintsFor } from "./hints";
 import { getFigureState, listDecisions, listNotes, listQuestions, type FigureDb } from "./store";
 import { screenCtxFor, stringScreenFor, holdsText, type FigureScreenCtx } from "./guards";
@@ -91,6 +91,8 @@ export interface FigureRaw {
   registry: FigureRegistry;
   sources: FinancialSource[];
   checks: ChecksResult;
+  /** The broker's check decisions as read (the refresh locates their corrected figures too). */
+  decisions: CheckDecision[];
   notes: CimFigureNote[];
   questions: CimFigureQuestion[];
   state: CimFigureState | null;
@@ -193,7 +195,7 @@ export function assembleFigureRaw(dealId: string, rows: RawSourceRows, stamp = "
   }
   const analysis = fin ? (rows.analyses as any[]).find((a) => String(a.id) === fin!.analysisId) : null;
   return {
-    dealId, stamp, loadedAt: Date.now(), info, registry, sources, checks,
+    dealId, stamp, loadedAt: Date.now(), info, registry, sources, checks, decisions,
     notes: rows.notes, questions: rows.questions, state: rows.state, docs,
     keyTerms: keyTermsFromFacts(info, docs, screen),
     statementsByYear,

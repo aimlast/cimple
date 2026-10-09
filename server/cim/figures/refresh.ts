@@ -55,7 +55,8 @@ export interface RefreshResult {
 /** The pure part: what to locate, then the worked-out notes. Shared with the tests. */
 export function refreshPlan(raw: FigureRaw, sections: Array<{ id: string; layoutType: string; layoutData: unknown }>) {
   const anchoredKeys = new Set(sections.flatMap((s) => anchorFigures(s, raw.registry)).map((a) => a.figureKey));
-  return { anchoredKeys, toLocate: buildChecks({ registry: raw.registry, sources: raw.sources, located: (raw.state?.located ?? {}) as any, decisions: [], figureKeys: anchoredKeys }).toLocate };
+  // With the broker's decisions: a corrected figure ("Cimple read it wrong") is located too — on its own line.
+  return { anchoredKeys, toLocate: buildChecks({ registry: raw.registry, sources: raw.sources, located: (raw.state?.located ?? {}) as any, decisions: raw.decisions ?? [], figureKeys: anchoredKeys }).toLocate };
 }
 
 const running = new Map<string, Promise<RefreshResult>>();

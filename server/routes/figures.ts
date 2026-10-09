@@ -82,6 +82,7 @@ function showRefusal(raw: FigureRaw, checkKey: string): string | null {
     return c.cimMismatch ? "Your CIM differs from the statements on this figure. Fix it first."
       : "This figure is worked out from figures that differ from the statements. Fix those first.";
   }
+  if (c.corrected && !c.located) return "Cimple couldn't find your figure on that line of the document. Check the document first.";
   if (!c.located && !["match", "rounding"].includes(c.size)) return "Cimple couldn't find this figure in the document. Check the document first.";
   return null;
 }

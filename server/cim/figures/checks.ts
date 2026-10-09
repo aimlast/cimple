@@ -49,6 +49,8 @@ export interface NotLocated {
   value: number;
   /** "tax return" / "financial statements". */
   docWord: string;
+  /** The broker's own figure ("Cimple read it wrong"), sought on this line of the document. */
+  lineWord?: string;
 }
 
 export interface ChecksResult {
@@ -58,7 +60,7 @@ export interface ChecksResult {
   /** D11 failures (the workspace's "Needs checking"). */
   notLocated: NotLocated[];
   /** What needs locating (the refresh locates these, then calls buildChecks again). */
-  toLocate: Array<{ documentId: string; updatedAt: string; value: number }>;
+  toLocate: Array<{ documentId: string; updatedAt: string; value: number; line?: string }>;
 }
 
 const near = (a: number, b: number) => Math.abs(Math.abs(a) - Math.abs(b)) <= 0.5;
@@ -129,9 +131,10 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
   const notLocated: NotLocated[] = [];
   const toLocate: ChecksResult["toLocate"] = [];
 
-  const find = (src: FinancialSource, value: number) => {
-    toLocate.push({ documentId: src.documentId, updatedAt: src.updatedAt, value });
-    return locatedEntry(located, src.documentId, src.updatedAt, value);
+  /** Where a value is printed in a source; `line`: only on the document's own line for it (a figure the broker typed). */
+  const find = (src: FinancialSource, value: number, line?: string) => {
+    toLocate.push({ documentId: src.documentId, updatedAt: src.updatedAt, value, ...(line ? { line } : {}) });
+    return locatedEntry(located, src.documentId, src.updatedAt, value, line);
   };
 
   for (const fig of Object.values(reg)) {
@@ -205,9 +208,10 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
       const corrected = decision && decision.state !== "left_out" && decision.correctedValue !== null && near(decision.valuesSnapshot.base, base) ? decision.correctedValue : null;
       const value = corrected ?? raw;
       const size = sizeOf(base, value, revenue);
-      // The broker's figure is located like any other: never "found in the tax return" unless the
-      // tax return's text has it (else it needs checking and can't be shown — D11).
-      const oLoc = find(other, value);
+      // The broker's figure is never "found in the tax return" unless the tax return prints it on its
+      // own line for this figure ("Interest and bank charges" — not "Inventories", where the same
+      // number may also be printed): else it needs checking and can't be shown (D11; checker r2 R2-1).
+      const oLoc = corrected !== null ? find(other, value, line.id) : find(other, value);
       const located = !!oLoc && (!baseIsStatements || !!baseLoc);
       let regrouped = false;
       let regroupedText: string | null = null;
@@ -239,8 +243,13 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
         base, other: value, sourceLabel: oLoc?.sourceLabel ?? null, size, regrouped, regroupedText, cimMismatch, located,
         decision: decided, ...(corrected !== null ? { corrected: true } : {}), baseCitation, otherCitation: sourceRef(other, { page: oLoc?.page ?? null, value }),
       });
-      if (!agrees(size) && !located && !cimMismatch) {
-        notLocated.push({ checkKey: key, figureKey: fig.key, documentId: !oLoc ? other.documentId : st!.documentId, value: !oLoc ? value : base, docWord: !oLoc ? (kind === "tax_return" ? "tax return" : "management accounts") : "financial statements" });
+      // A correction that isn't on its line needs checking whatever its size: it would otherwise read
+      // as a match the document doesn't support (checker r2 R2-1).
+      if ((!agrees(size) || corrected !== null) && !located && !cimMismatch) {
+        const docWord = kind === "tax_return" ? "tax return" : "management accounts";
+        notLocated.push(!oLoc
+          ? { checkKey: key, figureKey: fig.key, documentId: other.documentId, value, docWord, ...(corrected !== null ? { lineWord: line.blindWord } : {}) }
+          : { checkKey: key, figureKey: fig.key, documentId: st!.documentId, value: base, docWord: "financial statements" });
       }
     }
 

@@ -122,9 +122,14 @@ export function ownValue(src: FinancialSource | null, line: StandardLineId): num
   return src?.values[line]?.[src.year];
 }
 
-/** The key a located result is stored under: document version + value (a new upload is not located until refreshed). */
-export function locatedKey(documentId: string, updatedAt: string, value: number): string {
-  return `${documentId}@${updatedAt}#${Math.round(Math.abs(value))}`;
+/**
+ * The key a located result is stored under: document version + value (a new
+ * upload is not located until refreshed) — plus the line, for a figure the
+ * broker typed ("Cimple read it wrong"): that one is found only on a line of
+ * the document that means the same line (checker r2 R2-1).
+ */
+export function locatedKey(documentId: string, updatedAt: string, value: number, line?: string | null): string {
+  return `${documentId}@${updatedAt}#${Math.round(Math.abs(value))}${line ? `~${line}` : ""}`;
 }
 
 /** A citation of a source (the period as the fiscal year; the page when located). */

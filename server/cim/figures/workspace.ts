@@ -246,17 +246,23 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
     const approvedReason = diffNotes.some((n) => n.status === "approved" && !n.staleReason);
     const state = checkState({ size: c.size, regrouped: c.regrouped, approvedReason });
     const mismatch = held.has(c.figureKey);
+    // "Cimple read it wrong" (checker r2 R2-1): the broker's figure needs checking until the document
+    // prints it on its own line, and stays with the differences until the broker shows it — a
+    // correction never turns a difference into a match on its own.
+    const correctedUnshown = !!c.corrected && c.decision !== "shown";
     const group = c.decision === "left_out" ? "left_out"
-      : !agrees(c.size) && !c.located ? "needs_checking"
+      : (!agrees(c.size) || c.corrected) && !c.located ? "needs_checking"
+      : correctedUnshown ? "difference"
       : state === "match" ? "match"
       : state === "regrouped" ? "regrouped"
       : "difference";
     const refusal = mismatch ? "Your CIM differs from the statements on this figure. Fix it first."
+      : c.corrected && !c.located ? "Cimple couldn't find your figure on that line of the document."
       : !c.located && !agrees(c.size) ? "Cimple couldn't find it in the document."
       : null;
     // Read from what DD buyers are actually served (the kept copy while an update waits), when known.
     const shownToBuyers = served ? served.now.dd.checkKeys.has(c.key)
-      : ddOn && !mismatch && c.located && c.decision !== "left_out" && (state === "match" || state === "regrouped" || c.decision === "shown");
+      : ddOn && !mismatch && c.located && c.decision !== "left_out" && (c.corrected ? c.decision === "shown" : state === "match" || state === "regrouped" || c.decision === "shown");
     const afterPublish = !shownToBuyers && !!served?.afterPublish?.dd.checkKeys.has(c.key);
     const missing = raw.checks.notLocated.find((n) => n.checkKey === c.key);
     wsChecks.push({
@@ -284,11 +290,11 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
       shownToBuyers,
       afterPublish,
       onBuyerPage: ddPage.has(c.figureKey),
-      preTicked: preTicked(state, { cimMismatch: mismatch, located: c.located }),
+      preTicked: !correctedUnshown && preTicked(state, { cimMismatch: mismatch, located: c.located }),
       refusal,
       baseDocument: docRef(c.baseCitation?.documentId),
       otherDocument: docRef(c.otherCitation?.documentId),
-      notLocatedMessage: missing ? notLocatedMessage(missing.value, missing.docWord) : null,
+      notLocatedMessage: missing ? notLocatedMessage(missing.value, missing.docWord, missing.lineWord) : null,
     });
   }
 
@@ -318,7 +324,7 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
   for (const n of raw.checks.notLocated) {
     if (!shownSet.has(n.figureKey)) continue;
     const doc = docRef(n.documentId);
-    fixFirst.push({ id: `located:${n.checkKey}`, kind: "not_located", message: notLocatedMessage(n.value, n.docWord), checkKey: n.checkKey, documentId: doc?.id, documentName: doc?.name, documentHref: doc?.href ?? null });
+    fixFirst.push({ id: `located:${n.checkKey}`, kind: "not_located", message: notLocatedMessage(n.value, n.docWord, n.lineWord), checkKey: n.checkKey, documentId: doc?.id, documentName: doc?.name, documentHref: doc?.href ?? null });
   }
 
   // Other notes (difference / context notes not listed as a movement row) — for the review sheet.

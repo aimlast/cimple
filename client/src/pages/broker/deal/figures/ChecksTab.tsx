@@ -46,14 +46,19 @@ function StatePill({ c }: { c: WorkspaceCheck }) {
 function shownWords(c: WorkspaceCheck): string {
   if (c.decision === "left_out") return `Left out: ${c.leftOutReason ?? "no reason given"}`;
   if (c.shownToBuyers) return "Shown to due-diligence buyers";
+  // A figure the broker typed never shows by itself, even when it now matches (checker r2 R2-1).
+  if (c.corrected && c.decision !== "shown") return "Not shown yet: your figure shows only when you show it";
   if (c.afterPublish || !c.onBuyerPage) return "Shows once you publish the update";
   if (c.decision === "shown" || c.state === "regrouped" || c.state === "match") return "Shown once the checks are on";
   return "Not shown yet";
 }
 
-/** Only a difference with a reason (or none yet) waits for the broker's own "Show"; matches and worked-out groupings show with the checks. */
+/**
+ * A difference with a reason (or none yet), and any figure the broker typed, waits for the broker's
+ * own "Show"; matches and worked-out groupings Cimple read show with the checks.
+ */
 function needsShow(c: WorkspaceCheck): boolean {
-  return (c.state === "explained" || c.state === "ask") && !c.shownToBuyers && c.decision !== "shown" && !c.refusal;
+  return (c.corrected || c.state === "explained" || c.state === "ask") && !c.shownToBuyers && c.decision !== "shown" && !c.refusal;
 }
 
 function DocLink({ doc }: { doc: WorkspaceCheck["otherDocument"] }) {
@@ -67,11 +72,13 @@ function DocLink({ doc }: { doc: WorkspaceCheck["otherDocument"] }) {
 
 /** The other record's figure is the one the broker entered ("Cimple read it wrong"), not one Cimple read. */
 function YourFigure() {
-  return <span className="ml-1.5 rounded border border-border px-1 py-px align-middle text-[10px] font-normal text-muted-foreground" title="The figure you entered. Buyers see it only if Cimple finds it in the document and you show it.">Your figure</span>;
+  return <span className="ml-1.5 rounded border border-border px-1 py-px align-middle text-[10px] font-normal text-muted-foreground" title="The figure you entered. Buyers see it only when the document prints it on that line and you show it.">Your figure</span>;
 }
 
 function DifferenceRow({ c, a }: { c: WorkspaceCheck; a: ChecksActions }) {
-  const why = c.state === "regrouped" ? c.regroupedText : c.note?.text ?? null;
+  const why = c.state === "regrouped" ? c.regroupedText
+    : c.state === "match" ? (c.corrected ? `Your figure matches the ${c.base !== c.thisCim ? "statements as issued" : "CIM"}.` : null)
+    : c.note?.text ?? null;
   return (
     <div className="grid gap-3 rounded-lg border border-border bg-card p-3 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)]" data-testid={`check-row-${c.checkKey}`}>
       <div className="min-w-0">
@@ -95,7 +102,7 @@ function DifferenceRow({ c, a }: { c: WorkspaceCheck; a: ChecksActions }) {
           <span className="tabular-nums">{signedMoney(c.difference)}{c.pct ? ` (${c.pct})` : ""}</span>
           <StatePill c={c} />
         </div>
-        <p className={why ? "text-foreground" : "text-muted-foreground"}>{why ?? "No reason on file"}</p>
+        {(why || c.state !== "match") && <p className={why ? "text-foreground" : "text-muted-foreground"}>{why ?? "No reason on file"}</p>}
         <div className="flex flex-wrap gap-1.5">
           {c.decision === "left_out" ? (
             <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => a.onUndoLeaveOut(c)}>Show it again</Button>
@@ -107,7 +114,7 @@ function DifferenceRow({ c, a }: { c: WorkspaceCheck; a: ChecksActions }) {
               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => a.onLeaveOut(c)}>Leave out…</Button>
               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => a.onReadWrong(c)}>Cimple read it wrong</Button>
               {c.state === "ask" && <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => a.onAsk(c)}>Ask the seller</Button>}
-              {c.state !== "regrouped" && (c.note ? (
+              {c.state !== "regrouped" && c.state !== "match" && (c.note ? (
                 <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => a.onOpenNote(c.note!.id)}>Edit the reason</Button>
               ) : (
                 <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => a.onWrite(c)}>Write a reason</Button>

@@ -281,7 +281,9 @@ export const BROKER_WRITE_NOTE = "Write a note";
 export const BROKER_LAYER_FAILED = "The figure notes couldn't be loaded for this preview.";
 
 /** "Cimple couldn't find $86,000 in the tax return's text. Check the document before showing this." */
-export function notLocatedMessage(value: number, docWord: string): string {
+export function notLocatedMessage(value: number, docWord: string, lineWord?: string | null): string {
+  // A figure the broker typed must be on the document's own line for it (checker r2 R2-1).
+  if (lineWord) return `Cimple couldn't find your figure, ${dollars(value)}, on the ${docWord}'s ${lineWord} line. Check the document before showing this.`;
   return `Cimple couldn't find ${dollars(value)} in the ${docWord}'s text. Check the document before showing this.`;
 }
 

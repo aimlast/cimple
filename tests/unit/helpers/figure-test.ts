@@ -105,6 +105,8 @@ export interface RawOpts {
   /** Locate every value in the fixture's document texts first (as the refresh does). Default true. */
   locate?: boolean;
   info?: Record<string, unknown>;
+  /** Change a document's text before locating (e.g. a line the extraction misread). */
+  patchText?: (doc: { id: string; name: string }, text: string) => string;
 }
 
 /** The audience-neutral raw inputs for a fixture deal, exactly as loadFigureRaw assembles them. */
@@ -124,7 +126,11 @@ export async function fixtureRaw(name: "pacific" | "beacon" | "lakeshore", opts:
   });
   let raw = base({});
   if (opts.locate !== false) {
-    const text = (id: string) => fx.documents.find((d) => d.id === id)?.extractedText ?? null;
+    const text = (id: string) => {
+      const d = fx.documents.find((x) => x.id === id);
+      const t = d?.extractedText ?? null;
+      return t && d && opts.patchText ? opts.patchText(d, t) : t;
+    };
     raw = base(locateValues(raw.checks.toLocate, text));
   }
   return { fx, raw };

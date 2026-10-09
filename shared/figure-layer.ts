@@ -386,9 +386,10 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
     const state = checkState({ size: c.size, regrouped: c.regrouped, approvedReason: approvedDifference(c) });
     const cimMis = mismatch.has(c.figureKey);
     // D9: matches and worked-out groupings show once the checks are on; any other difference only
-    // once the broker shows it — a correction ("Cimple read it wrong") is not a decision to show.
+    // once the broker shows it — a correction ("Cimple read it wrong") is not a decision to show, and a
+    // corrected figure never shows by itself, even when it now matches (checker r2 R2-1).
     const buyerSees = ddOn && !cimMis && c.located && c.decision !== "left_out" &&
-      (state === "match" || state === "regrouped" || c.decision === "shown");
+      (c.corrected ? c.decision === "shown" : state === "match" || state === "regrouped" || c.decision === "shown");
     if (!broker && !buyerSees) return null;
     const diff = Math.abs(c.other) - Math.abs(c.base);
     const differs = !agrees(c.size);

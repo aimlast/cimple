@@ -91,7 +91,7 @@ export const FIGURE_LINES: readonly FigureLine[] = [
     id: "otherIncome", label: "Other income",
     factKeys: ["otherIncomeByYear", "gainOnDisposalByYear", "gainOnSaleOfAssetsByYear"],
     labelRe: /^(?:other\s+income|gain\s+on\s+(?:sale|disposal)(?:\s+of\s+(?:assets|equipment|capital\s+assets))?)$/i,
-    synonyms: ["other income", "gain on disposal", "gain on sale"], total: false, expense: false, comparable: "direct", askable: true, blindWord: "other income",
+    synonyms: ["other income", "other revenue", "gain on disposal", "gain on sale"], total: false, expense: false, comparable: "direct", askable: true, blindWord: "other income",
   },
   {
     id: "amortization", label: "Depreciation & amortization",
@@ -115,7 +115,7 @@ export const FIGURE_LINES: readonly FigureLine[] = [
     id: "incomeTaxes", label: "Income taxes",
     factKeys: ["incomeTaxesByYear", "incomeTaxByYear", "incomeTaxExpenseByYear", "provisionForIncomeTaxesByYear"],
     labelRe: /^(?:provision\s+for\s+)?(?:income|corporate)\s+tax(?:es)?(?:\s+expense)?$/i,
-    synonyms: ["income tax", "income taxes"], total: false, expense: true, comparable: "direct", askable: true, blindWord: "income taxes",
+    synonyms: ["income tax", "income taxes"], total: false, expense: true, comparable: "direct", askable: false, blindWord: "income taxes",
   },
   {
     id: "netIncome", label: "Net income",
@@ -236,3 +236,69 @@ const SYNONYM_FAMILIES: Record<string, string[]> = {
   bank: ["bank charges", "merchant fees", "card fees"],
   debts: ["bad debt", "bad debts", "write-off", "write-offs", "collections"],
 };
+
+// ── A document's own line label vs a line (checker r2 R2-1) ─────────────────
+
+/** Words that never tell lines apart. */
+const LABEL_STOP = new Set(["of", "and", "the", "on", "for", "to", "a", "an", "in", "per", "total", "from", "with"]);
+
+/** "Taxes" → "tax", "sales" → "sale", "inventories" → "inventory" (enough to compare a label with a line's words). */
+function stemWord(w: string): string {
+  if (w.length > 4 && w.endsWith("ies")) return `${w.slice(0, -3)}y`;
+  if (w.length > 3 && w.endsWith("xes")) return w.slice(0, -2);
+  if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1);
+  return w;
+}
+
+function labelWordsOf(text: string): string[] {
+  return String(text ?? "").toLowerCase().replace(/&/g, " ").split(/[^a-z0-9]+/).filter((w) => w && !LABEL_STOP.has(w)).map(stemWord);
+}
+
+/** Words that mean a label is NOT this line even when it carries the line's words. */
+const NOT_THIS_LINE: Partial<Record<StandardLineId, RegExp>> = {
+  revenue: /\bcost\b|\bother\b/i,
+  interest: /\bincome\b|\brevenue\b|\bearned\b/i,
+  incomeTaxes: /\bnet\b|\bbefore\b|purposes|taxable|payable|instal/i,
+  netIncome: /\bbefore\b|purposes|taxable/i,
+  grossProfit: /margin/i,
+};
+
+/** How many of one phrase's words a label carries in full (0 when it lacks one). */
+function phraseScore(label: string[], phrase: string): number {
+  const words = labelWordsOf(phrase);
+  return words.length > 0 && words.every((w) => label.includes(w)) ? words.length : 0;
+}
+
+/** How strongly a label reads as a line: its row-label pattern, else its longest synonym carried in full. */
+function lineScore(rawLabel: string, words: string[], line: FigureLine): number {
+  if (NOT_THIS_LINE[line.id]?.test(rawLabel)) return 0;
+  if (lineForLabel(rawLabel) === line.id) return 99;
+  return Math.max(0, ...[line.label, ...line.synonyms].map((p) => phraseScore(words, p)));
+}
+
+/**
+ * Does a document's own line label ("Interest and bank charges", "Cost of
+ * sales (direct operating costs)") mean this standard line? It carries the
+ * line's words (or one of its synonyms) in full, and no other standard line
+ * reads it more strongly ("Cost of sales" is not revenue; "Net income/loss
+ * before taxes" is not net income). A label that names no line, or names
+ * another one ("Inventories", "Professional fees"), never does — so a
+ * figure the broker typed is never "found in the tax return" on a line about
+ * something else. Ties fail closed.
+ */
+export function labelMeansLine(label: string | null | undefined, line: string): boolean {
+  const std = standardLineOf(line);
+  const full = String(label ?? "").trim();
+  if (!std || !full) return false;
+  // A parenthetical describes the line ("Cost of sales (direct operating costs)"): read the label
+  // without it first, and with it only when the bare label names no line.
+  const bare = full.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+  for (const raw of bare && bare !== full ? [bare, full] : [full]) {
+    const words = labelWordsOf(raw);
+    const own = lineScore(raw, words, std);
+    const best = Math.max(0, ...FIGURE_LINES.filter((o) => o.id !== std.id).map((o) => lineScore(raw, words, o)));
+    if (own > 0) return best < own;
+    if (best > 0) return false;
+  }
+  return false;
+}

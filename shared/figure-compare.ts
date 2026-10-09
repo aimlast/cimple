@@ -158,9 +158,10 @@ const GLUED_AFTER = /^\d{1,3}(?:,\d{3})+(?![\d,]|\.\d)/;
 /**
  * Where `value` is printed in `text`, with digit boundaries: "98,000" is
  * never found inside "1,398,000" or "98,0001", but "…charges86,000" and
- * "$341,010$297,642" are found. The first occurrence wins. Null = not found.
+ * "$341,010$297,642" are found. The first occurrence wins — the first one
+ * `accept` takes, when given. Null = not found.
  */
-export function locatedIn(text: string | null | undefined, value: number): Located | null {
+export function locatedIn(text: string | null | undefined, value: number, accept?: (hit: Located) => boolean): Located | null {
   if (!text || !Number.isFinite(value) || Math.round(Math.abs(value)) === 0) return null;
   for (const needle of spellings(value)) {
     let from = 0;
@@ -181,7 +182,10 @@ export function locatedIn(text: string | null | undefined, value: number): Locat
       if (/^,\d/.test(after)) continue;
       if (/^\d/.test(after) && !(grouped && GLUED_AFTER.test(after))) continue;
       if (/^\.\d/.test(after) && !/^\.00?(?!\d)/.test(after)) continue;
-      return { index: i, page: pageAt(text, i), sourceLabel: sourceLabelAt(text, i) };
+      const hit = { index: i, page: pageAt(text, i), sourceLabel: sourceLabelAt(text, i) };
+      // `accept` (a figure the broker typed): only an occurrence on the right line counts.
+      if (accept && !accept(hit)) continue;
+      return hit;
     }
   }
   return null;

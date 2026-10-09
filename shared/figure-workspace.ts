@@ -301,10 +301,13 @@ export function reviewItems(ws: FiguresWorkspace): ReviewItems {
     const sign = c.difference >= 0 ? "+" : "−";
     const amount = `${sign}$${Math.round(Math.abs(c.difference)).toLocaleString("en-US")}`;
     const later = c.onBuyerPage ? "" : " · shows once you publish the update";
+    // A figure the broker typed ("Cimple read it wrong") is offered unticked: it shows only on their own tick.
+    const yours = c.corrected ? " · your figure" : "";
     if (c.state === "ask") {
-      needsLook.push({ checkKey: c.checkKey, label: `${c.label} FY${c.year} · ${amount} · no reason yet${later}`, canShow: true, why: "Ask the seller first" });
+      needsLook.push({ checkKey: c.checkKey, label: `${c.label} FY${c.year} · ${amount} · no reason yet${yours}${later}`, canShow: true, why: "Ask the seller first" });
     } else {
-      differences.push({ checkKey: c.checkKey, label: `${c.label} FY${c.year} · ${c.state === "regrouped" ? "grouped differently" : "reason given"} (${amount})${later}`, ticked: c.preTicked });
+      const what = c.state === "match" ? "matches" : `${c.state === "regrouped" ? "grouped differently" : "reason given"} (${amount})`;
+      differences.push({ checkKey: c.checkKey, label: `${c.label} FY${c.year} · ${what}${yours}${later}`, ticked: c.preTicked });
     }
   }
   return { notes, differences, needsLook, matchesAuto };
