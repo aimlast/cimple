@@ -274,8 +274,8 @@ await test("GL-R1-05: buyers still reading a kept copy whose bridge shows other 
   const { evidenceChangeCount } = await import("../../server/gl/evidence");
   const ch = await evidenceChangeCount(dealId);
   // Notices, not changes: "Update what buyers see" wouldn't change them (the KPI never counts them as changes).
-  assert.ok(ch.notices.some((c) => /Full and Blind note is held back.*the version of your CIM they read/.test(c)), ch.notices.join(" | "));
-  assert.ok(ch.notices.some((c) => /Due-diligence buyers read the add-backs page right after the version of your CIM they read.*publish the updated CIM/.test(c)), ch.notices.join(" | "));
+  assert.equal(ch.notices.length, 1, "one line");
+  assert.match(ch.notices[0], /^Buyers still read the previous version of your CIM, whose "EBITDA Normalization & Adjustments" shows other add-backs or amounts: the Full and Blind note is held back, and the due-diligence page tells its readers its amounts are the current ones\. Publish the updated CIM/);
   assert.ok(!ch.changes.some((c) => /held back|Due-diligence buyers read/.test(c)), ch.changes.join(" | "));
   const again = await publishPreview(dealId);
   assert.ok(!again.changes.some((c) => /held back|Due-diligence buyers read/.test(c)), "the dialog says it once (in its warnings)");

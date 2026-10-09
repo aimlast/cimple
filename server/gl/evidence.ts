@@ -878,15 +878,16 @@ async function changesSincePublished(s: EvidenceState, pub: GlPublishedEvidence)
   const notices: string[] = [];
   if (pub.versions.normal || pub.versions.blind || pub.versions.dd) {
     const bridge = await bridgeMismatch(s.dealId, tight.snapshot).catch(() => null);
-    const where = bridge?.keptCopy ? `the version of your CIM they read ("${bridge.title}")` : bridge ? `your CIM's "${bridge.title}"` : "";
-    const fix = bridge?.keptCopy ? "publish the updated CIM" : "regenerate it, then update what buyers see";
-    if (bridge && (pub.versions.normal || pub.versions.blind)) {
+    // One line, whatever versions are shown: what buyers see now, and the one thing that fixes it.
+    if (bridge) {
+      const noteOn = pub.versions.normal || pub.versions.blind;
+      const what = [
+        noteOn ? "the Full and Blind note is held back" : "",
+        pub.versions.dd ? "the due-diligence page tells its readers its amounts are the current ones" : "",
+      ].filter(Boolean).join(", and ");
       notices.push(bridge.keptCopy
-        ? `The Full and Blind note is held back from buyers: ${where} shows other add-backs or amounts. It appears once you publish the updated CIM.`
-        : `The Full and Blind note is held back from buyers: ${where} shows different add-backs or amounts. Regenerate it, then update what buyers see.`);
-    }
-    if (bridge && pub.versions.dd) {
-      notices.push(`Due-diligence buyers read the add-backs page right after ${where}, which shows other add-backs or amounts — the page tells them its amounts are the current ones. To show one set of numbers, ${fix}.`);
+        ? `Buyers still read the previous version of your CIM, whose "${bridge.title}" shows other add-backs or amounts: ${what}. Publish the updated CIM to show one set of numbers.`
+        : `Your CIM's "${bridge.title}" shows other add-backs or amounts than the ones found in the books: ${what}. Regenerate it, then update what buyers see.`);
     }
   }
   const { snapshot: live } = await snapshotFromState(s, { versions: pub.versions, leaveOut: pub.leaveOut, publishedBy: null });
