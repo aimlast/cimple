@@ -40,6 +40,14 @@ export type TeaserPagesMode = "editor" | "buyer" | "seller" | "print" | "thumb";
 
 /** Space between blocks on a teaser page (tighter than the CIM's 40 px). */
 export const TEASER_BLOCK_GAP = 11;
+/** Editor: how far a block's selection / warning outline reaches above and below it (Tailwind `before:-inset-y-1`). */
+export const EDITOR_RING_INSET_Y = 4;
+/**
+ * Editor: where a block's warning chip sits — inside its own outline at the
+ * top-right (never above it: with an 11 px gap the outline of the block
+ * above is only 3 px away, so a chip lifted any higher sat on it).
+ */
+export const EDITOR_CHIP_POSITION = { top: -EDITOR_RING_INSET_Y + 2, right: 4 } as const;
 
 export interface TeaserLayoutInfo {
   /** Printed pages (an oversized block spills onto more). */
@@ -225,9 +233,11 @@ export function TeaserPages(props: TeaserPagesProps) {
         {deco?.label && (
           <span
             className={cn(
-              "absolute -top-3 right-0 z-10 rounded-full px-2 py-0.5 text-[10px] font-semibold shadow-sm",
+              "pointer-events-none absolute z-10 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-[14px] shadow-sm",
               deco.tone === "held" ? "bg-red-600 text-white" : deco.tone === "placeholder" ? "bg-amber-500 text-black" : "bg-amber-100 text-amber-900",
             )}
+            style={EDITOR_CHIP_POSITION}
+            data-testid="teaser-block-chip"
           >
             {deco.label}
           </span>

@@ -21,6 +21,7 @@ import { classifyGenerationWarnings } from "../../shared/cim-generation-warnings
 import { publishButtonState } from "../../client/src/components/teaser/TeaserPublishDialog";
 import { sampleTeaser } from "../../client/src/components/teaser/samples";
 import { paperContact, paperContactNote, printFooterText, sectionsForPaper } from "../../client/src/pages/TeaserPrintPreview";
+import { EDITOR_CHIP_POSITION, EDITOR_RING_INSET_Y, TEASER_BLOCK_GAP } from "../../client/src/components/teaser/TeaserPages";
 import { chipsBesideTagline, fillTeaserTokens, teaserFill } from "../../shared/teaser-view";
 import { tileLinesFor, CIM_TAB_VIEWS, EXTRA_CIM_TAB_VIEWS, useViewBadge } from "../../client/src/pages/broker/deal/cim-tab-slots";
 import { blindTileDesc } from "../../client/src/pages/broker/deal/CimTab";
@@ -186,6 +187,13 @@ test("on paper the 'ask from this page' step names the firm and its contact; the
   // Other lists are untouched.
   const other = { ...(sec as object), layoutData: { items: [{ title: "Add a second terminal" }] } } as never;
   assert.equal(sectionsForPaper([other], { firm: "X", name: null, email: null, phone: null })[0], other);
+});
+
+test("the editor's warning chip sits inside its own block's outline, never on the block above (checker r2)", () => {
+  const chipTop = -EDITOR_CHIP_POSITION.top; // px above the block's top edge
+  assert.ok(chipTop <= EDITOR_RING_INSET_Y, "inside this block's own outline");
+  assert.ok(chipTop < TEASER_BLOCK_GAP - EDITOR_RING_INSET_Y, "clear of the outline of the block above");
+  assert.ok(EDITOR_CHIP_POSITION.right >= 0, "inset from the right edge");
 });
 
 test("on paper a contact is always printed: the brand's email or phone, else the broker's own email; with none, the header says so", () => {

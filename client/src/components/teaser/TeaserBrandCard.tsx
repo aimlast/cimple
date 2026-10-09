@@ -131,23 +131,30 @@ function SavedRow({ t, isDefault }: { t: SavedTemplateItem; isDefault: boolean }
     onError: (e) => toast({ title: "Couldn't delete the template", description: e instanceof Error ? e.message : undefined, variant: "destructive" }),
   });
   return (
-    <li className="flex flex-wrap items-center gap-2 px-3 py-2.5 text-sm">
+    // Phones: the name gets the whole row (two templates must be tellable apart); the actions sit under it.
+    <li className="flex flex-col gap-1.5 px-3 py-2.5 text-sm sm:flex-row sm:items-center sm:gap-2" data-testid="teaser-saved-template">
       {editing ? (
-        <>
-          <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} className="h-8 max-w-xs" autoFocus />
-          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => name.trim() && patch.mutate({ name: name.trim() })} aria-label="Save the name"><Check className="h-4 w-4" /></Button>
-          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => { setName(t.name); setEditing(false); }} aria-label="Cancel"><X className="h-4 w-4" /></Button>
-        </>
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} className="h-8 min-w-0 flex-1 sm:max-w-xs" autoFocus aria-label="Template name" />
+          <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => name.trim() && patch.mutate({ name: name.trim() })} aria-label="Save the name"><Check className="h-4 w-4" /></Button>
+          <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => { setName(t.name); setEditing(false); }} aria-label="Cancel"><X className="h-4 w-4" /></Button>
+        </div>
       ) : (
         <>
-          <span className="min-w-0 flex-1 truncate font-medium">{t.name}</span>
-          {isDefault ? (
-            <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"><Star className="h-3 w-3" /> Default</span>
-          ) : (
-            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => patch.mutate({ makeDefault: true })} disabled={patch.isPending}>Set as my default</Button>
-          )}
-          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setEditing(true)} aria-label={`Rename ${t.name}`}><Pencil className="h-3.5 w-3.5" /></Button>
-          <Button size="icon" variant="ghost" className="h-8 w-8 text-red-500 hover:text-red-500" onClick={() => setConfirm(true)} aria-label={`Delete ${t.name}`}><Trash2 className="h-3.5 w-3.5" /></Button>
+          <span className="min-w-0 break-words font-medium sm:flex-1 sm:truncate" title={t.name} data-testid="teaser-saved-template-name">{t.name}</span>
+          <div className="-ml-2 flex flex-wrap items-center gap-1 sm:ml-0 sm:shrink-0">
+            {isDefault ? (
+              <span className="ml-2 inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground sm:ml-0"><Star className="h-3 w-3" /> Default</span>
+            ) : (
+              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => patch.mutate({ makeDefault: true })} disabled={patch.isPending}>Set as my default</Button>
+            )}
+            <Button size="sm" variant="ghost" className="h-8 gap-1 px-2 text-xs sm:w-8 sm:px-0" onClick={() => setEditing(true)} aria-label={`Rename ${t.name}`}>
+              <Pencil className="h-3.5 w-3.5" /><span className="sm:sr-only">Rename</span>
+            </Button>
+            <Button size="sm" variant="ghost" className="h-8 gap-1 px-2 text-xs text-red-500 hover:text-red-500 sm:w-8 sm:px-0" onClick={() => setConfirm(true)} aria-label={`Delete ${t.name}`}>
+              <Trash2 className="h-3.5 w-3.5" /><span className="sm:sr-only">Delete</span>
+            </Button>
+          </div>
         </>
       )}
       <AlertDialog open={confirm} onOpenChange={setConfirm}>
