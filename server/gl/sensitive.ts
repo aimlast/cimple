@@ -65,15 +65,17 @@ export interface BuyerMaskedEntry {
 export interface MaskableRow { account: string; name: string | null; memo: string | null }
 
 /**
- * Account, card and government numbers in a name or description: every run
- * of 7+ digits (spaces and dashes allowed inside) keeps its last 4.
+ * Account, card and government numbers in a name or description keep their
+ * last 4: 7+ digits in a row, or 9+ digits split by spaces or dashes (a card,
+ * a SIN, a phone). An invoice like "2024-118" stays.
  * INTEGRATOR: the data room's maskPersonalNumbers can replace this at the merge.
  */
 export function maskLongNumbers(text: string | null): string | null {
   if (!text) return text;
   return text.replace(/\d(?:[\d\s-]{5,}\d)/g, (m) => {
     const digits = m.replace(/\D/g, "");
-    return digits.length >= 7 ? `••••${digits.slice(-4)}` : m;
+    const longestRun = Math.max(...m.split(/[\s-]+/).map((x) => x.length));
+    return longestRun >= 7 || digits.length >= 9 ? `••••${digits.slice(-4)}` : m;
   });
 }
 
