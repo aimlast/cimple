@@ -23,14 +23,17 @@ function useWorkspace(dealId: string) {
   return useQuery<FiguresWorkspace>({ queryKey: figuresKey(dealId), queryFn: () => figuresRequest("GET", `/api/deals/${dealId}/figures`), staleTime: 30_000 });
 }
 
-/** The badge count (notes waiting for the broker's OK), cheap. */
-export function useFigureNotesWaiting(dealId: string): number {
-  const q = useQuery<FiguresStatus>({
+function useFigureCounts(dealId: string) {
+  return useQuery<FiguresStatus>({
     queryKey: [...figuresKey(dealId), "status", "counts"],
     queryFn: () => figuresRequest("GET", `/api/deals/${dealId}/figures/status?counts=1`),
     staleTime: 30_000,
   });
-  return q.data?.counts?.notesWaiting ?? 0;
+}
+
+/** The badge count (notes waiting for the broker's OK), cheap. */
+export function useFigureNotesWaiting(dealId: string): number {
+  return useFigureCounts(dealId).data?.counts?.notesWaiting ?? 0;
 }
 
 export function FigureVersionLines({ dealId, mode }: { dealId: string; mode: "normal" | "blind" | "dd" }) {
@@ -74,13 +77,27 @@ export function FigureVersionLines({ dealId, mode }: { dealId: string; mode: "no
 
 export function FigureNotesWaitingLine({ dealId }: { dealId: string }) {
   const [, navigate] = useLocation();
-  const waiting = useFigureNotesWaiting(dealId);
-  if (waiting === 0) return null;
+  const counts = useFigureCounts(dealId).data?.counts;
+  const waiting = counts?.notesWaiting ?? 0;
+  const flagged = counts?.ownerFlagged ?? 0;
+  if (waiting === 0 && flagged === 0) return null;
   return (
-    <p className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs" data-testid="figure-notes-waiting">
-      <Calculator className="h-3.5 w-3.5 text-teal" />
-      <span>{waiting} figure {waiting === 1 ? "note waits" : "notes wait"} for your OK.</span>
-      <button type="button" className="text-teal hover:underline" onClick={() => navigate(`/deal/${dealId}/cim?view=numbers&tab=moves&filter=waiting`)}>Review</button>
-    </p>
+    <div className="space-y-1.5">
+      {flagged > 0 && (
+        // The owner's "Change this" on their review page (D22): the note is hidden until the broker looks.
+        <p className="flex flex-wrap items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs" data-testid="figure-notes-owner-flagged">
+          <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+          <span>The owner asked for a change to {flagged === 1 ? "a note" : `${flagged} notes`} on the CIM's figures. Buyers don't see {flagged === 1 ? "it" : "them"} until you look.</span>
+          <button type="button" className="text-teal hover:underline" onClick={() => navigate(`/deal/${dealId}/cim?view=numbers&tab=moves&filter=look`)}>Review</button>
+        </p>
+      )}
+      {waiting > 0 && (
+        <p className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs" data-testid="figure-notes-waiting">
+          <Calculator className="h-3.5 w-3.5 text-teal" />
+          <span>{waiting} figure {waiting === 1 ? "note waits" : "notes wait"} for your OK.</span>
+          <button type="button" className="text-teal hover:underline" onClick={() => navigate(`/deal/${dealId}/cim?view=numbers&tab=moves&filter=waiting`)}>Review</button>
+        </p>
+      )}
+    </div>
   );
 }
