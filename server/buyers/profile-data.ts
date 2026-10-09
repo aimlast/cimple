@@ -19,6 +19,9 @@ import { storage } from "../storage";
 import { cachedFactsForDeals } from "../engagement/facts-cache";
 import { buyerInsight } from "../engagement/insights";
 
+/** CIM reading only: teaser visits (mode 'teaser') are the teaser's own numbers (server/teaser/engagement.ts). */
+const notTeaserVisit = sql`${buyerVisits.mode} IS DISTINCT FROM 'teaser'`;
+
 /**
  * Is this buyer on the broker's list? Same membership rule as the Buyers
  * page (storage.getBrokerBuyerContactList): a contact row, an invite from
@@ -172,7 +175,7 @@ async function readingByAccess(accessIds: string[]): Promise<Map<string, AccessE
     first: sql<number>`(extract(epoch from min(${buyerVisits.startedAt})) * 1000)::float8`,
     last: sql<number>`(extract(epoch from max(${buyerVisits.lastSeenAt})) * 1000)::float8`,
   }).from(buyerVisits)
-    .where(and(inArray(buyerVisits.buyerAccessId, accessIds), eq(buyerVisits.selfView, false), eq(buyerVisits.clamped, false)))
+    .where(and(inArray(buyerVisits.buyerAccessId, accessIds), eq(buyerVisits.selfView, false), eq(buyerVisits.clamped, false), notTeaserVisit))
     .groupBy(buyerVisits.buyerAccessId);
   if (visits.length === 0) return out;
   const ids = visits.map((v) => v.accessId);
@@ -184,7 +187,7 @@ async function readingByAccess(accessIds: string[]): Promise<Map<string, AccessE
       att: sql<number>`coalesce(sum(${readingRollups.attentionMs}), 0)::float8`,
     }).from(readingRollups)
       .innerJoin(buyerVisits, eq(buyerVisits.id, readingRollups.visitId))
-      .where(and(inArray(readingRollups.buyerAccessId, ids), eq(buyerVisits.selfView, false), eq(buyerVisits.clamped, false)))
+      .where(and(inArray(readingRollups.buyerAccessId, ids), eq(buyerVisits.selfView, false), eq(buyerVisits.clamped, false), notTeaserVisit))
       .groupBy(readingRollups.buyerAccessId, readingRollups.pageId),
     db.select({ id: buyerAccess.id, dealId: buyerAccess.dealId }).from(buyerAccess).where(inArray(buyerAccess.id, ids)),
   ]);
@@ -304,7 +307,7 @@ export async function readingIntentByAccess(accesses: Array<{ id: string; dealId
   const out = new Map<string, number>();
   if (accesses.length === 0) return out;
   const withVisits = await db.selectDistinct({ accessId: buyerVisits.buyerAccessId }).from(buyerVisits)
-    .where(and(inArray(buyerVisits.buyerAccessId, accesses.map((a) => a.id)), eq(buyerVisits.selfView, false), eq(buyerVisits.clamped, false)));
+    .where(and(inArray(buyerVisits.buyerAccessId, accesses.map((a) => a.id)), eq(buyerVisits.selfView, false), eq(buyerVisits.clamped, false), notTeaserVisit));
   const measured = new Set(withVisits.map((r) => r.accessId));
   const byDeal = new Map<string, string[]>();
   for (const a of accesses) if (measured.has(a.id)) byDeal.set(a.dealId, [...(byDeal.get(a.dealId) ?? []), a.id]);

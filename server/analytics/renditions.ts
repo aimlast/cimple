@@ -79,16 +79,23 @@ export interface LineageSource {
   analyticsLineage?: string | null;
 }
 
-/** The page index of a served CIM. Labels come from the SERVED sections only. */
+/**
+ * The page index of a served CIM. Labels come from the SERVED sections only.
+ * `extraPages` are prepended (the teaser's header page, `teaser_header`);
+ * the orders of the rest follow them.
+ */
 export function buildPageIndex(
   sections: ReadonlyArray<BuyerSection>,
   design: DesignLike | null | undefined,
   live: ReadonlyArray<LineageSource> = [],
+  extraPages: ReadonlyArray<Omit<RenditionPage, "order">> = [],
 ): RenditionPage[] {
   const shown = sections.filter(shownToBuyer);
   const byId = new Map(shown.map((s) => [s.id, s]));
   const lineage = new Map(live.map((s) => [s.id, s.analyticsLineage || s.id]));
-  return servedPageOrder(shown, design).map((pageId, order): RenditionPage => {
+  const lead: RenditionPage[] = extraPages.map((p, order) => ({ ...p, order }));
+  return [...lead, ...servedPageOrder(shown, design).map((pageId, i): RenditionPage => {
+    const order = lead.length + i;
     if (pageId === DISCLAIMER_PAGE_ID || pageId === CONTACT_PAGE_ID) {
       const blocks = brokeragePageBlocks(pageId);
       return {
@@ -114,7 +121,7 @@ export function buildPageIndex(
       blockFingerprint: blockFingerprint(s.layoutType, defaultView),
       blocks: blocks.map(toRenditionBlock),
     };
-  });
+  })];
 }
 
 /** Stable JSON (sorted keys) so equal servings hash equal. */
@@ -125,19 +132,24 @@ function stableJson(v: unknown): string {
   return `{${Object.keys(o).filter((k) => o[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${stableJson(o[k])}`).join(",")}}`;
 }
 
-export function renditionId(input: { mode: CimMode; variant: CimVariant; design: unknown; sections: unknown }): string {
+/** A rendition's mode: a CIM version, or the teaser document (mode = variant = "teaser"). */
+export type RenditionMode = CimMode | "teaser";
+
+export function renditionId(input: { mode: RenditionMode; variant: CimVariant; design: unknown; sections: unknown }): string {
   return createHash("sha256").update(stableJson({ mode: input.mode, variant: input.variant, design: input.design ?? null, sections: input.sections })).digest("hex").slice(0, 32);
 }
 
 export interface RenditionInput {
   dealId: string;
-  mode: CimMode;
+  mode: RenditionMode;
   variant: CimVariant;
   cimLayoutVersion: number | null;
   sections: BuyerSection[];
   design: unknown;
   /** The deal's live sections (for lineage). */
   live: ReadonlyArray<LineageSource>;
+  /** Pages before the sections (the teaser header). */
+  extraPages?: ReadonlyArray<Omit<RenditionPage, "order">>;
 }
 
 export interface RenditionWriter {
@@ -193,7 +205,7 @@ export async function recordRendition(input: RenditionInput, writer: RenditionWr
     const shown = input.sections.filter(shownToBuyer);
     if (shown.length === 0) return null;
     const id = renditionId({ mode: input.mode, variant: input.variant, design: input.design, sections: input.sections });
-    const pageIndex = buildPageIndex(input.sections, input.design as DesignLike, input.live);
+    const pageIndex = buildPageIndex(input.sections, input.design as DesignLike, input.live, input.extraPages ?? []);
     const seenAt = known.get(id);
     if (!seenAt || Date.now() - seenAt > KNOWN_TTL_MS) {
       await writer.insert({
@@ -209,6 +221,47 @@ export async function recordRendition(input: RenditionInput, writer: RenditionWr
     console.warn("[reading] rendition not recorded:", (err as Error)?.message);
     return null;
   }
+}
+
+/** The teaser's header page id (the reading tracker's first page on a teaser). */
+export const TEASER_HEADER_PAGE_ID = "teaser_header";
+
+/** The teaser header as a rendition page: one block, the heading (about 4 s to read). */
+export function teaserHeaderPage(title: string): Omit<RenditionPage, "order"> {
+  const blocks = [{ key: "heading", kind: "heading" as const, label: "Header", expectedMs: 4000, part: 0 }];
+  return {
+    pageId: TEASER_HEADER_PAGE_ID,
+    lineageId: TEASER_HEADER_PAGE_ID,
+    parts: 1,
+    servedTitle: title,
+    layoutType: "teaser_header",
+    locked: false,
+    expectedMs: 4000,
+    blockFingerprint: blockFingerprint("teaser_header", blocks),
+    blocks,
+  };
+}
+
+/**
+ * Records the teaser a buyer was served (mode = variant = "teaser"): the
+ * header page first, then each block with its own id as lineage (block ids
+ * are stable across edits). The disclaimer and contact pages are off.
+ */
+export async function recordTeaserRendition(
+  input: { dealId: string; sections: BuyerSection[]; design: unknown; header: { label?: string; codename?: string; tagline?: string; chips?: string[] } },
+  writer: RenditionWriter = dbRenditionWriter,
+): Promise<ViewRoomReading | null> {
+  const design = { ...((input.design as Record<string, unknown>) ?? {}), teaserHeader: input.header };
+  return recordRendition({
+    dealId: input.dealId,
+    mode: "teaser",
+    variant: "teaser",
+    cimLayoutVersion: null,
+    sections: input.sections,
+    design,
+    live: input.sections.map((b) => ({ id: b.id, analyticsLineage: b.id })),
+    extraPages: [teaserHeaderPage(input.header.codename || "Header")],
+  }, writer);
 }
 
 /** Test hook: forget which ids were written. */

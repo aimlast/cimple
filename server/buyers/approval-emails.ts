@@ -79,3 +79,69 @@ export function buildApprovalInviteEmail(opts: {
     ),
   };
 }
+
+// ── Teaser emails (server/teaser/*) ────────────────────────────────────────
+// Named per buyerFacingDealName: the codename (or neutral wording) for a
+// teaser or Blind CIM link, the business's name only for the Full CIM / DD.
+
+const teaserWrap = (title: string, inner: string) => `
+        <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
+          <h2 style="color: #e5e5e5; margin-bottom: 16px;">${title}</h2>
+          ${inner}
+        </div>`;
+
+const hello = (name: string | null | undefined) => {
+  const first = (name ?? "").trim().replace(/^\s*(?:dr|mr|mrs|ms|mx|prof)\.?\s+/i, "").split(/\s+/)[0];
+  return first ? `Hello ${escapeHtml(first)},` : "Hello,";
+};
+
+/** "Your code for Project Shoreline" — the 6-digit email check on a teaser link. */
+export function buildEmailCodeEmail(opts: { code: string; dealLabel: { name: string | null } }): { subject: string; html: string } {
+  const name = opts.dealLabel.name?.trim() || null;
+  const spaced = `${opts.code.slice(0, 3)} ${opts.code.slice(3)}`;
+  return {
+    subject: name ? `Your code for ${name}` : "Your code for the confidential opportunity",
+    html: teaserWrap(
+      name ? `Your code for ${escapeHtml(name)}` : "Your code",
+      `<p>Your code is <strong style="font-size: 20px; letter-spacing: 2px;">${escapeHtml(spaced)}</strong>.</p>
+          <p>It works for 15 minutes. If you didn't ask for it, you can ignore this email.</p>`,
+    ),
+  };
+}
+
+/** The CIM was opened on the buyer's teaser link ("It opens from the same link as the summary"). */
+export function buildCimReadyEmail(opts: {
+  buyerName: string | null;
+  firm: string | null;
+  dealLabel: { blind: boolean; name: string | null };
+  viewUrl: string;
+}): { subject: string; html: string } {
+  const name = opts.dealLabel.name?.trim() || null;
+  const firm = opts.firm?.trim() ? escapeHtml(opts.firm.trim()) : "Your broker";
+  const what = name ? escapeHtml(name) : "the confidential opportunity";
+  return {
+    subject: name ? `The CIM for ${name} is ready` : "The CIM you asked for is ready",
+    html: teaserWrap(
+      name ? `The CIM for ${escapeHtml(name)} is ready` : "The CIM you asked for is ready",
+      `<p>${hello(opts.buyerName)}</p>
+          <p>${firm} has opened the confidential information memorandum for ${what}. It opens from the same link as the summary.</p>
+          <p style="margin: 32px 0;"><a href="${escapeHtml(opts.viewUrl)}" style="background: #e5e5e5; color: #0a0a0a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Open the CIM</a></p>`,
+    ),
+  };
+}
+
+/** A teaser request declined (a short, polite email, no reason given). */
+export function buildTeaserDeclinedEmail(opts: { buyerName: string | null; firm: string | null; dealLabel: { name: string | null } }): { subject: string; html: string } {
+  const name = opts.dealLabel.name?.trim() || null;
+  const firm = opts.firm?.trim() ? escapeHtml(opts.firm.trim()) : "Your broker";
+  const what = name ? escapeHtml(name) : "this opportunity";
+  return {
+    subject: name ? `Your request about ${name}` : "Your request about the confidential opportunity",
+    html: teaserWrap(
+      name ? `Your request about ${escapeHtml(name)}` : "Your request",
+      `<p>${hello(opts.buyerName)}</p>
+          <p>Thank you for your interest in ${what}. ${firm} isn't able to share more on this opportunity right now.</p>
+          <p>— ${firm}</p>`,
+    ),
+  };
+}

@@ -23,6 +23,8 @@ export interface ReadingQuery {
   device: EngagementDevice;
   /** Only these buyer links (null = every link of the deal). */
   accessIds: string[] | null;
+  /** Which document's reading: the CIM (default — teaser visits excluded) or the teaser. */
+  kind?: "cim" | "teaser";
 }
 
 export interface RawRendition {
@@ -111,7 +113,8 @@ export interface RenditionRow extends RawRendition {
 }
 
 export interface ReadingSource {
-  renditions(dealId: string): Promise<RawRendition[]>;
+  /** The deal's CIM renditions (teaser renditions only with kind "teaser"). */
+  renditions(dealId: string, kind?: "cim" | "teaser"): Promise<RawRendition[]>;
   /** The rendition, only when it belongs to this deal. */
   rendition(dealId: string, id: string): Promise<RenditionRow | null>;
   pageIndexes(ids: string[]): Promise<Map<string, RenditionPage[]>>;
@@ -142,8 +145,24 @@ function deviceMatches(device: EngagementDevice, cls: string | null): boolean {
 
 // ── Postgres ─────────────────────────────────────────────────────────────
 
-function visitFilter(q: ReadingQuery, v = sql.raw("v")): SQL {
-  const parts: SQL[] = [sql`${v}.deal_id = ${q.dealId}`, sql`NOT ${v}.self_view`, sql`NOT ${v}.clamped`];
+/**
+ * The one visit filter every reading read uses (INTEGRATION §2.13): no
+ * broker self-views, no clamped visits, and teaser visits only when asked
+ * for (`kind: "teaser"`) — CIM numbers never include the teaser. (heatmap
+ * adds its hidden-demo-visit condition here.)
+ */
+export function cimVisitConditions(alias = "v", opts: { kind?: "cim" | "teaser" } = {}): SQL {
+  const v = sql.raw(alias);
+  return sql.join([
+    sql`NOT ${v}.self_view`,
+    sql`NOT ${v}.clamped`,
+    opts.kind === "teaser" ? sql`${v}.mode = 'teaser'` : sql`${v}.mode IS DISTINCT FROM 'teaser'`,
+  ], sql` AND `);
+}
+
+function visitFilter(q: ReadingQuery, alias = "v"): SQL {
+  const v = sql.raw(alias);
+  const parts: SQL[] = [sql`${v}.deal_id = ${q.dealId}`, cimVisitConditions(alias, { kind: q.kind })];
   if (q.since) parts.push(sql`${v}.last_seen_at >= ${q.since.toISOString()}::timestamp`);
   if (q.device === "phone") parts.push(sql`${v}.device_class = 'phone'`);
   if (q.device === "desktop") parts.push(sql`COALESCE(${v}.device_class, 'desktop') <> 'phone'`);
@@ -160,11 +179,11 @@ async function rows(q: SQL): Promise<Array<Record<string, unknown>>> {
 }
 
 export const dbReadingSource: ReadingSource = {
-  async renditions(dealId) {
+  async renditions(dealId, kind = "cim") {
     const r = await rows(sql`
       SELECT r.id, r.mode, r.variant, r.created_at,
-        (SELECT COUNT(*) FROM buyer_visits v WHERE v.rendition_id = r.id AND NOT v.self_view AND NOT v.clamped) AS visits
-      FROM cim_renditions r WHERE r.deal_id = ${dealId} ORDER BY r.created_at`);
+        (SELECT COUNT(*) FROM buyer_visits v WHERE v.rendition_id = r.id AND ${cimVisitConditions("v", { kind })}) AS visits
+      FROM cim_renditions r WHERE r.deal_id = ${dealId} AND ${kind === "teaser" ? sql`r.mode = 'teaser'` : sql`r.mode <> 'teaser'`} ORDER BY r.created_at`);
     return r.map((x) => ({ id: String(x.id), mode: String(x.mode), variant: String(x.variant), createdAt: asDate(x.created_at), visits: num(x.visits) }));
   },
   async rendition(dealId, id) {
@@ -262,7 +281,7 @@ export const dbReadingSource: ReadingSource = {
       SELECT e.buyer_access_id, e.section_key, e.time_spent_seconds, e.created_at FROM analytics_events e
       WHERE e.deal_id = ${dealId} AND e.event_type = 'section_exit' AND e.buyer_access_id IS NOT NULL AND e.section_key IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM buyer_visits v WHERE v.deal_id = ${dealId} AND v.legacy)
-        AND e.created_at < COALESCE((SELECT MIN(v.started_at) FROM buyer_visits v WHERE v.deal_id = ${dealId} AND NOT v.legacy AND NOT v.self_view), 'infinity'::timestamp)
+        AND e.created_at < COALESCE((SELECT MIN(v.started_at) FROM buyer_visits v WHERE v.deal_id = ${dealId} AND NOT v.legacy AND NOT v.self_view AND v.mode IS DISTINCT FROM 'teaser'), 'infinity'::timestamp)
       ORDER BY e.buyer_access_id, e.created_at
       LIMIT 50000`);
     return r.map((x) => ({ accessId: String(x.buyer_access_id), key: String(x.section_key), seconds: Number(x.time_spent_seconds ?? 0) || 0, at: asDate(x.created_at) }));
@@ -276,13 +295,14 @@ export function memoryReadingSource(
   store: MemoryReadingStore,
   extra: { questions?: RawQuestion[]; decisions?: RawDecision[]; sections?: Map<string, unknown[]>; legacyExits?: LegacyExit[] } = {},
 ): ReadingSource {
-  const visitOk = (q: ReadingQuery, v: { dealId: string; buyerAccessId: string; selfView: boolean; clamped: boolean; lastSeenAt: Date; deviceClass: string }) =>
-    v.dealId === q.dealId && !v.selfView && !v.clamped && (!q.since || v.lastSeenAt >= q.since) && deviceMatches(q.device, v.deviceClass)
+  const visitOk = (q: ReadingQuery, v: { dealId: string; buyerAccessId: string; selfView: boolean; clamped: boolean; lastSeenAt: Date; deviceClass: string; mode?: string | null }) =>
+    v.dealId === q.dealId && !v.selfView && !v.clamped && (q.kind === "teaser" ? v.mode === "teaser" : v.mode !== "teaser")
+    && (!q.since || v.lastSeenAt >= q.since) && deviceMatches(q.device, v.deviceClass)
     && (!q.accessIds || q.accessIds.includes(v.buyerAccessId));
   const visits = () => Array.from(store.visits.values());
   return {
-    async renditions(dealId) {
-      return Array.from(store.renditions.values()).filter((r) => r.dealId === dealId)
+    async renditions(dealId, kind = "cim") {
+      return Array.from(store.renditions.values()).filter((r) => r.dealId === dealId && (kind === "teaser" ? r.mode === "teaser" : r.mode !== "teaser"))
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
         .map((r) => ({ id: r.id, mode: r.mode, variant: r.variant, createdAt: r.createdAt, visits: visits().filter((v) => v.renditionId === r.id && !v.selfView && !v.clamped).length }));
     },

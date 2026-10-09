@@ -66,7 +66,7 @@ async function isOwningBroker(req: Request, deal: Deal): Promise<boolean> {
   return !!req.session?.brokerId && !!(await getOwnedDeal(deal.id, req.session.brokerId));
 }
 
-const sellerReviewLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false });
+export const sellerReviewLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false });
 
 export function registerSellerReviewRoutes(app: Express) {
   // ── Seller: the CIM to review ─────────────────────────────────────────
@@ -240,13 +240,55 @@ export function registerSellerReviewRoutes(app: Express) {
     }
   });
 
+  // ── Seller: the teaser to check (server/teaser/seller-check.ts) ───────
+  // The broker's "Ask the seller to check it" puts the teaser here; only the
+  // owner's link approves or asks for changes, others read it.
+  const teaserErr = (res: Response, err: unknown, fallback: string) => {
+    const e = err as { status?: number; message?: string; code?: string };
+    if (typeof e?.status === "number" && e.status < 500) return res.status(e.status).json({ error: e.message, code: e.code });
+    console.error("[seller-review] teaser:", err);
+    return res.status(500).json({ error: fallback });
+  };
+  app.get("/api/seller/:token/teaser-review", async (req: Request, res: Response) => {
+    try {
+      const found = await sellerDeal(req.params.token);
+      if (!found) return res.status(404).json({ error: "This link isn't valid any more — ask your broker for a new one." });
+      const { sellerTeaserView } = await import("../teaser/seller-check");
+      res.json(await sellerTeaserView(found, await isOwningBroker(req, found.deal)));
+    } catch (err) {
+      teaserErr(res, err, "Couldn't load the teaser");
+    }
+  });
+  app.post("/api/seller/:token/teaser-review/approve", sellerReviewLimiter, async (req: Request, res: Response) => {
+    try {
+      const found = await sellerDeal(req.params.token);
+      if (!found) return res.status(404).json({ error: "This link isn't valid any more — ask your broker for a new one." });
+      const { approveSellerCheck } = await import("../teaser/seller-check");
+      await approveSellerCheck(found, await isOwningBroker(req, found.deal));
+      res.json({ ok: true });
+    } catch (err) {
+      teaserErr(res, err, "Couldn't record your approval");
+    }
+  });
+  app.post("/api/seller/:token/teaser-review/request-changes", sellerReviewLimiter, async (req: Request, res: Response) => {
+    try {
+      const found = await sellerDeal(req.params.token);
+      if (!found) return res.status(404).json({ error: "This link isn't valid any more — ask your broker for a new one." });
+      const { requestSellerChanges } = await import("../teaser/seller-check");
+      res.json({ ok: true, ...(await requestSellerChanges(found, await isOwningBroker(req, found.deal), req.body?.note)) });
+    } catch (err) {
+      teaserErr(res, err, "Couldn't send your note");
+    }
+  });
+
   // ── Broker: where the seller's review stands ──────────────────────────
   app.get("/api/deals/:dealId/seller-review", requireBroker, requireOwnedDeal, async (_req: Request, res: Response) => {
     try {
       const deal = res.locals.deal as Deal;
       const stage = sellerReviewStage(deal);
+      // (A teaser check rides the same cim_ready event, marked kind "teaser" — not the CIM's review.)
       const sent = (await storage.getNotificationsByDeal(deal.id))
-        .filter((n) => n.type === "cim_ready")
+        .filter((n) => n.type === "cim_ready" && (n.metadata as { kind?: string } | null)?.kind !== "teaser")
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       const changeRequests = (await storage.getTasksByDeal(deal.id))
         .filter((t) => t.createdBy === SELLER_REVIEW_TASK_CREATOR && isOpenTask(t))

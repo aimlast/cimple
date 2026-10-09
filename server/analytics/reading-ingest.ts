@@ -381,7 +381,8 @@ export async function ingestReading(store: ReadingStore, input: IngestInput): Pr
       if (!w) throw new VisitConflict();
       if (plan.rollups.length) await tx.writeRollups(plan.rollups, plan.exactRollups);
       if (plan.events.length) await tx.writeEvents(plan.events);
-      const viewCounted = w.inserted && !plan.visit.selfView ? await tx.countView(input.access.id, plan.visit.id, input.now) : false;
+      // A teaser visit is never a CIM view (and never suppresses one: countView ignores teaser visits).
+      const viewCounted = w.inserted && !plan.visit.selfView && (plan.visit.mode as string) !== "teaser" ? await tx.countView(input.access.id, plan.visit.id, input.now) : false;
       return { status: 204, newVisit: w.inserted, clamped: plan.clamped, viewCounted } as IngestResult;
     });
   } catch (err) {
@@ -567,6 +568,7 @@ export const dbReadingStore: ReadingStore = {
               AND NOT EXISTS (
                 SELECT 1 FROM buyer_visits
                 WHERE buyer_access_id = ${accessId} AND id <> ${visitId} AND NOT self_view
+                  AND mode IS DISTINCT FROM 'teaser'
                   AND last_seen_at > ${new Date(now.getTime() - READING_RULES.visitGapMs).toISOString()}::timestamp
                   AND last_seen_at <= ${now.toISOString()}::timestamp)
             RETURNING id`);
@@ -646,6 +648,7 @@ export function memoryReadingStore(): MemoryReadingStore {
         },
         async countView(accessId, visitId, now) {
           const recent = Array.from(s.visits.values()).some((v) => v.buyerAccessId === accessId && v.id !== visitId && !v.selfView
+            && (v.mode as string | null) !== "teaser"
             && v.lastSeenAt.getTime() > now.getTime() - READING_RULES.visitGapMs && v.lastSeenAt.getTime() <= now.getTime());
           if (recent) return false;
           s.viewCounts.set(accessId, (s.viewCounts.get(accessId) ?? 0) + 1);
