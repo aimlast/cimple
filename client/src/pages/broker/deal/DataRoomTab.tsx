@@ -85,7 +85,8 @@ export function DataRoomTab() {
   if (room.isLoading) {
     return (
       <div className="space-y-4 p-4 sm:p-6">
-        <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border md:grid-cols-5">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-none" />)}</div>
+        {/* The same grid as the strip (3 on phones, 5 from md) so nothing jumps when it loads (checker r2 R2-4). */}
+        <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-border md:grid-cols-5">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-[72px] rounded-none md:h-[88px]" />)}</div>
         <div className="flex gap-5">
           <div className="hidden w-[260px] space-y-2 lg:block">{Array.from({ length: 9 }).map((_, i) => <Skeleton key={i} className="h-7 w-full" />)}</div>
           <div className="flex-1 space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
@@ -183,6 +184,12 @@ export function DataRoomTab() {
         ))}
       </div>
 
+      {view === "documents" && !data.room.planAppliedAt && data.kpis.inRoom > 0 && data.kpis.shared === 0 && (
+        <div className="flex flex-col gap-2 rounded-lg border border-teal/40 bg-teal/10 px-4 py-2.5 text-sm sm:flex-row sm:items-center" data-testid="room-plan-banner">
+          <span className="min-w-0 flex-1">Nothing is shared with buyers yet. Choose who sees each folder.</span>
+          <Button size="sm" className="self-start sm:self-auto" onClick={() => go({ plan: "1" })}>Choose who sees what</Button>
+        </div>
+      )}
       {view === "documents" && (
         <DocumentsView
           dealId={dealId}
@@ -202,7 +209,7 @@ export function DataRoomTab() {
         />
       )}
       {view === "buyers" && <BuyersView dealId={dealId} focusAccessId={buyerFocus} onViewAs={(id) => go({ as: id }, { push: true })} />}
-      {view === "todo" && <TodoView dealId={dealId} data={data} segment={todo} onSegment={(s) => go({ todo: s })} onOpenItem={(id) => go({ view: "documents", item: id }, { push: true })} onBuyer={(id) => go({ view: "buyers", buyer: id }, { push: true })} onDocuments={(f) => (f === "dd_cited" ? go({ dd: "1" }, { push: true }) : go({ view: "documents", filter: f }, { push: true }))} />}
+      {view === "todo" && <TodoView dealId={dealId} data={data} segment={todo} onSegment={(s) => go({ todo: s })} onOpenItem={(id) => go({ view: "documents", item: id }, { push: true })} onBuyer={(id) => go({ view: "buyers", buyer: id }, { push: true })} onDocuments={(f) => (f === "dd_cited" ? go({ dd: "1" }, { push: true }) : go({ view: "documents", filter: f }, { push: true }))} onPlan={() => go({ plan: "1" }, { push: true })} />}
       {view === "activity" && <ActivityView dealId={dealId} data={data} segment={activity} onSegment={(s) => go({ activity: s })} buyer={buyerFocus} onBuyer={(id) => go({ buyer: id })} onOpenItem={(id) => go({ view: "documents", item: id }, { push: true })} onViewAs={(id) => go({ as: id }, { push: true })} />}
 
       <DocumentDrawer dealId={dealId} item={drawerItem} onClose={() => go({ item: null })} onOpenViewer={(id) => go({ open: id }, { push: true })} onViewAs={() => { if (roomBuyers.length > 0) go({ as: roomBuyers[0].accessId, item: null }); else go({ view: "buyers", item: null }); }} />

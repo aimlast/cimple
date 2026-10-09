@@ -392,6 +392,7 @@ export type RoomRequestsPayload = {
 };
 
 export type WaitingKind =
+  | "plan"
   | "request"
   | "request_ready"
   | "team_request"

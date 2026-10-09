@@ -891,10 +891,20 @@ export function watermarkLine(i: { name?: string | null; email: string; at: Date
   return [who, i.email, ...(i.principalCompany ? [`for ${i.principalCompany}`] : []), when, i.trace].join(" · ");
 }
 
-/** The footer band on every page a reader sees. */
+/** "Oct 9, 2026, 18:53 UTC" — the watermark's time, always UTC and named (the trace line's basis). */
+export function watermarkWhen(at: Date): string {
+  const hh = String(at.getUTCHours()).padStart(2, "0");
+  const mm = String(at.getUTCMinutes()).padStart(2, "0");
+  return `${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()}, ${at.getUTCFullYear()}, ${hh}:${mm} UTC`;
+}
+
+/**
+ * The footer band on every page a reader sees: who is viewing and when
+ * (the view's start, in UTC like the trace line — never "shared on", which
+ * it isn't), and the firm that shared it (checker r2 R2-6).
+ */
 export function watermarkFooter(i: { email: string; at: Date; firm?: string | null }): string {
-  const d = `${MONTHS[i.at.getUTCMonth()]} ${i.at.getUTCDate()}, ${i.at.getUTCFullYear()}`;
-  return `Confidential · shared with ${i.email} on ${d}${i.firm ? ` by ${i.firm}` : ""}`;
+  return `Confidential · viewed by ${i.email} on ${watermarkWhen(i.at)}${i.firm ? ` · shared by ${i.firm}` : ""}`;
 }
 
 /** A device class from a viewport width (the view's `deviceClass`). */

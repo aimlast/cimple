@@ -31,6 +31,7 @@ import { TeamAcknowledge } from "@/components/vdr/buyer/TeamAcknowledge";
 import { DownloadControl, PrevNext, VdrViewer } from "@/components/vdr/VdrViewer";
 import { parseRoomLink } from "@/components/vdr/links";
 import type { ResolvePayload } from "@shared/vdr-api";
+import { watermarkWhen } from "@shared/vdr";
 import { BuyerChatbot } from "@/components/buyer/BuyerChatbot";
 
 type Nav = { place: RoomPlace; doc: string | null; q: string; page: number | null; rows?: number[] | null; sheet?: string | null; needle?: string | null };
@@ -371,7 +372,8 @@ function DocumentScreen({ source, data, itemId, initialPage, cited, onBack, onOp
         </aside>
       </div>
       <p className="px-4 py-3 text-center text-[11px] text-muted-foreground/80">
-        Viewed by {data.reader.name || data.reader.email} ({data.reader.email}) · {new Date().toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })} · Confidential · Your broker can see which documents you open.
+        {/* UTC, named, like the footer burned into each page — one time zone on one screen (checker r2 R2-6). */}
+        Viewed by {data.reader.name || data.reader.email} ({data.reader.email}) · {watermarkWhen(new Date())} · Confidential · Your broker can see which documents you open.
       </p>
       {/* Phones: About + Download at the bottom */}
       <div className="sticky bottom-0 z-30 flex items-center justify-between gap-2 border-t border-border bg-background/95 px-3 py-2 backdrop-blur-sm lg:hidden">

@@ -5,8 +5,8 @@
  *  - Diagonal (−30°) rows of the reader's line ("Jane Doe · jane@… ·
  *    2026-10-09 14:02 UTC · 7F3K2Q"), 22 px at 1,400 wide (14 px at 700), ink
  *    #46423B at 10 % alpha, rows 300 px apart.
- *  - A solid footer band, 18 px: "Confidential · shared with {email} on
- *    {date} by {firm}".
+ *  - A solid footer band, 18 px: "Confidential · viewed by {email} on
+ *    {Oct 9, 2026, 18:53 UTC} · shared by {firm}".
  *  - The font is LiberationSans from pdf.js's bundled standard fonts
  *    (node_modules), registered explicitly: a server with no system fonts
  *    would otherwise draw no watermark at all.

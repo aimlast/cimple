@@ -1441,7 +1441,7 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       const key = typeof req.body?.key === "string" ? req.body.key : "";
       const m = /^hint:([A-Za-z0-9_-]{1,64})$/.exec(key);
       if (m) await dealItem(d, dealId, m[1]);
-      else if (key !== "dd_cited") throw bad("Nothing to set aside.");
+      else if (key !== "dd_cited" && key !== "plan") throw bad("Nothing to set aside.");
       await logVdrQuietly(d.store, brokerLog(req, dealId, "todo_dismissed", { itemId: m ? m[1] : null, detail: { key } }));
       res.json({ ok: true });
     } catch (err) {

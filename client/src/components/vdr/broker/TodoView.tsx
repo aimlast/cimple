@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { AlertTriangle, CalendarClock, FileClock, FileQuestion, FilePlus2, FileX2, Inbox, Loader2, MessageSquare, PenLine, ShieldAlert, Sparkles, UserPlus } from "lucide-react";
+import { AlertTriangle, CalendarClock, FileClock, FileQuestion, FilePlus2, FileX2, Inbox, ListChecks, Loader2, MessageSquare, PenLine, ShieldAlert, Sparkles, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -26,7 +26,7 @@ import { useTeamAction } from "./TeamParts";
 
 export type TodoSegment = "waiting" | "requests" | "checklist";
 
-export function TodoView({ dealId, data, segment, onSegment, onOpenItem, onBuyer, onDocuments }: {
+export function TodoView({ dealId, data, segment, onSegment, onOpenItem, onBuyer, onDocuments, onPlan }: {
   dealId: string;
   data: BrokerRoomPayload;
   segment: TodoSegment;
@@ -34,6 +34,8 @@ export function TodoView({ dealId, data, segment, onSegment, onOpenItem, onBuyer
   onOpenItem: (id: string) => void;
   onBuyer: (accessId: string) => void;
   onDocuments: (filter: string) => void;
+  /** Opens "Who sees what" (set-up step 2). */
+  onPlan: () => void;
 }) {
   const requests = useRequests(dealId);
   const openRequests = (requests.data?.requests ?? []).filter((r) => r.status === "open" || r.status === "ready_to_share").length;
@@ -46,7 +48,7 @@ export function TodoView({ dealId, data, segment, onSegment, onOpenItem, onBuyer
           </button>
         ))}
       </div>
-      {segment === "waiting" && <Waiting dealId={dealId} data={data} onOpenItem={onOpenItem} onRequests={() => onSegment("requests")} onDocuments={onDocuments} />}
+      {segment === "waiting" && <Waiting dealId={dealId} data={data} onOpenItem={onOpenItem} onRequests={() => onSegment("requests")} onDocuments={onDocuments} onPlan={onPlan} />}
       {segment === "requests" && <RequestsView dealId={dealId} data={data} onOpenItem={onOpenItem} onBuyer={onBuyer} />}
       {segment === "checklist" && <SellerChecklistCard dealId={dealId} variant="room" roomItems={data.items} onOpenItem={onOpenItem} />}
     </div>
@@ -54,6 +56,7 @@ export function TodoView({ dealId, data, segment, onSegment, onOpenItem, onBuyer
 }
 
 const ICON: Record<WaitingItem["kind"], typeof Inbox> = {
+  plan: ListChecks,
   request: Inbox,
   request_ready: FilePlus2,
   question: MessageSquare,
@@ -67,7 +70,7 @@ const ICON: Record<WaitingItem["kind"], typeof Inbox> = {
   seller_removed: FileX2,
 };
 
-function Waiting({ dealId, data, onOpenItem, onRequests, onDocuments }: { dealId: string; data: BrokerRoomPayload; onOpenItem: (id: string) => void; onRequests: () => void; onDocuments: (filter: string) => void }) {
+function Waiting({ dealId, data, onOpenItem, onRequests, onDocuments, onPlan }: { dealId: string; data: BrokerRoomPayload; onOpenItem: (id: string) => void; onRequests: () => void; onDocuments: (filter: string) => void; onPlan: () => void }) {
   const todo = useTodo(dealId);
   const actions = useRoomActions(dealId);
   const { data: buyers } = useRoomBuyers(dealId);
@@ -116,6 +119,14 @@ function Waiting({ dealId, data, onOpenItem, onRequests, onDocuments }: { dealId
     let buttons: React.ReactNode = null;
     const b = busy === w.key;
     switch (w.kind) {
+      case "plan":
+        buttons = (
+          <>
+            <Button size="sm" onClick={onPlan} data-testid="todo-plan-choose">Choose</Button>
+            <Button size="sm" variant="ghost" onClick={() => step(w.key, () => vdrFetch("POST", `${roomBase(dealId)}/todo/dismiss`, { key: "plan" }))} disabled={b}>Not now</Button>
+          </>
+        );
+        break;
       case "request":
         buttons = <Button size="sm" variant="outline" onClick={onRequests}>Open</Button>;
         break;

@@ -419,7 +419,7 @@ export async function roomAndWaiting(deps: BrokerDeps, deal: Deal): Promise<{ pa
     roomBuyersByLevel[level] = buyers.eligible.filter((b) => b.hasRoom && sameAccessLevel(b.level, level)).length;
   }
   const waiting = room
-    ? waitingFromInputs(ctx, items, buyers.eligible, folderRows(snap.folders, snap.items, numbers.folders), inputs, cited)
+    ? waitingFromInputs(ctx, items, buyers.eligible, folderRows(snap.folders, snap.items, numbers.folders), inputs, cited, { planApplied: !!room.planAppliedAt })
     : [];
   const weekAgo = now.getTime() - 7 * 86_400_000;
   const recent = views.filter((v) => v.source !== "preview" && new Date(v.lastSeenAt).getTime() >= weekAgo);
@@ -460,8 +460,8 @@ export async function waitingFor(
   buyers: ReadonlyArray<RoomBuyerRow>,
   folders: ReadonlyArray<RoomFolderRow>,
 ): Promise<WaitingItem[]> {
-  const [inputs, cited] = await Promise.all([loadWaitingInputs(deps, deal.id), deps.ddCitedDocumentIds(deal.id).catch(() => null)]);
-  return waitingFromInputs(ctx, items, buyers, folders, inputs, cited);
+  const [inputs, cited, room] = await Promise.all([loadWaitingInputs(deps, deal.id), deps.ddCitedDocumentIds(deal.id).catch(() => null), deps.store.getRoom(deal.id)]);
+  return waitingFromInputs(ctx, items, buyers, folders, inputs, cited, { planApplied: !!room?.planAppliedAt });
 }
 
 /** "Waiting on you" from what's already read (no I/O). */
@@ -472,6 +472,7 @@ export function waitingFromInputs(
   folders: ReadonlyArray<RoomFolderRow>,
   inputs: WaitingInputs,
   cited: ReadonlyArray<string> | null,
+  opts: { planApplied?: boolean } = {},
 ): WaitingItem[] {
   const { requests, questions, team, dismissed } = inputs;
   const live = items.filter((i) => !i.removed);
@@ -492,6 +493,7 @@ export function waitingFromInputs(
     dismissed,
     ddCited: { available: !!cited, total: citedIds.length, notShared: citedIds.filter((id) => !ddShared.has(id)).length },
     docNames: new Map(Array.from(ctx.snap.docs.values()).map((d) => [d.id, d.name])),
+    planApplied: opts.planApplied,
   });
 }
 

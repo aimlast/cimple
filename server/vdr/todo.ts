@@ -3,7 +3,8 @@
  * §5.8). Pure: built from what the tab already loaded. Every row has its own
  * one-click action on the client; nothing here shares or sends anything.
  *
- * Order (the spec's table): buyer requests (a pasted list is one row) ·
+ * Order (the spec's table): the sharing plan while nothing is shared yet
+ * (checker r2 R2-3) · buyer requests (a pasted list is one row) ·
  * team members a buyer asked to add ·
  * requests ready to share · document questions · new seller versions ·
  * new files in a folder the plan shares · flags that need a look · what the
@@ -33,6 +34,8 @@ export type WaitingInput = {
   ddCited: { available: boolean; total: number; notShared: number };
   /** Document names (a seller's upload may not be in the room yet). */
   docNames?: ReadonlyMap<string, string>;
+  /** The broker confirmed "Who sees what" (set-up step 2). Unknown = treated as confirmed. */
+  planApplied?: boolean;
 };
 
 const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
@@ -66,6 +69,11 @@ export function waitingItems(i: WaitingInput): WaitingItem[] {
   const live = i.items.filter((x) => !x.removed);
   const byId = new Map(i.items.map((x) => [x.id, x]));
   const label = (key: string) => buyerLabelFor(key, i.groups, i.accessRows);
+
+  // 0. The broker skipped "Who sees what" and nothing is shared: bring them back to it (checker r2 R2-3).
+  if (i.planApplied === false && live.length > 0 && !live.some((x) => x.sharing.shared) && !i.dismissed.has("plan")) {
+    out.push({ key: "plan", kind: "plan", text: "Choose who sees what. Nothing in the data room is shared with buyers yet.", at: null });
+  }
 
   // 1. Buyer requests (open). A pasted list is one row.
   const open = i.requests.filter((r) => r.status === "open");

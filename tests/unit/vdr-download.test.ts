@@ -74,7 +74,7 @@ for (const d of ["t2", "lease", "roster"]) {
   const p = await prepareItem(itemOf(d).id, {}, pdeps);
   assert.equal(p?.status, "ready", `${d} prepared: ${p?.error ?? ""}`);
 }
-const mark = { line: "Jane Doe · jane@northgate.invalid · 2026-10-09 12:00 UTC · ABCDEF", footer: "Confidential · shared with jane@northgate.invalid on Oct 9, 2026 by Brassline" };
+const mark = { line: "Jane Doe · jane@northgate.invalid · 2026-10-09 12:00 UTC · ABCDEF", footer: "Confidential · viewed by jane@northgate.invalid on Oct 9, 2026, 12:00 UTC · shared by Brassline" };
 const sdeps = { pool, root };
 async function textOf(bytes: Uint8Array): Promise<string> {
   const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes), isEvalSupported: false, disableFontFace: true, useSystemFonts: false, verbosity: 0 }).promise;
@@ -108,7 +108,7 @@ assert.equal(origDoc.getTitle(), undefined, "the served copy carries no file det
 const origText = await textOf(orig.bytes);
 assert.ok(origText.includes("Warehouse lease"), "the original's text stays (it's the original)");
 assert.ok(origText.includes("jane@northgate.invalid"), "the reader's line is stamped on the page");
-assert.ok(origText.includes("Confidential · shared with jane@northgate.invalid"), "and the footer");
+assert.ok(origText.includes("Confidential · viewed by jane@northgate.invalid"), "and the footer");
 // The T2 has a covered SIN → never as the original.
 assert.deepEqual(downloadDecision({ item: { downloadable: true, downloadOriginal: true }, prepared: t2.prepared, buyer: { allowDownloads: true } }), { allowed: false, why: "personal_numbers" });
 

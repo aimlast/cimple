@@ -39,7 +39,7 @@ export function RoomSettingsDialog({ dealId, room, open, onOpenChange, onPlan }:
               <div className="absolute -inset-10 flex -rotate-[30deg] flex-col justify-center gap-6 opacity-[0.16]">
                 {Array.from({ length: 4 }).map((_, i) => <p key={i} className="whitespace-nowrap text-[11px] text-[#46423B]">{sample}  ·  {sample}</p>)}
               </div>
-              <div className="absolute inset-x-0 bottom-0 bg-[#FBF9F4] px-2 py-0.5 text-[9px] text-[#46423B]">Confidential · shared with jane@example.invalid on Oct 9, 2026</div>
+              <div className="absolute inset-x-0 bottom-0 bg-[#FBF9F4] px-2 py-0.5 text-[9px] text-[#46423B]">Confidential · viewed by jane@example.invalid on Oct 9, 2026, 14:02 UTC</div>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">No data room can stop a screenshot. Every page carries the reader's name, so a leaked page shows who leaked it.</p>
           </div>

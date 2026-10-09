@@ -23,7 +23,8 @@ export function RoomKpis({ kpis, onGo }: { kpis: Kpis; onGo: (view: RoomView, ex
     // Phones: a compact 3 + 2 grid (labels only), so the documents start on the first screen.
     <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-border/70 bg-border/70 md:grid-cols-5" data-testid="room-kpis">
       {cells.map((c) => (
-        <button key={c.key} onClick={c.go} className={cn("group relative bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted/30 md:px-4 md:py-4", c.wide && "col-span-2 md:col-span-1")} data-testid={`room-kpi-${c.key}`}>
+        // Top-aligned: a cell without a sub-line lines up with its neighbours (checker r2 R2-4).
+        <button key={c.key} onClick={c.go} className={cn("group relative flex flex-col items-stretch justify-start bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted/30 md:px-4 md:py-4", c.wide && "col-span-2 md:col-span-1")} data-testid={`room-kpi-${c.key}`}>
           <p className="text-[10px] font-medium uppercase leading-tight tracking-[0.1em] text-muted-foreground/70 md:text-2xs md:tracking-[0.14em]">{c.label}</p>
           <p className="mt-1.5 font-mono text-xl font-medium leading-none tabular-nums md:mt-2 md:text-2xl">{c.value}</p>
           {c.sub && <p className="mt-1.5 hidden truncate text-xs text-muted-foreground md:block">{c.sub}</p>}
