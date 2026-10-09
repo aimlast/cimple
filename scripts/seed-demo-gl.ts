@@ -58,8 +58,9 @@ const dollars = (c: number) => `$${(c / 100).toLocaleString("en-US", { maximumFr
 async function main() {
   const o = args();
   if (!o.deal) throw new Error("Pass --deal <demo key or deal id>.");
-  const [byKey] = await db.select().from(deals).where(eq(deals.demoKey, o.deal)).limit(1);
-  const deal = byKey ?? (await storage.getDeal(o.deal));
+  const byKey = await db.select().from(deals).where(eq(deals.demoKey, o.deal)).limit(2);
+  if (byKey.length > 1) throw new Error(`More than one deal has the demo key "${o.deal}" — pass the deal's id instead.`);
+  const deal = byKey[0] ?? (await storage.getDeal(o.deal));
   if (!deal) throw new Error(`No deal "${o.deal}".`);
   if (!deal.demoKey) throw new Error(`"${deal.businessName}" has no demo key — this script only touches fictional demo deals.`);
   console.log(`${deal.businessName} (${deal.id}, demo key ${deal.demoKey})`);
@@ -193,7 +194,7 @@ async function main() {
   } else {
     console.log("Not shown to buyers (add --publish, or use Financials → Add-backs in the books → Show to buyers…).");
   }
-  console.log(`Done. Undo with: --deal ${deal.demoKey} --remove --apply`);
+  console.log(`Done. Undo with: --deal ${deal.id} --remove --apply`);
 }
 
 main().then(() => process.exit(0)).catch((err) => {

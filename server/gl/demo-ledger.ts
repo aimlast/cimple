@@ -189,7 +189,8 @@ export function buildDemoLedger(input: {
         planted.push({ addbackKey: t.addbackKey, year: y.year, account, entries: 1, cents: claim });
         continue;
       }
-      const kind = costKind({ label: t.label, category: t.category, proof: t.proof });
+      // A club named with "entertainment" ("Golf club dues and entertainment") is still the club's account.
+      const kind: CostKind = /\b(golf|country club|club dues|membership)\b/i.test(t.label) && t.proof !== "payroll" && t.category !== "owner_comp" ? "club" : costKind({ label: t.label, category: t.category, proof: t.proof });
       if (kind === "pay") {
         // Paid through payroll (one provider entry per run, below); a T4 shows each person's pay.
         payCents += claim;

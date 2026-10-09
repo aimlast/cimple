@@ -594,7 +594,7 @@ export const pgStore: GlStore = {
                           AND ((f.ledger_id IS NOT NULL AND x.ledger_id = f.ledger_id AND x.row_no = f.row_no)
                             OR (f.document_id IS NOT NULL AND x.document_id = f.document_id AND x.fiscal_year = f.fiscal_year)))
         RETURNING f.id`);
-      return ((res as unknown as { rowCount?: number | null }).rowCount ?? 0);
+      return Array.isArray(res) ? res.length : ((res as unknown as { rowCount?: number | null }).rowCount ?? 0);
     });
   },
   async reserveAi(dealId, kind, cap, day) {
@@ -614,7 +614,8 @@ export const pgStore: GlStore = {
       WHERE deal_id = ${dealId} AND (ai_day IS DISTINCT FROM ${day} OR ${col} < ${Math.max(0, Math.floor(cap))})
       RETURNING ${col}
     `);
-    return ((res as unknown as { rowCount?: number | null }).rowCount ?? 0) > 0;
+    // postgres-js returns the rows (an array); other drivers a result with rowCount.
+    return (Array.isArray(res) ? res.length : ((res as unknown as { rowCount?: number | null }).rowCount ?? 0)) > 0;
   },
   async ledgerYearSummaries(dealId) {
     const db = await pgDb();
