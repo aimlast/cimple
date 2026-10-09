@@ -310,7 +310,9 @@ function BlockEditor({
       {fixed && (
         <div className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted/20 px-3 py-2">
           <p className="text-[11px] text-muted-foreground">
-            {block.slot === "next_step" || block.slot === "confidentiality" ? "Your brokerage's wording (Settings → Brand & templates)." : "Recalculated from the deal's information."}
+            {block.slot === "next_step" || block.slot === "confidentiality"
+              ? <>Your brokerage's wording (<a href="/broker/settings?tab=brand&section=teaser" className="text-teal underline-offset-2 hover:underline">Settings → Brand & templates → Teaser</a>).</>
+              : "Recalculated from the deal's information."}
           </p>
           <Button size="sm" variant="outline" className="h-7 shrink-0 gap-1 text-xs" disabled={api.reset.isPending || writing} onClick={() => api.reset.mutate(block.id)} data-testid="button-teaser-reset-facts">
             {api.reset.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />} Reset from the facts

@@ -98,6 +98,8 @@ export async function sellerTeaserView(found: SellerFound, previewByBroker: bool
     blocks: built.teaser.blocks,
     pageSize: row.pageSize,
     design: built.design,
+    /** Buyers with a teaser link can read a published version now (the bar's wording follows it). */
+    live: (await import("./store")).teaserPublished(row),
     canApprove: found.rights.canApproveCim && !previewByBroker,
     readOnlyMessage: found.rights.canApproveCim ? null : ONLY_OWNER_TEASER(owner?.name ?? null),
     previewByBroker,

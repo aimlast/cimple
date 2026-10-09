@@ -22,7 +22,9 @@ import { publishButtonState } from "../../client/src/components/teaser/TeaserPub
 import { sampleTeaser } from "../../client/src/components/teaser/samples";
 import { printFooterText, sectionsForPaper } from "../../client/src/pages/TeaserPrintPreview";
 import { chipsBesideTagline, fillTeaserTokens, teaserFill } from "../../shared/teaser-view";
-import { tileLinesFor } from "../../client/src/pages/broker/deal/cim-tab-slots";
+import { tileLinesFor, CIM_TAB_VIEWS, EXTRA_CIM_TAB_VIEWS, useViewBadge } from "../../client/src/pages/broker/deal/cim-tab-slots";
+import { blindTileDesc } from "../../client/src/pages/broker/deal/CimTab";
+import { sellerTeaserBarLine } from "../../client/src/pages/seller/SellerReview";
 
 let passed = 0;
 function test(name: string, fn: () => void) {
@@ -163,6 +165,27 @@ test("the header: a chip that only repeats the one-line description is dropped",
   assert.deepEqual(chipsBesideTagline(["Home Services", "Ontario", "Established 20+ years"], "Home Services"), ["Ontario", "Established 20+ years"]);
   assert.deepEqual(chipsBesideTagline(["Home Services", "Ontario"], "A trusted HVAC contractor"), ["Home Services", "Ontario"]);
   assert.deepEqual(chipsBesideTagline(["Home Services"], ""), ["Home Services"]);
+});
+
+test("the Blind CIM tile names the codename blind buyers read (the kept copy's while an update is under review)", () => {
+  assert.equal(blindTileDesc("Project Shoreline", "Project Coastline"), "Under “Project Coastline” until you publish the update");
+  assert.equal(blindTileDesc("Project Shoreline", null), "Under “Project Shoreline”");
+  assert.equal(blindTileDesc("Project Shoreline", "Project Shoreline"), "Under “Project Shoreline”");
+  assert.equal(blindTileDesc(null, null), "Under a project codename");
+});
+
+test("CIM tab slots: CIM_TAB_VIEWS (INTEGRATION §2.8) is the same registry; badge as a number or a hook", () => {
+  assert.equal(CIM_TAB_VIEWS, EXTRA_CIM_TAB_VIEWS);
+  const C = () => null;
+  assert.equal(useViewBadge({ key: "numbers", label: "Numbers & sources", badge: 3, Component: C }, "D"), 3);
+  assert.equal(useViewBadge({ key: "numbers", label: "Numbers & sources", badge: (id) => (id === "D" ? 2 : 0), Component: C }, "D"), 2);
+  assert.equal(useViewBadge({ key: "numbers", label: "Numbers & sources", useBadge: () => 5, badge: 1, Component: C }, "D"), 5);
+  assert.equal(useViewBadge({ key: "numbers", label: "Numbers & sources", Component: C }, "D"), null);
+});
+
+test("the seller's teaser bar: never 'nothing goes to buyers' once a version is published", () => {
+  assert.equal(sellerTeaserBarLine(true), "Buyers can already read this summary — tell your broker if anything should change.");
+  assert.equal(sellerTeaserBarLine(false), "Nothing goes to buyers until your broker publishes it.");
 });
 
 console.log("buyers");

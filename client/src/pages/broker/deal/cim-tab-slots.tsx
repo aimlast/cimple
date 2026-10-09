@@ -4,7 +4,8 @@
  * no contributor edits the layout:
  *
  *   CIM_TAB_VIEWS          the tabs — teaser's attention · versions · teaser ·
- *                          design; dd pushes `numbers` "Numbers & sources"
+ *   (= EXTRA_CIM_TAB_VIEWS) design; dd pushes `numbers` "Numbers & sources"
+ *                          ({ key, label, badge? | useBadge?, Component })
  *   ACCESS_TILE_LINES      extra lines under the four "What each buyer sees"
  *                          tiles — at most 2 per tile, dd first, then vdr
  *   VERSION_CARD_EXTRAS    extra content on the Versions cards (dd, gl)
@@ -26,13 +27,23 @@ export interface CimTabViewProps {
 export interface CimTabView {
   key: string;
   label: string;
-  /** A count on the tab (e.g. notes waiting); null/0 = none. Called every render. */
+  /** A count on the tab (e.g. notes waiting); null/0 = none. Called every render (it may use hooks). */
   useBadge?: (dealId: string) => number | null;
+  /** INTEGRATION §2.8 spelling: a fixed count, or a hook like `useBadge`. `useBadge` wins when both are given. */
+  badge?: number | null | ((dealId: string) => number | null);
   Component: ComponentType<CimTabViewProps>;
 }
 
 /** Extra views other streams register (dd: "numbers"). Teaser's four are built into CimTab. */
 export const EXTRA_CIM_TAB_VIEWS: CimTabView[] = [];
+/** The same registry under its INTEGRATION §2.8 name (dd registers `numbers` here): one array, two names. */
+export const CIM_TAB_VIEWS = EXTRA_CIM_TAB_VIEWS;
+
+/** A registered view's badge this render (call once per view, every render — the hooks keep their order). */
+export function useViewBadge(v: CimTabView, dealId: string): number | null {
+  if (v.useBadge) return v.useBadge(dealId);
+  return typeof v.badge === "function" ? v.badge(dealId) : v.badge ?? null;
+}
 
 export interface TileLine {
   key: string;

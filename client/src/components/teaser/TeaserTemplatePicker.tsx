@@ -42,7 +42,7 @@ export function TeaserTemplatePicker({
       {saved.length > 0 && (
         <div className="space-y-2">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Your templates</p>
-          <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 lg:grid-cols-3">
+          <div className="-mx-4 flex snap-x snap-mandatory scroll-px-4 gap-3 overflow-x-auto px-4 pb-1 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 lg:grid-cols-3">
             {saved.map((t) => {
               const on = value === t.key;
               const base = t.basedOn && TEASER_TEMPLATES[t.basedOn as keyof typeof TEASER_TEMPLATES];
@@ -75,7 +75,7 @@ export function TeaserTemplatePicker({
       )}
       <div className="space-y-2">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Start from</p>
-        <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 xl:grid-cols-4" role="radiogroup" aria-label="Teaser templates">
+        <div className="-mx-4 flex snap-x snap-mandatory scroll-px-4 gap-3 overflow-x-auto px-4 pb-2 sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 xl:grid-cols-4" role="radiogroup" aria-label="Teaser templates">
           {TEASER_TEMPLATE_KEYS_ORDER.map((key) => {
             const t = TEASER_TEMPLATES[key];
             const on = value === key;

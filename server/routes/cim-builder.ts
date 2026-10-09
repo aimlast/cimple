@@ -274,6 +274,15 @@ export function registerCimBuilderRoutes(app: Express): void {
         blind: {
           generated: blindGenerated,
           codename: deal.blindCodename ?? null,
+          /** The codename blind buyers read now: the kept copy's while a CIM update is under review, else null (= codename). */
+          servedCodename: await (async () => {
+            try {
+              const { servedBlindCodename } = await import("../cim/published-snapshot");
+              return await servedBlindCodename(deal);
+            } catch {
+              return null;
+            }
+          })(),
           /** Why the codename (chosen before a stricter check, or before a fact changed) would point at the business; null when it is neutral. */
           codenameProblem: deal.blindCodename ? codenameProblem(deal, deal.blindCodename) : null,
           running: blind.running,

@@ -353,6 +353,15 @@ interface SellerTeaserData {
   canApprove?: boolean;
   readOnlyMessage?: string | null;
   previewByBroker?: boolean;
+  /** A version is already published to buyers. */
+  live?: boolean;
+}
+
+/** The line beside the seller's buttons: nothing is out yet, or buyers can already read the published summary. */
+export function sellerTeaserBarLine(live: boolean | undefined): string {
+  return live
+    ? "Buyers can already read this summary — tell your broker if anything should change."
+    : "Nothing goes to buyers until your broker publishes it.";
 }
 
 function SellerTeaserPart({ token, data, onChanged }: { token: string; data: SellerTeaserData; onChanged: () => void }) {
@@ -442,7 +451,7 @@ function SellerTeaserPart({ token, data, onChanged }: { token: string; data: Sel
               </div>
             ) : (
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-xs text-muted-foreground">Nothing goes to buyers until your broker publishes it.</p>
+                <p className="text-xs text-muted-foreground" data-testid="text-teaser-bar-line">{sellerTeaserBarLine(data.live)}</p>
                 <div className="flex flex-col-reverse gap-2 sm:flex-row">
                   <Button variant="outline" onClick={() => setAsking(true)} data-testid="button-teaser-request-changes">Ask for changes</Button>
                   <Button className="bg-teal text-teal-foreground hover:bg-teal/90" disabled={approve.isPending} onClick={() => approve.mutate()} data-testid="button-approve-teaser">

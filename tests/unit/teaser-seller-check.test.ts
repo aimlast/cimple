@@ -63,6 +63,9 @@ async function main() {
     assert.match(g.json.readOnlyMessage, /Only Harjit Sandhu can approve the teaser/);
     assert.ok(g.json.blocks.length >= 4);
     assert.ok(!/Pacific Coast|Surrey/.test(g.text));
+    // The bar's wording follows whether buyers can already read a published version.
+    const { teaserPublished } = await import("../../server/teaser/store");
+    assert.equal(g.json.live, teaserPublished(await h.teasers.get("D-PAC")));
     const no = await call("POST", "/api/seller/seller-acc/teaser-review/approve", {});
     assert.equal(no.status, 403);
     assert.equal(no.json.code, "not_owner");

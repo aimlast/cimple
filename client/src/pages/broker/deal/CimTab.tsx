@@ -54,7 +54,7 @@ import { useTeaserSummary } from "@/components/teaser/useTeaserSummary";
 import { shortDay, type TeaserSummary } from "@/components/teaser/api";
 import type { CimSection } from "@shared/schema";
 import {
-  ACCESS_TILE_LINES, ATTENTION_GROUPS, CIM_PUBLISH_NOTES, EXTRA_CIM_TAB_VIEWS, VERSION_CARD_EXTRAS, tileLinesFor,
+  ACCESS_TILE_LINES, ATTENTION_GROUPS, CIM_PUBLISH_NOTES, EXTRA_CIM_TAB_VIEWS, VERSION_CARD_EXTRAS, tileLinesFor, useViewBadge,
   type CimTabViewProps, type TileLine,
 } from "./cim-tab-slots";
 
@@ -78,6 +78,12 @@ const PASS_THROUGH = ["tab", "note"];
 interface HeldPrivateLite {
   showing?: unknown[];
   servedShowing?: unknown[];
+}
+
+/** The Blind CIM tile's line: the codename blind buyers read (the kept copy's while an update is under review). */
+export function blindTileDesc(codename: string | null | undefined, served: string | null | undefined): string {
+  if (served && served !== codename) return `Under “${served}” until you publish the update`;
+  return codename ? `Under “${codename}”` : "Under a project codename";
 }
 
 export function CimTab() {
@@ -107,7 +113,7 @@ export function CimTab() {
   const versionExtras = VERSION_CARD_EXTRAS.map((src) => src.useExtras(dealId));
   const extraGroups = ATTENTION_GROUPS.map((src) => src.useGroup(dealId)).filter((g): g is NonNullable<typeof g> => !!g);
   const publishNotes = CIM_PUBLISH_NOTES.flatMap((src) => src.useNotes(dealId));
-  const extraBadges = EXTRA_CIM_TAB_VIEWS.map((v) => v.useBadge?.(dealId) ?? null);
+  const extraBadges = EXTRA_CIM_TAB_VIEWS.map((v) => useViewBadge(v, dealId));
 
   const hasSections = (data?.sections.length ?? 0) > 0;
   const generate = useMutation({
@@ -237,7 +243,7 @@ export function CimTab() {
         : data.blind.updating > 0 ? { text: `Updating ${data.blind.updating}`, tone: "amber" }
         : readyWord,
       count: byLevel(BLIND_ACCESS_LEVEL),
-      desc: data.blind.codename ? `Under “${data.blind.codename}”` : "Under a project codename",
+      desc: blindTileDesc(data.blind.codename, data.blind.servedCodename),
       onOpen: () => setView("versions"),
       onPreview: hasSections ? () => openBuilder(PREVIEW_PARAM[BLIND_ACCESS_LEVEL]) : null,
     },
