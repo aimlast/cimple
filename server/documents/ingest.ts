@@ -433,6 +433,18 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
   activeReads.add(doc.id);
   const stopHeartbeat = startReadHeartbeat(doc.id);
   try {
+    // The data room (INTEGRATION §2.17, top step 3): a picture is never read
+    // (it has no text and Cimple never sends pictures to the AI), and a file
+    // the broker chose to "Just store in the data room" isn't read until
+    // they ask. No text, no AI.
+    const { isImageMime } = await import("@shared/vdr");
+    const storedOnly = !!(doc.sourceMeta as DocumentSourceMeta | null)?.readSkipped;
+    if (isImageMime(doc.mimeType) || storedOnly) {
+      const meta: DocumentSourceMeta = { ...(((doc.sourceMeta as DocumentSourceMeta | null) ?? {}) as DocumentSourceMeta) };
+      if (!storedOnly) meta.readFailed = { at: new Date().toISOString(), reason: "a picture has no text to read", retryable: false };
+      await storage.updateDocument(doc.id, { status: "extracted", isProcessed: false, sourceMeta: meta } as any);
+      return { status: "extracted", fieldsWritten: [] };
+    }
     await storage.updateDocument(doc.id, { status: "parsing" } as any);
     let text = "";
     // How the text was laid out (a PDF's pages) — tells a scan from a readable file.
@@ -499,6 +511,9 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
   } finally {
     stopHeartbeat();
     activeReads.delete(doc.id);
+    // The data room (INTEGRATION §2.17, finally step 2): a new room document is
+    // filed into its folder, unshared, when the room adds new documents.
+    void import("../vdr/setup").then((m) => m.autoFileIfRoom(doc.id)).catch(() => undefined);
   }
 }
 

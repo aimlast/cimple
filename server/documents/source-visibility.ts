@@ -58,6 +58,10 @@ export async function restampSourceVisibility(dealId: string, documentId: string
   });
   // Merge rows are re-read against the re-stamped facts.
   await settleMergeRowsQuietly(dealId, "visibility");
+  // The data room (INTEGRATION §2.17 step 2): a source made broker-only leaves
+  // the room at once; shared again, it is offered back, never re-shared.
+  const { onSourceVisibilityChanged } = await import("../vdr/setup");
+  await onSourceVisibilityChanged(documentId, brokerOnly);
 }
 
 /** What Cimple recorded about reading a source — kept when the broker edits its details. */

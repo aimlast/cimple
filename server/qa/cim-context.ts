@@ -594,6 +594,10 @@ export function faqKnowledgeRows(
       // Not asked on any page of a served CIM (reading analytics).
       sectionId: null,
       renditionId: null,
+      // Not about a data-room document.
+      vdrItemId: null,
+      vdrPage: null,
+      vdrTeamMemberId: null,
       createdAt: f.createdAt,
       updatedAt: f.updatedAt,
     }));

@@ -17,6 +17,7 @@ import { isPageWidth, zipTooLarge, zipTotals } from "./child/limits";
 import { openPdf, pageText, renderPage } from "./child/pdf";
 import { renderPhoto } from "./child/photo";
 import { readJobFile } from "./child/read-file";
+import { runBasePage, runPrepare } from "./child/prepare";
 import type { ChildMessage, ChildRequest, RenderJob } from "./render-jobs";
 
 const shimInstalled = installGetBuiltinModuleShim();
@@ -47,6 +48,10 @@ async function runJob(job: RenderJob): Promise<unknown> {
       if (zipTooLarge(totals)) throw new ChildJobError("too_large", `${totals.entries} entries, ${totals.uncompressedBytes} bytes uncompressed`);
       return totals;
     }
+    case "prepare":
+      return runPrepare(job);
+    case "basePage":
+      return runBasePage(job);
     default:
       throw new ChildJobError("unreadable", "unknown job");
   }

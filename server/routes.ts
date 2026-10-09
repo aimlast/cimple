@@ -2526,6 +2526,12 @@ Return JSON only.`,
         updates as Partial<InsertDealDocumentRequirement>,
       );
 
+      // Data room: linking a file to a row a buyer's request created makes that request "Ready to share".
+      if (linkedDoc) {
+        const { onRequirementFulfilled } = await import("./vdr/requests");
+        await onRequirementFulfilled(existing.id, linkedDoc.id);
+      }
+
       // Linking a file that was uploaded without a category gives it the
       // row's category so the broker's list shows "financials", not "other".
       if (linkedDoc && (linkedDoc.category === "other" || !linkedDoc.category)) {
@@ -2547,6 +2553,11 @@ Return JSON only.`,
       if (unlinkedBySeller) {
         const previous = await storage.getDocument(previousFileId);
         if (previous && previous.dealId === req.params.dealId && previous.uploadedBy === "seller") {
+          // Data room: a replacement takes the old file's place (not shared); a
+          // file buyers could open, simply removed by the seller, goes to the broker's To do.
+          const { markReplacement, onSourceDeleted } = await import("./vdr/setup");
+          if (typeof updates.uploadedFileId === "string") await markReplacement(previous.id, updates.uploadedFileId);
+          else await onSourceDeleted(previous, { bySeller: true });
           const { deleteDocumentAndProvenance } = await import("./documents/cleanup");
           await deleteDocumentAndProvenance(previous.id).catch((e) => console.warn("[documents] seller unlink cleanup failed:", e));
         }
@@ -3212,9 +3223,17 @@ Return JSON only.`,
       if (linkedRequirement && previousFileId && previousFileId !== doc.id && uploadedBy === "seller") {
         const previous = await storage.getDocument(previousFileId);
         if (previous && previous.dealId === req.params.dealId && previous.uploadedBy === "seller") {
+          // Data room: the new version takes the old one's place, not shared (before the old row goes).
+          const { markReplacement } = await import("./vdr/setup");
+          await markReplacement(previous.id, doc.id);
           const { deleteDocumentAndProvenance } = await import("./documents/cleanup");
           await deleteDocumentAndProvenance(previous.id).catch((e) => console.warn("[documents] replace cleanup failed:", e));
         }
+      }
+      // Data room: a buyer's request the broker asked the seller for is now "Ready to share".
+      if (linkedRequirement) {
+        const { onRequirementFulfilled } = await import("./vdr/requests");
+        await onRequirementFulfilled(linkedRequirement.id, doc.id);
       }
 
       let satisfiedTask: { id: string; title: string } | null = null;

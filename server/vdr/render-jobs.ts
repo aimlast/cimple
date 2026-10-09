@@ -27,7 +27,16 @@ export type RenderJob =
   /** A photo, size-checked from its header first, re-encoded as a JPEG. */
   | { kind: "photo"; file: string; width: PageWidth; quality?: number }
   /** A zip container's central-directory totals (xlsx, docx, pptx), refused when over the caps. */
-  | { kind: "zipCheck"; file: string };
+  | { kind: "zipCheck"; file: string }
+  /**
+   * Prepare a data-room document (vdr spec §9.5): writes the served copy and
+   * the cache files into `outDir` (a confined private-vdr-cache folder) and
+   * returns what it found. `text` is the document's stored text, used for
+   * PowerPoint / .doc / .ppt when the file itself can't be read as text.
+   */
+  | { kind: "prepare"; file: string; outDir: string; fileKind: PrepareFileKind; ext: string; text?: string | null; prerender?: number }
+  /** Render one page's base image (1,400 px, personal numbers covered) into the cache, for pages past the pre-rendered ones. */
+  | { kind: "basePage"; outDir: string; page: number; source: "served" | "original"; file?: string | null };
 
 export type CanaryResult = {
   node: string;
@@ -68,11 +77,37 @@ export type PhotoResult = { source: ImageHeader; width: number; height: number; 
 
 export type ZipCheckResult = ZipTotals;
 
+export type PrepareFileKind = "pdf" | "image" | "sheet" | "html" | "text";
+
+/** One row of vdr_page_text: the SERVED text (covered, hidden words dropped). */
+export type PageTextRow = { page: number; label: string; text: string };
+
+export type PrepareResult = {
+  kind: PrepareFileKind;
+  pages?: Array<{ w: number; h: number; hasText: boolean }>;
+  sheets?: Array<{ name: string; rows: number; cols: number; firstRow: number; firstCol: number; hidden?: boolean; truncated?: boolean }>;
+  personal: { count: number; kinds: Array<"sin" | "ssn" | "card" | "account">; pages: number[] };
+  officeScan?: { count: number; parts: string[] };
+  hidden?: { count: number; pages: number[] };
+  forms?: { fields: number; covered: number };
+  strippedAnnotations?: number;
+  /** "sanitised": served.pdf was written; "original": the PDF couldn't be rewritten (e.g. encrypted), so pages render with no annotations and no original download is offered. */
+  servedCopy?: "sanitised" | "original";
+  pageTexts: PageTextRow[];
+  /** Base page images written (1-based page numbers). */
+  rendered: number[];
+  ms: number;
+};
+
+export type BasePageResult = { page: number; width: number; height: number; bytes: number };
+
 export type RenderResultFor<J extends RenderJob> =
   J extends { kind: "canary" } ? CanaryResult
   : J extends { kind: "pdfPage" } ? PdfPageResult
   : J extends { kind: "photo" } ? PhotoResult
   : J extends { kind: "zipCheck" } ? ZipCheckResult
+  : J extends { kind: "prepare" } ? PrepareResult
+  : J extends { kind: "basePage" } ? BasePageResult
   : never;
 
 // ── Wire protocol (IPC, advanced serialization) ────────────────────────────

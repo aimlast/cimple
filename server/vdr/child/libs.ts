@@ -30,6 +30,41 @@ export function loadCanvas(): Promise<Canvas> {
   return canvasP;
 }
 
+type PdfLib = typeof import("pdf-lib");
+let pdfLibP: Promise<PdfLib> | null = null;
+/** pdf-lib (sanitising the served copy; later stamping and page-image PDFs). */
+export function loadPdfLib(): Promise<PdfLib> {
+  if (!pdfLibP) {
+    pdfLibP = import("pdf-lib").then((m: any) => (m.PDFDocument ? m : m.default) as PdfLib);
+    pdfLibP.catch(() => { pdfLibP = null; });
+  }
+  return pdfLibP;
+}
+
+/** SheetJS (spreadsheets). */
+export async function loadXlsx(): Promise<typeof import("xlsx")> {
+  const m: any = await import("xlsx");
+  return (m.read ? m : m.default) as typeof import("xlsx");
+}
+
+/** JSZip (reading every part of an office file; rewriting a docx before mammoth). */
+export async function loadJszip(): Promise<typeof import("jszip")> {
+  const m: any = await import("jszip");
+  return (m.loadAsync ? m : m.default) as typeof import("jszip");
+}
+
+/** mammoth (docx → HTML). */
+export async function loadMammoth(): Promise<any> {
+  const m: any = await import("mammoth");
+  return m.convertToHtml ? m : m.default;
+}
+
+/** sanitize-html. */
+export async function loadSanitizeHtml(): Promise<any> {
+  const m: any = await import("sanitize-html");
+  return m.default ?? m;
+}
+
 const req = createRequire(import.meta.url);
 
 /** pdf.js's bundled standard fonts (Helvetica, Times…), read from node_modules, never from the system. */

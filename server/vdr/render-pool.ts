@@ -293,6 +293,7 @@ function defaultTimeout(job: RenderJob): number {
   switch (job.kind) {
     case "canary": return VDR_JOB_TIMEOUTS_MS.canary;
     case "zipCheck": return VDR_JOB_TIMEOUTS_MS.inspect;
+    case "prepare": return VDR_JOB_TIMEOUTS_MS.prepare;
     default: return VDR_JOB_TIMEOUTS_MS.page;
   }
 }

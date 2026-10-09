@@ -282,6 +282,8 @@ app.use((req, res, next) => {
       import("./crm/buyer-sync").then((m) => m.startBuyerSyncScheduler()).catch((err) => console.error("[buyer-sync] scheduler failed to start:", err));
       // Sources a redeploy cut off mid-read are marked "couldn't read" (with "Read it again").
       import("./documents/ingest").then((m) => m.startInterruptedReadRecovery()).catch((err) => console.error("[ingest] interrupted-read recovery failed:", err));
+      // ── vdr: data-room documents a restart left unprepared go back in the (one-at-a-time) queue ──
+      import("./vdr/prepare").then((m) => m.startPrepareQueue()).catch((err) => console.error("[vdr] prepare queue failed to start:", err));
       // Once per volume: files earlier deletes left behind (no row points at them) leave the volume.
       if (process.env.NODE_ENV === "production") {
         // First what deleted deals left (their rows made their files look in use), then files no row points at.
