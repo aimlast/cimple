@@ -16,13 +16,13 @@
 import { useLocation } from "wouter";
 import { ArrowRight, BookOpenText, ChevronRight, Radio } from "lucide-react";
 import { DEFAULT_ENGAGEMENT_FILTERS, formatReadingTime } from "@shared/analytics-v2";
-import { dayMonth, type DealKpisResponse, type ReadingNowRow } from "@shared/analytics-dashboard";
+import { dayMonth, extendLinkHref, type DealKpisResponse, type ReadingNowRow } from "@shared/analytics-dashboard";
 import { useDealKpis, useDealReadingNow } from "@/hooks/useAnalyticsDashboard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { InfoDot } from "@/components/analytics/Explain";
 import { KpiDisplay } from "@/components/analytics/KpiStrip";
-import { Chip } from "@/components/analytics/parts";
+import { Chip, LinkRanOutChip } from "@/components/analytics/parts";
 import { cn } from "@/lib/utils";
 import { StatusChip } from "./buyers/parts";
 
@@ -162,6 +162,7 @@ export function PulseTop({ dealId, data, readingNow }: { dealId: string; data: D
                       <span className="text-sm font-medium text-foreground">{e.name}</span>
                       {e.company && <span className="text-xs text-muted-foreground">{e.company}</span>}
                       <StatusChip status={e.status} label={e.statusLabel} />
+                      {data.linkRanOut?.[e.accessId] && <LinkRanOutChip at={data.linkRanOut[e.accessId]} />}
                     </span>
                     <span className="mt-0.5 min-w-0 text-xs leading-relaxed text-muted-foreground line-clamp-2 md:mt-0 md:line-clamp-1">{e.why}</span>
                   </span>
@@ -170,6 +171,15 @@ export function PulseTop({ dealId, data, readingNow }: { dealId: string; data: D
               </li>
             ))}
           </ol>
+          {data.callTop.some((e) => data.linkRanOut?.[e.accessId]) && (
+            <p className="mt-1 text-xs text-muted-foreground" data-testid="pulse-link-ran-out">
+              {(() => {
+                const out = data.callTop.filter((e) => data.linkRanOut?.[e.accessId]);
+                return `${out.length === 1 ? `${out[0].name}'s link has` : `${out.length} of these links have`} run out, so they can't open the CIM.`;
+              })()}{" "}
+              <button type="button" onClick={() => setLocation(extendLinkHref(dealId))} className="font-medium text-teal hover:underline" data-testid="pulse-extend">Extend</button>
+            </p>
+          )}
         </div>
       )}
 

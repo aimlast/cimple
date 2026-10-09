@@ -245,6 +245,7 @@ export function EngagementTab() {
               published={k?.published ?? true}
               selected={selectedBuyer}
               onSelect={(buyer) => go({ buyer })}
+              linkRanOut={k?.linkRanOut}
             />
           )}
         </div>

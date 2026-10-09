@@ -28,7 +28,7 @@ import { activityItems, pageItems, type ActivityOptions } from "./activity";
 import { attentionBasis, hasPartByPart, kindAttention, layoutAttention, roleAttention } from "./attention";
 import { buyerRows } from "./buyers";
 import { dealRows, dealsWithoutBuyers } from "./deals";
-import { activeVisits, buyerGroups, cimOnly, computeKpis, headsUp, kpiValue, lastActivity } from "./kpis";
+import { activeVisits, buyerGroups, cimOnly, computeKpis, headsUp, kpiValue, lastActivity, linkRanOut, noticeIds } from "./kpis";
 import type { BrokerInputs, DealInputs } from "./load";
 import { readingNowResponseRows, type ReadingNowDbRow } from "./reading-now";
 import { seesCim } from "./levels";
@@ -40,9 +40,14 @@ export function partialOf(inputs: Pick<BrokerInputs, "failed">): PartialLoad | n
   return inputs.failed.length ? { failedDeals: inputs.failed.map((f) => ({ ...f })) } : null;
 }
 
-/** The period to show for a request ("auto" resolves on the counted deals' last activity). */
-export function resolveRangeFor(inputs: BrokerInputs, req: RangeRequest | unknown, now: Date) {
-  const last = lastActivity(inputs);
+/**
+ * The period to show for a request ("auto" resolves on the counted deals'
+ * last activity). `allowed` = the deal tab's Buyers filter: the last
+ * activity is then one of THOSE buyers' (an empty feed never names someone
+ * the filter left out).
+ */
+export function resolveRangeFor(inputs: BrokerInputs, req: RangeRequest | unknown, now: Date, allowed: Set<string> | null = null) {
+  const last = lastActivity(inputs, allowed);
   return { ...resolveRange(parseRangeRequest(req), last?.at ?? null, now), last };
 }
 
@@ -69,16 +74,19 @@ export function overviewResponse(inputs: BrokerInputs, rangeReq: unknown, now: D
     lastActivity: last ? { at: last.at.toISOString(), text: last.text, dealId: last.dealId } : null,
     demoDealIds: inputs.deals.filter((d) => !!d.demoKey).map((d) => d.id),
     partial: partialOf(inputs),
+    noticeIds: noticeIds(inputs, now),
   };
 }
 
 /** The global "Who to call": the same items as the KPI strip, so the list and "Worth a call" agree. */
-export function callListResponse(inputs: BrokerInputs, size = 15): AnalyticsCallListResponse {
+export function callListResponse(inputs: BrokerInputs, size = 15, now: Date = new Date()): AnalyticsCallListResponse {
   const entries: CallListEntry[] = buildCallList(inputs.items.map((it) => ({ deal: it.deal, facts: cimOnly(it.facts) })), size);
   const listed = new Set(entries.map((e) => e.dealId));
+  const listedLinks = new Set(entries.map((e) => e.accessId));
   return {
     entries,
     deals: inputs.items.filter((it) => listed.has(it.deal.id)).map((it) => ({ dealId: it.deal.id, live: it.live, demo: it.demo })),
+    linkRanOut: linkRanOut(inputs.access.filter((a) => listedLinks.has(a.id)), now),
   };
 }
 
@@ -106,7 +114,8 @@ export function activityResponse(
   inputs: BrokerInputs,
   opts: Omit<ActivityOptions, "range"> & { range: unknown; cursor?: string | null; limit?: number },
 ): ActivityResponse {
-  const { range, last } = resolveRangeFor(inputs, opts.range, opts.now);
+  const allowed = opts.accessIds ? new Set(opts.accessIds) : null;
+  const { range, last } = resolveRangeFor(inputs, opts.range, opts.now, allowed);
   const all = activityItems(inputs, inputs.decisions, { ...opts, range });
   const page = pageItems(all, opts.cursor ?? null, opts.limit);
   return {
@@ -158,6 +167,7 @@ export function dealKpisResponse(inputs: DealInputs, readingNow: ReadingNowDbRow
     renditions: item.facts.renditions,
     legacyOnly: item.facts.legacyOnly,
     sampleReading: facts.buyers.some((b) => b.visits.some(isSampleVisit)),
+    linkRanOut: linkRanOut(inputs.access.filter((a) => a.dealId === deal.id), now),
     forText: forTextOf(inputs.filters),
   };
 }

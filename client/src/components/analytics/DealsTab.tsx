@@ -20,7 +20,7 @@ import { TabEmpty } from "./EmptyStates";
 
 export const DEALS_TAB_DESCRIPTION = "How each CIM is doing, side by side. 'Read' follows the period above; the other columns are all time.";
 
-type SortKey = "deal" | "opened" | "read" | "time" | "far" | "nda" | "teaser" | "waiting" | "last";
+type SortKey = "deal" | "opened" | "read" | "time" | "far" | "nda" | "teaser_links" | "waiting" | "last";
 
 export const DEAL_COLUMN_INFO: Record<SortKey, string> = {
   deal: "Your deals with at least one buyer link.",
@@ -29,7 +29,7 @@ export const DEAL_COLUMN_INFO: Record<SortKey, string> = {
   time: "The middle buyer's active reading time over all their visits (idle time, hidden tabs and your own previews don't count).",
   far: "The middle buyer's furthest page, out of the content pages they could open (cover, disclaimer and contact pages left out).",
   nda: "Buyers who signed the NDA, then how many of them chose 'Interested'. All time.",
-  teaser: "Teaser links you've given, and how many of those buyers asked for the CIM.",
+  teaser_links: "Teaser links you've given, and how many of those buyers asked for the CIM.",
   waiting: "Questions nobody has answered yet, buyers who asked for the CIM, and buyers waiting for your approval.",
   last: "The latest visit, question, NDA, decision or request for the CIM.",
 };
@@ -44,7 +44,7 @@ function sortValue(r: DealDashboardRow, k: SortKey): number | string {
     case "time": return r.medianReadingMs ?? -1;
     case "far": return r.medianPagesReached != null && r.contentPages ? r.medianPagesReached / r.contentPages : -1;
     case "nda": return r.ndaSigned * 1000 + r.interested;
-    case "teaser": return r.teaser ? r.teaser.sent : -1;
+    case "teaser_links": return r.teaser ? r.teaser.sent : -1;
     case "waiting": return r.waiting;
     case "last": return t(r.lastActivityAt);
   }
@@ -107,7 +107,7 @@ export function DealsTable({ rows, range, sort, onSort }: {
     { key: "time", label: "Time per buyer" },
     { key: "far", label: "How far they got" },
     { key: "nda", label: "NDA → Interested" },
-    ...(teaser ? [{ key: "teaser" as SortKey, label: "Teaser" }] : []),
+    ...(teaser ? [{ key: "teaser_links" as SortKey, label: "Teaser" }] : []),
     { key: "waiting", label: "Waiting on you" },
     { key: "last", label: "Last activity" },
   ];

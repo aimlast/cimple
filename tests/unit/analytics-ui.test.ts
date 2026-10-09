@@ -48,6 +48,11 @@ const { PulseTop, pulseStats } = await import("../../client/src/components/engag
 const { analyticsKeys } = await import("../../client/src/hooks/useAnalyticsDashboard");
 const { ANALYTICS_URL_DEFAULTS } = await import("../../client/src/components/analytics/url");
 const { TooltipProvider } = await import("../../client/src/components/ui/tooltip");
+const { CallListTab } = await import("../../client/src/components/analytics/CallListTab");
+const { BuyerCard } = await import("../../client/src/components/engagement/buyers/BuyerCard");
+const {
+  brokerZoneLabel, dayMonth, timeOfDay, viewerTimeOfDay, whenWords, NOTICE_CHIP_WORDS,
+} = await import("../../shared/analytics-dashboard");
 
 let passed = 0;
 async function test(name: string, fn: () => void | Promise<void>) {
@@ -272,10 +277,32 @@ await test("the period note: automatic → all time, and an explicit empty perio
 });
 
 await test("heads-up lines link to exactly those buyers", () => {
-  const html = render(h(HeadsUp, { lines: [{ id: "expiring", count: 4, text: "4 buyer links run out in the next 7 days: Victoria Ashdown, Marcus Albrecht and 2 more.", names: [], link: "/broker/analytics?tab=buyers&status=expiring" }] }));
+  const line = { id: "expiring", count: 4, text: "4 buyer links run out in the next 7 days: Victoria Ashdown, Marcus Albrecht and 2 more.", names: [], link: "/broker/analytics?tab=buyers&notice=expiring", ids: ["a1", "a2", "a3", "a4"] };
+  const html = render(h(HeadsUp, { lines: [line], linkFor: (x: { id: string }) => `/broker/analytics?range=all&tab=buyers&notice=${x.id}` }));
   assert.match(text(html), /4 buyer links run out in the next 7 days/);
   assert.match(text(html), /4 links run out this week/);
-  assert.match(html, /href="\/broker\/analytics\?tab=buyers&amp;status=expiring"/);
+  assert.match(html, /href="\/broker\/analytics\?range=all&amp;tab=buyers&amp;notice=expiring"/, "the exact-set chip, keeping the page's period");
+  // A registered source's line (no ids) links where it says.
+  const src = render(h(HeadsUp, { lines: [{ id: "vdr", count: 1, text: "Gurdeep Randhawa is in the data room now", names: [], link: "/deal/d1/engagement?view=data-room" }], linkFor: () => "/nope" }));
+  assert.match(src, /href="\/deal\/d1\/engagement\?view=data-room"/);
+});
+
+await test("a heads-up's \"See them\" shows exactly the buyers the line counted", () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, enabled: false } } });
+  const rows = [
+    buyerRow({ accessId: "a1", firstSeenAt: null, lastSeenAt: null }),
+    buyerRow({ accessId: "a2", name: "Travis Holmgren", firstSeenAt: null, lastSeenAt: null }),
+    buyerRow({ accessId: "a3", name: "Natalie Vasconcelos", firstSeenAt: null, lastSeenAt: null, live: false }),
+  ];
+  qc.setQueryData(analyticsKeys.buyers(null), { rows, partial: null });
+  qc.setQueryData(analyticsKeys.overview("auto", null), { kpis: [], noticeIds: { expiring: [], not_opened: ["a2"] } });
+  const html = render(h(AllBuyersTab, { examples: null, state: { ...ANALYTICS_URL_DEFAULTS, tab: "buyers", notice: "not_opened" }, update() {} }), qc);
+  const t = text(html);
+  assert.match(html, /data-testid="notice-chip"/);
+  assert.match(t, new RegExp(NOTICE_CHIP_WORDS.not_opened.replace("+", "\\+")));
+  assert.match(t, /1 of 1 buyer/, "the line said 1, the list shows 1");
+  assert.match(t, /Travis Holmgren/);
+  assert.doesNotMatch(t, /Gurdeep Randhawa|Natalie Vasconcelos/);
 });
 
 console.log("Activity");
@@ -307,6 +334,27 @@ await test("day headers, bold names, the deal chip, the Sample tag", () => {
   assert.match(html, /data-testid="sample-tag"/);
   assert.match(t, /3:12 pm/);
   assert.equal(dayHeading("2026-09-23T19:12:00Z", now), "Wed 23 Sept");
+});
+
+await test("one date and time rule: Toronto, '23 Sept' and '3:12 pm', labelled when the viewer's clock differs", () => {
+  const at = "2026-09-24T00:25:00Z"; // 8:25 pm on 23 Sept in Toronto; 9:25 am on 24 Sept in Tokyo
+  assert.equal(dayMonth(at), "23 Sept");
+  assert.equal(timeOfDay(at), "8:25 pm");
+  assert.equal(viewerTimeOfDay(at, "Asia/Tokyo"), "9:25 am");
+  assert.equal(whenWords(at, Date.parse("2026-10-09T16:00:00Z")), "23 Sept", "older than a week: the Toronto day, never 'Sep 24'");
+  const now = Date.parse("2026-10-09T16:00:00Z");
+  assert.equal(brokerZoneLabel(now, "America/Toronto"), null);
+  assert.equal(brokerZoneLabel(now, "America/New_York"), null, "same clock as Toronto: no label");
+  assert.equal(brokerZoneLabel(now, "Asia/Tokyo"), "Toronto time");
+  assert.equal(brokerZoneLabel(now, "America/Vancouver"), "Toronto time");
+  assert.equal(brokerZoneLabel(now, ""), null);
+  // The feed: the label on each day header (sticky beside the times), the viewer's own clock in each time's tooltip.
+  const labelled = render(h(ActivityList, { items: [item({ id: "v:9", at })], showDeal: false, now, zoneLabel: "Toronto time" }));
+  assert.match(labelled, /data-testid="activity-zone"[^>]*>Toronto time</);
+  assert.match(labelled, /title="[^"]+ your time"[^>]*>8:25 pm</);
+  const plain = render(h(ActivityList, { items: [item({ id: "v:9", at })], showDeal: false, now, zoneLabel: null }));
+  assert.doesNotMatch(plain, /activity-zone|your time/);
+  assert.match(text(plain), /8:25 pm/);
 });
 
 await test("the pinned reading-now line", () => {
@@ -408,7 +456,7 @@ function pulseData(o: Partial<DealKpisResponse> = {}): DealKpisResponse {
     groups: { worthACall: [], reading: [], quietInRange: [], declined: [], revoked: [], notOpened: [] },
     readingNow: [], readersAll: 13, readersWeek: 0, lastReadAt: "2026-09-23T15:00:00Z", grantedCim: 13,
     mostStudiedPage: { pageId: "p1", part: 0, label: "12", title: "Organization & Key Personnel", attentionMs: 2_206_000 },
-    renditions: [], legacyOnly: true, sampleReading: false, forText: "All time · All buyers", ...o,
+    renditions: [], legacyOnly: true, sampleReading: false, linkRanOut: {}, forText: "All time · All buyers", ...o,
   };
 }
 
@@ -430,6 +478,57 @@ await test("never '0 reading this week': it says who has read it and when", () =
   assert.ok(none.includes("no one has read it yet"));
   const sample = text(render(h(PulseTop, { dealId: "d1", data: pulseData({ sampleReading: true }), readingNow: [] })));
   assert.match(sample, /Sample reading/);
+});
+
+console.log("Links that ran out");
+
+const cardProps = (o: Partial<BuyerEngagementCard> = {}) => ({
+  card: { ...card("a1", "Gurdeep Randhawa"), lastSeenAt: "2026-09-24T00:25:00Z", contactedAt: null, ...o },
+  titles: new Map<string, string>(), blindTitles: new Map<string, string>(), maxMs: 1,
+  nav: { openDocument() {}, openJourney() {} },
+  onContacted() {}, contacting: false, onBrief() {}, briefing: false, brief: null, onCloseBrief() {},
+});
+
+await test("the card writes dates on the same calendar as the list ('23 Sept', not 'Sep 24')", () => {
+  const t = text(render(h(BuyerCard, cardProps())));
+  assert.match(t, /3 visits · 23 Sept/);
+  assert.doesNotMatch(t, /Sep 24|Sep 23/);
+});
+
+await test("a buyer whose link ran out: chip and Extend on the card, the call row, the deal list and the pulse", () => {
+  const ranOut = "2026-10-06T15:00:00Z";
+  const c = render(h(BuyerCard, { ...cardProps(), linkRanOutAt: ranOut, extendHref: "/deal/d1/buyers?stage=have" }));
+  assert.match(text(c), /Link ran out/);
+  assert.match(text(c), /Their link ran out on 6 Oct. They can't open the CIM until you extend it./);
+  assert.match(c, /href="\/deal\/d1\/buyers\?stage=have"[^>]*>Extend</);
+  assert.doesNotMatch(text(render(h(BuyerCard, cardProps()))), /Link ran out/, "no chip on a valid link");
+
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, enabled: false } } });
+  const entry = { dealId: "d1", dealName: "Pacific Coast Logistics", accessId: "a1", name: "Gurdeep Randhawa", company: "Kinbrook", status: "interested", statusLabel: "Interested", why: "Chose Interested on 18 Sept.", talkingPoints: [], lastSeenAt: "2026-09-24T00:25:00Z" } as CallListEntry;
+  const other = { ...entry, accessId: "a2", name: "Travis Holmgren" } as CallListEntry;
+  qc.setQueryData(analyticsKeys.callList(null), { entries: [entry, other], deals: [{ dealId: "d1", live: true, demo: false }], linkRanOut: { a1: ranOut } });
+  const list = render(h(CallListTab, { examples: null, selected: null, onSelect() {}, callCount: 2, notOpened: 0 }), qc);
+  const rowA1 = list.slice(list.indexOf('data-testid="call-row-a1"'), list.indexOf('data-testid="call-row-a2"'));
+  assert.match(rowA1, /Link ran out/, "the call row says it");
+  assert.doesNotMatch(list.slice(list.indexOf('data-testid="call-row-a2"')), /Link ran out/);
+  assert.match(text(list), /Gurdeep Randhawa/, "still on the list: they may be worth a call");
+
+  const groups: BuyerGroups = { worthACall: [grow("a1", "Gurdeep Randhawa")], reading: [], quietInRange: [], declined: [], revoked: [], notOpened: [] };
+  const dl = render(h(BuyerList, {
+    groups, cards: new Map([["a1", card("a1", "Gurdeep Randhawa")]]), range: "all", selected: "a1", onSelect() {}, maxMs: 1,
+    titles: new Map(), blindTitles: new Map(), live: true, nudgeMode: () => null, onNudge() {}, linkRanOut: { a1: ranOut },
+  }));
+  assert.match(text(dl), /Link ran out/);
+
+  const p = text(render(h(PulseTop, { dealId: "d1", data: pulseData({ linkRanOut: { a1: ranOut } }), readingNow: [] })));
+  assert.match(p, /Link ran out/);
+  assert.match(p, /Gurdeep Randhawa's link has run out, so they can't open the CIM. Extend/);
+  assert.doesNotMatch(text(render(h(PulseTop, { dealId: "d1", data: pulseData(), readingNow: [] }))), /Link ran out/);
+});
+
+await test("the KPI cell keeps its full sub-line in a tooltip (a phone shows one line)", () => {
+  const html = render(h(KpiStrip, { kpis: [kpi("to_call", 9, { sub: "Best lead: Gurdeep Randhawa" }), kpi("waiting", 0)], range: "30d", periodTitle: "Buyers", footerFor: () => null }));
+  assert.match(html, /title="Best lead: Gurdeep Randhawa"[^>]*data-testid="kpi-to_call-sub"/);
 });
 
 console.log(`\n${passed} passed`);

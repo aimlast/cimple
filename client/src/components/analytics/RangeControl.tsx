@@ -30,7 +30,7 @@ export function RangeControl({
           aria-checked={value === r}
           onClick={() => onChange(r)}
           className={cn(
-            "flex-1 whitespace-nowrap rounded-[5px] px-2.5 py-1 text-xs font-medium transition-colors",
+            "flex-1 whitespace-nowrap rounded-[5px] px-2 py-0.5 text-xs font-medium transition-colors sm:px-2.5 sm:py-1",
             value === r ? "bg-teal/15 text-teal" : "text-muted-foreground hover:text-foreground",
           )}
           data-testid={`range-${r}`}

@@ -14,7 +14,7 @@ import { MessageSquare } from "lucide-react";
 import type { CallListEntry, EngagementBuyersResponse } from "@shared/analytics-v2";
 import { engagementKeys, useEngagementBuyers } from "@/hooks/useEngagement";
 import { getAnalyticsJson, titleMaps, useAnalyticsCallList, useEngagementPageTitles } from "@/hooks/useAnalyticsDashboard";
-import type { ExamplesMode } from "@shared/analytics-dashboard";
+import { extendLinkHref, type ExamplesMode, type LinkRanOut } from "@shared/analytics-dashboard";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -25,7 +25,7 @@ import { useBuyerCardActions } from "@/components/engagement/buyers/useBuyerCard
 import type { EngagementNav } from "@/components/engagement/types";
 import { cn } from "@/lib/utils";
 import { analyticsSearch } from "./url";
-import { DealChips, whenText } from "./parts";
+import { DealChips, LinkRanOutChip, whenText } from "./parts";
 import { TabEmpty } from "./EmptyStates";
 import { useMinWidth } from "./media";
 
@@ -57,6 +57,7 @@ export function CallListTab({
   const listRef = useRef<HTMLOListElement>(null);
   const entries = data?.entries ?? [];
   const flags: DealFlags = useMemo(() => new Map((data?.deals ?? []).map((d) => [d.dealId, { live: d.live, demo: d.demo }])), [data]);
+  const ranOut: LinkRanOut = data?.linkRanOut ?? {};
   const current = entries.find((e) => e.accessId === selected) ?? (wide ? entries[0] : undefined) ?? null;
 
   if (isLoading) {
@@ -107,13 +108,14 @@ export function CallListTab({
   return (
     <div className="grid gap-5 lg:grid-cols-[400px_minmax(0,1fr)]" data-testid="call-tab">
       <div className="min-w-0">
-        <ol ref={listRef} className="space-y-2" onKeyDown={onKey} aria-label="Who to call" data-testid="call-list">
+        <ol ref={listRef} className="space-y-1.5" onKeyDown={onKey} aria-label="Who to call" data-testid="call-list">
           {entries.map((e, i) => (
             <li key={`${e.dealId}:${e.accessId}`}>
               <CallRow
                 entry={e}
                 rank={i + 1}
                 flags={flags.get(e.dealId)}
+                ranOutAt={ranOut[e.accessId] ?? null}
                 selected={wide && current?.accessId === e.accessId}
                 onClick={() => onSelect(e.accessId)}
                 onHover={() => prefetch(e.dealId)}
@@ -130,7 +132,7 @@ export function CallListTab({
       </div>
       {wide ? (
         <div className="min-w-0 lg:sticky lg:top-4 lg:self-start">
-          {current && <CallDetail entry={current} flags={flags.get(current.dealId)} />}
+          {current && <CallDetail entry={current} flags={flags.get(current.dealId)} ranOutAt={ranOut[current.accessId] ?? null} />}
         </div>
       ) : (
         <Sheet open={!!current} onOpenChange={(o) => { if (!o) onSelect(null); }}>
@@ -138,7 +140,7 @@ export function CallListTab({
             <SheetHeader className="sr-only">
               <SheetTitle className="sr-only">{current?.name}</SheetTitle>
             </SheetHeader>
-            {current && <CallDetail entry={current} flags={flags.get(current.dealId)} />}
+            {current && <CallDetail entry={current} flags={flags.get(current.dealId)} ranOutAt={ranOut[current.accessId] ?? null} />}
           </SheetContent>
         </Sheet>
       )}
@@ -146,8 +148,13 @@ export function CallListTab({
   );
 }
 
-function CallRow({ entry: e, rank, flags, selected, onClick, onHover }: {
-  entry: CallListEntry; rank: number; flags?: { live: boolean; demo: boolean }; selected: boolean; onClick(): void; onHover(): void;
+/**
+ * One lead, about 96 px: rank · name, company, status · the deal, its chips
+ * and when they were last seen · why (two lines). Hovering shows the first
+ * thing to say.
+ */
+function CallRow({ entry: e, rank, flags, ranOutAt, selected, onClick, onHover }: {
+  entry: CallListEntry; rank: number; flags?: { live: boolean; demo: boolean }; ranOutAt: string | null; selected: boolean; onClick(): void; onHover(): void;
 }) {
   const tip = e.talkingPoints[0] ? `What to say: ${e.talkingPoints[0].text}` : undefined;
   return (
@@ -160,31 +167,32 @@ function CallRow({ entry: e, rank, flags, selected, onClick, onHover }: {
       aria-current={selected || undefined}
       data-access={e.accessId}
       className={cn(
-        "flex w-full items-start gap-3 rounded-lg border bg-card px-3.5 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-teal",
+        "flex w-full items-start gap-3 rounded-lg border bg-card px-3.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-teal",
         selected ? "border-border border-l-2 border-l-teal bg-teal/10" : "border-border hover:border-teal/40",
       )}
       data-testid={`call-row-${e.accessId}`}
     >
       <span className="mt-0.5 w-5 shrink-0 font-mono text-xs tabular-nums text-teal">{rank}</span>
       <span className="min-w-0 flex-1">
-        <span className="flex items-baseline gap-2">
-          <span className="shrink-0 text-sm font-medium text-foreground">{e.name}</span>
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 text-sm font-medium leading-5 text-foreground">{e.name}</span>
           {e.company && <span className="min-w-0 truncate text-xs text-muted-foreground">{e.company}</span>}
-          {e.lastSeenAt && <span className="ml-auto shrink-0 whitespace-nowrap text-2xs tabular-nums text-muted-foreground">{whenText(e.lastSeenAt)}</span>}
+          <span className="ml-auto shrink-0"><StatusChip status={e.status} label={e.statusLabel} /></span>
         </span>
-        <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-          <StatusChip status={e.status} label={e.statusLabel} />
+        <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground">
           <span className="min-w-0 truncate">{e.dealName}</span>
           {flags && <DealChips live={flags.live} demo={flags.demo} />}
+          {ranOutAt && <LinkRanOutChip at={ranOutAt} />}
+          {e.lastSeenAt && <span className="ml-auto shrink-0 whitespace-nowrap text-2xs tabular-nums">{whenText(e.lastSeenAt)}</span>}
         </span>
-        <span className="mt-1.5 text-xs leading-relaxed text-foreground/85 line-clamp-2">{e.why}</span>
+        <span className="mt-1 text-xs leading-snug text-foreground/85 line-clamp-1 lg:line-clamp-2">{e.why}</span>
       </span>
     </button>
   );
 }
 
 /** The selected buyer's full card (the same card as the deal's Buyers view). */
-function CallDetail({ entry, flags }: { entry: CallListEntry; flags?: { live: boolean; demo: boolean } }) {
+function CallDetail({ entry, flags, ranOutAt }: { entry: CallListEntry; flags?: { live: boolean; demo: boolean }; ranOutAt: string | null }) {
   const [, setLocation] = useLocation();
   const dealId = entry.dealId;
   const { data, isLoading } = useEngagementBuyers(dealId, {});
@@ -215,6 +223,12 @@ function CallDetail({ entry, flags }: { entry: CallListEntry; flags?: { live: bo
           {chips}
         </div>
         <p className="text-[15px] font-semibold text-foreground">{entry.name}</p>
+        {ranOutAt && (
+          <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <LinkRanOutChip at={ranOutAt} />
+            <Link href={extendLinkHref(dealId)} className="font-medium text-teal hover:underline">Extend</Link>
+          </p>
+        )}
         <p className="mt-2 text-sm text-foreground/90">{entry.why}</p>
         {entry.talkingPoints.length > 0 && (
           <ol className="mt-3 space-y-1.5">
@@ -238,6 +252,8 @@ function CallDetail({ entry, flags }: { entry: CallListEntry; flags?: { live: bo
         dealHref={dealHref}
         dealExtra={chips}
         legend
+        linkRanOutAt={ranOutAt}
+        extendHref={extendLinkHref(dealId)}
         {...actions.propsFor(card)}
       />
       {actions.dialogs}

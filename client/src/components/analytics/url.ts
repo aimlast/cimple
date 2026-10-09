@@ -4,7 +4,7 @@
  *
  *   /broker/analytics?tab=call|deals|buyers|activity|attention&range=7d|30d|all
  *     &examples=include|exclude&buyer=<accessId>&deal=<dealId>&status=<s>&q=<text>
- *     &sort=<s>&kpi=<id>:<range>&kind=<k>
+ *     &sort=<s>&kpi=<id>:<range>&notice=expiring|not_opened&kind=<k>
  *
  *   /deal/:id/engagement?view=buyers|document|activity|<extra>&buyer=<accessId>
  *     &page=<pageId#part>&journey=<accessId>&range=&device=&buyers=&segment=&rendition=
@@ -18,6 +18,8 @@ import {
   BUYER_KPI_IDS,
   parseActivityKind,
   parseBuyerStatusFilter,
+  parseNoticeId,
+  type NoticeId,
   type ActivityKindFilter,
   type AnalyticsTab,
   type BuyerStatusFilter,
@@ -54,11 +56,13 @@ export interface AnalyticsUrlState {
   q: string;
   sort: BuyerSort;
   kpi: KpiChip | null;
+  /** A heads-up line's "See them": exactly the buyers that line counted. */
+  notice: NoticeId | null;
   kind: ActivityKindFilter;
 }
 
 export const ANALYTICS_URL_DEFAULTS: AnalyticsUrlState = {
-  tab: null, range: null, examples: null, buyer: null, deal: null, status: "all", q: "", sort: "last_active", kpi: null, kind: "all",
+  tab: null, range: null, examples: null, buyer: null, deal: null, status: "all", q: "", sort: "last_active", kpi: null, notice: null, kind: "all",
 };
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -89,6 +93,7 @@ export function parseAnalyticsSearch(search: string): AnalyticsUrlState {
     q: (p.get("q") ?? "").slice(0, 120),
     sort: BUYER_SORTS.some((s) => s.key === sort) ? (sort as BuyerSort) : "last_active",
     kpi: parseKpiChip(p.get("kpi")),
+    notice: parseNoticeId(p.get("notice")),
     kind: parseActivityKind(p.get("kind")),
   };
 }
@@ -106,6 +111,7 @@ export function analyticsSearch(state: Partial<AnalyticsUrlState>): string {
   if (s.q) p.set("q", s.q);
   if (s.sort && s.sort !== "last_active") p.set("sort", s.sort);
   if (s.kpi) p.set("kpi", `${s.kpi.id}:${s.kpi.range}`);
+  if (s.notice) p.set("notice", s.notice);
   if (s.kind && s.kind !== "all") p.set("kind", s.kind);
   const q = p.toString();
   return q ? `?${q}` : "";
@@ -124,7 +130,7 @@ export function resolveAnalyticsTab(tab: AnalyticsTab | null, callCount: number 
 const TAB_PARAMS: Record<AnalyticsTab, Array<keyof AnalyticsUrlState>> = {
   call: ["buyer"],
   deals: [],
-  buyers: ["deal", "status", "q", "sort", "kpi"],
+  buyers: ["deal", "status", "q", "sort", "kpi", "notice"],
   activity: ["deal", "kind"],
   attention: [],
 };

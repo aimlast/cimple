@@ -18,6 +18,7 @@ import { useCallback, useMemo } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { AlertTriangle } from "lucide-react";
 import {
+  parseNoticeId,
   rangeWindow,
   type AnalyticsTab,
   type DashboardRange,
@@ -144,7 +145,7 @@ export default function Analytics() {
             error={overview.isError}
             onRetry={() => overview.refetch()}
             periodTitle="Buyers"
-            periodControl={<RangeControl value={range} onChange={(r) => update({ range: r })} className="w-full sm:w-auto" />}
+            periodControl={<RangeControl value={range} onChange={(r) => update({ range: r })} />}
             periodAside={examplesAside}
             showDeal
             footerFor={footerFor}
@@ -167,7 +168,12 @@ export default function Analytics() {
               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-teal" onClick={() => overview.refetch()}>Try again</Button>
             </div>
           )}
-          {o && <HeadsUp lines={o.headsUp} />}
+          {o && (
+            <HeadsUp
+              lines={o.headsUp}
+              linkFor={(h) => `/broker/analytics${analyticsSearch({ range: state.range, examples: state.examples, tab: "buyers", notice: parseNoticeId(h.id) })}`}
+            />
+          )}
 
           <DashboardTabBar tabs={tabs} value={tab} onChange={onTab} ariaLabel="Analytics views" className="pt-1">
             <div className="space-y-4 pt-3">

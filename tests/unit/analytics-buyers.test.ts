@@ -4,7 +4,7 @@
  *   DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=disabled npx tsx tests/unit/analytics-buyers.test.ts
  */
 import assert from "node:assert/strict";
-import { matchesBuyerStatus, type BuyerStatusFilter } from "../../shared/analytics-dashboard";
+import { matchesBuyerStatus, parseBuyerStatusFilter, type BuyerStatusFilter } from "../../shared/analytics-dashboard";
 import { accessLevelLabel } from "../../shared/access-levels";
 import { buildBuyersResponse } from "../../server/engagement/responses";
 import { buyerRows } from "../../server/analytics-dashboard/buyers";
@@ -93,7 +93,10 @@ assert.deepEqual(match("deciding"), ["b", "r"], "opened, no final decision");
 assert.deepEqual(match("not_opened"), ["n"], "CIM links never opened; never a teaser link");
 assert.deepEqual(match("declined"), ["x"]);
 assert.deepEqual(match("expiring"), ["b"], "runs out within 7 days, not removed, undecided");
-assert.deepEqual(match("teaser"), ["t1", "t2"]);
+assert.deepEqual(match("teaser_links"), ["t1", "t2"]);
+assert.equal(parseBuyerStatusFilter("teaser"), "teaser_links", "an older ?status=teaser link still opens Teaser only");
+assert.equal(parseBuyerStatusFilter("teaser_links"), "teaser_links");
+assert.equal(parseBuyerStatusFilter("bogus"), "all");
 assert.deepEqual(match("teaser_asked"), ["t2"]);
 assert.deepEqual(match("revoked"), ["r"]);
 

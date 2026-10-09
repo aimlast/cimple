@@ -14,6 +14,7 @@ import {
   KPI_COPY,
   applyKpiFilter,
   dayMonth,
+  matchesBuyerStatus,
   hasReadCim,
   questionWaitingOn,
   resolveExamples,
@@ -23,11 +24,11 @@ import {
 } from "../../shared/analytics-dashboard";
 import { buildCallList } from "../../server/routes/engagement-insights";
 import { buildSummaryResponse } from "../../server/engagement/responses";
-import { computeKpis, headsUp } from "../../server/analytics-dashboard/kpis";
+import { computeKpis, headsUp, lastActivity, linkRanOut, noticeIds } from "../../server/analytics-dashboard/kpis";
 import { buyerRows } from "../../server/analytics-dashboard/buyers";
 import { kpiFactsFilters } from "../../server/analytics-dashboard/load";
-import { dealKpisResponse } from "../../server/analytics-dashboard/responses";
-import { NOW, ago, dealInputsOf, factsOf, inputsOf, questionRow, type DealSpec } from "./fixtures/analytics-fixtures";
+import { activityResponse, callListResponse, dealKpisResponse, overviewResponse } from "../../server/analytics-dashboard/responses";
+import { DAY as DAY_MS, NOW, ago, dealInputsOf, factsOf, inputsOf, questionRow, type DealSpec } from "./fixtures/analytics-fixtures";
 
 const kpi = (ks: Kpi[], id: KpiId) => {
   const k = ks.find((x) => x.id === id);
@@ -81,7 +82,7 @@ assert.deepEqual(ids(kpi(all, "reading")), ["dd", "g1", "l1", "q1", "r1", "t1"],
 assert.deepEqual(ids(kpi(d7, "reading")), ["r1", "t1"], "7 days: the last active second is in the window");
 assert.equal(kpi(d7, "reading").previous, 3, "previous window [14d, 7d): g1 (10d), q1 (8d), l1 (12d)");
 assert.deepEqual(ids(kpi(d30, "reading")), ["g1", "l1", "q1", "r1", "t1"], "30 days");
-assert.equal(kpi(all, "reading").sub, "of 7 with the CIM", "broker scope: of the CIM links not removed");
+assert.equal(kpi(all, "reading").sub, "of 8 given the CIM", "broker scope: of every CIM link given, removed ones included (the value counts them too)");
 assert.equal(kpi(all, "reading").rangeBound, true);
 assert.ok(kpi(all, "reading").who.every((w) => w.note?.endsWith(" reading")));
 
@@ -295,6 +296,114 @@ assert.equal(KPI_COPY.to_call.shortLabel, "Worth a call");
   const src = { id: "vdr", count: 1, text: "Gurdeep Randhawa is in the data room now", names: ["Gurdeep Randhawa"], link: "/deal/hu/engagement?view=data-room" };
   const withSrc = headsUp(inputsOf([HU]), NOW, [src]);
   assert.deepEqual(withSrc.map((h) => h.id), ["vdr", "expiring"], "registered sources first; at most 2 lines");
+}
+
+// ── "Buyers who read … of N given the CIM": the value never exceeds N (checker AN-1) ──
+{
+  // Three readers, two of them removed afterwards (a broker reads a buyer's interest, then removes access).
+  const RV: DealSpec = {
+    id: "rv", name: "Removed Readers", live: true,
+    links: [1, 2, 3].map((i) => ({ id: `rv${i}`, name: `Buyer ${i}`, level: "full", revokedDaysAgo: i <= 2 ? 1 : null, firstViewedDaysAgo: 5 })),
+    visits: [1, 2, 3].map((i) => ({ id: `rvv${i}`, access: `rv${i}`, daysAgo: 5, activeMs: 60_000 })),
+  };
+  for (const range of DASHBOARD_RANGES) {
+    for (const spec of [RV, D1]) {
+      const k = kpi(computeKpis(inputsOf([spec]), { range, now: NOW, scope: "broker" }).kpis, "reading");
+      const m = /^of (\d+) given the CIM$/.exec(k.sub ?? "");
+      if (!m) continue;
+      assert.ok(k.value <= Number(m[1]), `${spec.id}:${range} — ${k.value} readers ≤ ${m[1]} given the CIM`);
+    }
+  }
+  const k = kpi(computeKpis(inputsOf([RV]), { range: "all", now: NOW, scope: "broker" }).kpis, "reading");
+  assert.equal(k.value, 3, "removed buyers' reading still counts");
+  assert.equal(k.sub, "of 3 given the CIM", "…and so do their links");
+  assert.match(KPI_COPY.reading.explain("all", "broker"), /including links you later removed/);
+}
+
+// ── Heads-up "See them" opens exactly the buyers the line counted (checker AN-5) ──
+{
+  const HU2: DealSpec = {
+    id: "hu2", name: "Heads Up Two", live: true,
+    links: [
+      { id: "e1", name: "Runs Out Soon", firstViewedDaysAgo: 2, expiresInDays: 3 },
+      { id: "e2", name: "Runs Out Later", firstViewedDaysAgo: 2, expiresInDays: 12 },
+      { id: "e3", name: "Removed Runs Out", firstViewedDaysAgo: 2, expiresInDays: 2, revokedDaysAgo: 1 },
+      { id: "o1", name: "Unopened Old", createdDaysAgo: 5 },
+      { id: "o2", name: "Unopened New", createdDaysAgo: 1 },
+      { id: "o3", name: "Unopened Removed", createdDaysAgo: 6, revokedDaysAgo: 1 },
+    ],
+    visits: [{ id: "hv", access: "e1", daysAgo: 2, activeMs: 60_000 }, { id: "hv2", access: "e2", daysAgo: 2, activeMs: 60_000 }, { id: "hv3", access: "e3", daysAgo: 2, activeMs: 60_000 }],
+  };
+  const NOT_LIVE: DealSpec = {
+    id: "nl", name: "Not Live Yet", live: false,
+    links: [{ id: "nl1", name: "Waiting For Publish", createdDaysAgo: 9 }, { id: "nl2", name: "Not Live Expiring", firstViewedDaysAgo: 3, expiresInDays: 2 }],
+  };
+  const i = inputsOf([HU2, NOT_LIVE]);
+  const lines = headsUp(i, NOW);
+  const sets = noticeIds(i, NOW);
+  const rows = buyerRows(i, NOW);
+  assert.deepEqual(sets.expiring, ["e1"], "live deals only, not removed, within 7 days");
+  assert.deepEqual(sets.not_opened, ["o1"], "live deals only, not removed, 3+ days");
+  for (const h of lines) {
+    assert.ok(h.ids, `${h.id}: the line carries its exact set`);
+    assert.equal(h.ids!.length, h.count, `${h.id}: count = ids`);
+    assert.equal(applyKpiFilter(rows, h.ids!).length, h.count, `${h.id}: "See them" shows exactly ${h.count} rows`);
+    assert.match(h.link, new RegExp(`notice=${h.id}$`), `${h.id}: links with the exact-set chip`);
+  }
+  // The general status filters stay broader (they're for browsing), which is why the line links to its exact set.
+  assert.ok(rows.filter((r) => matchesBuyerStatus(r, "not_opened", NOW)).length > h1Count(lines, "not_opened"));
+  // The overview carries the sets even when a registered source takes both line slots.
+  const src = (n: string) => ({ id: n, count: 1, text: n, names: [], link: "/x" });
+  const ov = overviewResponse(i, "all", NOW, [src("vdr"), src("teaser")]);
+  assert.deepEqual(ov.headsUp.map((h) => h.id), ["vdr", "teaser"]);
+  assert.deepEqual(ov.noticeIds, sets, "noticeIds are there whether or not their line is shown");
+  // A removed link is "Link removed", never "Haven't opened" (the Who-to-call line's count = the filter's rows).
+  assert.ok(!rows.filter((r) => matchesBuyerStatus(r, "not_opened", NOW)).some((r) => r.revokedAt));
+  assert.equal(rows.filter((r) => matchesBuyerStatus(r, "not_opened", NOW)).length, ov.counts.notOpened);
+}
+function h1Count(lines: ReturnType<typeof headsUp>, id: string): number {
+  return lines.find((h) => h.id === id)?.count ?? 0;
+}
+
+// ── The deal Activity view's empty state names only the filtered buyers (checker AN-6) ──
+{
+  const f: EngagementFilters = { ...DEFAULT_ENGAGEMENT_FILTERS, range: "7d", buyers: ["someone-elses-link"] };
+  const di = dealInputsOf(D1, f);
+  const r = activityResponse(di, { range: "7d", now: NOW, kinds: "all", dealId: "d1", accessIds: [], extra: [] });
+  assert.equal(r.items.length, 0);
+  assert.equal(r.lastActivity, null, "a Buyers filter that matches nobody: no 'last activity' naming someone else");
+  const one: EngagementFilters = { ...DEFAULT_ENGAGEMENT_FILTERS, range: "7d", buyers: ["g1"] };
+  const r1 = activityResponse(dealInputsOf(D1, one), { range: "7d", now: NOW, kinds: "all", dealId: "d1", accessIds: ["g1"], extra: [] });
+  assert.ok(r1.lastActivity, "the filtered buyer's own last activity");
+  assert.match(r1.lastActivity!.text, /^Gurdeep Randhawa /, "names the filtered buyer, never another");
+  assert.equal(lastActivity(inputsOf([D1]), new Set(["g1"]))!.text.startsWith("Gurdeep Randhawa"), true);
+  const everyone = lastActivity(inputsOf([D1]));
+  assert.ok(everyone && !everyone.text.startsWith("Gurdeep Randhawa"), "without the filter, someone more recent is named (so the filter really changed it)");
+}
+
+// ── Links that ran out stay listed, with "Link ran out" (checker AN-9) ──
+{
+  const EX: DealSpec = {
+    id: "ex", name: "Expired Links", live: true,
+    links: [
+      { id: "k1", name: "Kept Reading", firstViewedDaysAgo: 9, expiresInDays: -2, ndaDaysAgo: 9 },
+      { id: "k2", name: "Still Valid", firstViewedDaysAgo: 9, expiresInDays: 20 },
+      { id: "k3", name: "Said No", firstViewedDaysAgo: 9, expiresInDays: -2, decision: "not_interested", decisionDaysAgo: 3 },
+      { id: "k4", name: "Removed", firstViewedDaysAgo: 9, expiresInDays: -2, revokedDaysAgo: 1 },
+      { id: "k5", name: "Teaser Holder", level: "teaser_only", expiresInDays: -2 },
+    ],
+    visits: ["k1", "k2", "k3", "k4"].map((a, n) => ({ id: `kv${n}`, access: a, daysAgo: 9 - n, activeMs: 25 * 60_000 })),
+    reading: ["kv0", "kv1", "kv2", "kv3"].map((v) => ({ visit: v, page: "fin", ms: 20 * 60_000 })),
+  };
+  const ro = linkRanOut(inputsOf([EX]).access, NOW);
+  assert.deepEqual(Object.keys(ro), ["k1"], "CIM links past expiry; not removed, not a buyer who said no, never a teaser link");
+  assert.equal(ro.k1, new Date(NOW.getTime() - 2 * DAY_MS).toISOString());
+  const cl = callListResponse(inputsOf([EX]), 15, NOW);
+  assert.ok(cl.entries.some((e) => e.accessId === "k1"), "still worth a call");
+  assert.deepEqual(Object.keys(cl.linkRanOut), ["k1"], "the call list marks them");
+  const dr = dealKpisResponse(dealInputsOf(EX), [], NOW);
+  assert.deepEqual(Object.keys(dr.linkRanOut), ["k1"], "the deal tab and the pulse mark them");
+  assert.ok(dr.callTop.some((e) => e.accessId === "k1"), "the pulse keeps them in Call first");
 }
 
 console.log("analytics-kpis: all assertions passed");

@@ -118,7 +118,7 @@ export function registerAnalyticsDashboardRoutes(app: Express): void {
   app.get("/api/broker/analytics/call-list", requireBroker, async (req, res) => {
     try {
       const inputs = await loadBrokerInputs(req.session.brokerId!, { examples: parseExamplesMode(req.query.examples) });
-      res.json(callListResponse(inputs, CALL_LIST_SIZE));
+      res.json(callListResponse(inputs, CALL_LIST_SIZE, deps.clock()));
     } catch (err) {
       fail(res, err, "call-list", "Couldn't load who to call");
     }

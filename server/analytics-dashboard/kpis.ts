@@ -45,6 +45,9 @@ import {
   type Kpi,
   type KpiId,
   type KpiWho,
+  type LinkRanOut,
+  type NoticeId,
+  HEADS_UP_NOT_OPENED_DAYS,
 } from "@shared/analytics-dashboard";
 import { nextStepWords } from "@shared/buyer-next-steps";
 import type { CaptureFacts } from "../engagement/facts";
@@ -55,7 +58,6 @@ import type { AccessRow, BrokerInputs, DashboardItem, QuestionRow } from "./load
 import { accessLevelRank, isTeaserOnly, seesCim } from "./levels";
 
 const DAY = 86_400_000;
-const HEADS_UP_NOT_OPENED_DAYS = 3;
 const CONTACTED_MS = 48 * 3_600_000;
 const FINAL = new Set(["interested", "not_interested", "lapsed"]);
 const DECLINED = new Set(["not_interested", "lapsed"]);
@@ -98,7 +100,7 @@ export function buyerHref(dealId: string, accessId: string): string {
   return `/deal/${dealId}/engagement?buyer=${encodeURIComponent(accessId)}`;
 }
 
-interface CimBuyer { item: DashboardItem; b: BuyerReadingFacts }
+export interface CimBuyer { item: DashboardItem; b: BuyerReadingFacts }
 
 function cimBuyers(inputs: Pick<BrokerInputs, "items">, f: EngagementFilters | undefined): CimBuyer[] {
   const out: CimBuyer[] = [];
@@ -355,10 +357,13 @@ export function computeKpis(inputs: BrokerInputs, opts: KpiOptions): { kpis: Kpi
     const lastBefore = since == null ? 0 : latest(buyers.map(({ b }) => lastActive(b, before)));
     const lastEver = latest(buyers.map(({ b }) => lastActive(b, (ms) => ms > 0)));
     const value = cur.length;
-    const withCim = buyers.filter(({ b }) => !b.revokedAt).length;
+    // The "of N" counts the SAME links the value can count: every CIM link
+    // ever given, removed ones included (a removed buyer's reading still
+    // counts), so the value can never exceed it.
+    const givenCim = buyers.length;
     let sub: string | null;
     if (value === 0 && lastBefore) sub = `last on ${dayMonth(lastBefore)}`;
-    else if (scope === "broker") sub = `of ${withCim} with the CIM`;
+    else if (scope === "broker") sub = `of ${givenCim} given the CIM`;
     else if (range === "all") sub = lastEver ? `last on ${dayMonth(lastEver)}` : null;
     else sub = deltaWords(value, prev, range);
     kpis.push({
@@ -467,12 +472,15 @@ function namesWords(names: string[]): string {
 }
 
 /**
- * The 1–2 lines under the numbers: registered sources first (data room),
- * then links running out within 7 days, then buyers who haven't opened 3
- * days after you gave access. CIM links on LIVE deals only (a buyer can't
- * open an unpublished CIM); teaser-only links never.
+ * The buyers behind the two built-in heads-up lines, uncapped: CIM links on
+ * LIVE deals only (a buyer can't open an unpublished CIM), never teaser-only
+ * links, never removed links.
+ *   expiring     the link runs out within the next 7 days, no final answer yet
+ *   not_opened   never opened, 3+ days after access was given
+ * The line's number, its "See them" list (`?notice=<id>` → exactly these
+ * ids) and the response's `noticeIds` are all this one set.
  */
-export function headsUp(inputs: Pick<BrokerInputs, "items">, now: Date, extra: HeadsUp[] = [], max = 2): HeadsUp[] {
+export function noticeSets(inputs: Pick<BrokerInputs, "items">, now: Date): Record<NoticeId, CimBuyer[]> {
   const nowMs = now.getTime();
   const live = cimBuyers({ items: inputs.items.filter((it) => it.live) }, undefined);
   const expiring = live
@@ -482,29 +490,64 @@ export function headsUp(inputs: Pick<BrokerInputs, "items">, now: Date, extra: H
   const notOpened = live
     .filter(({ b }) => !b.revokedAt && !openedCim(b) && nowMs - t(b.grantedAt) >= HEADS_UP_NOT_OPENED_DAYS * DAY)
     .sort((x, y) => t(x.b.grantedAt) - t(y.b.grantedAt));
+  return { expiring, not_opened: notOpened };
+}
+
+/** `noticeIds` on the overview response: each built-in line's exact access ids. */
+export function noticeIds(inputs: Pick<BrokerInputs, "items">, now: Date): Record<NoticeId, string[]> {
+  const sets = noticeSets(inputs, now);
+  return { expiring: sets.expiring.map(({ b }) => b.accessId), not_opened: sets.not_opened.map(({ b }) => b.accessId) };
+}
+
+/**
+ * The 1–2 lines under the numbers: registered sources first (data room),
+ * then links running out within 7 days, then buyers who haven't opened 3
+ * days after you gave access (noticeSets). Each built-in line carries the
+ * exact ids it counted; "See them" opens exactly those buyers.
+ */
+export function headsUp(inputs: Pick<BrokerInputs, "items">, now: Date, extra: HeadsUp[] = [], max = 2): HeadsUp[] {
+  const sets = noticeSets(inputs, now);
   const out: HeadsUp[] = [...extra];
-  if (expiring.length > 0) {
-    const names = expiring.map(({ b }) => b.name);
+  if (sets.expiring.length > 0) {
+    const names = sets.expiring.map(({ b }) => b.name);
     const n = names.length;
     out.push({
       id: "expiring",
       count: n,
       text: `${n} buyer link${n === 1 ? " runs" : "s run"} out in the next 7 days: ${namesWords(names)}.`,
       names: names.slice(0, 20),
-      link: "/broker/analytics?tab=buyers&status=expiring",
+      link: "/broker/analytics?tab=buyers&notice=expiring",
+      ids: sets.expiring.map(({ b }) => b.accessId),
     });
   }
-  if (notOpened.length > 0) {
-    const n = notOpened.length;
+  if (sets.not_opened.length > 0) {
+    const n = sets.not_opened.length;
     out.push({
       id: "not_opened",
       count: n,
       text: `${n} buyer${n === 1 ? " hasn't" : "s haven't"} opened their link ${HEADS_UP_NOT_OPENED_DAYS} days after you gave it.`,
-      names: notOpened.map(({ b }) => b.name).slice(0, 20),
-      link: "/broker/analytics?tab=buyers&status=not_opened",
+      names: sets.not_opened.map(({ b }) => b.name).slice(0, 20),
+      link: "/broker/analytics?tab=buyers&notice=not_opened",
+      ids: sets.not_opened.map(({ b }) => b.accessId),
     });
   }
   return out.slice(0, max);
+}
+
+/**
+ * CIM links that have run out (accessId → expiry): not removed, and not a
+ * buyer who said no or didn't respond (those are out of every call list
+ * anyway). They stay listed with "Link ran out" and Extend.
+ */
+export function linkRanOut(access: Pick<AccessRow, "id" | "accessLevel" | "expiresAt" | "revokedAt" | "decision">[], now: Date): LinkRanOut {
+  const out: LinkRanOut = {};
+  const nowMs = now.getTime();
+  for (const a of access) {
+    if (!seesCim(a.accessLevel) || a.revokedAt || !a.expiresAt) continue;
+    if (a.decision && DECLINED.has(a.decision)) continue;
+    if (a.expiresAt.getTime() <= nowMs) out[a.id] = a.expiresAt.toISOString();
+  }
+  return out;
 }
 
 // ── Last activity ─────────────────────────────────────────────────────────
@@ -520,20 +563,27 @@ const DECISION_WORDS: Record<string, string> = {
  * question, an NDA signature, a final decision, a request for the CIM.
  * "Gurdeep Randhawa read Pacific Coast Logistics".
  */
-export function lastActivity(inputs: Pick<BrokerInputs, "items" | "access" | "questions" | "deals">): { at: Date; text: string; dealId: string } | null {
+export function lastActivity(
+  inputs: Pick<BrokerInputs, "items" | "access" | "questions" | "deals">,
+  /** The deal tab's Buyers filter: only these links' activity (null = everyone). */
+  allowed: Set<string> | null = null,
+): { at: Date; text: string; dealId: string } | null {
   let best: { at: number; text: string; dealId: string } | null = null;
   const consider = (at: number, text: string, dealId: string) => {
     if (at > 0 && (!best || at > best.at)) best = { at, text, dealId };
   };
+  const ok = (accessId: string | null | undefined) => !allowed || (!!accessId && allowed.has(accessId));
   const dealName = new Map(inputs.deals.map((d) => [d.id, d.businessName]));
   for (const it of inputs.items) {
     const name = it.deal.businessName;
     for (const b of cimOnly(it.facts).buyers) {
+      if (!ok(b.accessId)) continue;
       for (const v of b.visits) consider(t(v.lastSeenAt), `${b.name} ${v.activeMs >= READING_RULES.readerMinMs ? "read" : "opened"} ${name}`, it.deal.id);
       for (const q of b.questions) consider(t(q.askedAt), `${b.name} asked a question about ${name}`, it.deal.id);
     }
   }
   for (const a of inputs.access) {
+    if (!ok(a.id)) continue;
     const who = a.buyerName || a.buyerEmail;
     const name = dealName.get(a.dealId) ?? "";
     if (a.ndaSignedAt) consider(a.ndaSignedAt.getTime(), `${who} signed the NDA for ${name}`, a.dealId);
@@ -541,6 +591,7 @@ export function lastActivity(inputs: Pick<BrokerInputs, "items" | "access" | "qu
     for (const e of a.accessEvents) if (e.type === "cim_requested") consider(t(e.at), `${who} asked for the CIM of ${name}`, a.dealId);
   }
   for (const q of inputs.questions) {
+    if (!ok(q.accessId)) continue;
     const a = inputs.access.find((x) => x.id === q.accessId);
     consider(q.askedAt.getTime(), `${a ? a.buyerName || a.buyerEmail : "A buyer"} asked a question about ${dealName.get(q.dealId) ?? ""}`, q.dealId);
   }

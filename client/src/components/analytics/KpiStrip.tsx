@@ -152,21 +152,23 @@ function KpiBlock({
   const n = loading ? count : cells.length;
   return (
     <section className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-card" data-testid={testId} aria-label={title}>
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/70 px-4 py-2">
-        <h2 className="order-1 flex min-w-0 items-center gap-1.5 font-mono text-2xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
+      {/* One row: the title, then the period control at the right (short words on a phone); the
+          example-deals note follows it, on its own line on a phone. */}
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/70 px-3 py-1.5 sm:px-4 sm:py-2">
+        <h2 className="flex min-w-0 items-center gap-1.5 font-mono text-2xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
           <span className="truncate">{title}</span>
           {info && <InfoDot text={info} />}
         </h2>
-        {aside && <div className="order-2 ml-auto flex items-center sm:order-3 sm:ml-0">{aside}</div>}
-        {control && <div className="order-3 flex w-full items-center sm:order-2 sm:ml-auto sm:w-auto">{control}</div>}
+        {control && <div className="ml-auto flex items-center">{control}</div>}
+        {aside && <div className={cn("flex items-center", control ? "w-full sm:w-auto" : "ml-auto")}>{aside}</div>}
       </header>
       <div className={cn("grid grid-cols-2 gap-px bg-border/70", n === 3 ? "sm:grid-cols-3" : n >= 4 ? "sm:grid-cols-4" : "")}>
         {loading
           ? Array.from({ length: count }, (_, i) => (
-              <div key={i} className={cn("bg-card px-4 py-3", count % 2 === 1 && i === count - 1 && "col-span-2 sm:col-span-1")}>
+              <div key={i} className={cn("bg-card px-3 py-2 sm:px-4 sm:py-3", count % 2 === 1 && i === count - 1 && "col-span-2 sm:col-span-1")}>
                 <Skeleton className="h-2.5 w-20" />
-                <Skeleton className={cn("mt-3", size === "sm" ? "h-5 w-10" : "h-7 w-12")} />
-                <Skeleton className="mt-2 h-2.5 w-24" />
+                <Skeleton className={cn("mt-2 sm:mt-3", size === "sm" ? "h-5 w-10" : "h-5 w-10 sm:h-7 sm:w-12")} />
+                <Skeleton className="mt-1.5 h-2.5 w-24 sm:mt-2" />
               </div>
             ))
           : cells.map((k, i) => (
@@ -195,7 +197,8 @@ function KpiCell({ kpi, size, strip, wide }: { kpi: Kpi; size: "md" | "sm"; stri
       aria-describedby={descId}
       className={cn(
         "group relative flex h-full w-full flex-col items-start bg-card text-left transition-colors hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-teal",
-        size === "sm" ? "px-3.5 py-2.5 sm:px-4" : "px-3.5 py-2.5 sm:px-4 sm:py-3.5",
+        // A phone keeps each cell compact (~70 px): small padding, a one-line sub.
+        size === "sm" ? "px-3 py-2 sm:px-4 sm:py-2.5" : "px-3 py-2 sm:px-4 sm:py-3.5",
         wide && "col-span-2 sm:col-span-1",
         open && "bg-muted/20",
       )}
@@ -207,15 +210,19 @@ function KpiCell({ kpi, size, strip, wide }: { kpi: Kpi; size: "md" | "sm"; stri
       </span>
       <span
         className={cn(
-          "mt-1.5 font-mono font-medium leading-none tabular-nums",
-          size === "sm" ? "text-[22px]" : "text-[22px] sm:text-[28px]",
+          "mt-1 font-mono font-medium leading-none tabular-nums sm:mt-1.5",
+          size === "sm" ? "text-[20px] sm:text-[22px]" : "text-[20px] sm:text-[28px]",
           alert ? "text-teal" : "text-foreground",
         )}
         data-testid={`kpi-${kpi.id}-value`}
       >
         <KpiDisplay text={kpi.display} />
       </span>
-      <span className="mt-1.5 line-clamp-2 min-h-[1rem] text-[11px] leading-snug text-muted-foreground sm:text-xs" data-testid={`kpi-${kpi.id}-sub`}>
+      <span
+        className="mt-1 w-full truncate text-[11px] leading-snug text-muted-foreground sm:mt-1.5 sm:line-clamp-2 sm:min-h-[1rem] sm:whitespace-normal sm:text-xs"
+        title={kpi.sub ?? undefined}
+        data-testid={`kpi-${kpi.id}-sub`}
+      >
         {kpi.sub ?? " "}
       </span>
       <span id={descId} className="sr-only">{kpi.explain}</span>

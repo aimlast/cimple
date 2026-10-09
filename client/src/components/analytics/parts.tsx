@@ -1,13 +1,13 @@
 /** Small shared pieces of the analytics dashboards: deal chips, the tab description line. */
 import type { ReactNode } from "react";
-import { dayMonth } from "@shared/analytics-dashboard";
+import { linkRanOutWords, whenWords } from "@shared/analytics-dashboard";
 import { cn } from "@/lib/utils";
 import { InfoDot } from "./Explain";
 
 export const EXAMPLE_TIP = "Example deals are the made-up showcase deals. Their numbers are in these totals and marked 'Example' wherever they appear.";
 export const NOT_LIVE_TIP = "Buyers can't open it right now";
 
-export function Chip({ children, tone = "muted", title, className, testId }: { children: ReactNode; tone?: "muted" | "live" | "example" | "brass"; title?: string; className?: string; testId?: string }) {
+export function Chip({ children, tone = "muted", title, className, testId }: { children: ReactNode; tone?: "muted" | "live" | "example" | "brass" | "warning"; title?: string; className?: string; testId?: string }) {
   return (
     <span
       title={title}
@@ -17,6 +17,7 @@ export function Chip({ children, tone = "muted", title, className, testId }: { c
         tone === "muted" && "border-border bg-muted/40 text-muted-foreground",
         tone === "example" && "border-dashed border-border text-muted-foreground",
         tone === "brass" && "border-teal/40 bg-teal/10 text-teal",
+        tone === "warning" && "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400",
         className,
       )}
       data-testid={testId}
@@ -35,6 +36,11 @@ export function DealChips({ live, demo, showLive = false }: { live: boolean; dem
       {demo && <Chip tone="example" title={EXAMPLE_TIP} testId="chip-example">Example</Chip>}
     </>
   );
+}
+
+/** "Link ran out" (a CIM link past its expiry; the tooltip says when and what to do). */
+export function LinkRanOutChip({ at, testId = "chip-link-ran-out" }: { at: string; testId?: string }) {
+  return <Chip tone="warning" title={linkRanOutWords(at)} testId={testId}>Link ran out</Chip>;
 }
 
 /** The one muted sentence under the tab bar that says what the tab shows. */
@@ -93,17 +99,9 @@ export function FilterChip({ children, onRemove, testId }: { children: ReactNode
   );
 }
 
-/** "just now", "3 h ago", "yesterday", "4 days ago", then "23 Sept" (the dashboards' one date style). */
-export function whenText(iso: string | null | undefined, now = Date.now()): string {
-  if (!iso) return "";
-  const t = Date.parse(iso);
-  if (!t) return "";
-  const s = Math.max(0, (now - t) / 1000);
-  if (s < 90) return "just now";
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  if (s < 20 * 3600) return `${Math.round(s / 3600)} h ago`;
-  const days = Math.round(s / 86400);
-  if (days <= 1) return "yesterday";
-  if (days < 7) return `${days} days ago`;
-  return dayMonth(iso);
-}
+/**
+ * "just now", "3 h ago", "yesterday", "4 days ago", then "23 Sept": the
+ * dashboards' one date style, on the broker's calendar (Toronto), the same
+ * rule as the buyer cards' "why" lines (shared/analytics-dashboard.ts).
+ */
+export const whenText = whenWords;

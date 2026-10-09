@@ -15,6 +15,7 @@ import {
   BUYER_STATUS_FILTERS,
   dayMonth,
   matchesBuyerStatus,
+  NOTICE_CHIP_WORDS,
   rangeWords,
   type BuyerDashboardRow,
   type BuyerStatusFilter,
@@ -121,7 +122,11 @@ export function AllBuyersTab({ examples, state, update }: {
   const chip = state.kpi;
   const chipOverview = useAnalyticsOverview(chip?.range ?? "auto", examples, !!chip);
   const chipIds = chip ? chipOverview.data?.kpis.find((k) => k.id === chip.id)?.ids ?? null : null;
-  const chipLoading = !!chip && !chipOverview.data;
+  // A heads-up line's "See them": exactly the buyers that line counted (the page's own overview, cached).
+  const notice = state.notice;
+  const noticeOverview = useAnalyticsOverview(state.range ?? "auto", examples, !!notice);
+  const noticeIds = notice ? noticeOverview.data?.noticeIds?.[notice] ?? null : null;
+  const chipLoading = (!!chip && !chipOverview.data) || (!!notice && !noticeOverview.data);
   const [search, setSearch] = useState(state.q);
   const [shown, setShown] = useState(PAGE);
   const [sheet, setSheet] = useState(false);
@@ -132,7 +137,7 @@ export function AllBuyersTab({ examples, state, update }: {
     const id = setTimeout(() => update({ q: search }), 200);
     return () => clearTimeout(id);
   }, [search, state.q, update]);
-  useEffect(() => setShown(PAGE), [state.q, state.deal, state.status, state.sort, state.kpi?.id, state.kpi?.range]);
+  useEffect(() => setShown(PAGE), [state.q, state.deal, state.status, state.sort, state.kpi?.id, state.kpi?.range, state.notice]);
 
   const now = useMemo(() => new Date(), [data]);
   const all = data?.rows ?? [];
@@ -143,18 +148,19 @@ export function AllBuyersTab({ examples, state, update }: {
   }, [all]);
   const rows = useMemo(() => {
     let r = applyKpiFilter(all, chip ? chipIds ?? [] : null);
+    r = applyKpiFilter(r, notice ? noticeIds ?? [] : null);
     if (state.deal) r = r.filter((x) => x.dealId === state.deal);
     r = r.filter((x) => matchesBuyerStatus(x, state.status, now));
     r = searchBuyerRows(r, state.q);
     return sortBuyerRows(r, state.sort);
-  }, [all, chip, chipIds, state.deal, state.status, state.q, state.sort, now]);
+  }, [all, chip, chipIds, notice, noticeIds, state.deal, state.status, state.q, state.sort, now]);
 
   if (isLoading || chipLoading) return <div className="space-y-2"><Skeleton className="h-9 w-full" />{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>;
   if (error || !data) return <PanelError what="your buyers" onRetry={() => refetch()} />;
 
-  const any = !!(state.q || state.deal || state.status !== "all" || chip);
+  const any = !!(state.q || state.deal || state.status !== "all" || chip || notice);
   const nFilters = (state.deal ? 1 : 0) + (state.status !== "all" ? 1 : 0) + (state.sort !== "last_active" ? 1 : 0);
-  const clear = () => { setSearch(""); update({ q: "", deal: null, status: "all", kpi: null }); };
+  const clear = () => { setSearch(""); update({ q: "", deal: null, status: "all", kpi: null, notice: null }); };
   const statusLabel = BUYER_STATUS_FILTERS.find((s) => s.key === state.status)?.label ?? "All";
   const dealName = deals.find((d) => d.id === state.deal)?.name ?? null;
   const page = rows.slice(0, shown);
@@ -162,6 +168,7 @@ export function AllBuyersTab({ examples, state, update }: {
   const chips = (
     <>
       {chip && <FilterChip onRemove={() => update({ kpi: null })} testId="kpi-chip">{kpiChipWords(chip.id, chip.range)}</FilterChip>}
+      {notice && <FilterChip onRemove={() => update({ notice: null })} testId="notice-chip">{NOTICE_CHIP_WORDS[notice]}</FilterChip>}
       {state.deal && dealName && <FilterChip onRemove={() => update({ deal: null })}>{dealName}</FilterChip>}
       {state.status !== "all" && <FilterChip onRemove={() => update({ status: "all" })}>{statusLabel}</FilterChip>}
     </>
@@ -202,6 +209,7 @@ export function AllBuyersTab({ examples, state, update }: {
             </SelectContent>
           </Select>
           {chip && <FilterChip onRemove={() => update({ kpi: null })} testId="kpi-chip">{kpiChipWords(chip.id, chip.range)}</FilterChip>}
+          {notice && <FilterChip onRemove={() => update({ notice: null })} testId="notice-chip">{NOTICE_CHIP_WORDS[notice]}</FilterChip>}
           {any && <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={clear} data-testid="buyers-clear">Clear</Button>}
         </div>
         {/* phone: one Filters button, active filters as chips */}

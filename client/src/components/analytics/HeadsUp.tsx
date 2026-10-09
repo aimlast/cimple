@@ -2,7 +2,8 @@
  * The heads-up lines under the numbers (at most two, only when they apply):
  * a registered source's line first (the data room), then buyer links running
  * out within 7 days, then buyers who haven't opened 3 days after you gave
- * access. Each has "See them" → the Buyers tab filtered to exactly them.
+ * access. Each has "See them" → the Buyers tab showing exactly the buyers
+ * the line counted (`?notice=<id>`; the line's number = the rows).
  */
 import { Link } from "wouter";
 import { ChevronRight, Flag } from "lucide-react";
@@ -15,7 +16,11 @@ export function headsUpShort(h: HeadsUpLine): string {
   return h.text;
 }
 
-export function HeadsUp({ lines }: { lines: HeadsUpLine[] }) {
+export function HeadsUp({ lines, linkFor }: {
+  lines: HeadsUpLine[];
+  /** "See them" for a built-in line: the Buyers tab showing exactly its buyers (keeps the page's period and example setting). */
+  linkFor?(h: HeadsUpLine): string;
+}) {
   const shown = lines.slice(0, HEADS_UP_MAX);
   if (shown.length === 0) return null;
   return (
@@ -27,7 +32,7 @@ export function HeadsUp({ lines }: { lines: HeadsUpLine[] }) {
             <span className="sm:hidden">{headsUpShort(h)}</span>
             <span className="hidden sm:inline">{h.text}</span>
           </p>
-          <Link href={h.link} className="inline-flex shrink-0 items-center gap-0.5 text-xs font-medium text-teal hover:underline" data-testid={`heads-up-${h.id}`}>
+          <Link href={(h.ids && linkFor?.(h)) || h.link} className="inline-flex shrink-0 items-center gap-0.5 text-xs font-medium text-teal hover:underline" data-testid={`heads-up-${h.id}`}>
             <span className="hidden sm:inline">See them</span>
             <ChevronRight className="h-3.5 w-3.5" />
           </Link>

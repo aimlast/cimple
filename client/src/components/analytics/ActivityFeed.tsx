@@ -13,8 +13,13 @@ import {
 } from "lucide-react";
 import {
   ACTIVITY_KIND_FILTERS,
+  brokerDayKey,
+  brokerZoneLabel,
+  dayHeading,
   dayMonth,
   rangeLabel,
+  timeOfDay,
+  viewerTimeOfDay,
   type ActivityGroup,
   type ActivityItem,
   type ActivityKindFilter,
@@ -40,8 +45,6 @@ import { SampleTag } from "./KpiStrip";
 import { OptionGroup } from "./parts";
 import { TabEmpty } from "./EmptyStates";
 
-const TZ = "America/Toronto";
-
 const GROUP_ICON: Record<ActivityGroup, typeof BookOpen> = {
   reading: BookOpen, nda: FileSignature, decision: Flag, question: MessageSquare, broker: UserCog, data_room: FolderOpen,
 };
@@ -51,28 +54,15 @@ const TONE: Record<ActivityItem["tone"], string> = {
   neutral: "text-foreground/80",
 };
 
-const dayKeyFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
-const dayHeadFmt = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, weekday: "short", day: "numeric", month: "short" });
-const timeFmt = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit", hour12: true });
-
-/** "Today" | "Yesterday" | "Tue 23 Sept" (Toronto calendar days). */
-export function dayHeading(at: string | number, now: number = Date.now()): string {
-  const k = dayKeyFmt.format(new Date(at));
-  if (k === dayKeyFmt.format(new Date(now))) return "Today";
-  if (k === dayKeyFmt.format(new Date(now - 86_400_000))) return "Yesterday";
-  return dayHeadFmt.format(new Date(at)).replace(",", "");
-}
-
-/** "3:12 pm" */
-export function timeOfDay(at: string | number): string {
-  return timeFmt.format(new Date(at)).replace(/\s?([AP])M$/, (_, x: string) => ` ${x.toLowerCase()}m`);
-}
+// Dates and times: the broker's calendar (Toronto), one rule with every
+// other engagement and analytics screen (shared/analytics-dashboard.ts).
+export { dayHeading, timeOfDay };
 
 /** Items grouped by day, newest first (exported for tests). */
 export function groupByDay(items: ActivityItem[], now: number = Date.now()): Array<{ key: string; heading: string; items: ActivityItem[] }> {
   const out: Array<{ key: string; heading: string; items: ActivityItem[] }> = [];
   for (const it of items) {
-    const key = dayKeyFmt.format(new Date(it.at));
+    const key = brokerDayKey(it.at);
     const last = out[out.length - 1];
     if (last && last.key === key) last.items.push(it);
     else out.push({ key, heading: dayHeading(it.at, now), items: [it] });
@@ -94,15 +84,33 @@ function TitleWithName({ title, name }: { title: string; name: string | null }) 
   );
 }
 
-/** The list itself (presentational; exported for tests). */
-export function ActivityList({ items, showDeal, compact, now }: { items: ActivityItem[]; showDeal: boolean; compact?: boolean; now?: number }) {
+/**
+ * The list itself (presentational; exported for tests). Times are Toronto's;
+ * when the viewer's own clock differs, each day header says "Toronto time"
+ * (sticky, so the label stays beside the times) and each time's tooltip
+ * gives the viewer's own clock. `zoneLabel` is for tests (default: worked
+ * out from this browser).
+ */
+export function ActivityList({ items, showDeal, compact, now, zoneLabel }: {
+  items: ActivityItem[];
+  showDeal: boolean;
+  compact?: boolean;
+  now?: number;
+  zoneLabel?: string | null;
+}) {
   const days = groupByDay(items, now);
+  const zone = zoneLabel !== undefined ? zoneLabel : brokerZoneLabel(now);
   return (
     <div className="space-y-4" data-testid="activity-list">
       {days.map((d) => (
         <section key={d.key}>
-          <h3 className={cn("z-10 bg-background/95 py-1 font-mono text-2xs uppercase tracking-[0.14em] text-muted-foreground backdrop-blur", !compact && "sticky top-0")} data-testid="activity-day">
-            {d.heading}
+          <h3 className={cn("z-10 flex items-baseline gap-2 bg-background/95 py-1 font-mono text-2xs uppercase tracking-[0.14em] text-muted-foreground backdrop-blur", !compact && "sticky top-0")} data-testid="activity-day">
+            <span>{d.heading}</span>
+            {zone && (
+              <span className="ml-auto font-sans text-[11px] normal-case tracking-normal text-muted-foreground/80" title="Times are on the broker's calendar (Toronto). Hover a time to see it on your own clock." data-testid="activity-zone">
+                {zone}
+              </span>
+            )}
           </h3>
           <ol className="mt-1 divide-y divide-border/60 rounded-xl border border-border bg-card">
             {d.items.map((it) => {
@@ -112,7 +120,13 @@ export function ActivityList({ items, showDeal, compact, now }: { items: Activit
                   <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", TONE[it.tone])} aria-hidden />
                   <div className="min-w-0 flex-1">
                     <p className="text-sm leading-snug text-foreground/90">
-                      <span className="mr-2 whitespace-nowrap text-xs tabular-nums text-muted-foreground">{timeOfDay(it.at)}</span>
+                      <span
+                        className="mr-2 whitespace-nowrap text-xs tabular-nums text-muted-foreground"
+                        title={zone ? `${viewerTimeOfDay(it.at)} your time` : undefined}
+                        data-testid="activity-time"
+                      >
+                        {timeOfDay(it.at)}
+                      </span>
                       <TitleWithName title={it.title} name={it.name} />
                       {it.sample && <SampleTag className="ml-1.5 align-middle" />}
                     </p>

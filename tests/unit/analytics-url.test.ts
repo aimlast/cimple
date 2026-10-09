@@ -86,8 +86,17 @@ test("the number chip round-trips", () => {
 });
 
 test("every param round-trips", () => {
-  const state = { ...ANALYTICS_URL_DEFAULTS, tab: "buyers" as const, range: "30d" as const, examples: "include" as const, buyer: "acc_1", deal: "deal-1", status: "expiring" as const, q: "kinbrook", sort: "fit" as const, kpi: { id: "interested" as const, range: "7d" as const }, kind: "nda" as const };
+  const state = { ...ANALYTICS_URL_DEFAULTS, tab: "buyers" as const, range: "30d" as const, examples: "include" as const, buyer: "acc_1", deal: "deal-1", status: "expiring" as const, q: "kinbrook", sort: "fit" as const, kpi: { id: "interested" as const, range: "7d" as const }, notice: "not_opened" as const, kind: "nda" as const };
   assert.deepEqual(parseAnalyticsSearch(analyticsSearch(state)), state);
+});
+
+test("the heads-up chip (notice=) round-trips, refuses junk, and goes with a tab switch", () => {
+  assert.equal(parseAnalyticsSearch("?tab=buyers&notice=expiring").notice, "expiring");
+  assert.equal(parseAnalyticsSearch("?tab=buyers&notice=bogus").notice, null);
+  assert.equal(analyticsSearch({ tab: "buyers", notice: "expiring" }), "?tab=buyers&notice=expiring");
+  assert.equal(switchTab(parseAnalyticsSearch("?tab=buyers&notice=expiring"), "activity").notice, null);
+  // An older "Teaser only" link (status=teaser) still opens that filter under its new key.
+  assert.equal(parseAnalyticsSearch("?tab=buyers&status=teaser").status, "teaser_links");
 });
 
 test("a tab switch keeps the period and the example-deals choice, and drops the old tab's filters", () => {

@@ -11,7 +11,8 @@
  */
 import { useMemo } from "react";
 import { formatReadingTime, type BuyerEngagementCard } from "@shared/analytics-v2";
-import { dayMonth, type BuyerGroups } from "@shared/analytics-dashboard";
+import { dayMonth, extendLinkHref, linkRanOutWords, type BuyerGroups, type LinkRanOut } from "@shared/analytics-dashboard";
+import { Link } from "wouter";
 import { useEngagementBuyers } from "@/hooks/useEngagement";
 import { titleMaps, useEngagementPageTitles } from "@/hooks/useAnalyticsDashboard";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -81,6 +82,8 @@ export interface BuyersViewProps extends EngagementViewProps {
   /** The selected buyer (?buyer=); null = the first row (wide screens only). */
   selected: string | null;
   onSelect(accessId: string | null): void;
+  /** From the KPI response: links that have run out (accessId → when). */
+  linkRanOut?: LinkRanOut;
 }
 
 export function BuyersView(props: BuyersViewProps) {
@@ -133,6 +136,8 @@ export function BuyersView(props: BuyersViewProps) {
       nav={nav}
       actions={actions}
       onAllTime={() => props.onFiltersChange({ ...filters, range: "all" })}
+      ranOutAt={props.linkRanOut?.[row.accessId] ?? null}
+      extendHref={extendLinkHref(dealId)}
     />
   ) : !anyOpened ? (
     <EmptyReading published={props.published} />
@@ -160,6 +165,7 @@ export function BuyersView(props: BuyersViewProps) {
         live={props.published}
         nudgeMode={actions.nudgeMode}
         onNudge={actions.nudge}
+        linkRanOut={props.linkRanOut}
         head={<BuyerListHead readers={props.readers} totalMs={totalMs} olderVisits={props.olderVisits} />}
       />
       {wide ? (
@@ -177,7 +183,7 @@ export function BuyersView(props: BuyersViewProps) {
   );
 }
 
-function BuyerDetail({ card, row, notOpened, quiet, published, titles, blindTitles, maxMs, nav, actions, onAllTime }: {
+function BuyerDetail({ card, row, notOpened, quiet, published, titles, blindTitles, maxMs, nav, actions, onAllTime, ranOutAt, extendHref }: {
   card: BuyerEngagementCard | null;
   row: { accessId: string; name: string; grantedAt: string; lastSeenAt: string | null };
   notOpened: boolean;
@@ -189,13 +195,21 @@ function BuyerDetail({ card, row, notOpened, quiet, published, titles, blindTitl
   nav: EngagementViewProps["nav"];
   actions: BuyerCardActions;
   onAllTime(): void;
+  ranOutAt: string | null;
+  extendHref: string;
 }) {
+  const ranOut = ranOutAt ? (
+    <p className="mt-3 text-xs text-muted-foreground" data-testid="detail-link-ran-out">
+      {linkRanOutWords(ranOutAt)} <Link href={extendHref} className="font-medium text-teal hover:underline">Extend</Link>
+    </p>
+  ) : null;
   if (notOpened) {
     const mode = actions.nudgeMode(row.accessId);
     return (
       <div className="rounded-xl border border-dashed border-border bg-card px-5 py-8 text-center" data-testid="detail-not-opened">
         <p className="text-sm font-medium text-foreground">{row.name} hasn't opened the CIM yet.</p>
         <p className="mt-1 text-xs text-muted-foreground">Access given {whenText(row.grantedAt)}.{published ? "" : " The CIM isn't live, so they can't open it yet."}</p>
+        {ranOut}
         {published && (
           <div className="mt-4 flex flex-wrap justify-center gap-2">
             {mode && (
@@ -222,6 +236,7 @@ function BuyerDetail({ card, row, notOpened, quiet, published, titles, blindTitl
         <p className="mt-1 text-xs text-muted-foreground">
           {row.lastSeenAt ? `Last read ${whenText(row.lastSeenAt)}.` : "Change the filters to see their reading."}
         </p>
+        {ranOut}
         {quiet && <Button size="sm" variant="outline" className="mt-4 h-8 text-xs" onClick={onAllTime}>Show all time</Button>}
       </div>
     );
@@ -234,6 +249,8 @@ function BuyerDetail({ card, row, notOpened, quiet, published, titles, blindTitl
       maxMs={maxMs}
       nav={nav}
       legend
+      linkRanOutAt={ranOutAt}
+      extendHref={extendHref}
       {...actions.propsFor(card)}
     />
   );

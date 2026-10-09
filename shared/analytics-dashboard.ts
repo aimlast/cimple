@@ -126,12 +126,103 @@ export function applyKpiFilter<T extends { accessId: string }>(rows: T[], ids: s
   return rows.filter((r) => set.has(r.accessId));
 }
 
+// ── Dates and times: ONE rule on every engagement and analytics screen ─────
+//
+// Every date and time the broker sees is on the broker's calendar, Toronto
+// (the same rule as server/engagement/insights.ts whenText, which writes the
+// buyer cards' "why" lines on the server). Written "23 Sept" and "3:12 pm".
+// A viewer whose own clock differs from Toronto's (the founder abroad, a
+// Vancouver broker) sees the times labelled "Toronto time", with their own
+// clock in a tooltip, so "5:25 am" under "Today" is never a puzzle.
+
+/** The broker's calendar. */
+export const BROKER_TIME_ZONE = TZ;
+
+const msOf = (at: Date | string | number | null | undefined): number => {
+  if (at == null || at === "") return NaN;
+  return typeof at === "number" ? at : new Date(at).getTime();
+};
+const dayMonthFmt = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, day: "numeric", month: "short" });
+const dayKeyFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+const dayHeadFmt = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, weekday: "short", day: "numeric", month: "short" });
+const clockOpts: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit", hour12: true };
+
 /** "23 Sept" (Toronto calendar day, like the rest of the broker's dates). */
 export function dayMonth(at: Date | string | number | null | undefined): string {
-  if (at == null || at === "") return "";
-  const t = typeof at === "number" ? at : new Date(at).getTime();
-  if (!Number.isFinite(t)) return "";
-  return new Intl.DateTimeFormat("en-GB", { timeZone: TZ, day: "numeric", month: "short" }).format(t);
+  const t = msOf(at);
+  return Number.isFinite(t) ? dayMonthFmt.format(t) : "";
+}
+
+/** "2026-09-23": the Toronto calendar day (grouping key). */
+export function brokerDayKey(at: Date | string | number): string {
+  return dayKeyFmt.format(msOf(at));
+}
+
+/** "Today" | "Yesterday" | "Tue 23 Sept" (Toronto calendar days). */
+export function dayHeading(at: Date | string | number, now: number = Date.now()): string {
+  const k = brokerDayKey(at);
+  if (k === brokerDayKey(now)) return "Today";
+  if (k === brokerDayKey(now - DAY)) return "Yesterday";
+  return dayHeadFmt.format(msOf(at)).replace(",", "");
+}
+
+function clock(at: Date | string | number, timeZone: string | undefined): string {
+  return new Intl.DateTimeFormat("en-US", { ...clockOpts, timeZone }).format(msOf(at))
+    .replace(/\s?([AP])M$/, (_, x: string) => ` ${x.toLowerCase()}m`);
+}
+
+/** "3:12 pm" (Toronto). */
+export function timeOfDay(at: Date | string | number): string {
+  return clock(at, TZ);
+}
+
+/** The viewer's own time zone ("" when the runtime can't say). */
+export function viewerTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  } catch {
+    return "";
+  }
+}
+
+/** "6:25 pm" on the viewer's own clock (the tooltip beside a Toronto time). */
+export function viewerTimeOfDay(at: Date | string | number, zone: string = viewerTimeZone()): string {
+  try {
+    return clock(at, zone || undefined);
+  } catch {
+    return clock(at, undefined);
+  }
+}
+
+/**
+ * "Toronto time" when the viewer's clock shows a different time from
+ * Toronto's right now (so the times on screen need the label), else null.
+ */
+export function brokerZoneLabel(now: number = Date.now(), zone: string = viewerTimeZone()): string | null {
+  if (!zone) return null;
+  const wall = (z: string) => new Intl.DateTimeFormat("en-CA", {
+    timeZone: z, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).format(now);
+  try {
+    return wall(zone) === wall(TZ) ? null : "Toronto time";
+  } catch {
+    return null;
+  }
+}
+
+/** "just now", "12 min ago", "3 h ago", "yesterday", "4 days ago", then "23 Sept" (Toronto). */
+export function whenWords(at: string | null | undefined, now: number = Date.now()): string {
+  if (!at) return "";
+  const t = Date.parse(at);
+  if (!t) return "";
+  const s = Math.max(0, (now - t) / 1000);
+  if (s < 90) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 20 * 3600) return `${Math.round(s / 3600)} h ago`;
+  const days = Math.round(s / 86400);
+  if (days <= 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  return dayMonth(t);
 }
 
 export function plural(n: number, one: string, many = `${one}s`): string {
@@ -251,7 +342,7 @@ export const KPI_COPY: Record<KpiId, {
     label: () => "Buyers who read",
     shortLabel: "Read",
     explain: (r, scope) =>
-      `Buyers who read ${scope === "broker" ? "one of your CIMs" : "the CIM"} ${rangeWords(r)}: at least one visit with 3 seconds or more of active reading. Idle time, hidden tabs and your own previews don't count.${scope === "broker" ? " A buyer with links to two deals counts once for each." : ""}`,
+      `Buyers who read ${scope === "broker" ? "one of your CIMs" : "the CIM"} ${rangeWords(r)}: at least one visit with 3 seconds or more of active reading. Idle time, hidden tabs and your own previews don't count.${scope === "broker" ? " A buyer with links to two deals counts once for each. \"Given the CIM\" counts every buyer you've given a CIM, including links you later removed (their reading still counts)." : ""}`,
   },
   nda: {
     label: () => "NDAs signed",
@@ -290,7 +381,34 @@ export interface ReadingNowRow {
 }
 export interface ReadingNowResponse { rows: ReadingNowRow[] }
 
-export interface HeadsUp { id: string; count: number; text: string; names: string[]; link: string }
+export interface HeadsUp {
+  id: string;
+  count: number;
+  text: string;
+  names: string[];
+  link: string;
+  /**
+   * The built-in lines ("expiring", "not_opened"): the exact access ids
+   * counted, so "See them" opens exactly those buyers (`?notice=<id>`). A
+   * registered source's line leaves it out and links where it says.
+   */
+  ids?: string[] | null;
+}
+
+/** The built-in heads-up lines, as a Buyers-tab chip (`?tab=buyers&notice=<id>`). */
+export type NoticeId = "expiring" | "not_opened";
+export const NOTICE_IDS: readonly NoticeId[] = ["expiring", "not_opened"];
+/** The days a CIM link may sit unopened before the "haven't opened" line names it. */
+export const HEADS_UP_NOT_OPENED_DAYS = 3;
+/** The chip's words: what exactly the rows are. */
+export const NOTICE_CHIP_WORDS: Record<NoticeId, string> = {
+  expiring: "Link runs out in the next 7 days",
+  not_opened: `Haven't opened, ${HEADS_UP_NOT_OPENED_DAYS}+ days after you gave access`,
+};
+export function parseNoticeId(v: unknown): NoticeId | null {
+  const s = Array.isArray(v) ? v[0] : v;
+  return NOTICE_IDS.includes(s as NoticeId) ? (s as NoticeId) : null;
+}
 export interface PartialLoad { failedDeals: Array<{ dealId: string; dealName: string }> }
 
 /** The two heads-up lines the page shows at most. */
@@ -320,6 +438,13 @@ export interface AnalyticsOverviewResponse {
   lastActivity: { at: string; text: string; dealId: string } | null;
   demoDealIds: string[];
   partial: PartialLoad | null;
+  /**
+   * The built-in heads-up sets, uncapped and whether or not their line is
+   * shown (the page shows at most two lines): `?notice=<id>` on the Buyers
+   * tab restricts the rows to exactly this set, so the line's number and
+   * the list it opens always agree.
+   */
+  noticeIds: Record<NoticeId, string[]>;
 }
 
 export interface DealDashboardRow {
@@ -344,6 +469,26 @@ export interface DealDashboardRow {
 export interface AnalyticsCallListResponse {
   entries: CallListEntry[];
   deals: Array<{ dealId: string; live: boolean; demo: boolean }>;
+  /** Listed buyers whose link has run out (accessId → when): "Link ran out", with Extend. */
+  linkRanOut: LinkRanOut;
+}
+
+/**
+ * CIM links that have run out (accessId → the expiry, ISO): not removed, not
+ * a buyer who said no or didn't respond. They stay in the call list (the
+ * broker may well want to call them) with a "Link ran out" chip and Extend,
+ * because they can't open the CIM until the broker extends the link.
+ */
+export type LinkRanOut = Record<string, string>;
+
+/** The chip's tooltip: "Their link ran out on 6 Oct. They can't open the CIM until you extend it." */
+export function linkRanOutWords(expiredAt: string): string {
+  return `Their link ran out on ${dayMonth(expiredAt)}. They can't open the CIM until you extend it.`;
+}
+
+/** Where "Extend" goes: the deal's Buyers tab, Have the CIM (extend, give a new link). */
+export function extendLinkHref(dealId: string): string {
+  return `/deal/${dealId}/buyers?stage=have`;
 }
 
 export interface AnalyticsDealsResponse {
@@ -393,7 +538,7 @@ export interface AnalyticsBuyersResponse { rows: BuyerDashboardRow[]; partial: P
 
 /** The Buyers tab's status filter. */
 export type BuyerStatusFilter =
-  | "all" | "interested" | "deciding" | "not_opened" | "declined" | "expiring" | "teaser" | "teaser_asked" | "revoked";
+  | "all" | "interested" | "deciding" | "not_opened" | "declined" | "expiring" | "teaser_links" | "teaser_asked" | "revoked";
 
 export const BUYER_STATUS_FILTERS: ReadonlyArray<{ key: BuyerStatusFilter; label: string }> = [
   { key: "all", label: "All" },
@@ -402,13 +547,17 @@ export const BUYER_STATUS_FILTERS: ReadonlyArray<{ key: BuyerStatusFilter; label
   { key: "not_opened", label: "Haven't opened" },
   { key: "declined", label: "Said no or didn't respond" },
   { key: "expiring", label: "Link runs out soon" },
-  { key: "teaser", label: "Teaser only" },
+  { key: "teaser_links", label: "Teaser only" },
   { key: "teaser_asked", label: "Asked for the CIM" },
   { key: "revoked", label: "Link removed" },
 ];
 
+/** Status keys an older link may carry → today's key (the "Teaser only" filter was `status=teaser`). */
+const OLD_STATUS_KEYS: Record<string, BuyerStatusFilter> = { teaser: "teaser_links" };
+
 export function parseBuyerStatusFilter(v: unknown): BuyerStatusFilter {
   const s = Array.isArray(v) ? v[0] : v;
+  if (typeof s === "string" && Object.prototype.hasOwnProperty.call(OLD_STATUS_KEYS, s)) return OLD_STATUS_KEYS[s];
   return BUYER_STATUS_FILTERS.some((f) => f.key === s) ? (s as BuyerStatusFilter) : "all";
 }
 
@@ -423,14 +572,15 @@ export function matchesBuyerStatus(row: BuyerDashboardRow, filter: BuyerStatusFi
     case "deciding":
       return row.document === "cim" && !!row.firstSeenAt
         && (!row.decision || row.decision === "under_review" || row.decision === "need_more_time");
-    case "not_opened": return row.document === "cim" && !row.firstSeenAt;
+    // (Not removed: the same set as the Who-to-call "{n} haven't opened" line; a removed link is "Link removed".)
+    case "not_opened": return row.document === "cim" && !row.firstSeenAt && !row.revokedAt;
     case "declined": return row.decision === "not_interested" || row.decision === "lapsed";
     case "expiring": {
       if (row.revokedAt || !row.expiresAt || FINAL_DECISIONS.has(row.decision)) return false;
       const t = Date.parse(row.expiresAt);
       return t > now.getTime() && t - now.getTime() <= 7 * DAY;
     }
-    case "teaser": return row.document !== "cim";
+    case "teaser_links": return row.document !== "cim";
     case "teaser_asked": return row.status === "teaser_asked";
     case "revoked": return !!row.revokedAt;
   }
@@ -551,6 +701,8 @@ export interface DealKpisResponse {
   legacyOnly: boolean;
   /** Example-deal sample reading is shown (INTEGRATION C9: the shell's "Sample reading" chip and the pulse). */
   sampleReading: boolean;
+  /** This deal's CIM links that have run out (the list rows, the card, the pulse's "Call first"). */
+  linkRanOut: LinkRanOut;
   /** "Last 7 days · Interested buyers" */
   forText: string | null;
 }

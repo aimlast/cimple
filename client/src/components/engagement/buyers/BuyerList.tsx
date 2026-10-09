@@ -10,12 +10,12 @@
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { ChevronDown, Copy, Mail } from "lucide-react";
 import { formatReadingTime, type BuyerEngagementCard, type EngagementRange } from "@shared/analytics-v2";
-import { dayMonth, rangeLabel, type BuyerGroups, type GroupRow } from "@shared/analytics-dashboard";
+import { dayMonth, rangeLabel, type BuyerGroups, type GroupRow, type LinkRanOut } from "@shared/analytics-dashboard";
 import { accessLevelLabel } from "@shared/access-levels";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { PageStrip, StatusChip } from "./parts";
-import { whenText } from "@/components/analytics/parts";
+import { LinkRanOutChip, whenText } from "@/components/analytics/parts";
 
 export type GroupKey = keyof BuyerGroups;
 
@@ -67,6 +67,8 @@ export interface BuyerListProps {
   onNudge(accessId: string): void;
   /** The list head (counts, the legacy chip). */
   head?: ReactNode;
+  /** Links that have run out (accessId → when): a "Link ran out" chip on the row. */
+  linkRanOut?: LinkRanOut;
 }
 
 export function BuyerList(props: BuyerListProps) {
@@ -145,8 +147,9 @@ export function BuyerListRow({ row, group, rank, card, selected, onSelect, list 
   card: BuyerEngagementCard | null;
   selected: boolean;
   onSelect(): void;
-  list: Pick<BuyerListProps, "maxMs" | "titles" | "blindTitles" | "live" | "nudgeMode" | "onNudge">;
+  list: Pick<BuyerListProps, "maxMs" | "titles" | "blindTitles" | "live" | "nudgeMode" | "onNudge" | "linkRanOut">;
 }) {
+  const ranOutAt = list.linkRanOut?.[row.accessId] ?? null;
   const plain = group === "notOpened" || group === "quietInRange" || !card;
   const mode = group === "notOpened" ? list.nudgeMode(row.accessId) : null;
   return (
@@ -188,7 +191,11 @@ export function BuyerListRow({ row, group, rank, card, selected, onSelect, list 
             <span className="mt-1 flex flex-wrap items-center gap-1.5">
               <StatusChip status={card.status} label={card.statusLabel} />
               <span className="text-2xs text-muted-foreground">{accessLevelLabel(row.accessLevel)}</span>
+              {ranOutAt && <LinkRanOutChip at={ranOutAt} />}
             </span>
+          )}
+          {ranOutAt && (group === "notOpened" || group === "quietInRange" || !card) && (
+            <span className="mt-1 flex"><LinkRanOutChip at={ranOutAt} /></span>
           )}
         </span>
       </button>
