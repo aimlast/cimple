@@ -25,8 +25,11 @@ import {
   effectiveScope, heatIntensity, heatMaxMs, interactionLines, legendTicks, msAtIntensity, orderPages, paperTint,
   parsePageParam, partVisibility, partVisibilityCss, pathWidths, reachFallback, readersText, selectPageIndex,
   steepestDrop, topBlocks, unreadBlocks, TINT_STRENGTH, defaultSectionView, inView, isUnread, pageInView, pageOfText,
+  drawMode, statusSentence, whyNotes, washFill, WASH_MAX_ALPHA, pageRank, railTint, pageLegendTicks, recordedReach, reachCountsLine,
+  pageHeatMaxMs, ordinal, shortDate, type StatusContext,
 } from "../../client/src/components/engagement/document/viewer-model";
 import { PageCanvas } from "../../client/src/components/engagement/document/PageCanvas";
+import { updateNote } from "../../client/src/components/engagement/document/PagePanel";
 
 (globalThis as any).window ??= { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) };
 
@@ -331,10 +334,141 @@ test("a page missing from this version says so instead of rendering something el
   assert.match(html, /isn(&#x27;|')t in this version of the CIM/);
 });
 
+console.log("whole-page heat, status line and Why? (heat-map spec §3)");
+
+type Heat = DocumentPage["heat"];
+const heat = (basis: Heat["basis"], over: Partial<Heat> = {}): Heat => ({ basis, partBuyers: basis === "parts" || basis === "mixed" ? 3 : 0, pageOnlyBuyers: basis === "page" ? 8 : basis === "mixed" ? 2 : 0, pageOnlyMs: basis === "page" ? 1_660_000 : basis === "mixed" ? 250_000 : 0, reason: basis === "page" || basis === "mixed" ? "before_part_tracking" : null, ...over });
+const hp = (attentionMs: number, h: Heat) => ({ attentionMs, heat: h });
+const ctx = (over: Partial<StatusContext> = {}): StatusContext => ({ blind: false, showNamed: false, sameLayout: true, ...over });
+const docOf = (over: Record<string, unknown> = {}) => ({ versionNote: null, sampleReading: false, reachBasis: "tracked", lastRecordedIndex: null, legacyUnmatched: null, pages: [], ...over }) as any;
+
+test("what is drawn: each part, the whole page, or nothing", () => {
+  assert.equal(drawMode(hp(60_000, heat("parts"))), "parts");
+  assert.equal(drawMode(hp(60_000, heat("mixed"))), "parts");
+  assert.equal(drawMode(hp(60_000, heat("page"))), "wash");
+  assert.equal(drawMode(hp(60_000, heat("parts")), false), "wash", "the named version with different parts: whole page");
+  assert.equal(drawMode(hp(500, heat("none"))), "none");
+  assert.equal(drawMode(null), "none");
+});
+test("the wash stays light enough to read through (alpha ≤ 0.37) and grows with time", () => {
+  const a = (c: string | null) => Number(/, ([\d.]+)\)$/.exec(c ?? "")?.[1]);
+  assert.equal(washFill(0), null);
+  assert.ok(a(washFill(1)) <= WASH_MAX_ALPHA + 1e-9 && a(washFill(1)) > 0.36);
+  assert.ok(a(washFill(0.2)) < a(washFill(0.8)));
+  assert.ok(a(washFill(0.01)) >= 0.1, "even a little reading shows");
+  assert.match(washFill(0.5)!, /^rgba\(\d+, \d+, \d+, /, "explicit rgba on the theme-locked paper");
+});
+test("rank on the page: '3rd most-read of 29', 'Most-read of 29', nothing for an unread page", () => {
+  const pages = [5, 30, 10, 20, 0].map((m, i) => ({ pageId: `p${i}`, part: 0, index: i, attentionMs: m * 1000 }));
+  assert.equal(pageRank(pages, pages[1])!.text, "Most-read of 5");
+  assert.equal(pageRank(pages, pages[2])!.text, "3rd most-read of 5");
+  assert.equal(pageRank(pages, pages[4]), null);
+  assert.deepEqual([1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 101].map(ordinal), ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd", "101st"]);
+  assert.equal(pageHeatMaxMs(pages), 30_000);
+});
+test("rail tiles are tinted by reading time in the brass token (both themes); unread tiles aren't", () => {
+  assert.equal(railTint(0), null);
+  assert.equal(railTint(1), "hsl(var(--teal) / 0.300)");
+  assert.equal(railTint(0.5), "hsl(var(--teal) / 0.175)");
+});
+test("the whole-page legend speaks in seconds of page reading time", () => {
+  const ticks = pageLegendTicks(36 * 60_000 + 46_000);
+  assert.equal(ticks.length, 4);
+  assert.equal(ticks[3].label, "36 min 46 s");
+  assert.ok(ticks.every((t) => !/%/.test(t.label)));
+});
+test("the status line: one sentence, first match wins (spec §3.4)", () => {
+  const d = docOf();
+  assert.equal(statusSentence(hp(0, heat("none")), d, ctx()), "Nobody has read this page yet.");
+  assert.equal(statusSentence(hp(60_000, heat("page")), docOf({ versionNote: { kind: "kept_copy", since: "2026-09-29T14:02:17Z" } }), ctx({ blind: true })),
+    "Shaded as a whole page: read before Cimple tracked each part of a page.");
+  assert.equal(statusSentence(hp(60_000, heat("page", { reason: "other_layout" })), d, ctx()), "Shaded as a whole page: buyers read a version of it with different parts.");
+  assert.equal(statusSentence(hp(60_000, heat("mixed", { partBuyers: 1, pageOnlyBuyers: 2, pageOnlyMs: 250_000 })), d, ctx()),
+    "Colours show where 1 buyer read; 2 more read it as a whole page (4 min 10 s).");
+  assert.equal(statusSentence(hp(60_000, heat("parts")), docOf({ versionNote: { kind: "held", sample: true } }), ctx({ blind: true })), "Buyers can't open this CIM until you publish your update.");
+  assert.equal(statusSentence(hp(60_000, heat("parts")), docOf({ versionNote: { kind: "kept_copy", since: "2026-09-29T14:02:17Z" } }), ctx()), "Buyers are still reading the version from before your 29 Sep update.");
+  assert.equal(statusSentence(hp(60_000, heat("parts")), docOf({ versionNote: { kind: "older_version", changedPages: 3 } }), ctx()), "This is the version these buyers read; your CIM has changed since.");
+  assert.equal(statusSentence(hp(60_000, heat("parts")), d, ctx({ blind: true })), "Blind version: exactly what blind buyers saw.");
+  assert.equal(statusSentence(hp(60_000, heat("parts")), d, ctx()), null);
+  assert.equal(shortDate("not a date"), null);
+});
+test("Why? lists every note that applies, in plain words", () => {
+  const pages = [0, 1, 2, 3].map((i) => ({ index: i, label: String(27 + i), title: ["Transaction", "Next Steps & Contact", "Disclaimer", "Contact"][i], reachRecorded: i === 0 }));
+  const notes = whyNotes(hp(60_000, heat("page")), docOf({
+    versionNote: { kind: "kept_copy", since: "2026-09-29T14:02:17Z" }, sampleReading: true, reachBasis: "old_tracking", lastRecordedIndex: 0, pages,
+    legacyUnmatched: { attentionMs: 660_000, pages: [{ label: "History milestones", attentionMs: 400_000 }, { label: "Where we operate", attentionMs: 260_000 }] },
+  }), ctx({ blind: true }));
+  assert.deepEqual(notes.map((n) => n.key), ["basis", "version", "blind", "not_recorded", "unmatched", "sample"]);
+  assert.match(notes[0].text, /^Cimple recorded these visits before it tracked each part of a page/);
+  assert.match(notes[1].text, /before your 29 Sep update, while the update waits for your review/);
+  assert.equal(notes[3].text, `Cimple's earlier tracking didn't record pages 28–30 (Next Steps & Contact, Disclaimer, Contact), so "how far buyers got" stops at page 27.`);
+  assert.match(notes[4].text, /^11 min of earlier reading was on pages this version of the CIM doesn't show \(History milestones, Where we operate\)/);
+  assert.match(notes[5].text, /^This is an example deal\./);
+  const held = whyNotes(hp(60_000, heat("parts")), docOf({ versionNote: { kind: "held", sample: true } }), ctx());
+  assert.equal(held[0].text, "Buyers haven't seen this version yet. This sample reading is drawn on the version they'll get when you publish.");
+  const heldReal = whyNotes(hp(60_000, heat("parts")), docOf({ versionNote: { kind: "held", sample: false } }), ctx());
+  assert.equal(heldReal[0].text, "Buyers haven't seen this version yet. Shading shows the time they spent on the matching page of the version they read.");
+  const named = whyNotes(hp(60_000, heat("parts")), docOf(), ctx({ blind: true, showNamed: true, sameLayout: false }));
+  assert.equal(named[0].text, "The named version's parts differ from what blind buyers saw, so the whole page is shaded by its reading time.");
+  // Never the internal words on screen.
+  for (const n of [...notes, ...held, ...named]) assert.doesNotMatch(`${n.title} ${n.text}`, /legacy|rendition|dwell/i);
+  assert.deepEqual(whyNotes(hp(60_000, heat("parts")), docOf(), ctx()), []);
+});
+test("how far buyers got: pages never recorded are left out of the drop; the counts match the Buyers view", () => {
+  // Pacific: 12 ×8, 11, 9, 9, 8 ×13, 7, 6, 6, then 0 0 on the two pages the old tracking never recorded.
+  const counts = [...Array(8).fill(12), 11, 9, 9, ...Array(13).fill(8), 7, 6, 6, 0, 0];
+  const reach = counts.map((b, i) => ({ buyers: b, label: String(i + 1) }));
+  const pagesRec = counts.map((_, i) => ({ reachRecorded: i < 27 }));
+  assert.equal(steepestDrop(reach)!.index, 27, "without the rule: the stray drop onto page 28");
+  assert.equal(steepestDrop(recordedReach(reach, pagesRec))!.index, 9, "with it: page 10 (11 → 9)");
+  assert.equal(reachCountsLine({ openedTotal: 13, openedBy: 12, reach, pages: pagesRec, oldTracking: true }),
+    "13 opened it · 12 with reading recorded · 6 got to page 27, the last page recorded");
+  // No marked drop: the sentence above already says how far they got.
+  const flat = [5, 5, 5].map((b, i) => ({ buyers: b, label: String(i + 1) }));
+  assert.equal(reachCountsLine({ openedTotal: 5, openedBy: 5, reach: flat, pages: flat.map(() => ({ reachRecorded: true })), oldTracking: false }), "5 opened it");
+});
+test("the update note on a kept copy: renamed in the update, or nothing carries it on", () => {
+  const kept = { versionNote: { kind: "kept_copy", since: "x" } } as any;
+  assert.equal(updateNote({ update: { status: "renamed", title: "Capital Investment & Fleet Renewal" } }, kept), "In your update this page is “Capital Investment & Fleet Renewal”.");
+  assert.equal(updateNote({ update: { status: "no_successor" } }, kept), "No page in your update carries on this page's reading history.");
+  assert.equal(updateNote({ update: { status: "renamed", title: "X" } }, { versionNote: null }), null);
+  assert.equal(updateNote({ update: null }, kept), null);
+});
+
+function renderWash(showHeat: boolean, modeOver: "wash" | "parts" = "wash", h: Heat = heat("page")): string {
+  const pg = { ...page(0, [block("heading", 0, "heading"), block("row:0", 0)]), attentionMs: 1_660_000, heat: h };
+  return renderToStaticMarkup(React.createElement(PageCanvas, {
+    rendition: rendition([longTable], "normal", [tablePage]), pageId: longTable.id, part: 0, renditionPage: tablePage, page: pg as DocumentPage,
+    paint: modeOver === "parts", showHeat, showUnread: false, maxMs: 1, selectedKey: null, hoveredKey: null, onSelectKey() {}, onHoverKey() {}, touch: false,
+    mode: modeOver, washT: 0.8, washCard: { time: "27 min 40 s", buyers: 8, rankText: "3rd most-read of 29" },
+  }));
+}
+test("a page known only as a total is washed, with its edge bar and rank badge — no part buttons", () => {
+  const html = renderWash(true);
+  const overlay = html.slice(html.indexOf("data-heat-overlay"));
+  assert.ok(/data-heat-wash="true"/.test(overlay), "the wash is drawn");
+  assert.ok(/role="img" aria-label="Whole page: 27 min 40 s of reading time from 8 buyers, 3rd most-read of 29 pages"/.test(overlay), "described for screen readers");
+  assert.ok(/data-heat-wash-edge/.test(overlay), "edge bar");
+  assert.ok(/3rd most-read of 29 · 27 min 40 s/.test(overlay), "rank badge");
+  assert.ok(!/data-heat-block=/.test(html), "no part buttons");
+  assert.ok(/mix-blend-mode:multiply/.test(overlay), "multiplied onto the paper");
+});
+test("colours off: no wash and no badge", () => {
+  const html = renderWash(false);
+  assert.ok(!/data-heat-wash/.test(html), "no wash");
+  assert.ok(!/most-read/.test(html), "no badge");
+});
+test("mixed reading: the parts are painted and a badge says how much was read as a whole page", () => {
+  const html = renderWash(true, "parts", heat("mixed", { pageOnlyMs: 250_000 }));
+  assert.ok(!/data-heat-wash=/.test(html), "no wash");
+  assert.ok(/\+ 4 min 10 s read as a whole page/.test(html), "the mixed badge");
+});
+
 console.log("words and removals");
 
 const VIEWER_FILES = [
   "client/src/components/engagement/document/DocumentView.tsx",
+  "client/src/components/engagement/document/StatusLine.tsx",
   "client/src/components/engagement/document/PageCanvas.tsx",
   "client/src/components/engagement/document/PagePanel.tsx",
   "client/src/components/engagement/document/PageRail.tsx",

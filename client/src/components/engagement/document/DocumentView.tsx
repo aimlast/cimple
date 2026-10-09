@@ -20,15 +20,25 @@
  * shows the named version of the same page. Part-by-part heat is drawn on the
  * named version only when both versions have the same parts.
  *
- * Phones: chips instead of the rail, the page full width, a peek bar at the
- * bottom that opens "This page" as a sheet, and a tapped part opens its
- * details as a sheet. Swipe left/right changes page.
+ * A page whose reading is known only as a total (recorded before Cimple
+ * tracked each part, or on a version with different parts) is never blank:
+ * the whole page is shaded by its reading time with its rank on it
+ * (drawMode "wash"). One status line above the page says how the colours
+ * were made; "Why?" holds every note (StatusLine).
  *
- * Owned by the VIEWER stream.
+ * Phones: chips (with heat swatches) instead of the rail, the page full
+ * width, a collapsed "How far buyers got" row, the chrome above the paper
+ * kept under ~280 px (the layout switch and the named-version switch become
+ * icons; the page headline moves into the "This page" sheet), a peek bar at
+ * the bottom that opens "This page" as a sheet, and a tapped part (or the
+ * tapped whole page) opens its details as a sheet. Swipe left/right changes
+ * page.
+ *
+ * Owned by the heatmap stream.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
-import { ChevronLeft, ChevronRight, ChevronUp, Eye, EyeOff, FileSearch, LayoutList, Rows3 } from "lucide-react";
+import { AlertCircle, ChevronLeft, ChevronRight, ChevronUp, Eye, EyeOff, FileSearch, LayoutList, RefreshCw, Rows3 } from "lucide-react";
 import {
   formatReadingTime,
   viewerPageKey,
@@ -44,13 +54,16 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { cn } from "@/lib/utils";
 import type { EngagementViewProps } from "../types";
 import { Segmented } from "../FilterBar";
-import { BlockDetails, PageCanvas } from "./PageCanvas";
+import { BlockDetails, PageCanvas, WashDetails, type WashCard } from "./PageCanvas";
 import { PagePanel, ReadLabelChip } from "./PagePanel";
 import { PageChips, PageRail } from "./PageRail";
 import { PageTable } from "./PageTable";
 import { ReachChart } from "./ReachChart";
+import { StatusLine } from "./StatusLine";
+import { heatChrome } from "../heat";
 import {
-  defaultSectionView, effectiveScope, expandCount, heatMaxMs, legendTicks, pageInView, pageOfText, paperTint, readersText, selectPageIndex, unreadBlocks,
+  defaultSectionView, drawMode, effectiveScope, expandCount, heatIntensity, heatMaxMs, legendTicks, pageHeatMaxMs, pageInView, pageLegendTicks, pageOfText,
+  pageRank, paperTint, readersText, selectPageIndex, unreadBlocks, washFill,
   type HeatScope, type PageOrder, type SectionView,
 } from "./viewer-model";
 
@@ -63,12 +76,12 @@ export interface DocumentViewProps extends EngagementViewProps {
 }
 
 export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam, onPageChange, openedSoFar = 0 }: DocumentViewProps) {
-  const { data: doc, isLoading, error } = useEngagementDocument(dealId, filters);
+  const { data: doc, isLoading, error, refetch, isFetching } = useEngagementDocument(dealId, filters);
   const renditionId = doc?.rendition?.id ?? null;
   const { data: rendition, isLoading: rLoading } = useEngagementRendition(dealId, renditionId);
   const isMobile = useIsMobile();
 
-  const [mode, setMode] = useState<"pages" | "table">("pages");
+  const [layout, setLayout] = useState<"pages" | "table">("pages");
   const [order, setOrder] = useState<PageOrder>("document");
   const [showHeat, setShowHeat] = useState(true);
   const [showUnread, setShowUnread] = useState(false);
@@ -79,6 +92,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [washSheet, setWashSheet] = useState(false);
   // A collapsible section's view (null = its default: see defaultSectionView).
   const [viewWanted, setViewWanted] = useState<SectionView | null>(null);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
@@ -102,12 +116,13 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
     setSelectedKey(null);
     setHoveredKey(null);
     setViewWanted(null);
+    setWashSheet(false);
     onPageChange(viewerPageKey(p.pageId, p.part));
   }, [pages, onPageChange]);
 
   // ←/→ change page anywhere in the view (not while typing or in a dialog).
   useEffect(() => {
-    if (mode !== "pages") return;
+    if (layout !== "pages") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.altKey || e.metaKey || e.ctrlKey) return;
       const t = e.target as HTMLElement | null;
@@ -118,17 +133,29 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [go, index, pages.length, mode]);
+  }, [go, index, pages.length, layout]);
 
   if (isLoading) return <DocumentSkeleton />;
-  if (error || !doc) return <p className="text-sm text-muted-foreground">Couldn't load reading by page. Try again in a moment.</p>;
-  if (pages.length === 0 || doc.openedBy === 0) return <DocumentEmpty dealId={dealId} openedSoFar={openedSoFar} filtered={filters.buyers.length > 0 || filters.segment !== "all" || filters.range !== "all" || filters.device !== "all"} />;
+  if (error || !doc) return <DocumentError onRetry={() => refetch()} retrying={isFetching} />;
+  const filtered = filters.buyers.length > 0 || filters.segment !== "all" || filters.range !== "all" || filters.device !== "all";
+  // Buyers read it, but the version they read can't be drawn right now (e.g. a blind version still being prepared).
+  if (pages.length === 0 && (doc.totals?.visits ?? 0) > 0) return <DocumentCantDraw visits={doc.totals.visits} buyers={doc.openedTotal ?? doc.openedBy} onRetry={() => refetch()} retrying={isFetching} />;
+  if (pages.length === 0 || (doc.openedBy === 0 && doc.totals.attentionMs === 0)) return <DocumentEmpty dealId={dealId} openedSoFar={openedSoFar} filtered={filtered} />;
 
   const shown: EngagementRenditionResponse | undefined = showNamed && named ? named : rendition;
   const servedPage = rendition?.pages.find((p) => p.pageId === current?.pageId);
   const shownPage = shown?.pages.find((p) => p.pageId === current?.pageId);
   const sameLayout = !showNamed || !servedPage || !shownPage || servedPage.blockFingerprint === shownPage.blockFingerprint;
-  const paint = !!current && !current.pageLevelOnly && !doc.legacyOnly && sameLayout;
+  // Each part painted, the whole page washed (only its total is known), or nothing.
+  const mode = drawMode(current, sameLayout);
+  const paint = mode === "parts";
+  const maxPageMs = pageHeatMaxMs(pages);
+  const washT = current ? heatIntensity(current.attentionMs, maxPageMs) : 0;
+  const rank = current ? pageRank(pages, current) : null;
+  const washCard: WashCard | null = current && mode === "wash"
+    ? { time: formatReadingTime(current.attentionMs), buyers: current.buyers.length, rankText: rank?.text ?? null }
+    : null;
+  const statusCtx = { blind: rendition?.mode === "blind", showNamed, sameLayout };
   const sectionDefault = current ? defaultSectionView(current, servedPage) : null;
   const sectionView: SectionView | null = sectionDefault ? viewWanted ?? sectionDefault : null;
   const currentInView = current ? pageInView(current, sectionView) : null;
@@ -150,45 +177,36 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
       filteredToOne={filteredToOne}
       paint={paint}
       sectionView={paint ? sectionView : null}
+      headline={isMobile ? current.headline : null}
     />
   ) : null;
 
   return (
-    <div className={cn("space-y-4", isMobile && "pb-20")} data-testid="engagement-document">
+    <div className={cn(isMobile ? "space-y-2.5 pb-20" : "space-y-4")} data-testid="engagement-document">
       <ReachChart
         reach={doc.reach}
+        pages={pages}
         headline={doc.reachHeadline}
         openedBy={doc.openedBy}
+        openedTotal={doc.openedTotal ?? doc.openedBy}
+        oldTracking={doc.reachBasis === "old_tracking"}
+        maxPageMs={maxPageMs}
         selectedIndex={index}
-        onOpen={(i) => { setMode("pages"); go(i); }}
+        onOpen={(i) => { setLayout("pages"); go(i); }}
         compact={isMobile}
       />
 
-      {doc.legacyOnly && (
-        <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground" data-testid="engagement-legacy-note">
-          These visits were recorded before reading was tracked part by part, so each page shows its total reading time only.
-          New visits show which parts buyers read, drawn on the page.
-        </p>
-      )}
-      {doc.legacyUnmatched && doc.legacyUnmatched.attentionMs >= 1000 && (
-        <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground" data-testid="engagement-legacy-unmatched">
-          {formatReadingTime(doc.legacyUnmatched.attentionMs)} of earlier reading was on {doc.legacyUnmatched.pages.length === 1 ? "a page" : "pages"} this version of the CIM doesn't show
-          ({doc.legacyUnmatched.pages.slice(0, 4).map((p) => p.label).join(", ")}{doc.legacyUnmatched.pages.length > 4 ? ", …" : ""}).
-          It still counts in each buyer's visits.
-        </p>
-      )}
-
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <Segmented<"pages" | "table">
-          label="Layout"
-          value={mode}
-          onChange={setMode}
-          options={[
-            { value: "pages", label: "Page by page", icon: <Rows3 className="h-3 w-3" /> },
-            { value: "table", label: "All pages in a table", icon: <LayoutList className="h-3 w-3" /> },
-          ]}
-        />
-        {!isMobile && (
+      {!isMobile && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Segmented<"pages" | "table">
+            label="Layout"
+            value={layout}
+            onChange={setLayout}
+            options={[
+              { value: "pages", label: "Page by page", icon: <Rows3 className="h-3 w-3" /> },
+              { value: "table", label: "All pages in a table", icon: <LayoutList className="h-3 w-3" /> },
+            ]}
+          />
           <Segmented<PageOrder>
             label="Order of pages"
             size="xs"
@@ -196,13 +214,20 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
             onChange={setOrder}
             options={[{ value: "document", label: "Pages in order" }, { value: "time", label: "Most time first" }]}
           />
-        )}
-      </div>
+        </div>
+      )}
 
-      {mode === "table" ? (
-        <PageTable pages={pages} order={order} openedBy={doc.openedBy} onOpen={(i) => { setMode("pages"); go(i); }} />
+      {layout === "table" ? (
+        <div className="space-y-2">
+          {isMobile && (
+            <button type="button" onClick={() => setLayout("pages")} className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-foreground/85" data-testid="layout-pages">
+              <Rows3 className="h-3.5 w-3.5" /> Page by page
+            </button>
+          )}
+          <PageTable pages={pages} order={order} openedBy={doc.openedBy} onOpen={(i) => { setLayout("pages"); go(i); }} />
+        </div>
       ) : (
-        <div className={cn("grid gap-5", "md:grid-cols-[210px_minmax(0,1fr)]", "xl:grid-cols-[220px_minmax(0,1fr)_300px]")}>
+        <div className={cn("grid", isMobile ? "gap-2.5" : "gap-5", "md:grid-cols-[210px_minmax(0,1fr)]", "xl:grid-cols-[220px_minmax(0,1fr)_300px]")}>
           {isMobile ? (
             <PageChips pages={pages} selectedIndex={index} onSelect={go} />
           ) : (
@@ -218,22 +243,37 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
             </aside>
           )}
 
-          <div className="min-w-0 space-y-3">
+          <div className={cn("min-w-0", isMobile ? "space-y-2" : "space-y-3")}>
             {current && (
               <PageHeader
                 page={current}
                 pageOf={pageOfText(current.label, pages)}
                 onPrev={index > 0 ? () => go(index - 1) : null}
                 onNext={index < pages.length - 1 ? () => go(index + 1) : null}
+                showHeadline={!isMobile}
               />
             )}
 
+            {current && <StatusLine page={current} doc={doc} ctx={statusCtx} />}
+
             {current && (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+              <div className={cn("flex flex-wrap items-center text-xs text-muted-foreground", isMobile ? "gap-x-2 gap-y-1.5" : "gap-x-4 gap-y-2")} data-testid="heat-toggles">
                 <label className="inline-flex items-center gap-2">
                   <Switch checked={showHeat} onCheckedChange={setShowHeat} aria-label="Show reading time colours" />
                   Reading-time colours
                 </label>
+                {isMobile && (
+                  <button
+                    type="button"
+                    onClick={() => setLayout("table")}
+                    aria-label="All pages in a table"
+                    title="All pages in a table"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-foreground/80"
+                    data-testid="layout-table"
+                  >
+                    <LayoutList className="h-4 w-4" />
+                  </button>
+                )}
                 {paint && showHeat && (
                   <Segmented<HeatScope>
                     label="Compare parts with"
@@ -265,11 +305,16 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
                   <button
                     type="button"
                     onClick={() => setNamedWanted(!showNamed)}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-foreground/85 hover:text-foreground"
+                    aria-label={showNamed ? "Show what the buyer saw" : "Show the named version"}
+                    title={showNamed ? "Show what the buyer saw" : "Show the named version"}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-md border border-border text-xs text-foreground/85 hover:text-foreground",
+                      isMobile ? "h-8 w-8 justify-center" : "px-2 py-1",
+                    )}
                     data-testid="toggle-named-version"
                   >
                     {showNamed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                    {showNamed ? "Show what the buyer saw" : "Show the named version"}
+                    {!isMobile && (showNamed ? "Show what the buyer saw" : "Show the named version")}
                   </button>
                 )}
               </div>
@@ -285,15 +330,6 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
               </p>
             )}
 
-            {rendition?.mode === "blind" && (
-              <p className="text-xs text-muted-foreground" data-testid="blind-note">
-                {showNamed
-                  ? sameLayout
-                    ? "Named version, for your reference. Blind buyers saw the codename version of this page; the colours are theirs."
-                    : "Named version, for your reference. Its parts differ from what blind buyers saw, so only the page totals apply."
-                  : "Blind version: exactly what blind buyers saw."}
-              </p>
-            )}
 
             <div
               className="relative"
@@ -332,13 +368,19 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
                   touch={isMobile}
                   view={sectionView}
                   onViewChange={(v) => { setViewWanted(v); setSelectedKey(null); }}
+                  mode={mode}
+                  washT={washT}
+                  washCard={washCard}
+                  onWashTap={() => setWashSheet(true)}
                 />
               )}
             </div>
 
             {current && (
               <div className="flex flex-wrap items-center justify-between gap-3">
-                {paint && showHeat ? <HeatLegend maxMs={maxMs} scope={effectiveScope(scope, current)} /> : <span />}
+                {paint && showHeat
+                  ? <HeatLegend maxMs={maxMs} scope={effectiveScope(scope, current)} />
+                  : mode === "wash" && showHeat ? <PageLegend maxPageMs={maxPageMs} /> : <span />}
                 <PagerButtons pageOf={pageOfText(current.label, pages)} onPrev={index > 0 ? () => go(index - 1) : null} onNext={index < pages.length - 1 ? () => go(index + 1) : null} />
               </div>
             )}
@@ -352,7 +394,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
         </div>
       )}
 
-      {isMobile && current && mode === "pages" && (
+      {isMobile && current && layout === "pages" && (
         <>
           <button
             type="button"
@@ -360,6 +402,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
             className="fixed inset-x-3 bottom-3 z-30 flex items-center gap-2 rounded-xl border border-border bg-card/95 px-4 py-3 text-left text-xs shadow-2xl backdrop-blur"
             data-testid="engagement-peek"
           >
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: heatChrome(washT) }} aria-hidden data-heat-swatch />
             <span className="font-semibold tabular-nums">{formatReadingTime(current.attentionMs)}</span>
             <span className="text-muted-foreground">·</span>
             <span className="tabular-nums">{readersText(current.readers, doc.openedBy)} read</span>
@@ -372,6 +415,14 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
                 <SheetTitle className="text-base">Page {current.label} · {current.title}</SheetTitle>
               </SheetHeader>
               {panel}
+            </SheetContent>
+          </Sheet>
+          <Sheet open={washSheet && !!washCard} onOpenChange={setWashSheet}>
+            <SheetContent side="bottom" className="rounded-t-2xl" data-testid="engagement-wash-sheet">
+              <SheetHeader className="mb-2 text-left">
+                <SheetTitle className="text-sm">Page {current.label} · {current.title}</SheetTitle>
+              </SheetHeader>
+              {washCard && <WashDetails card={washCard} />}
             </SheetContent>
           </Sheet>
           <Sheet open={!!selectedKey} onOpenChange={(o) => { if (!o) setSelectedKey(null); }}>
@@ -397,7 +448,7 @@ function scrollToBlock(key: string) {
   el?.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
-function PageHeader({ page, pageOf, onPrev, onNext }: { page: DocumentPage; pageOf: string; onPrev: (() => void) | null; onNext: (() => void) | null }) {
+function PageHeader({ page, pageOf, onPrev, onNext, showHeadline = true }: { page: DocumentPage; pageOf: string; onPrev: (() => void) | null; onNext: (() => void) | null; showHeadline?: boolean }) {
   return (
     <div className="space-y-2">
       <div className="flex items-start gap-3">
@@ -411,7 +462,7 @@ function PageHeader({ page, pageOf, onPrev, onNext }: { page: DocumentPage; page
           <PagerButton dir="next" onClick={onNext} />
         </div>
       </div>
-      {page.headline && (
+      {showHeadline && page.headline && (
         <p className="border-l-2 border-teal/70 bg-teal/5 py-1.5 pl-3 pr-2 text-sm text-foreground/90" data-testid="engagement-page-headline">
           {page.headline}
         </p>
@@ -468,6 +519,68 @@ function HeatLegend({ maxMs, scope }: { maxMs: number; scope: HeatScope }) {
   );
 }
 
+/** Legend for the whole-page shade: the page's reading time against the busiest page. */
+function PageLegend({ maxPageMs }: { maxPageMs: number }) {
+  const ticks = pageLegendTicks(maxPageMs);
+  if (ticks.length === 0) return <span />;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground" data-testid="engagement-page-legend">
+      <span>Whole page shaded by its reading time:</span>
+      <span className="inline-flex items-stretch overflow-hidden rounded-sm border border-border" style={{ background: "#FBF9F4" }}>
+        {ticks.map((t) => (
+          <span key={t.t} className="flex flex-col items-center px-1.5 pt-1 pb-0.5">
+            <span className="h-2.5 w-8 rounded-[2px]" style={{ background: washFill(t.t) ?? "transparent", mixBlendMode: "multiply" }} />
+            <span className="mt-0.5 text-[10px] tabular-nums" style={{ color: "#201D18" }}>{t.label}</span>
+          </span>
+        ))}
+      </span>
+      <span>· darkest = the most-read page ({formatReadingTime(maxPageMs)})</span>
+    </div>
+  );
+}
+
+function DocumentError({ onRetry, retrying }: { onRetry(): void; retrying: boolean }) {
+  return (
+    <div className="flex flex-col items-start gap-3 rounded-lg border border-border bg-card px-4 py-5 sm:flex-row sm:items-center" data-testid="engagement-document-error">
+      <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+      <p className="flex-1 text-sm text-muted-foreground">Couldn't load reading by page. Try again in a moment.</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        disabled={retrying}
+        className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/60 disabled:opacity-60"
+        data-testid="engagement-document-retry"
+      >
+        <RefreshCw className={cn("h-3.5 w-3.5", retrying && "animate-spin")} aria-hidden /> Retry
+      </button>
+    </div>
+  );
+}
+
+/** Buyers read the CIM, but the version they read can't be drawn right now (never "no reading recorded"). */
+function DocumentCantDraw({ visits, buyers, onRetry, retrying }: { visits: number; buyers: number; onRetry(): void; retrying: boolean }) {
+  const n = Math.max(1, buyers);
+  return (
+    <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border px-6 py-12 text-center" data-testid="engagement-document-cant-draw">
+      <p className="flex items-center justify-center gap-2 text-sm font-medium">
+        <FileSearch className="h-4 w-4 text-teal" aria-hidden /> We can't show the pages right now
+      </p>
+      <p className="max-w-md text-sm text-muted-foreground">
+        {n} buyer{n === 1 ? "" : "s"} read this CIM ({visits} visit{visits === 1 ? "" : "s"}), but the version they read can't be drawn at the moment
+        (the blind version may still be being prepared). Try again in a few minutes.
+      </p>
+      <button
+        type="button"
+        onClick={onRetry}
+        disabled={retrying}
+        className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/60 disabled:opacity-60"
+      >
+        <RefreshCw className={cn("h-3.5 w-3.5", retrying && "animate-spin")} aria-hidden /> Try again
+      </button>
+    </div>
+  );
+}
+
 function DocumentSkeleton() {
   return (
     <div className="space-y-4">
@@ -502,13 +615,13 @@ function DocumentEmpty({ dealId, filtered, openedSoFar }: { dealId: string; filt
       <div className="max-w-md space-y-1.5">
         <p className="flex items-center justify-center gap-2 text-sm font-medium">
           <FileSearch className="h-4 w-4 text-teal" />
-          {filtered ? "No reading for these filters" : earlier ? "No page-by-page reading recorded yet" : "No buyer has opened the CIM yet"}
+          {filtered ? "No reading for these filters" : earlier ? "No reading recorded on the pages yet" : "No buyer has opened the CIM yet"}
         </p>
         <p className="text-sm text-muted-foreground">
           {filtered
             ? "Try a longer date range or all buyers."
             : earlier
-              ? `${openedSoFar} buyer${openedSoFar === 1 ? " has" : "s have"} opened the CIM, but before reading was recorded part by part. Their next visits will show here: which pages and numbers they study, drawn on the CIM itself.`
+              ? `${openedSoFar} buyer${openedSoFar === 1 ? " has" : "s have"} opened the CIM, but no time on its pages was recorded yet. Their next visits will show here: which pages and numbers they study, drawn on the CIM itself.`
               : "When buyers open the CIM, you'll see which pages and numbers they study, drawn on the CIM itself, page by page."}
         </p>
         {!filtered && !earlier && (

@@ -2,17 +2,20 @@
  * The page rail beside the heat map: one tile per page — number, real title
  * (and "Buyer saw: …" when blind buyers saw a different title), a layout
  * icon, a bar for the page's share of all reading time, "5 of 6 read" and how
- * they read it. Document order or most time first. Up/down arrow keys move
- * between pages while the rail has focus.
+ * they read it. Each tile's background is tinted by the page's reading time
+ * against the busiest page (railTint), so the heat shows before any click.
+ * Document order or most time first. Up/down arrow keys move between pages
+ * while the rail has focus.
  *
- * On a phone the rail becomes a row of chips that scrolls sideways.
+ * On a phone the rail becomes a row of chips that scrolls sideways, each with
+ * a heat swatch.
  */
 import { useEffect, useRef } from "react";
 import { READ_LABEL_TEXT, formatReadingTime, type DocumentPage } from "@shared/analytics-v2";
 import { cn } from "@/lib/utils";
 import { heatChrome } from "../heat";
 import { layoutIcon } from "./layout-icons";
-import { orderPages, type PageOrder } from "./viewer-model";
+import { heatIntensity, orderPages, railTint, type PageOrder } from "./viewer-model";
 
 export function PageRail({
   pages, selectedIndex, onSelect, order, openedBy, totalMs,
@@ -50,6 +53,7 @@ export function PageRail({
           const Icon = layoutIcon(p.layoutType);
           const on = p.index === selectedIndex;
           const unreached = p.reachedBy === 0;
+          const tint = railTint(heatIntensity(p.attentionMs, maxMs));
           return (
             <button
               key={`${p.pageId}#${p.part}`}
@@ -59,9 +63,12 @@ export function PageRail({
               aria-current={on ? "page" : undefined}
               className={cn(
                 "w-full rounded-md border px-2.5 py-2 text-left transition-colors",
-                on ? "border-teal/50 bg-teal/10" : "border-transparent hover:bg-muted/50",
+                on ? "border-teal/50 ring-1 ring-teal/60" : "border-transparent hover:border-border",
+                !tint && (on ? "bg-teal/10" : "hover:bg-muted/50"),
                 unreached && !on && "opacity-55",
               )}
+              style={tint ? { background: tint } : undefined}
+              data-rail-tint={tint ? "1" : undefined}
             >
               <div className="flex items-start gap-2">
                 <span className={cn("mt-px w-5 shrink-0 text-right text-[11px] tabular-nums", on ? "text-teal font-semibold" : "text-muted-foreground")}>{p.label}</span>
@@ -106,7 +113,7 @@ export function PageChips({ pages, selectedIndex, onSelect }: { pages: DocumentP
     <div ref={ref} className="relative -mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none]" data-testid="engagement-page-chips" aria-label="Pages of the CIM">
       {pages.map((p) => {
         const on = p.index === selectedIndex;
-        const t = maxMs ? p.attentionMs / maxMs : 0;
+        const t = heatIntensity(p.attentionMs, maxMs);
         return (
           <button
             key={`${p.pageId}#${p.part}`}
@@ -118,13 +125,14 @@ export function PageChips({ pages, selectedIndex, onSelect }: { pages: DocumentP
               on ? "border-teal/60 bg-teal/15 text-teal" : "border-border text-foreground/85",
             )}
           >
+            <span
+              className="h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{ background: heatChrome(t) }}
+              aria-hidden
+              data-heat-swatch
+            />
             <span className="tabular-nums font-semibold">{p.label}</span>
             <span className="truncate">{p.title}</span>
-            <span className="flex shrink-0 items-end gap-[1px]" aria-hidden>
-              {[0.2, 0.5, 0.8].map((s) => (
-                <span key={s} className="w-[3px] rounded-[1px]" style={{ height: 4 + s * 6, background: t >= s ? heatChrome(0.95) : "hsl(var(--muted))" }} />
-              ))}
-            </span>
           </button>
         );
       })}
