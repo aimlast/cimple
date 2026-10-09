@@ -4,7 +4,9 @@
  * anyone who hasn't opened. One load per visit; search, filters, sort and
  * paging happen here. The number chip (`kpi=<id>:<range>`) shows exactly the
  * buyers a number counted.
- *   lg+: one-row toolbar + table;  below: search, a Filters sheet, cards.
+ *   lg+: one-row toolbar (search, deal, status, sort, Clear), the number /
+ *        heads-up chip on its own line under it, then the table;
+ *   below: search, a Filters sheet, cards.
  */
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
@@ -89,12 +91,19 @@ export function canNudge(r: BuyerDashboardRow): boolean {
   return r.document === "cim" && !r.firstSeenAt && !r.revokedAt && r.live;
 }
 
+/** "24 of 27" pages read; "—" for a teaser link, a CIM with no pages to count, or a buyer who never opened it (not "0 of 26"). */
+export function pagesReadText(r: BuyerDashboardRow): string {
+  if (r.document !== "cim" || !r.firstSeenAt || r.pagesRead == null || !r.contentPages) return "—";
+  return `${r.pagesRead} of ${r.contentPages}`;
+}
+
 /** "2 h 12 min · 24 of 27 pages · 4 of 6 criteria · last 24 Sept" (the phone card line). */
 export function buyerFactsLine(r: BuyerDashboardRow): string {
   if (r.document !== "cim") return r.ndaSignedAt ? `NDA signed ${dayMonth(r.ndaSignedAt)}` : "Has the teaser";
   const parts: string[] = [];
   if (r.readingMs) parts.push(formatReadingTime(r.readingMs));
-  if (r.pagesRead != null && r.contentPages) parts.push(`${r.pagesRead} of ${r.contentPages} pages`);
+  const pages = pagesReadText(r);
+  if (pages !== "—") parts.push(`${pages} pages`);
   if (r.fitText) parts.push(r.fitText);
   parts.push(r.lastSeenAt ? `last ${dayMonth(r.lastSeenAt)}` : "not opened yet");
   return parts.join(" · ");
@@ -126,7 +135,9 @@ export function AllBuyersTab({ examples, state, update }: {
   const notice = state.notice;
   const noticeOverview = useAnalyticsOverview(state.range ?? "auto", examples, !!notice);
   const noticeIds = notice ? noticeOverview.data?.noticeIds?.[notice] ?? null : null;
-  const chipLoading = (!!chip && !chipOverview.data) || (!!notice && !noticeOverview.data);
+  // Waiting for the set (never while it failed: that shows an error with Retry, not endless skeleton rows).
+  const chipLoading = (!!chip && chipOverview.isPending) || (!!notice && noticeOverview.isPending);
+  const chipFailed = (!!chip && chipOverview.isError && !chipOverview.data) || (!!notice && noticeOverview.isError && !noticeOverview.data);
   const [search, setSearch] = useState(state.q);
   const [shown, setShown] = useState(PAGE);
   const [sheet, setSheet] = useState(false);
@@ -155,8 +166,26 @@ export function AllBuyersTab({ examples, state, update }: {
     return sortBuyerRows(r, state.sort);
   }, [all, chip, chipIds, notice, noticeIds, state.deal, state.status, state.q, state.sort, now]);
 
-  if (isLoading || chipLoading) return <div className="space-y-2"><Skeleton className="h-9 w-full" />{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>;
+  if (isLoading || chipLoading) return <div className="space-y-2" data-testid="buyers-loading"><Skeleton className="h-9 w-full" />{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>;
   if (error || !data) return <PanelError what="your buyers" onRetry={() => refetch()} />;
+  if (chipFailed) {
+    // The set behind a number or a heads-up line couldn't load: say so (Retry), or show everyone instead.
+    return (
+      <div className="space-y-2" data-testid="buyers-chip-error">
+        <PanelError
+          what="this list"
+          onRetry={() => { if (chip) void chipOverview.refetch(); if (notice) void noticeOverview.refetch(); }}
+        />
+        <p className="text-center text-xs text-muted-foreground">
+          Or{" "}
+          <button type="button" className="font-medium text-teal hover:underline" onClick={() => update({ kpi: null, notice: null })} data-testid="buyers-chip-error-all">
+            show all your buyers
+          </button>
+          .
+        </p>
+      </div>
+    );
+  }
 
   const any = !!(state.q || state.deal || state.status !== "all" || chip || notice);
   const nFilters = (state.deal ? 1 : 0) + (state.status !== "all" ? 1 : 0) + (state.sort !== "last_active" ? 1 : 0);
@@ -176,9 +205,9 @@ export function AllBuyersTab({ examples, state, update }: {
 
   return (
     <div className="space-y-3" data-testid="buyers-tab">
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full lg:w-72">
+      {/* Toolbar: one row at lg+ (the number / heads-up chip goes on the line under it) */}
+      <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
+        <div className="relative w-full lg:w-64 xl:w-72">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
@@ -188,16 +217,16 @@ export function AllBuyersTab({ examples, state, update }: {
             data-testid="buyers-search"
           />
         </div>
-        <div className="hidden flex-wrap items-center gap-2 lg:flex">
+        <div className="hidden shrink-0 items-center gap-2 lg:flex">
           <Select value={state.deal ?? "all"} onValueChange={(v) => update({ deal: v === "all" ? null : v })}>
-            <SelectTrigger className="h-9 w-48 text-sm" data-testid="buyers-deal"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-9 w-44 text-sm xl:w-48" data-testid="buyers-deal"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All deals</SelectItem>
               {deals.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
             </SelectContent>
           </Select>
           <Select value={state.status} onValueChange={(v) => update({ status: v as BuyerStatusFilter })}>
-            <SelectTrigger className="h-9 w-52 text-sm" data-testid="buyers-status"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-9 w-48 text-sm xl:w-52" data-testid="buyers-status"><SelectValue /></SelectTrigger>
             <SelectContent>
               {BUYER_STATUS_FILTERS.map((s) => <SelectItem key={s.key} value={s.key}>{s.key === "all" ? "Any status" : s.label}</SelectItem>)}
             </SelectContent>
@@ -208,8 +237,6 @@ export function AllBuyersTab({ examples, state, update }: {
               {BUYER_SORTS.map((s) => <SelectItem key={s.key} value={s.key}>{s.label}</SelectItem>)}
             </SelectContent>
           </Select>
-          {chip && <FilterChip onRemove={() => update({ kpi: null })} testId="kpi-chip">{kpiChipWords(chip.id, chip.range)}</FilterChip>}
-          {notice && <FilterChip onRemove={() => update({ notice: null })} testId="notice-chip">{NOTICE_CHIP_WORDS[notice]}</FilterChip>}
           {any && <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={clear} data-testid="buyers-clear">Clear</Button>}
         </div>
         {/* phone: one Filters button, active filters as chips */}
@@ -221,6 +248,12 @@ export function AllBuyersTab({ examples, state, update }: {
           {any && <button type="button" className="text-xs text-muted-foreground hover:text-foreground" onClick={clear}>Clear</button>}
         </div>
       </div>
+      {(chip || notice) && (
+        <div className="hidden flex-wrap items-center gap-2 lg:flex" data-testid="buyers-set-chips">
+          {chip && <FilterChip onRemove={() => update({ kpi: null })} testId="kpi-chip">{kpiChipWords(chip.id, chip.range)}</FilterChip>}
+          {notice && <FilterChip onRemove={() => update({ notice: null })} testId="notice-chip">{NOTICE_CHIP_WORDS[notice]}</FilterChip>}
+        </div>
+      )}
 
       {rows.length > 0 && (
         <p className="text-xs text-muted-foreground" data-testid="buyers-count">
@@ -317,7 +350,7 @@ export function BuyersTable({ rows, hideDeal, onNudge }: { rows: BuyerDashboardR
                   <td className="px-2.5 py-2.5"><BuyerStatusCell row={r} /></td>
                   <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums">{r.fitText ?? "—"}</td>
                   <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums" title={teaser ? TEASER_READING_TIP : undefined}>{teaser ? "—" : r.readingMs ? formatReadingTime(r.readingMs) : "—"}</td>
-                  <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums" title={teaser ? TEASER_READING_TIP : undefined}>{!teaser && r.pagesRead != null && r.contentPages ? `${r.pagesRead} of ${r.contentPages}` : "—"}</td>
+                  <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums" title={teaser ? TEASER_READING_TIP : undefined}>{pagesReadText(r)}</td>
                   <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums">{r.ndaSignedAt ? <span className="text-foreground/90">✓ {dayMonth(r.ndaSignedAt)}</span> : "—"}</td>
                   <td className="whitespace-nowrap px-2.5 py-2.5 tabular-nums text-muted-foreground">{r.lastSeenAt ? dayMonth(r.lastSeenAt) : teaser ? "—" : "Not opened"}</td>
                   <td className="whitespace-nowrap px-2.5 py-2.5 pr-4 text-right" onClick={(e) => e.stopPropagation()}>

@@ -37,7 +37,8 @@ const { KpiStrip, KpiPopover, kpiOneLine } = await import("../../client/src/comp
 const { RangeControl } = await import("../../client/src/components/analytics/RangeControl");
 const { RangeNote, rangeNoteContent } = await import("../../client/src/components/analytics/RangeNote");
 const { DealsTable } = await import("../../client/src/components/analytics/DealsTab");
-const { AllBuyersTab, BuyersTable, canNudge, kpiChipWords } = await import("../../client/src/components/analytics/AllBuyersTab");
+const AllBuyersMod = await import("../../client/src/components/analytics/AllBuyersTab");
+const { AllBuyersTab, BuyersTable, canNudge, kpiChipWords } = AllBuyersMod;
 const { AnalyticsEmpty, ANALYTICS_EMPTY_COPY, analyticsEmptyKind } = await import("../../client/src/components/analytics/EmptyStates");
 const { ActivityList, ReadingNowLine, dayHeading } = await import("../../client/src/components/analytics/ActivityFeed");
 const { DashboardTabBar } = await import("../../client/src/components/analytics/DashboardTabBar");
@@ -251,6 +252,58 @@ await test("the number chip shows in the number's own words and restricts the ro
   assert.doesNotMatch(t, /Travis Holmgren/);
   assert.equal(kpiChipWords("to_call", "all"), "Worth a call");
   assert.equal(kpiChipWords("nda", "all"), "Signed the NDA so far");
+});
+
+await test("a number chip whose set fails to load shows an error with Retry, never endless skeletons (checker AN2-4)", () => {
+  const rows = [buyerRow({ accessId: "a1" }), buyerRow({ accessId: "a2", name: "Travis Holmgren" })];
+  const state = { ...ANALYTICS_URL_DEFAULTS, tab: "buyers" as const, kpi: { id: "reading" as const, range: "30d" as const } };
+  // Still loading the set: skeleton rows.
+  const loading = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false } } });
+  loading.setQueryData(analyticsKeys.buyers(null), { rows, partial: null });
+  const l = render(h(AllBuyersTab, { examples: null, state, update() {} }), loading);
+  assert.match(l, /data-testid="buyers-loading"/);
+  // The set failed: an error with Retry and "show all your buyers", not skeletons.
+  for (const which of ["kpi", "notice"] as const) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false } } });
+    qc.setQueryData(analyticsKeys.buyers(null), { rows, partial: null });
+    const key = which === "kpi" ? analyticsKeys.overview("30d", null) : analyticsKeys.overview("auto", null);
+    qc.getQueryCache().build(qc, { queryKey: key }).setState({ status: "error", error: new Error("500"), fetchStatus: "idle", errorUpdatedAt: 1 } as never);
+    const st = which === "kpi" ? state : { ...ANALYTICS_URL_DEFAULTS, tab: "buyers" as const, notice: "expiring" as const };
+    const html = render(h(AllBuyersTab, { examples: null, state: st, update() {} }), qc);
+    assert.doesNotMatch(html, /data-testid="buyers-loading"/, `${which}: no endless skeletons`);
+    assert.match(html, /data-testid="buyers-chip-error"/, `${which}: an error`);
+    assert.match(text(html), /Couldn't load this list/);
+    assert.match(html, /data-testid="button-panel-retry"/, `${which}: Retry`);
+    assert.match(text(html), /show all your buyers/);
+    assert.doesNotMatch(text(html), /Travis Holmgren/, `${which}: never the whole list under the chip's name`);
+  }
+});
+
+await test("the Buyers toolbar is one row at lg; the number chip sits on the line under it (checker AN2-8)", () => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, enabled: false } } });
+  qc.setQueryData(analyticsKeys.buyers(null), { rows: [buyerRow({ accessId: "a1" })], partial: null });
+  qc.setQueryData(analyticsKeys.overview("all", null), { kpis: [kpi("reading", 1, { ids: ["a1"] })] });
+  const html = render(h(AllBuyersTab, { examples: null, state: { ...ANALYTICS_URL_DEFAULTS, tab: "buyers", kpi: { id: "reading", range: "all" }, status: "interested" }, update() {} }), qc);
+  const toolbar = /<div class="flex flex-wrap items-center gap-2 lg:flex-nowrap">([\s\S]*?)<div class="hidden flex-wrap items-center gap-2 lg:flex" data-testid="buyers-set-chips">/.exec(html);
+  assert.ok(toolbar, "the chip line follows the toolbar");
+  const wideRow = /<div class="hidden shrink-0 items-center gap-2 lg:flex">([\s\S]*?)<div class="flex w-full flex-wrap items-center gap-2 lg:hidden">/.exec(toolbar![1])![1];
+  assert.doesNotMatch(wideRow, /kpi-chip|notice-chip/, "no chip inside the one-row toolbar");
+  assert.match(wideRow, /data-testid="buyers-clear"/, "Clear stays on the toolbar row");
+  assert.match(html, /data-testid="buyers-set-chips"[\s\S]*?data-testid="kpi-chip"/);
+  assert.match(wideRow, /w-44 text-sm xl:w-48[\s\S]*w-48 text-sm xl:w-52/, "deal and status selects narrower at lg, so the row fits from 1024 px");
+});
+
+await test("Pages read is '—' for a buyer who never opened, not '0 of 26' (checker AN2-8)", () => {
+  const { pagesReadText } = AllBuyersMod;
+  const never = buyerRow({ accessId: "a9", name: "Check Notopened", firstSeenAt: null, lastSeenAt: null, readingMs: 0, pagesRead: 0, contentPages: 26, status: "not_opened", statusLabel: "Not opened yet", decision: "" });
+  assert.equal(pagesReadText(never), "—");
+  assert.equal(pagesReadText(buyerRow({})), "24 of 27");
+  assert.equal(pagesReadText(buyerRow({ pagesRead: 0, contentPages: 26 })), "0 of 26", "opened but read nothing closely: a real 0");
+  assert.equal(pagesReadText(buyerRow({ document: "teaser", pagesRead: null, contentPages: null })), "—");
+  const html = render(h(BuyersTable, { rows: [never], onNudge() {} }));
+  assert.doesNotMatch(text(html), /0 of 26/);
+  assert.doesNotMatch(AllBuyersMod.buyerFactsLine(never), /0 of 26/, "the phone card too");
+  assert.match(AllBuyersMod.buyerFactsLine(never), /not opened yet/);
 });
 
 console.log("Empty states and the period note");
