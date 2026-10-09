@@ -18,9 +18,18 @@ import { CONTACT_PAGE_ID, DISCLAIMER_PAGE_ID } from "@shared/cim-blocks";
 import { storage } from "../storage";
 import { cachedFactsForDeals } from "../engagement/facts-cache";
 import { buyerInsight } from "../engagement/insights";
+import { cimVisitConditions } from "../engagement/queries";
+import { sampleColumns } from "../engagement/demo-columns";
 
-/** CIM reading only: teaser visits (mode 'teaser') are the teaser's own numbers (server/teaser/engagement.ts). */
-const notTeaserVisit = sql`${buyerVisits.mode} IS DISTINCT FROM 'teaser'`;
+/**
+ * The visits a buyer's reading is counted from — the same rule as the
+ * Engagement tab (INTEGRATION §2.13): no broker preview, clamped or teaser
+ * visit, and no old visit that an example deal's sample reading replaces.
+ * The drizzle queries below read `buyer_visits` unaliased.
+ */
+export async function profileVisitConditions() {
+  return cimVisitConditions("buyer_visits", { sampleColumns: await sampleColumns() });
+}
 
 /**
  * Is this buyer on the broker's list? Same membership rule as the Buyers
@@ -168,6 +177,7 @@ export async function engagementByAccess(accessIds: string[]): Promise<Map<strin
 /** Reading-time engagement per access (only rows with at least one measured visit). */
 async function readingByAccess(accessIds: string[]): Promise<Map<string, AccessEngagement>> {
   const out = new Map<string, AccessEngagement>();
+  const shownVisit = await profileVisitConditions();
   const visits = await db.select({
     accessId: buyerVisits.buyerAccessId,
     n: sql<number>`count(*)::int`,
@@ -175,7 +185,7 @@ async function readingByAccess(accessIds: string[]): Promise<Map<string, AccessE
     first: sql<number>`(extract(epoch from min(${buyerVisits.startedAt})) * 1000)::float8`,
     last: sql<number>`(extract(epoch from max(${buyerVisits.lastSeenAt})) * 1000)::float8`,
   }).from(buyerVisits)
-    .where(and(inArray(buyerVisits.buyerAccessId, accessIds), eq(buyerVisits.selfView, false), eq(buyerVisits.clamped, false), notTeaserVisit))
+    .where(and(inArray(buyerVisits.buyerAccessId, accessIds), shownVisit))
     .groupBy(buyerVisits.buyerAccessId);
   if (visits.length === 0) return out;
   const ids = visits.map((v) => v.accessId);
@@ -187,7 +197,7 @@ async function readingByAccess(accessIds: string[]): Promise<Map<string, AccessE
       att: sql<number>`coalesce(sum(${readingRollups.attentionMs}), 0)::float8`,
     }).from(readingRollups)
       .innerJoin(buyerVisits, eq(buyerVisits.id, readingRollups.visitId))
-      .where(and(inArray(readingRollups.buyerAccessId, ids), eq(buyerVisits.selfView, false), eq(buyerVisits.clamped, false), notTeaserVisit))
+      .where(and(inArray(readingRollups.buyerAccessId, ids), shownVisit))
       .groupBy(readingRollups.buyerAccessId, readingRollups.pageId),
     db.select({ id: buyerAccess.id, dealId: buyerAccess.dealId }).from(buyerAccess).where(inArray(buyerAccess.id, ids)),
   ]);
@@ -307,7 +317,7 @@ export async function readingIntentByAccess(accesses: Array<{ id: string; dealId
   const out = new Map<string, number>();
   if (accesses.length === 0) return out;
   const withVisits = await db.selectDistinct({ accessId: buyerVisits.buyerAccessId }).from(buyerVisits)
-    .where(and(inArray(buyerVisits.buyerAccessId, accesses.map((a) => a.id)), eq(buyerVisits.selfView, false), eq(buyerVisits.clamped, false), notTeaserVisit));
+    .where(and(inArray(buyerVisits.buyerAccessId, accesses.map((a) => a.id)), await profileVisitConditions()));
   const measured = new Set(withVisits.map((r) => r.accessId));
   const byDeal = new Map<string, string[]>();
   for (const a of accesses) if (measured.has(a.id)) byDeal.set(a.dealId, [...(byDeal.get(a.dealId) ?? []), a.id]);

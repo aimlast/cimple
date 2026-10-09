@@ -312,6 +312,30 @@ export function parseEngagementFilters(q: Record<string, unknown>): EngagementFi
   };
 }
 
+/**
+ * Who a filtered view shows, for its copy (never "nobody" when other buyers
+ * may well have read): "one" = a single buyer's whole reading (the Buyers
+ * view's "See where they read"); "some" = any narrower view — several
+ * buyers, a segment, a device or a date range (one buyer on a phone or over
+ * 7 days is "some": they may have read the page on a computer or earlier);
+ * null = every buyer, all time, any device.
+ */
+export type EngagementViewScope = "one" | "some" | null;
+export function engagementViewScope(f: Pick<EngagementFilters, "buyers" | "segment" | "range" | "device">): EngagementViewScope {
+  const narrowed = f.range !== "all" || f.device !== "all";
+  if (f.buyers.length === 1) return narrowed ? "some" : "one";
+  return f.buyers.length > 1 || f.segment !== "all" || narrowed ? "some" : null;
+}
+
+/**
+ * The pulse's "opened" (INTEGRATION §2.9): a visit, or a stamped first view
+ * when the view is all time on any device — a first view with no visit
+ * carries no device, and its date alone isn't reading in a range.
+ */
+export function firstViewCounts(f: Pick<EngagementFilters, "range" | "device">): boolean {
+  return f.range === "all" && f.device === "all";
+}
+
 /** Query string for a filter set (defaults omitted). */
 export function engagementFiltersQuery(f: Partial<EngagementFilters>): string {
   const p = new URLSearchParams();
@@ -442,6 +466,8 @@ export interface FactPage extends ViewerPageRef {
   locked: boolean;
   expectedMs: number;
   blocks: RenditionBlock[];
+  /** What the current CIM does with this page when it is no longer a current section (server/engagement/titles.ts). */
+  update?: PageUpdate;
 }
 
 export interface PageReading {
@@ -470,6 +496,8 @@ export interface VisitFacts {
   path: Array<[number, string]>;
   /** Recorded before detailed reading tracking (page-level only). */
   legacy: boolean;
+  /** Sample reading on an example deal (buyer_visits.demo_seed; scripts/seed-demo-reading.ts) — never real. */
+  sample: boolean;
   /** Opaque per-deal network key (keyed hash) — only for "opened from N places". */
   networkKey: string | null;
 }
@@ -530,6 +558,8 @@ export interface DealReadingFacts {
   buyers: BuyerReadingFacts[];
   /** Only legacy (page-level) reading exists for this filter. */
   legacyOnly: boolean;
+  /** Some of the reading drawn is sample reading on an example deal (VisitFacts.sample). */
+  sampleReading: boolean;
   lastWriteAt: string | null;
   /**
    * Old-tracker reading on pages the current CIM no longer has (a
@@ -567,6 +597,8 @@ export interface EngagementSummaryResponse {
   mostStudiedPage: (PageRef & { attentionMs: number }) | null;
   renditions: RenditionSummary[];
   legacyOnly: boolean;
+  /** This example deal's reading is sample data (the "Sample reading" chip). */
+  sampleReading: boolean;
   lastWriteAt: string | null;
 }
 
@@ -622,12 +654,22 @@ export interface EngagementBuyersResponse {
   notOpened: NotOpenedBuyer[];
   pages: ViewerPageRef[];
   legacyOnly: boolean;
+  sampleReading: boolean;
+  /**
+   * opened: a link with a visit, or (all time, any device) a stamped first
+   * view — the pulse's rule, = the Document view's openedTotal. withReading: a link with
+   * a visit of ≥ READING_RULES.readerMinMs active (the reader rule) — = the
+   * Document view's openedBy.
+   */
+  counts: { opened: number; withReading: number };
 }
 
 export interface BuyerSeconds {
   accessId: string;
   name: string;
   attentionMs: number;
+  /** Their reading here is known only as a page total (DocumentPage.buyers). */
+  pageOnly?: true;
 }
 
 export interface BlockAttention {
@@ -673,9 +715,55 @@ export interface DocumentPage extends ViewerPageRef {
   questions: Array<BuyerQuestionRef & { accessId: string; name: string }>;
   /** "Changed since N buyers read it" — N, or null when unchanged. */
   changedSince: number | null;
-  /** Page-level only (legacy data, or layout differed between merged versions). */
+  /** Page-level only (legacy data, or layout differed between merged versions). = heat.basis === "page". */
   pageLevelOnly: boolean;
+  /** How this page's reading is known: part by part, as a page total, or both. */
+  heat: PageHeat;
+  /**
+   * False (reachBasis "old_tracking" only) for a page nobody has any reading
+   * on, deal-wide whatever the filter: the old tracking never recorded it
+   * (added after these buyers read, or never tracked). Hatched, never a drop,
+   * no read label.
+   */
+  reachRecorded: boolean;
+  /** What the current CIM does with this page when it is no longer a current section. */
+  update: PageUpdate;
 }
+
+// ── Heat basis (how a page's reading is known) ───────────────────────────
+
+/**
+ * parts   reading recorded part by part (paint each part);
+ * page    only page totals (old tracking, or a version with different
+ *         parts): the whole page is shaded by its reading time;
+ * mixed   both: parts painted from part-level readers, the rest noted;
+ * none    under a second of reading.
+ */
+export type HeatBasis = "parts" | "page" | "mixed" | "none";
+
+export interface PageHeat {
+  basis: HeatBasis;
+  /** Buyers with part-by-part reading on this page. */
+  partBuyers: number;
+  /** Buyers with only a page total here. */
+  pageOnlyBuyers: number;
+  /** Attention known only as a page total (included in attentionMs). */
+  pageOnlyMs: number;
+  /** Why page totals only: read before part tracking, or on a version with different parts (the larger share). */
+  reason: "before_part_tracking" | "other_layout" | null;
+}
+
+/** What the drawn version is, against what buyers are served now. */
+export type VersionNote =
+  | { kind: "kept_copy"; since: string }
+  | { kind: "held"; sample: boolean }
+  | { kind: "older_version"; changedPages: number };
+
+/** A page that is no longer a current section: renamed in the update, or none continues it. */
+export type PageUpdate = { status: "renamed"; title: string } | { status: "no_successor" } | null;
+
+/** How "how far buyers got" is known: the tracker's exact furthest page, or the old tracking's pages with reading. */
+export type ReachBasis = "tracked" | "old_tracking";
 
 export interface ReachPoint {
   index: number;
@@ -699,8 +787,16 @@ export interface KindAttention {
 export interface EngagementDocumentResponse {
   rendition: RenditionSummary | null;
   renditions: RenditionSummary[];
-  /** Buyers who opened the CIM (denominator of "7/9 read"). */
+  /** Buyers with reading recorded: a visit of ≥ READING_RULES.readerMinMs active (denominator of "7/9 read"). */
   openedBy: number;
+  /** Buyers who opened it: a visit, or (all time, any device) a stamped first view — the pulse's rule (firstViewCounts). */
+  openedTotal: number;
+  reachBasis: ReachBasis;
+  /** reachBasis "old_tracking": the last recorded viewer page (DocumentPage.reachRecorded — deal-wide, not this view's). */
+  lastRecordedIndex: number | null;
+  /** This example deal's reading is sample data. */
+  sampleReading: boolean;
+  versionNote: VersionNote | null;
   reach: ReachPoint[];
   reachHeadline: string | null;
   pages: DocumentPage[];
@@ -755,6 +851,8 @@ export interface BuyerJourneyResponse {
   accessId: string;
   name: string;
   company: string | null;
+  /** This example deal's reading is sample data. */
+  sampleReading: boolean;
   visits: JourneyVisit[];
   questions: BuyerQuestionRef[];
   decisions: Array<{ decision: string; at: string }>;

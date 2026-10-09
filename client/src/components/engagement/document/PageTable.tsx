@@ -53,7 +53,9 @@ export function PageTable({ pages, order, openedBy, onOpen }: { pages: DocumentP
                 <TableCell className="text-right text-xs tabular-nums">{p.attentionMs > 0 ? formatReadingTime(p.attentionMs) : "—"}</TableCell>
                 <TableCell className="hidden sm:table-cell text-right text-xs tabular-nums">{per != null ? formatReadingTime(per) : "—"}</TableCell>
                 <TableCell className="hidden lg:table-cell text-right text-xs tabular-nums text-muted-foreground">{formatReadingTime(p.expectedMs)}</TableCell>
-                <TableCell className="hidden sm:table-cell"><ReadLabelChip label={p.readLabel} /></TableCell>
+                <TableCell className="hidden sm:table-cell">
+                  {p.reachRecorded === false ? <span className="text-[11px] text-muted-foreground">No reading recorded</span> : <ReadLabelChip label={p.readLabel} />}
+                </TableCell>
                 <TableCell className="hidden md:table-cell text-right text-xs tabular-nums">{p.questions.length || "—"}</TableCell>
               </TableRow>
             );

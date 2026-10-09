@@ -31,7 +31,8 @@ import { dealPublishedForBuyers } from "@shared/buyer-publish-gate";
 import { requireBroker, requireOwnedDeal } from "../broker-auth/routes.js";
 import { storage } from "../storage";
 import { getDealAccess } from "../engagement/access";
-import { decisionHistory, readingSource, type CaptureFacts } from "../engagement/facts";
+import { decisionHistory, loadTitleSources, readingSource, type CaptureFacts } from "../engagement/facts";
+import { pageTitle, titleIndex } from "../engagement/titles";
 import {
   buildBuyersResponse,
   buildDocumentResponse,
@@ -92,26 +93,24 @@ export function registerEngagementRoutes(app: Express): void {
         // Old-tracker reading is drawn on the CIM as it would be served now
         // (server/engagement/legacy.ts): that version isn't stored — rebuild it.
         // Every CIM level a link on this deal reads (normalised), plus the named CIM.
+        // Broker side: a CIM held from buyers is drawn as they will get it (ignoreHold).
         const levels = Array.from(new Set([
           ...(await storage.getBuyerAccessByDeal(deal.id)).filter((a) => seesCim(a.accessLevel)).map((a) => normalizeAccessLevel(a.accessLevel)),
           NAMED_ACCESS_LEVEL,
         ]));
         for (const level of levels) {
-          const lr = await liveRendition(deal, level);
+          const lr = await liveRendition(deal, level, new Date(), { ignoreHold: true });
           if (lr?.raw.id === rid) { row = lr.row; break; }
         }
       }
       if (!row) return res.status(404).json({ error: "Not found" });
-      // Real (named) titles, broker side: the page's own section, else the
-      // section that continues it after a regeneration (lineage).
-      const live = await storage.getCimSectionsByDeal(deal.id);
-      const byId = new Map(live.map((s) => [s.id, s]));
-      const byLineage = new Map(live.map((s) => [s.analyticsLineage || s.id, s]));
+      // Real (named) titles, broker side: the served page's own (titles.ts) —
+      // never the title of a section that continues it after a regeneration.
+      const [live, stored] = await Promise.all([storage.getCimSectionsByDeal(deal.id), readingSource().renditions(deal.id)]);
+      const pages = row.pageIndex ?? [];
+      const titles = titleIndex(await loadTitleSources(deal, live, stored, row, new Map([[row.id, pages]])));
       const realTitles: Record<string, string> = {};
-      for (const p of row.pageIndex ?? []) {
-        const s = byId.get(p.pageId) ?? byLineage.get(p.lineageId);
-        realTitles[p.pageId] = s?.sectionTitle || p.servedTitle;
-      }
+      for (const p of pages) realTitles[p.pageId] = pageTitle(p, row.mode as CimMode, titles).title || p.servedTitle;
       const body: EngagementRenditionResponse = {
         id: row.id,
         mode: row.mode as CimMode,

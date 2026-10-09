@@ -11,7 +11,13 @@
  *                 page, clicking selects it
  *   what they did switched to Normalized, opened the section, played the video…
  *   questions     asked while on this page
- *   version note  "Changed since 2 buyers read it"
+ *   version note  "Changed since 2 buyers read it"; on a kept copy or an
+ *                 older version, what the current CIM does with this page
+ *                 ("In your update this page is “…”")
+ *
+ * A buyer whose reading here is known only as a page total carries a muted
+ * "· whole page"; a page known only as a total says so instead of listing
+ * parts.
  *
  * A switch turns the panel to "What holds attention" (AttentionByKind, the
  * intelligence stream's component) for this page and the whole CIM.
@@ -30,7 +36,7 @@ import { KIND_GROUPS, kindGroupOf } from "@shared/cim-blocks";
 import { AttentionByKind } from "../AttentionByKind";
 import { heatChrome } from "../heat";
 import { Segmented } from "../FilterBar";
-import { expandCount, interactionLines, isUnread, pageInView, paintable, perReaderMs, readersText, type SectionView } from "./viewer-model";
+import { expandCount, interactionLines, isUnread, pageInView, paintable, perReaderMs, readersText, scopedNobody, type SectionView } from "./viewer-model";
 import { Link } from "wouter";
 import { cn } from "@/lib/utils";
 
@@ -76,7 +82,7 @@ function pageKinds(page: DocumentPage, renditionPage: RenditionPage | undefined)
 }
 
 export function PagePanel({
-  page, doc, dealId, renditionPage, selectedKey, onHoverKey, onSelectKey, onOnlyBuyer, filteredToOne, paint, className, sectionView = null,
+  page, doc, dealId, renditionPage, selectedKey, onHoverKey, onSelectKey, onOnlyBuyer, filteredToOne, viewScope, paint, className, sectionView = null, headline = null,
 }: {
   page: DocumentPage;
   doc: EngagementDocumentResponse;
@@ -87,10 +93,18 @@ export function PagePanel({
   onSelectKey(key: string | null): void;
   onOnlyBuyer(accessId: string): void;
   filteredToOne: boolean;
+  /**
+   * Who the view shows (shared engagementViewScope): "one" = one buyer's whole
+   * reading, "some" = a narrower view (buyers, a segment, a device, a date
+   * range). Defaults from filteredToOne.
+   */
+  viewScope?: "one" | "some" | null;
   paint: boolean;
   className?: string;
   /** A collapsible section: the view drawn (the parts listed are that view's). */
   sectionView?: SectionView | null;
+  /** Phones: the page's one-sentence headline moves here from above the page. */
+  headline?: string | null;
 }) {
   const [mode, setMode] = useState<"page" | "kinds">("page");
   const [allParts, setAllParts] = useState(false);
@@ -104,6 +118,11 @@ export function PagePanel({
   const perReader = perReaderMs(page);
   const did = interactionLines(page.interactions);
   const shownParts = allParts ? parts : parts.slice(0, 8);
+  const scope = viewScope !== undefined ? viewScope : filteredToOne ? "one" : null;
+  // Nobody in this view read it: other buyers may have (unless nobody's reading was ever recorded on it).
+  const nobodyText = page.reachRecorded === false
+    ? "Nobody has read this page yet."
+    : scopedNobody(scope, { all: "Nobody has read this page yet.", one: "This buyer hasn't read this page.", some: "No buyer in this view has read this page." });
 
   return (
     <div className={cn("space-y-5 text-sm", className)} data-testid="engagement-page-panel">
@@ -130,7 +149,11 @@ export function PagePanel({
         <>
           <dl className="grid grid-cols-2 gap-x-3 gap-y-3">
             <Stat term="Reading time" value={formatReadingTime(page.attentionMs)} note="all buyers together" />
-            <Stat term="Buyers who read it" value={readersText(page.readers, doc.openedBy)} note={`${page.reachedBy} got this far`} />
+            <Stat
+              term="Buyers who read it"
+              value={readersText(page.readers, doc.openedBy)}
+              note={page.reachRecorded === false ? "no reading recorded on this page" : `${page.reachedBy} got this far`}
+            />
             <Stat
               term="Per buyer"
               value={perReader != null ? formatReadingTime(perReader) : "—"}
@@ -145,24 +168,32 @@ export function PagePanel({
             </div>
           </dl>
 
-          {(page.changedSince != null || page.pageLevelOnly || !paint) && (
+          {headline && (
+            <p className="border-l-2 border-teal/70 bg-teal/5 py-1.5 pl-3 pr-2 text-xs text-foreground/90" data-testid="engagement-page-headline">
+              {headline}
+            </p>
+          )}
+
+          {page.changedSince != null && (
             <div className="flex gap-2 rounded-md border border-border bg-muted/30 p-2.5 text-xs text-muted-foreground">
               <History className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <div className="space-y-1">
-                {page.changedSince != null && (
-                  <p>Changed since {page.changedSince} buyer{page.changedSince === 1 ? "" : "s"} read it. The colours show reading on this version.</p>
-                )}
-                {(page.pageLevelOnly || !paint) && (
-                  <p>Only page totals are available here: the layout differed between versions, or it was read before part-by-part tracking.</p>
-                )}
-              </div>
+              <p>Changed since {page.changedSince} buyer{page.changedSince === 1 ? "" : "s"} read it. The colours show reading on this version.</p>
+            </div>
+          )}
+
+          {updateNote(page, doc) && (
+            <div className="flex gap-2 rounded-md border border-border bg-muted/30 p-2.5 text-xs text-muted-foreground" data-testid="engagement-update-note">
+              <History className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <p>{updateNote(page, doc)}</p>
             </div>
           )}
 
           <section>
             <h4 className="mb-2 text-xs font-medium text-foreground/90">Buyers on this page</h4>
             {page.buyers.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Nobody has read this page yet.</p>
+              <p className="text-xs text-muted-foreground">
+                {nobodyText}
+              </p>
             ) : (
               <ul className="space-y-1.5">
                 {page.buyers.map((b) => (
@@ -175,7 +206,17 @@ export function PagePanel({
                       title={filteredToOne ? undefined : `Show only ${b.name}`}
                     >
                       <span className="truncate text-xs group-enabled:group-hover:text-teal">{b.name}</span>
-                      <span className="text-xs tabular-nums text-muted-foreground">{formatReadingTime(b.attentionMs)}</span>
+                      <span className="text-xs tabular-nums text-muted-foreground">
+                        {formatReadingTime(b.attentionMs)}
+                        {b.pageOnly && (
+                          <span
+                            className="text-muted-foreground/70"
+                            title={page.heat?.reason === "other_layout" ? "Read a version with different parts" : "Read before Cimple tracked each part of a page"}
+                          >
+                            {" "}· whole page
+                          </span>
+                        )}
+                      </span>
                       <span className="col-span-2 mt-0.5 h-1.5 overflow-hidden rounded-full bg-muted">
                         <span className="block h-full rounded-full" style={{ width: `${maxBuyer ? Math.max(3, (b.attentionMs / maxBuyer) * 100) : 0}%`, background: heatChrome(0.85) }} />
                       </span>
@@ -186,15 +227,22 @@ export function PagePanel({
             )}
           </section>
 
-          {parts.length > 0 && (
+          {/* Nobody read it: the buyers list above already says so — no parts to rank. */}
+          {parts.length > 0 && page.heat?.basis !== "none" && (
             <section>
               <h4 className="mb-2 text-xs font-medium text-foreground/90">
                 Parts of this page{sectionView === "collapsed" ? " (collapsed, as buyers first see it)" : sectionView === "opened" ? " (opened)" : ""}
               </h4>
               {openedNobody ? (
-                <p className="text-xs text-muted-foreground">Nobody has opened this section yet.</p>
+                <p className="text-xs text-muted-foreground">
+                  {scopedNobody(scope, { all: "Nobody has opened this section yet.", one: "This buyer hasn't opened this section.", some: "No buyer in this view has opened this section." })}
+                </p>
               ) : !paint ? (
-                <p className="text-xs text-muted-foreground">Part-by-part reading isn't available for this page.</p>
+                <p className="text-xs text-muted-foreground">
+                  {page.heat?.basis === "page"
+                    ? "Only the page total is known for this reading."
+                    : "The version shown has different parts, so only the page total applies here."}
+                </p>
               ) : (
                 <ul className="space-y-1" onMouseLeave={() => onHoverKey(null)}>
                   {shownParts.map((b) => (
@@ -229,6 +277,9 @@ export function PagePanel({
                 <button type="button" onClick={() => setAllParts((v) => !v)} className="mt-1 text-xs text-teal hover:underline">
                   {allParts ? "Show the top 8" : `Show all ${parts.length} parts`}
                 </button>
+              )}
+              {paint && page.heat?.basis === "mixed" && page.heat.pageOnlyMs >= 1000 && (
+                <p className="mt-1.5 text-[11px] text-muted-foreground">+ {formatReadingTime(page.heat.pageOnlyMs)} read as a whole page</p>
               )}
             </section>
           )}
@@ -284,4 +335,15 @@ function Stat({ term, value, note }: { term: string; value: string; note?: strin
       {note && <p className="text-[11px] leading-snug text-muted-foreground">{note}</p>}
     </div>
   );
+}
+
+/**
+ * What the current CIM does with this page, on a kept copy or an older
+ * version only ("In your update this page is “…”"); null otherwise.
+ */
+export function updateNote(page: Pick<DocumentPage, "update">, doc: Pick<EngagementDocumentResponse, "versionNote">): string | null {
+  const v = doc.versionNote;
+  if (!page.update || (v?.kind !== "kept_copy" && v?.kind !== "older_version")) return null;
+  if (page.update.status === "renamed") return `In your update this page is “${page.update.title}”.`;
+  return "No page in your update carries on this page's reading history.";
 }

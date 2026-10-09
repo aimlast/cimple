@@ -61,7 +61,7 @@ export function JourneyDrawer({
     <Sheet open={!!accessId} onOpenChange={(o) => { if (!o) onClose(); }}>
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-lg" data-testid="engagement-journey">
         <SheetHeader className="text-left">
-          <SheetTitle>{data?.name ?? "Visits"}</SheetTitle>
+          <SheetTitle className="flex items-center gap-2">{data?.name ?? "Visits"}{data?.sampleReading && <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted-foreground" title="This is an example deal: its buyers and their reading are made up." data-testid="journey-sample-chip">Sample</span>}</SheetTitle>
           <SheetDescription>
             {data?.company ? `${data.company} · ` : ""}
             {visits.length} visit{visits.length === 1 ? "" : "s"}

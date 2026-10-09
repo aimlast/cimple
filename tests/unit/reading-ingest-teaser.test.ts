@@ -148,9 +148,9 @@ async function main() {
     assert.ok((await src.blockSums(q)).every((b) => b.renditionId !== rid));
     const { cimVisitConditions } = await import("../../server/engagement/queries");
     const { PgDialect } = await import("drizzle-orm/pg-core");
-    const sqlText = new PgDialect().sqlToQuery(cimVisitConditions("v")).sql;
+    const sqlText = new PgDialect().sqlToQuery(cimVisitConditions("v", { sampleColumns: false })).sql;
     assert.match(sqlText, /v\.mode IS DISTINCT FROM 'teaser'/);
-    assert.match(new PgDialect().sqlToQuery(cimVisitConditions("vv", { kind: "teaser" })).sql, /vv\.mode = 'teaser'/);
+    assert.match(new PgDialect().sqlToQuery(cimVisitConditions("vv", { sampleColumns: false, kind: "teaser" })).sql, /vv\.mode = 'teaser'/);
   });
 
   await check("teaserEngagement: the funnel, worth a call, opened today", async () => {
