@@ -20,7 +20,7 @@
 import type { Deal, TogetherChunk, TogetherLine, TogetherSitting } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
 import type { CoverageBoard, CoverageItem } from "@shared/coverage-board";
-import type { BoardDiff, BrokerUnconfirmedView, CaptureHints, SpeakerMap } from "@shared/together";
+import type { BoardDiff, BrokerUnconfirmedView, CaptureHints, SpeakerMap, SpeakerRole } from "@shared/together";
 import { lineRole, rolesKnown, speakerDisplay, speakerKind } from "@shared/together-speakers";
 import { storage } from "../storage";
 import { boardFromCoverage, loadCoverageInputs, type CoverageInputs } from "../interview/coverage-board";
@@ -712,6 +712,7 @@ async function finishChunk(
   const store = togetherStore();
   if (applyingNow.has(chunk.id)) return;
   applyingNow.add(chunk.id);
+  let applied = false;
   try {
     // (Already filed — a second path reached it: its stored result stands.)
     if ((await store.getChunk(chunk.id))?.status === "done") return;
@@ -727,10 +728,45 @@ async function finishChunk(
     await store.updateChunk(chunk.id, { status: "done", result: result as never, appliedAt: now, doneAt: now });
     await recordOnSitting(s, chunk, result, guarded, catalogue, usage);
     await publishFiled(s, r, chunk, result);
+    applied = true;
   } finally {
     applyingNow.delete(chunk.id);
   }
+  // The broker may have said who's who while this part was with the model: its
+  // answers were held with the roles it was read with. Once both roles are known
+  // they are filed now (no AI) — never left as "possible answers" (§5.6, D6).
+  if (applied && chunk.reason !== "promote" && guarded.suggestions.length > 0) {
+    await promoteIfRolesKnown(s).catch((err) => console.warn(`[together] couldn't re-check held answers (${s.id}):`, (err as Error).message));
+  }
 }
+
+/** The role of each held answer's lines, as the sitting knows them now. */
+async function heldLineRoles(s: TogetherSitting, held: HeldEntry[]): Promise<{ lines: Map<number, TogetherLine>; roleOf: (seq: number) => SpeakerRole }> {
+  const store = togetherStore();
+  const speakers = (s.speakers ?? {}) as SpeakerMap;
+  const lines = new Map<number, TogetherLine>();
+  for (const seq of Array.from(new Set(held.flatMap((h) => h.lines)))) for (const l of await store.linesBetween(s.id, seq, seq)) lines.set(l.seq, l);
+  const roleOf = (seq: number): SpeakerRole => {
+    const l = lines.get(seq);
+    return l ? lineRole(speakers, { speaker: l.speaker, attested: !!l.attestedSellerAt }) : "unknown";
+  };
+  return { lines, roleOf };
+}
+
+/** Promotes the sitting's held answers when any of them now has known roles (else nothing — no board push). */
+export async function promoteIfRolesKnown(sitting: TogetherSitting): Promise<{ filed: number }> {
+  const s = (await togetherStore().getSitting(sitting.id)) ?? sitting;
+  if (s.status === "ended") return { filed: 0 };
+  const held = captureStateOf(s).held ?? [];
+  if (held.length === 0) return { filed: 0 };
+  const { roleOf } = await heldLineRoles(s, held);
+  const split = promoteHeld(held, roleOf);
+  if (split.file.length === 0 && split.brokerUnconfirmed.length === 0) return { filed: 0 };
+  return promoteHeldAnswers(s);
+}
+
+/** One promotion at a time per sitting (a role choice and a finished part can both ask at once). */
+const promoting = new Map<string, Promise<unknown>>();
 
 async function recordOnSitting(s: TogetherSitting, chunk: TogetherChunk, result: ChunkResult, guarded: GuardedCapture, catalogue: CaptureCatalogue | null, usage: CaptureUsage | null): Promise<void> {
   const fresh = (await togetherStore().getSitting(s.id)) ?? s;
@@ -866,19 +902,24 @@ export async function publishStatus(sittingId: string): Promise<void> {
  * seller didn't confirm". No AI call.
  */
 export async function promoteHeldAnswers(sitting: TogetherSitting, opts: { only?: { itemId: string } } = {}): Promise<{ filed: number }> {
+  const prev = promoting.get(sitting.id) ?? Promise.resolve();
+  const run = prev.catch(() => undefined).then(() => promoteHeldAnswersNow(sitting, opts));
+  promoting.set(sitting.id, run);
+  try {
+    return await run;
+  } finally {
+    if (promoting.get(sitting.id) === run) promoting.delete(sitting.id);
+  }
+}
+
+async function promoteHeldAnswersNow(sitting: TogetherSitting, opts: { only?: { itemId: string } }): Promise<{ filed: number }> {
   const store = togetherStore();
   const s = (await store.getSitting(sitting.id)) ?? sitting;
   const st = captureStateOf(s);
   const held = (st.held ?? []).filter((h) => !opts.only || h.itemId === opts.only.itemId);
   if (held.length === 0) return { filed: 0 };
   const speakers = (s.speakers ?? {}) as SpeakerMap;
-  const allSeqs = Array.from(new Set(held.flatMap((h) => h.lines)));
-  const lines = new Map<number, TogetherLine>();
-  for (const seq of allSeqs) for (const l of await store.linesBetween(s.id, seq, seq)) lines.set(l.seq, l);
-  const roleOf = (seq: number) => {
-    const l = lines.get(seq);
-    return l ? lineRole(speakers, { speaker: l.speaker, attested: !!l.attestedSellerAt }) : "unknown";
-  };
+  const { lines, roleOf } = await heldLineRoles(s, held);
   const split = promoteHeld(held, roleOf);
   const deal = await storage.getDeal(s.dealId);
   if (!deal) return { filed: 0 };
