@@ -95,6 +95,25 @@ async function main() {
     assert.equal(u.status, 200, u.text);
   });
 
+  await check("a saved template: save, then start from it (no AI) — its blocks and the broker's wording", async () => {
+    const st = await call("GET", "/api/deals/D-PAC/teaser", undefined, broker);
+    const conf = st.json.teaser.draft.blocks.find((b: { slot: string }) => b.slot === "confidentiality");
+    const e = await call("PATCH", `/api/deals/D-PAC/teaser/blocks/${conf.id}`, { rev: st.json.teaser.draftRev, body: "Confidential. Ask Brassline, never the business." }, broker);
+    assert.equal(e.status, 200, e.text);
+    const sv = await call("POST", "/api/deals/D-PAC/teaser/save-template", { name: "Brassline house style", makeDefault: true }, broker);
+    assert.equal(sv.status, 200, sv.text);
+    const list = await call("GET", "/api/broker/teaser-templates", undefined, broker);
+    assert.equal(list.json.defaultTemplate, sv.json.template.key);
+    const ft = await call("POST", "/api/deals/D-PAC/teaser/from-template", { templateKey: sv.json.template.key, replace: true }, broker);
+    assert.equal(ft.status, 200, ft.text);
+    assert.equal(ft.json.teaser.templateName, "Brassline house style");
+    assert.equal(ft.json.teaser.draft.blocks.find((b: { slot: string }) => b.slot === "confidentiality").body, "Confidential. Ask Brassline, never the business.");
+    const u = await call("POST", "/api/deals/D-PAC/teaser/undo", { rev: ft.json.teaser.draftRev }, broker);
+    assert.equal(u.status, 200, u.text);
+    const u2 = await call("POST", "/api/deals/D-PAC/teaser/undo", { rev: u.json.teaser.draftRev }, broker);
+    assert.equal(u2.status, 200, u2.text);
+  });
+
   await check("the view GET serves the whitelisted teaser payload; firstViewedAt untouched; reading recorded", async () => {
     const v = await call("GET", `/api/view/${link.accessToken}`);
     assert.equal(v.status, 200, v.text);

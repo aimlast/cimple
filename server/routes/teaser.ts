@@ -136,9 +136,16 @@ async function requireRow(deal: Deal): Promise<TeaserRow> {
   return row;
 }
 
+/** A template key → its definition (a saved one is the broker's own; null when it isn't theirs). */
+async function resolveDef(key: string, brokerId: string) {
+  if (isBuiltInTeaserTemplate(key)) return TEASER_TEMPLATES[key];
+  const { savedTemplateDef } = await import("../teaser/templates-store");
+  return savedTemplateDef(key, brokerId);
+}
+
 /** Fixed-block builder for a slot (template switches): cells / trend from the facts now. */
 async function fixedBlockFor(deal: Deal, row: TeaserRow, slot: string, templateKey: string): Promise<TeaserBlock | null> {
-  const def = templateDef(templateKey);
+  const def = (await resolveDef(templateKey, deal.brokerId)) ?? templateDef(templateKey);
   const slotDef = def.slots.find((s) => s.slot === slot);
   if (!slotDef || slotDef.src === "ai") return null;
   const f = await teaserFigures(deal);
@@ -241,8 +248,10 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
       if (existing && existing.draft.blocks.length > 0 && !body.replace) {
         return res.status(409).json({ error: "Replace the current draft? You can undo it.", code: "has_draft" });
       }
+      const def = await resolveDef(body.templateKey, deal.brokerId);
+      if (!def) return res.status(400).json({ error: "That template isn't there any more.", code: "invalid" });
       const f = await teaserFigures(deal);
-      const gate = await teaserGate(deal, f, existing?.numbers ?? templateDef(body.templateKey).numbers);
+      const gate = await teaserGate(deal, f, existing?.numbers ?? def.numbers);
       if (!gate.ok) return res.status(400).json({ error: gate.reasons[0], reasons: gate.reasons, code: "gate" });
       const started = await startTeaserGeneration(deal, { templateKey: body.templateKey });
       if ("busy" in started) return res.status(409).json({ error: "Cimple is writing your teaser — try again in a moment.", code: "writing" });
@@ -261,7 +270,8 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
       if (existing?.generation?.status === "running") return res.status(409).json({ error: "Cimple is writing your teaser — try again in a moment.", code: "writing" });
       if (existing && existing.draft.blocks.length > 0 && !body.replace) return res.status(409).json({ error: "Replace the current draft? You can undo it.", code: "has_draft" });
       const f = await teaserFigures(deal);
-      const def = templateDef(body.templateKey);
+      const def = await resolveDef(body.templateKey, deal.brokerId);
+      if (!def) return res.status(400).json({ error: "That template isn't there any more.", code: "invalid" });
       const numbers = existing?.numbers ?? def.numbers;
       const gate = await teaserGate(deal, f, numbers);
       if (!gate.ok) return res.status(400).json({ error: gate.reasons[0], reasons: gate.reasons, code: "gate" });
@@ -307,17 +317,16 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
       // A template switch: missing slots added (fixed ones from the facts now; AI ones written in the background).
       let toFill: string[] = [];
       const fixedBlocks = new Map<string, TeaserBlock | null>();
+      let newDef: Awaited<ReturnType<typeof resolveDef>> = null;
       if (body.templateKey && body.templateKey !== row.templateKey) {
-        const { savedTemplateDef } = await import("../teaser/templates-store");
-        const def = isBuiltInTeaserTemplate(body.templateKey) ? TEASER_TEMPLATES[body.templateKey] : await savedTemplateDef(body.templateKey, deal.brokerId);
-        if (!def) return res.status(400).json({ error: "Pick a template.", code: "invalid" });
-        for (const s of def.slots) if (s.src !== "ai" && !row.draft.blocks.some((b) => b.slot === s.slot)) fixedBlocks.set(s.slot, await fixedBlockFor(deal, row, s.slot, body.templateKey));
+        newDef = await resolveDef(body.templateKey, deal.brokerId);
+        if (!newDef) return res.status(400).json({ error: "Pick a template.", code: "invalid" });
+        for (const s of newDef.slots) if (s.src !== "ai" && !row.draft.blocks.some((b) => b.slot === s.slot)) fixedBlocks.set(s.slot, await fixedBlockFor(deal, row, s.slot, body.templateKey));
       }
       const updated = await saveDraft(deal.id, body.rev, (doc, r) => {
         let next = doc;
-        if (body.templateKey && body.templateKey !== r.templateKey) {
-          const def = templateDef(body.templateKey);
-          const applied = applyTemplateSlots(next, def, (slot) => fixedBlocks.get(slot) ?? null);
+        if (newDef && body.templateKey && body.templateKey !== r.templateKey) {
+          const applied = applyTemplateSlots(next, newDef, (slot) => fixedBlocks.get(slot) ?? null);
           next = applied.doc;
           toFill = applied.toFill;
         }
