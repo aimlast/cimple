@@ -117,3 +117,17 @@ export function sectionSimilarity(a: SectionWordsInput, b: SectionWordsInput): n
   const rb = pageRole({ layoutType: b.layoutType, title: b.sectionTitle, sectionKey: b.sectionKey });
   return dice >= ONE_WORD_SECTION_SIMILARITY && ra === rb && ra !== "other" ? dice : 0;
 }
+
+/** The stems two sections share (telling: weight 1 on both sides) — for the lineage repair's explanations. */
+export function sharedLineageWords(a: SectionWordsInput, b: SectionWordsInput): { telling: string[]; broad: string[] } {
+  const A = lineageWords(a.sectionKey, a.sectionTitle);
+  const B = lineageWords(b.sectionKey, b.sectionTitle);
+  const telling: string[] = [];
+  const broad: string[] = [];
+  A.forEach((w, k) => {
+    const wb = B.get(k);
+    if (wb === undefined) return;
+    (w === 1 && wb === 1 ? telling : broad).push(k);
+  });
+  return { telling: telling.sort(), broad: broad.sort() };
+}

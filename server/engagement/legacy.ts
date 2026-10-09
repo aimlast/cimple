@@ -162,6 +162,46 @@ export function legacyPageRemap(
   };
 }
 
+/**
+ * How legacyPageRemap places a page of the reading on file — for the dry
+ * runs of scripts/seed-demo-reading.ts, which list every old key with how it
+ * lands. Same order as legacyPageRemap / legacyKeyResolver:
+ *   "on this version"        the stored page (by id or stored lineage) is a page of the version drawn;
+ *   "same key"               a current section has that key;
+ *   "blind key of a section" the blind view's s_<id> key of a current section;
+ *   "via lineage"            through a current section's analytics_lineage (a
+ *                            regeneration's link — worth a look where the
+ *                            lineage couldn't be checked);
+ *   "section id"             the stored page id is a current section's id;
+ *   "key words"              a renamed key, matched by its words (matchLegacyKey).
+ * Null when it isn't placed. Pure.
+ */
+export type LegacyPlacementHow = "on this version" | "same key" | "blind key of a section" | "via lineage" | "section id" | "key words";
+export function legacyPlacementHow(
+  sections: ReadonlyArray<LegacySection>,
+  blindKey: (id: string) => string,
+  drawn: ReadonlyArray<{ pageId: string; lineageId: string }> | null = null,
+): (pageId: string, lineageId: string | null) => LegacyPlacementHow | null {
+  const remap = legacyPageRemap(sections, blindKey, drawn);
+  const drawnIds = drawn ? new Set(drawn.map((p) => p.pageId)) : null;
+  const drawnLineages = drawn ? new Set(drawn.map((p) => p.lineageId)) : null;
+  const byKey = new Set(sections.map((s) => s.sectionKey));
+  const byBlind = new Set(sections.map((s) => blindKey(s.id)));
+  const ids = new Set(sections.map((s) => s.id));
+  const lineages = new Set(sections.map((s) => s.analyticsLineage).filter((x): x is string => !!x));
+  const lineageBlind = new Set(Array.from(lineages).map((l) => blindKey(l)));
+  return (pageId, lineageId) => {
+    if (!remap(pageId, lineageId)) return null;
+    if (drawnIds && (drawnIds.has(pageId) || (!!lineageId && drawnLineages!.has(lineageId)))) return "on this version";
+    if (ids.has(pageId) || (!!lineageId && ids.has(lineageId) && !lineages.has(lineageId))) return "section id";
+    if (lineageId && lineages.has(lineageId)) return "via lineage";
+    if (byKey.has(pageId)) return "same key";
+    if (byBlind.has(pageId)) return "blind key of a section";
+    if (lineageBlind.has(pageId) || lineages.has(pageId)) return "via lineage";
+    return "key words";
+  };
+}
+
 // ── Renamed keys (word helpers: shared/section-words.ts) ─────────────────
 
 /**

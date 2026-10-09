@@ -15,6 +15,7 @@ import { sql, type SQL } from "drizzle-orm";
 import type { EngagementDevice, RenditionPage } from "@shared/analytics-v2";
 import { asDate, type MemoryReadingStore } from "../analytics/reading-ingest";
 import type { LegacyExit } from "./legacy";
+import { sampleColumns } from "./demo-columns";
 
 export interface ReadingQuery {
   dealId: string;
@@ -156,8 +157,40 @@ function deviceMatches(device: EngagementDevice, cls: string | null): boolean {
 
 // ── Postgres ─────────────────────────────────────────────────────────────
 
-function visitFilter(q: ReadingQuery, v = sql.raw("v")): SQL {
-  const parts: SQL[] = [sql`${v}.deal_id = ${q.dealId}`, sql`NOT ${v}.self_view`, sql`NOT ${v}.clamped`];
+/**
+ * The visits every CIM reading count is built from (INTEGRATION §2.13 — one
+ * helper for every reader of buyer_visits): never the owning broker's own
+ * preview (self_view), never a clamped (forged or buggy) visit, never a
+ * teaser visit (the teaser has its own screen), and never an old visit that
+ * sample reading on an example deal replaces while it is in place
+ * (superseded_by; only once the column exists — before that no visit can be
+ * hidden, so leaving it out is exactly equivalent). `alias` is the visits
+ * table's name or alias in the surrounding query.
+ */
+export function cimVisitConditions(alias = "v", opts: { sampleColumns: boolean }): SQL {
+  const v = sql.raw(alias);
+  const parts: SQL[] = [
+    sql`NOT ${v}.self_view`,
+    sql`NOT ${v}.clamped`,
+    sql`${v}.mode IS DISTINCT FROM 'teaser'`,
+  ];
+  if (opts.sampleColumns) parts.push(sql`${v}.superseded_by IS NULL`);
+  return sql.join(parts, sql` AND `);
+}
+
+/**
+ * The "first part-by-part visit" that ends a deal's OLD tracker reading
+ * (legacyExits here, loadExits in legacy-store.ts): neither a sample visit
+ * nor a teaser visit may end it (INTEGRATION §2.13).
+ */
+export function firstTrackedVisitSql(dealId: string, opts: { sampleColumns: boolean }): SQL {
+  return sql`(SELECT MIN(v.started_at) FROM buyer_visits v WHERE v.deal_id = ${dealId} AND NOT v.legacy AND NOT v.self_view
+    AND v.mode IS DISTINCT FROM 'teaser'${opts.sampleColumns ? sql` AND v.demo_seed IS NULL` : sql``})`;
+}
+
+export function visitFilter(q: ReadingQuery, sampleCols: boolean, alias = "v"): SQL {
+  const v = sql.raw(alias);
+  const parts: SQL[] = [sql`${v}.deal_id = ${q.dealId}`, cimVisitConditions(alias, { sampleColumns: sampleCols })];
   if (q.since) parts.push(sql`${v}.last_seen_at >= ${q.since.toISOString()}::timestamp`);
   if (q.device === "phone") parts.push(sql`${v}.device_class = 'phone'`);
   if (q.device === "desktop") parts.push(sql`COALESCE(${v}.device_class, 'desktop') <> 'phone'`);
@@ -175,10 +208,11 @@ async function rows(q: SQL): Promise<Array<Record<string, unknown>>> {
 
 export const dbReadingSource: ReadingSource = {
   async renditions(dealId) {
+    const sc = await sampleColumns();
     const r = await rows(sql`
       SELECT r.id, r.mode, r.variant, r.created_at,
-        (SELECT COUNT(*) FROM buyer_visits v WHERE v.rendition_id = r.id AND NOT v.self_view AND NOT v.clamped) AS visits
-      FROM cim_renditions r WHERE r.deal_id = ${dealId} ORDER BY r.created_at`);
+        (SELECT COUNT(*) FROM buyer_visits v WHERE v.rendition_id = r.id AND ${cimVisitConditions("v", { sampleColumns: sc })}) AS visits
+      FROM cim_renditions r WHERE r.deal_id = ${dealId} AND r.mode <> 'teaser' ORDER BY r.created_at`);
     return r.map((x) => ({ id: String(x.id), mode: String(x.mode), variant: String(x.variant), createdAt: asDate(x.created_at), visits: num(x.visits) }));
   },
   async rendition(dealId, id) {
@@ -200,25 +234,28 @@ export const dbReadingSource: ReadingSource = {
     return out;
   },
   async visits(q) {
+    const sc = await sampleColumns();
     const r = await rows(sql`
       SELECT v.id, v.buyer_access_id, v.rendition_id, v.started_at, v.last_seen_at, v.wall_ms, v.active_ms, v.device_class,
-        v.ua_family, v.max_page_index, v.path, v.legacy, v.ip_hash
-      FROM buyer_visits v WHERE ${visitFilter(q)} ORDER BY v.started_at`);
+        v.ua_family, v.max_page_index, v.path, v.legacy, v.ip_hash${sc ? sql`, v.demo_seed` : sql``}
+      FROM buyer_visits v WHERE ${visitFilter(q, sc)} ORDER BY v.started_at`);
     return r.map((x) => ({
       id: String(x.id), accessId: String(x.buyer_access_id), renditionId: orNull(x.rendition_id),
       startedAt: asDate(x.started_at), lastSeenAt: asDate(x.last_seen_at), wallMs: num(x.wall_ms), activeMs: num(x.active_ms),
       deviceClass: orNull(x.device_class), uaFamily: orNull(x.ua_family),
       maxPageIndex: x.max_page_index == null ? null : num(x.max_page_index),
       path: Array.isArray(x.path) ? (x.path as Array<[number, string]>) : [], legacy: !!x.legacy, ipHash: orNull(x.ip_hash),
+      demoSeed: orNull(x.demo_seed),
     }));
   },
   async blockSums(q) {
+    const sc = await sampleColumns();
     const r = await rows(sql`
       SELECT r.buyer_access_id, r.rendition_id, r.lineage_id, r.page_id, r.block_key,
         SUM(r.attention_ms) AS att, SUM(r.skim_ms) AS skim, SUM(r.visible_ms) AS vis, SUM(r.pointer_ms) AS ptr,
         MIN(r.first_at) AS first_at, MAX(r.last_at) AS last_at
       FROM reading_rollups r JOIN buyer_visits v ON v.id = r.visit_id
-      WHERE r.deal_id = ${q.dealId} AND ${visitFilter(q)}
+      WHERE r.deal_id = ${q.dealId} AND ${visitFilter(q, sc)}
       GROUP BY r.buyer_access_id, r.rendition_id, r.lineage_id, r.page_id, r.block_key`);
     return r.map((x) => ({
       accessId: String(x.buyer_access_id), renditionId: orNull(x.rendition_id), lineageId: orNull(x.lineage_id),
@@ -228,10 +265,11 @@ export const dbReadingSource: ReadingSource = {
     }));
   },
   async visitPages(q) {
+    const sc = await sampleColumns();
     const r = await rows(sql`
       SELECT r.buyer_access_id, r.visit_id, r.rendition_id, r.lineage_id, r.page_id, SUM(r.attention_ms) AS att
       FROM reading_rollups r JOIN buyer_visits v ON v.id = r.visit_id
-      WHERE r.deal_id = ${q.dealId} AND ${visitFilter(q)} AND r.attention_ms > 0
+      WHERE r.deal_id = ${q.dealId} AND ${visitFilter(q, sc)} AND r.attention_ms > 0
       GROUP BY r.buyer_access_id, r.visit_id, r.rendition_id, r.lineage_id, r.page_id`);
     return r.map((x) => ({
       accessId: String(x.buyer_access_id), visitId: String(x.visit_id), renditionId: orNull(x.rendition_id),
@@ -239,10 +277,11 @@ export const dbReadingSource: ReadingSource = {
     }));
   },
   async events(q) {
+    const sc = await sampleColumns();
     const r = await rows(sql`
       SELECT e.buyer_access_id, e.visit_id, e.rendition_id, e.event_type, e.page_id, e.block_key, e.event_data, e.client_seq, e.created_at
       FROM analytics_events e JOIN buyer_visits v ON v.id = e.visit_id
-      WHERE e.deal_id = ${q.dealId} AND e.visit_id IS NOT NULL AND ${visitFilter(q)}
+      WHERE e.deal_id = ${q.dealId} AND e.visit_id IS NOT NULL AND ${visitFilter(q, sc)}
       ORDER BY e.visit_id, e.client_seq
       LIMIT 20000`);
     return r.map((x) => {
@@ -272,11 +311,14 @@ export const dbReadingSource: ReadingSource = {
       .filter((d) => !!d.decision);
   },
   async legacyExits(dealId) {
+    const sc = await sampleColumns();
+    // A stored legacy visit — hidden by sample reading or not — means the
+    // old reading lives in buyer_visits now (never read twice).
     const r = await rows(sql`
       SELECT e.buyer_access_id, e.section_key, e.time_spent_seconds, e.created_at FROM analytics_events e
       WHERE e.deal_id = ${dealId} AND e.event_type = 'section_exit' AND e.buyer_access_id IS NOT NULL AND e.section_key IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM buyer_visits v WHERE v.deal_id = ${dealId} AND v.legacy)
-        AND e.created_at < COALESCE((SELECT MIN(v.started_at) FROM buyer_visits v WHERE v.deal_id = ${dealId} AND NOT v.legacy AND NOT v.self_view), 'infinity'::timestamp)
+        AND e.created_at < COALESCE(${firstTrackedVisitSql(dealId, { sampleColumns: sc })}, 'infinity'::timestamp)
       ORDER BY e.buyer_access_id, e.created_at
       LIMIT 50000`);
     return r.map((x) => ({ accessId: String(x.buyer_access_id), key: String(x.section_key), seconds: Number(x.time_spent_seconds ?? 0) || 0, at: asDate(x.created_at) }));
@@ -297,20 +339,31 @@ export const dbReadingSource: ReadingSource = {
 
 // ── In memory (tests) ────────────────────────────────────────────────────
 
+/** The table's legacy flag and sample-reading columns, optional on memory-store visits. */
+export interface MemSampleCols {
+  legacy?: boolean;
+  demoSeed?: string | null;
+  supersededBy?: string | null;
+}
+
 /** A source over the in-memory ingest store, plus fixture questions/decisions. */
 export function memoryReadingSource(
   store: MemoryReadingStore,
   extra: { questions?: RawQuestion[]; decisions?: RawDecision[]; sections?: Map<string, unknown[]>; legacyExits?: LegacyExit[]; kept?: KeptCopyTitles | null } = {},
 ): ReadingSource {
-  const visitOk = (q: ReadingQuery, v: { dealId: string; buyerAccessId: string; selfView: boolean; clamped: boolean; lastSeenAt: Date; deviceClass: string }) =>
-    v.dealId === q.dealId && !v.selfView && !v.clamped && (!q.since || v.lastSeenAt >= q.since) && deviceMatches(q.device, v.deviceClass)
+  // Visits in the memory store may carry the sample-reading columns and the
+  // legacy flag the way the table does (tests set them on the stored rows).
+  type MemVisit = MemoryReadingStore["visits"] extends Map<string, infer V> ? V & MemSampleCols : never;
+  const shown = (v: MemVisit) => !v.selfView && !v.clamped && v.mode !== ("teaser" as string) && !v.supersededBy;
+  const visitOk = (q: ReadingQuery, v: MemVisit) =>
+    v.dealId === q.dealId && shown(v) && (!q.since || v.lastSeenAt >= q.since) && deviceMatches(q.device, v.deviceClass)
     && (!q.accessIds || q.accessIds.includes(v.buyerAccessId));
-  const visits = () => Array.from(store.visits.values());
+  const visits = () => Array.from(store.visits.values()) as MemVisit[];
   return {
     async renditions(dealId) {
       return Array.from(store.renditions.values()).filter((r) => r.dealId === dealId)
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-        .map((r) => ({ id: r.id, mode: r.mode, variant: r.variant, createdAt: r.createdAt, visits: visits().filter((v) => v.renditionId === r.id && !v.selfView && !v.clamped).length }));
+        .map((r) => ({ id: r.id, mode: r.mode, variant: r.variant, createdAt: r.createdAt, visits: visits().filter((v) => v.renditionId === r.id && shown(v)).length }));
     },
     async rendition(dealId, id) {
       const r = store.renditions.get(id);
@@ -324,7 +377,7 @@ export function memoryReadingSource(
       return visits().filter((v) => visitOk(q, v)).sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime()).map((v) => ({
         id: v.id, accessId: v.buyerAccessId, renditionId: v.renditionId, startedAt: v.startedAt, lastSeenAt: v.lastSeenAt,
         wallMs: v.wallMs, activeMs: v.activeMs, deviceClass: v.deviceClass, uaFamily: v.uaFamily, maxPageIndex: v.maxPageIndex,
-        path: v.path, legacy: false, ipHash: v.ipHash,
+        path: v.path, legacy: !!v.legacy, ipHash: v.ipHash, demoSeed: v.demoSeed ?? null,
       }));
     },
     async blockSums(q) {
@@ -370,7 +423,10 @@ export function memoryReadingSource(
       return extra.decisions ?? [];
     },
     async legacyExits(dealId) {
-      const first = visits().filter((v) => v.dealId === dealId && !v.selfView).reduce<number>((m, v) => Math.min(m, v.startedAt.getTime()), Infinity);
+      if (visits().some((v) => v.dealId === dealId && v.legacy)) return [];
+      const first = visits()
+        .filter((v) => v.dealId === dealId && !v.legacy && !v.selfView && v.mode !== ("teaser" as string) && !v.demoSeed)
+        .reduce<number>((m, v) => Math.min(m, v.startedAt.getTime()), Infinity);
       return (extra.legacyExits ?? []).filter((e) => e.at.getTime() < first);
     },
     async keptCopyTitles() {

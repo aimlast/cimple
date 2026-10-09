@@ -26,7 +26,8 @@ import { PAGE_ROLES, type PageRole, type RenditionPage } from "@shared/analytics
 import { BLOCK_KINDS, type BlockKind } from "@shared/cim-blocks";
 import { pageRole } from "@shared/cim-page-role";
 import type { CimMode } from "@shared/analytics-v2";
-import { dbReadingSource } from "./queries";
+import { cimVisitConditions, dbReadingSource } from "./queries";
+import { sampleColumns } from "./demo-columns";
 import { pageTitle, titleIndex } from "./titles";
 
 /** The compare page shows an industry benchmark only with this many other brokerages' deals behind it. */
@@ -126,11 +127,15 @@ export function computeBenchmarkRows(
 
 /** Reads a deal's rollups + served pages and returns its benchmark rows (no writes). */
 export async function computeDealBenchmarks(dealId: string): Promise<DealBenchmarkRow[]> {
+  // Real part-by-part reading only: never the broker's preview, a clamped or
+  // teaser visit, a hidden old visit, old page totals, or sample reading
+  // (demo deals never write benchmarks anyway — defence in depth).
+  const sc = await sampleColumns();
   const rows = await db.execute<{ rendition_id: string | null; page_id: string; block_key: string; access_id: string; att: string | number }>(sql`
     SELECT r.rendition_id, r.page_id, r.block_key, r.buyer_access_id AS access_id, SUM(r.attention_ms)::bigint AS att
     FROM reading_rollups r
     JOIN buyer_visits v ON v.id = r.visit_id
-    WHERE r.deal_id = ${dealId} AND v.self_view = false AND v.clamped = false AND v.legacy = false
+    WHERE r.deal_id = ${dealId} AND ${cimVisitConditions("v", { sampleColumns: sc })} AND v.legacy = false${sc ? sql` AND v.demo_seed IS NULL` : sql``}
     GROUP BY r.rendition_id, r.page_id, r.block_key, r.buyer_access_id
   `);
   const rollups: BenchmarkRollupRow[] = Array.from(rows as unknown as Array<Record<string, unknown>>).map((r) => ({
