@@ -22,6 +22,8 @@
  *      email, `created_by = 'demo-seed'`, acknowledged, NO link and no email).
  *
  *   npx tsx scripts/seed-demo-data-room.ts --deal <id> [--deal <id>…] | --all-demo   (dry run: lists every row)
+ *        --all-demo = the founder's demo account's (broker_demo) demo deals only: another broker's deals
+ *        (qa_cimgen's "QA OCT —" copies, which other work uses) and any "QA …" deal are skipped and listed
  *   … --apply        writes them (in one transaction per deal)
  *   … --remove       lists what it would delete; --remove --apply deletes ONLY rows marked
  *                    demo-seed / demo, then the room when nothing else is in it
@@ -31,6 +33,7 @@
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import {
+  users,
   buyerAccess,
   buyerVisits,
   deals,
@@ -64,6 +67,30 @@ function parseArgs(argv: string[]): Args {
   }
   if (!a.allDemo && a.deals.length === 0) throw new Error("name a deal (--deal <id>) or --all-demo");
   return a;
+}
+
+/** The founder's demo account: --all-demo seeds only its deals (checker r2 R2-2). */
+export const DEMO_BROKER_USERNAME = "broker_demo";
+
+/**
+ * --all-demo's deals: demo deals of the founder's demo account only. Every
+ * other demo-keyed deal is listed with why it was skipped — another
+ * broker's (qa_cimgen's QA copies, which other work uses) or a "QA …" copy.
+ */
+export function allDemoSelection<D extends Pick<Deal, "id" | "businessName" | "demoKey" | "brokerId">>(
+  rows: ReadonlyArray<D>,
+  demoBrokerId: string | null,
+): { targets: D[]; skipped: Array<{ deal: D; why: string }> } {
+  if (!demoBrokerId) throw new Error(`the ${DEMO_BROKER_USERNAME} account wasn't found: name each deal with --deal <id>`);
+  const targets: D[] = [];
+  const skipped: Array<{ deal: D; why: string }> = [];
+  for (const d of rows) {
+    if (!d.demoKey) continue;
+    if (d.brokerId !== demoBrokerId) skipped.push({ deal: d, why: `not a ${DEMO_BROKER_USERNAME} deal` });
+    else if (/^\s*QA\b/i.test(d.businessName ?? "") || /-qa-oct$/.test(d.demoKey)) skipped.push({ deal: d, why: "a QA copy" });
+    else targets.push(d);
+  }
+  return { targets, skipped };
 }
 
 /** The two locks: a demo_key, and never a real deal's name. */
@@ -112,9 +139,16 @@ async function main() {
   const { traceFor } = await import("../server/vdr/activity");
   const { basicDescription } = await import("@shared/vdr");
 
-  const targets: Deal[] = args.allDemo
-    ? await db.select().from(deals).where(isNotNull(deals.demoKey))
-    : (await Promise.all(args.deals.map(async (id) => (await db.select().from(deals).where(eq(deals.id, id)))[0]))).filter(Boolean);
+  let targets: Deal[];
+  if (args.allDemo) {
+    const demoBroker = (await db.select({ id: users.id }).from(users).where(eq(users.username, DEMO_BROKER_USERNAME)))[0];
+    const picked = allDemoSelection(await db.select().from(deals).where(isNotNull(deals.demoKey)), demoBroker?.id ?? null);
+    targets = picked.targets;
+    console.log(`--all-demo: ${targets.length} ${DEMO_BROKER_USERNAME} demo deals; ${picked.skipped.length} skipped`);
+    for (const s of picked.skipped) console.log(`  skipped ${s.deal.businessName} (${s.deal.id}): ${s.why}`);
+  } else {
+    targets = (await Promise.all(args.deals.map(async (id) => (await db.select().from(deals).where(eq(deals.id, id)))[0]))).filter(Boolean);
+  }
   if (!args.allDemo) for (const id of args.deals) if (!targets.some((d) => d.id === id)) throw new Error(`no such deal: ${id}`);
 
   for (const deal of targets) {
