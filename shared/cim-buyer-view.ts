@@ -53,6 +53,8 @@ import { blindIdentifiers, blindTitleRedactor } from "./blind-identifiers";
 import { blindLeakTerms, blindPlaceholders, collectStrings, findBlindLeaks } from "./blind-guard";
 import { buyerMediaLayoutData, dealAddressFragments, isMediaLayout, type MediaAssetRef } from "./cim-media";
 import { factAmounts, parseChartNumber, withStatedChartTotal } from "./cim-chart-values";
+import { seesCim } from "./access-levels";
+import { buildFigureLayer, layerStrings, withDdSourceCheck, type FigureInputs, type FigureLayer } from "./figure-layer";
 
 export interface BuyerSection {
   id: string;
@@ -83,7 +85,21 @@ export interface BuyerCim {
   leaked: string[];
   /** Per leaked section: what it still contained (for the broker, never the buyer). */
   leakReasons: Record<string, string>;
+  /**
+   * Notes on the CIM's figures and (DD) the figure checks, for this version
+   * (shared/figure-layer.ts). Null when there is nothing to show.
+   */
+  figureLayer: FigureLayer | null;
+  /**
+   * Why the figure layer was dropped (a Blind CIM layer that still named
+   * something identifying, or failed to build) — logged for the broker, NEVER
+   * copied into leaked/leakReasons (that would re-redact the CIM, a paid call).
+   */
+  figureLayerDropped: string | null;
 }
+
+/** What the section rules produce before the figure layer is added. */
+type BuyerCimSections = Omit<BuyerCim, "figureLayer" | "figureLayerDropped">;
 
 /**
  * True when a buyer must not receive anything CIM-derived yet: the deal
@@ -415,7 +431,43 @@ function writingInProgress(s: CimSection): boolean {
  * the rows for the buyer's mode (blind or dd; ignored for normal).
  */
 export function buildBuyerCim(input: BuyerCimInput): BuyerCim {
-  return buildBuyerSections(input);
+  return withFigureLayer(buildBuyerSections(input), input);
+}
+
+/**
+ * The figure layer over exactly the sections this buyer is served (after
+ * every section rule and the blind identity check), then — due diligence —
+ * "How the figures check out" right after its anchor section. In the Blind
+ * CIM the whole layer is checked by the same identity guard: any hit drops
+ * the layer (fail closed) and says why in `figureLayerDropped`.
+ */
+function withFigureLayer(base: BuyerCimSections, input: BuyerCimInput): BuyerCim {
+  const none: BuyerCim = { ...base, figureLayer: null, figureLayerDropped: null };
+  if (!input.figures || base.preparing || base.sections.length === 0 || !seesCim(input.accessLevel)) return none;
+  let layer: FigureLayer | null;
+  try {
+    layer = buildFigureLayer(base.sections.filter((s) => !s.locked), input.figures, base.mode);
+  } catch (err) {
+    return { ...none, figureLayerDropped: `the figure notes could not be built (${(err as Error)?.message ?? "error"})` };
+  }
+  if (!layer) return none;
+  if (base.mode === "blind") {
+    const deal = input.deal;
+    const terms = blindLeakTerms(deal as any, { codename: deal.blindCodename || "Confidential Opportunity" });
+    const texts = layerStrings(layer);
+    const leaks = findBlindLeaks(texts, terms);
+    const placeholders = leaks.length ? [] : blindPlaceholders(texts);
+    if (leaks.length > 0 || placeholders.length > 0) {
+      return {
+        ...none,
+        figureLayerDropped: leaks.length > 0
+          ? `the Blind CIM's figure notes named ${leaks.slice(0, 3).map((l) => `"${l}"`).join(", ")}`
+          : `the Blind CIM's figure notes kept placeholders such as ${placeholders.slice(0, 2).join(", ")}`,
+      };
+    }
+  }
+  const sections = base.mode === "dd" ? withDdSourceCheck(base.sections, layer) : base.sections;
+  return { ...base, sections, figureLayer: layer, figureLayerDropped: null };
 }
 
 interface BuyerCimInput {
@@ -442,9 +494,15 @@ interface BuyerCimInput {
    * broker preview) = every section as it stands.
    */
   published?: CimSectionOverride[] | null;
+  /**
+   * The figure notes and (DD) checks for this buyer — server/cim/figures/
+   * serve.ts buyerFigureInputs, reached only through buyerCimExtras()
+   * (server/cim/buyer-extras.ts). Omitted = no figure layer.
+   */
+  figures?: FigureInputs | null;
 }
 
-function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
+function buildBuyerSections(raw: BuyerCimInput): BuyerCimSections {
   const mode = cimModeForAccessLevel(raw.accessLevel);
   // On a live CIM, changes the broker hasn't approved yet stay off buyers:
   // the section's last approved version is served instead (cim-published).

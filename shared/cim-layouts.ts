@@ -78,6 +78,12 @@ export interface CimLayoutDef {
   defaultData: (ctx: CimLayoutDefaultContext) => Record<string, unknown>;
   /** Presentation-only keys (URLs, colours…) the Q&A flattener skips. */
   presentationKeys?: string[];
+  /**
+   * A page the system adds for buyers at serve time (never stored as a
+   * section): not in the builder's gallery, never a layout a broker or the
+   * AI can choose (isCimLayoutKey is false for it), always read-only.
+   */
+  synthetic?: boolean;
 }
 
 const LAYOUTS = [
@@ -519,6 +525,29 @@ const LAYOUTS = [
     }),
     presentationKeys: ["zoom", "blindMap", "regionOnly"],
   },
+
+  // ── Due diligence (stream "dd") ────────────────────────────────────────
+  {
+    // "How the figures check out": the CIM's figures beside the tax returns
+    // and other records, inserted for due-diligence buyers by buildBuyerCim
+    // (shared/figure-layer.ts withDdSourceCheck). Its layoutData is structure
+    // only ({ v, lines, years }); the values come from the figure layer.
+    key: "dd_source_check",
+    label: "How the figures check out",
+    description: "Due diligence only: each figure compared with the tax returns and other records.",
+    category: "tables",
+    content: "structured",
+    editor: "data",
+    blind: "exclude",
+    family: "dd_source_check",
+    planner: false,
+    aiWrite: false,
+    aiRewrite: false,
+    synthetic: true,
+    aiSpec: "dd_source_check: { v: 1, lines: string[], years: string[] }",
+    aiUse: "— Never chosen: the system adds it for due-diligence buyers.",
+    defaultData: () => ({ v: 1, lines: [], years: [] }),
+  },
 ] as const satisfies readonly CimLayoutDef[];
 
 export type CimLayoutKey = (typeof LAYOUTS)[number]["key"];
@@ -526,7 +555,8 @@ export type CimLayoutKey = (typeof LAYOUTS)[number]["key"];
 /** Every registered layout, in gallery order. */
 export const CIM_LAYOUTS: readonly CimLayoutDef[] = LAYOUTS;
 
-export const CIM_LAYOUT_KEYS: readonly CimLayoutKey[] = LAYOUTS.map((l) => l.key);
+/** Layouts a section can have (system-added pages excluded). */
+export const CIM_LAYOUT_KEYS: readonly CimLayoutKey[] = LAYOUTS.filter((l) => !("synthetic" in l && l.synthetic)).map((l) => l.key);
 
 const BY_KEY = new Map<string, CimLayoutDef>(LAYOUTS.map((l) => [l.key, l]));
 
@@ -535,8 +565,9 @@ export function getCimLayout(key: string | null | undefined): CimLayoutDef | und
   return key ? BY_KEY.get(key) : undefined;
 }
 
+/** A layout a section can be given (a system-added page such as dd_source_check is not one). */
 export function isCimLayoutKey(key: unknown): key is CimLayoutKey {
-  return typeof key === "string" && BY_KEY.has(key);
+  return typeof key === "string" && BY_KEY.has(key) && !BY_KEY.get(key)!.synthetic;
 }
 
 /** Map an arbitrary (AI- or client-supplied) layout type onto a registered one. */
@@ -558,7 +589,7 @@ export function layoutsByCategory(): Array<{ key: CimLayoutCategory; label: stri
   return CIM_LAYOUT_CATEGORIES.map((c) => ({
     key: c.key,
     label: c.label,
-    layouts: CIM_LAYOUTS.filter((l) => l.category === c.key),
+    layouts: CIM_LAYOUTS.filter((l) => l.category === c.key && !l.synthetic),
   })).filter((g) => g.layouts.length > 0);
 }
 

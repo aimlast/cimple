@@ -84,6 +84,8 @@ export const READING_INTERACTIONS = [
   "contact_click",    // detail: "email" | "phone" | "website"
   "copy", "print_attempt", "download_attempt",
   "chat_open",
+  "figure_note",      // detail: the opaque figure id (a note on a figure opened)
+  "figure_compare",   // detail: "side_by_side" | "cim_only" (the DD compare switch)
 ] as const;
 export type ReadingInteractionType = (typeof READING_INTERACTIONS)[number];
 
