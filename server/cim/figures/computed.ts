@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 import type { FigureRegistry, RegistryFigure } from "@shared/figure-anchors";
 import { decomposeMovement } from "@shared/figure-compare";
 import { movementBlindText, movementText } from "@shared/figure-copy";
-import type { FigureCheckInput } from "@shared/figure-layer";
+import { cimMismatchHeld, type FigureCheckInput } from "@shared/figure-layer";
 import { figureKey, parseFigureKey, standardLineOf } from "@shared/figure-lines";
 import type { MachineNote } from "./store";
 
@@ -73,7 +73,7 @@ export interface ComputedNotesInput {
 
 export function computedNotes(input: ComputedNotesInput): MachineNote[] {
   const reg = input.registry;
-  const held = new Set(input.checks.filter((c) => c.kind === "cim_statements" && c.cimMismatch).map((c) => c.figureKey));
+  const held = cimMismatchHeld(input.checks, reg);
   const out: MachineNote[] = [];
   for (const key of Array.from(new Set(input.anchoredKeys))) {
     const fig = reg[key];

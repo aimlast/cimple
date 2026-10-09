@@ -12,7 +12,7 @@ import { useState } from "react";
 import { X } from "lucide-react";
 import type { FigureCheckView, FigureLayer, FigureNoteView, FigureView } from "@shared/figure-layer";
 import {
-  ASK_ABOUT_FIGURE, ASK_BROKER_DIFFERENCE, BROKER_ASK_SELLER, BROKER_CIM_MISMATCH, BROKER_HINT_PREFIX, BROKER_HINT_SUFFIX,
+  ASK_ABOUT_FIGURE, ASK_BROKER_DIFFERENCE, BROKER_ASK_SELLER, BROKER_CIM_MISMATCH, BROKER_CIM_MISMATCH_DERIVED, BROKER_CIM_MISMATCH_PLAIN, BROKER_HINT_PREFIX, BROKER_HINT_SUFFIX,
   BROKER_NO_REASON, BROKER_NOT_LOCATED, BROKER_NOT_SHOWN, BROKER_USE_HINT, BROKER_WRITE_NOTE, BROKER_WRITE_REASON,
   COL_THIS_CIM, SEND_TO_BROKER, SENT_TO_BROKER,
 } from "@shared/figure-copy";
@@ -191,6 +191,12 @@ export function FigureBody({ fig, mode, audience, broker, buyer, onClose }: Figu
       </div>
 
       {checks.map((c) => <CheckBlock key={c.id} fig={fig} check={c} broker={isBroker} />)}
+      {isBroker && fig.cimMismatch && !checks.some((c) => c.preview === "cim_mismatch") && (
+        // D9a (broker preview only): the figure is held — no reason to write or hint to use until it's fixed.
+        <p className="rounded border border-dashed px-1.5 py-1 text-[11px]" style={{ borderColor: "#B7791F", color: SOFT }} data-testid="figure-held">
+          {fig.cimMismatchDerived ? BROKER_CIM_MISMATCH_DERIVED : BROKER_CIM_MISMATCH_PLAIN}
+        </p>
+      )}
       {mode === "dd" && fig.otherBlank && checks.every((c) => c.kindLabel.startsWith("Financial statements")) && (
         <p className="text-[11px]" style={{ color: MUTED }}>{fig.otherBlank}.</p>
       )}

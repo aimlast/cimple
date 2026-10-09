@@ -28,7 +28,7 @@ import { requireBroker, requireOwnedDeal } from "../broker-auth/routes.js";
 import { storage } from "../storage";
 import { buildBuyerCim } from "@shared/cim-buyer-view";
 import { cimModeForAccessLevel, isTeaserOnly, parseAccessLevelInput, DD_ACCESS_LEVEL, sameAccessLevel } from "@shared/access-levels";
-import { DD_SOURCE_CHECK_PAGE_ID } from "@shared/figure-layer";
+import { DD_SOURCE_CHECK_PAGE_ID, cimMismatchHeld } from "@shared/figure-layer";
 import { figureKey as figureKeyOf, parseFigureKey } from "@shared/figure-lines";
 import { anchorFigures } from "@shared/figure-anchors";
 import { captureKeyFor } from "@shared/figure-explain";
@@ -78,7 +78,10 @@ function showRefusal(raw: FigureRaw, checkKey: string): string | null {
   const c = raw.checks.checks.find((x) => x.key === checkKey);
   if (!c) return "That check isn't on this deal any more.";
   if (c.kind === "cim_statements") return "This compares the CIM with its own statements; fix the figure on the Financials tab instead.";
-  if (raw.checks.checks.some((x) => x.figureKey === c.figureKey && x.kind === "cim_statements" && x.cimMismatch)) return "Your CIM differs from the statements on this figure. Fix it first.";
+  if (cimMismatchHeld(raw.checks.checks, raw.registry).has(c.figureKey)) {
+    return c.cimMismatch ? "Your CIM differs from the statements on this figure. Fix it first."
+      : "This figure is worked out from figures that differ from the statements. Fix those first.";
+  }
   if (!c.located && !["match", "rounding"].includes(c.size)) return "Cimple couldn't find this figure in the document. Check the document first.";
   return null;
 }
@@ -314,6 +317,14 @@ export function registerFigureRoutes(app: Express): void {
         other = check.other;
       } else {
         compareKey = "";
+      }
+      // D9a: a note on a figure held by a mismatch with the statements (or measured from one)
+      // would never reach buyers — and "Save and show to buyers" must not say otherwise.
+      const held = cimMismatchHeld(raw.checks.checks, raw.registry);
+      const heldKey = [body.figureKey, ...(body.kind === "movement" ? [figureKeyOf(fig.line, compareKey)] : [])].find((k) => held.has(k));
+      if (heldKey) {
+        const year = parseFigureKey(heldKey)?.year ?? "";
+        return res.status(422).json({ field: "text", message: `Your CIM's FY${year} figures don't match the statements, so buyers don't see notes on this figure. Fix FY${year} first (Fix first, at the top).` });
       }
       const question = body.fromQuestionId ? await getQuestion(deal.id, body.fromQuestionId) : null;
       const candidate = { id: body.figureKey, value: fig.value, ...(fromValue !== undefined ? { fromValue } : {}), ...(other !== undefined ? { other } : {}) };

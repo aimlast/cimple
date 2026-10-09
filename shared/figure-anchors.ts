@@ -37,6 +37,12 @@ export interface RegistryFigure {
   category?: string;
   /** Compare as absolute amounts (expenses). */
   expense: boolean;
+  /**
+   * A standard line's figure as that year's financial statements print it,
+   * when they state the line at all (equal or not) — D9a's derived holds read
+   * it: a derived total the statements state and agree with is never held.
+   */
+  statementsValue?: number;
 }
 
 export type FigureRegistry = Record<string, RegistryFigure>;

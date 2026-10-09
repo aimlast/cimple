@@ -114,6 +114,7 @@ export function figureRegistry(
     for (const [lineId, value] of Object.entries(values ?? {}) as Array<[StandardLineId, number]>) {
       const base = reg[figureKey(lineId, year)];
       const def = standardLine(lineId);
+      if (base && def && typeof value === "number" && Number.isFinite(value)) base.statementsValue = def.expense ? Math.abs(value) : value;
       if (!base || !def || typeof value !== "number" || Math.abs(Math.abs(base.value) - Math.abs(value)) <= 1) continue;
       const comps = base.components ?? [];
       const sumOf = (cs: Array<{ key: string; sign: 1 | -1 }>) => cs.reduce((t, c) => t + c.sign * Math.abs(reg[c.key]?.value ?? 0), 0);

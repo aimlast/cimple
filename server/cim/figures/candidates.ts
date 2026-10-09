@@ -16,7 +16,7 @@
 import type { FigureRegistry, RegistryFigure } from "@shared/figure-anchors";
 import { agrees } from "@shared/figure-compare";
 import { captureKeyFor } from "@shared/figure-explain";
-import type { FigureCheckInput } from "@shared/figure-layer";
+import { cimMismatchHeld, type FigureCheckInput } from "@shared/figure-layer";
 import { baseLineOf, figureKey, lineWords, parseFigureKey, standardLine, standardLineOf, type LineId } from "@shared/figure-lines";
 import { fingerprintOf, movedEnough, movementOf, previousOf } from "./computed";
 import { revenueOf } from "./registry";
@@ -70,9 +70,13 @@ function movementCandidate(reg: FigureRegistry, fig: RegistryFigure, prev: Regis
   };
 }
 
-/** Figures held by D9a (a CIM figure that disagrees with its statements, unexplained). */
-export function heldFigures(checks: ReadonlyArray<FigureCheckInput>): Set<string> {
-  return new Set(checks.filter((c) => c.kind === "cim_statements" && c.cimMismatch).map((c) => c.figureKey));
+/**
+ * Figures held by D9a: a CIM figure that disagrees with its statements,
+ * unexplained, and (with the registry) the derived totals of that year worked
+ * out from it — EBITDA, gross profit, income before taxes, net income.
+ */
+export function heldFigures(checks: ReadonlyArray<FigureCheckInput>, reg?: FigureRegistry | null): Set<string> {
+  return cimMismatchHeld(checks, reg);
 }
 
 /**
@@ -86,7 +90,7 @@ export function movementTargets(
   checks: ReadonlyArray<FigureCheckInput>,
   opts: { undecomposedTotals?: boolean } = {},
 ): FigureCandidate[] {
-  const held = heldFigures(checks);
+  const held = heldFigures(checks, reg);
   const out = new Map<string, FigureCandidate>();
   const add = (fig: RegistryFigure | undefined) => {
     if (!fig) return;
@@ -134,7 +138,7 @@ export function movementTargets(
 /** Material differences between the statements and another record that D6 doesn't work out. */
 export function differenceTargets(reg: FigureRegistry, checks: ReadonlyArray<FigureCheckInput>, anchoredKeys?: Iterable<string>): FigureCandidate[] {
   const shown = anchoredKeys ? new Set(anchoredKeys) : null;
-  const held = heldFigures(checks);
+  const held = heldFigures(checks, reg);
   const out: FigureCandidate[] = [];
   for (const c of checks) {
     if (c.kind !== "tax_return" && c.kind !== "management") continue;

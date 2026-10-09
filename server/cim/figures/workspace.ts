@@ -111,7 +111,7 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
   const anchoredKeys = Array.from(new Set(anchors.map((a) => a.figureKey)));
   const shownSet = new Set(anchoredKeys);
   const checks = raw.checks.checks;
-  const held = heldFigures(checks);
+  const held = heldFigures(checks, reg);
   const ddOn = !!raw.state?.ddShownAt;
   const facts = raw.info;
 
@@ -166,10 +166,11 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
       shown: shownSet.has(key),
       status: moveStatus(note, isHeld),
       note: note ? workspaceNote(note, raw) : null,
-      hint: note && note.status === "approved" ? null : hints[key] ?? null,
+      // D9a: nothing measured from or to a held figure is offered for buyers — fix it first.
+      hint: isHeld || (note && note.status === "approved") ? null : hints[key] ?? null,
       question: q ? { id: q.id, status: q.status } : null,
       answer: q ? answerFor(facts, q.captureKey) : null,
-      askable: askableLine(fig),
+      askable: !isHeld && askableLine(fig),
       ...(isHeld ? { heldYear: held.has(key) ? fig.year : prev!.year } : {}),
     });
   }

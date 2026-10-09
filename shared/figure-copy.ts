@@ -199,6 +199,10 @@ export const BROKER_PREVIEW_BAR = "Due-diligence buyers don't see these checks y
 export const BROKER_REVIEW_AND_SHOW = "Review and show to buyers";
 export const BROKER_NO_OTHER_RECORDS = "No tax returns on file to compare with";
 export const BROKER_CIM_MISMATCH = "Your CIM differs from the statements; buyers don't see checks on this figure";
+/** D9a on a figure with no check shown (the Full / Blind preview): buyers read it plain. */
+export const BROKER_CIM_MISMATCH_PLAIN = "Your CIM differs from the statements here; buyers see this figure without notes until you fix it";
+/** D9a reaching a derived total (EBITDA, gross profit…) worked out from figures that disagree. */
+export const BROKER_CIM_MISMATCH_DERIVED = "Worked out from figures that differ from the statements; buyers see it without notes until you fix them";
 export const BROKER_NOT_LOCATED = "Cimple couldn't find this in the document";
 export const BROKER_NO_REASON = "No reason on file";
 export const BROKER_HINT_PREFIX = "Cimple's analysis suggests:";

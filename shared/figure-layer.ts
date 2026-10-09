@@ -244,7 +244,10 @@ export interface FigureView {
   noReason?: true;
   /** Broker preview: what has no reason on file — the change from the year before, or a difference. */
   noReasonFor?: { kind: "change"; fromYear: string } | { kind: "difference" };
+  /** Broker preview: held by D9a (buyers see the cell plain). */
   cimMismatch?: true;
+  /** …because it is worked out from that year's figures that disagree (EBITDA, gross profit…). */
+  cimMismatchDerived?: true;
   figureKey?: string;
 }
 
@@ -337,8 +340,10 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
   const anchors: Anchor[] = sections.flatMap((s) => anchorFigures(s, registry));
   const anchoredKeys = new Set(anchors.map((a) => a.figureKey));
 
-  // D9a: a CIM figure that disagrees with its statements, unexplained.
-  const mismatch = new Set(inputs.checks.filter((c) => c.kind === "cim_statements" && c.cimMismatch).map((c) => c.figureKey));
+  // D9a: a CIM figure that disagrees with its statements, unexplained — and
+  // the derived totals of that year worked out from it (EBITDA has no
+  // statements line of its own to disagree with).
+  const mismatch = cimMismatchHeld(inputs.checks, registry);
 
   const notesBy = new Map<string, FigureNoteInput[]>();
   for (const n of inputs.notes) {
@@ -461,15 +466,19 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
     }
     if (broker) {
       view.figureKey = key;
-      if (mismatch.has(key)) view.cimMismatch = true;
+      if (mismatch.has(key)) {
+        view.cimMismatch = true;
+        if (heldAsDerived(key, inputs.checks)) view.cimMismatchDerived = true;
+      }
       const hasApproved = (notesBy.get(key) ?? []).some((n) => n.status === "approved" && (n.kind === "movement" || n.kind === "context"));
       // "No reason on file" only where a reason is expected: a change of 8%
-      // or more from the year before, or a difference nothing explains.
+      // or more from the year before, or a difference nothing explains —
+      // never on a held figure, or a change measured from one (fix it first).
       const prev = registry[figureKey(fig.line, String(Number(fig.year) - 1))];
-      const moved = !!prev && Math.abs(Math.abs(fig.value) - Math.abs(prev.value)) >= 2500 && Math.abs(prev.value) > 0
+      const moved = !!prev && !mismatch.has(prev.key) && Math.abs(Math.abs(fig.value) - Math.abs(prev.value)) >= 2500 && Math.abs(prev.value) > 0
         && Math.abs(Math.abs(fig.value) - Math.abs(prev.value)) / Math.abs(prev.value) >= 0.08;
       const unexplained = (view.checks ?? []).some((c) => c.state === "ask");
-      if (!hasApproved && (moved || unexplained)) {
+      if (!mismatch.has(key) && !hasApproved && (moved || unexplained)) {
         view.noReason = true;
         view.noReasonFor = unexplained ? { kind: "difference" } : { kind: "change", fromYear: prev!.year };
         const hint = inputs.hints?.[key];
@@ -636,9 +645,69 @@ export function ddSourceCheckAnchor(sections: SectionLike[], layer: FigureLayer)
   return best;
 }
 
-/** True when this anchor's figure is held by D9a (its CIM figure disagrees with the statements). */
-export function heldByCimMismatch(anchor: { figureKey: string }, checks: ReadonlyArray<Pick<FigureCheckInput, "figureKey" | "kind" | "cimMismatch">>): boolean {
-  return checks.some((c) => c.figureKey === anchor.figureKey && c.kind === "cim_statements" && c.cimMismatch);
+/** True when this anchor's figure is held by D9a (its CIM figure disagrees with the statements, or is worked out from one that does). */
+export function heldByCimMismatch(
+  anchor: { figureKey: string },
+  checks: ReadonlyArray<Pick<FigureCheckInput, "figureKey" | "kind" | "cimMismatch">>,
+  registry?: FigureRegistry | null,
+): boolean {
+  return cimMismatchHeld(checks, registry).has(anchor.figureKey);
+}
+
+/** P&L order of the standard lines: a line's figure feeds the derived totals after it. */
+const PNL_STAGE: Record<string, number> = {
+  revenue: 0, costOfSales: 0,
+  grossProfit: 1, operatingExpenses: 1, nonRecurring: 1,
+  ebitda: 2, otherIncome: 2, amortization: 2, interest: 2,
+  incomeBeforeTax: 3, incomeTaxes: 3,
+  netIncome: 4,
+};
+/** Totals the CIM works out from other lines (the statements may carry none to compare with — EBITDA never). */
+export const DERIVED_TOTAL_LINES: ReadonlySet<string> = new Set(["grossProfit", "ebitda", "incomeBeforeTax", "netIncome"]);
+
+/**
+ * D9a and what follows from it: the CIM figures held because they disagree
+ * with the statements and nothing explains it — plus, in the same year, every
+ * derived total worked out after them (gross profit, EBITDA, income before
+ * taxes, net income). A derived total with no line of its own on the
+ * statements never shows a mismatch by itself: Pacific's FY2022 EBITDA
+ * ($4,129,000) is built from the cost of sales and operating expenses the
+ * FY2022 statements disagree with ($3,409,800 from the statements as issued),
+ * so no movement note, hint, question or check measured from or to it may
+ * reach buyers either. A statements-as-issued variant is the statements' own
+ * figure and is never held. `registry` omitted: the direct mismatches only.
+ */
+export function cimMismatchHeld(
+  checks: ReadonlyArray<Pick<FigureCheckInput, "figureKey" | "kind" | "cimMismatch">>,
+  registry?: FigureRegistry | null,
+): Set<string> {
+  const out = new Set<string>();
+  const firstStage = new Map<string, number>(); // year → the earliest P&L stage that disagrees
+  for (const c of checks) {
+    if (c.kind !== "cim_statements" || !c.cimMismatch) continue;
+    out.add(c.figureKey);
+    const p = parseFigureKey(c.figureKey);
+    if (!p) continue;
+    const stage = PNL_STAGE[baseLineOf(p.line)];
+    if (stage === undefined) continue;
+    firstStage.set(p.year, Math.min(firstStage.get(p.year) ?? Infinity, stage));
+  }
+  if (!registry || firstStage.size === 0) return out;
+  for (const f of Object.values(registry)) {
+    if (!DERIVED_TOTAL_LINES.has(String(f.line))) continue; // standard derived lines only (never "@statements")
+    const from = firstStage.get(f.year);
+    if (from === undefined || PNL_STAGE[String(f.line)] <= from) continue;
+    // The statements state this total and agree with it (Pacific's FY2022 net income, $1,115,900):
+    // the figure buyers read is right whatever the lines above it say.
+    if (typeof f.statementsValue === "number" && Math.abs(Math.abs(f.statementsValue) - Math.abs(f.value)) <= 1) continue;
+    out.add(f.key);
+  }
+  return out;
+}
+
+/** True when a held figure is held only because it is worked out from figures that disagree (not itself compared). */
+export function heldAsDerived(figureKey: string, checks: ReadonlyArray<Pick<FigureCheckInput, "figureKey" | "kind" | "cimMismatch">>): boolean {
+  return !checks.some((c) => c.figureKey === figureKey && c.kind === "cim_statements" && c.cimMismatch);
 }
 
 /**
