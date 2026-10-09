@@ -84,6 +84,7 @@ export const READING_INTERACTIONS = [
   "contact_click",    // detail: "email" | "phone" | "website"
   "copy", "print_attempt", "download_attempt",
   "chat_open",
+  "vdr_open",         // detail: "doc:<itemId>" — opened a data-room document from the CIM (the tracker is paused meanwhile)
 ] as const;
 export type ReadingInteractionType = (typeof READING_INTERACTIONS)[number];
 

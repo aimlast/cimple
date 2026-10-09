@@ -402,6 +402,14 @@ export interface ActivityInput {
   idleLimitMs: number;
   /** Other tabs of the same buyer link (BroadcastChannel beats). */
   peers: PeerBeat[];
+  /**
+   * The reader has stepped out of the CIM inside the view room (the data
+   * room's document drawer is open over it): those seconds are AWAY, never
+   * reading — so the visit's reading time stops growing and it leaves
+   * "Reading now" within 90 s (buyer_visits.last_seen_at moves only with
+   * active time).
+   */
+  paused?: boolean;
 }
 
 export const ACTIVITY_RULES = {
@@ -424,6 +432,7 @@ export const ACTIVITY_RULES = {
  */
 export function activityState(i: ActivityInput): ActivityState {
   if (!i.visible) return "hidden";
+  if (i.paused) return "away";
   const R = ACTIVITY_RULES;
   const myPointerNow = i.now - i.lastPointerAt <= R.pointerNowMs;
   const live = i.peers.filter((p) => i.now - p.at <= R.peerStaleMs);

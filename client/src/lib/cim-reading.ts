@@ -77,17 +77,30 @@ interface Options {
   reading: ViewRoomReading | null | undefined;
   /** Real content is on screen (not the NDA / preparing / updating screens). */
   enabled: boolean;
+  /**
+   * The buyer stepped out of the CIM inside the view room (the data room's
+   * document drawer is open over it): the visit keeps going, but those
+   * seconds count as away, never reading (shared/reading-allocator.ts).
+   */
+  paused?: boolean;
 }
 
-export function useCimReading({ token, accessId, reading, enabled }: Options): CimReadingTracker {
+export function useCimReading({ token, accessId, reading, enabled, paused = false }: Options): CimReadingTracker {
   const sessionRef = useRef<ReadingSession | null>(null);
+  const pausedRef = useRef(paused);
   const renditionId = reading?.renditionId ?? null;
   const pageOrderKey = reading?.pageOrder?.join(",") ?? "";
+
+  useEffect(() => {
+    pausedRef.current = paused;
+    sessionRef.current?.setPaused(paused);
+  }, [paused]);
 
   useEffect(() => {
     if (!enabled || !token || !accessId || !reading?.renditionId || typeof window === "undefined") return;
     const session = new ReadingSession({ token, accessId, renditionId: reading.renditionId, pageOrder: reading.pageOrder ?? [] });
     sessionRef.current = session;
+    session.setPaused(pausedRef.current);
     session.start();
     return () => {
       session.stop();
@@ -146,6 +159,17 @@ function uuid(): string {
 }
 
 const toRect = (r: DOMRect): Rect => ({ top: r.top, bottom: r.bottom, left: r.left, right: r.right });
+
+/**
+ * The page an interaction is recorded on: the one given, else the page being
+ * read, else the first page — so an interaction without a page of its own
+ * (vdr_open from the data-room drawer, print, chat) always carries a valid
+ * page id. null when none of them is a valid id (nothing is recorded).
+ */
+export function interactionPageId(given: string | null | undefined, current: string | null | undefined, pageOrder: readonly string[]): string | null {
+  const page = given ?? current ?? pageOrder[0];
+  return page && ID_RE.test(page) ? page : null;
+}
 const sameCounters = (a: BlockCounters | undefined, b: BlockCounters) => !!a && a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -164,6 +188,7 @@ class ReadingSession {
   private pending: ReadingInteraction[] = [];
 
   private stopped = false;
+  private paused = false;           // the buyer is in the data room drawer: seconds count as away
   private dead = false;             // the server said this link is gone: stop sending
   private inflight = false;
   private failures = 0;
@@ -343,6 +368,10 @@ class ReadingSession {
 
   // ── host callbacks ────────────────────────────────────────────────────
 
+  setPaused(paused: boolean): void {
+    this.paused = paused;
+  }
+
   currentPageId(): string | null {
     return this.alloc?.currentPageId() ?? null;
   }
@@ -354,8 +383,8 @@ class ReadingSession {
 
   record(type: ReadingInteractionType, pageId: string | null, blockKey?: string, detail?: string): void {
     if (this.stopped) return;
-    const page = pageId ?? this.currentPageId() ?? this.pageOrder[0];
-    if (!page || !ID_RE.test(page)) return;
+    const page = interactionPageId(pageId, this.currentPageId(), this.pageOrder);
+    if (!page) return;
     this.lastInputAt = Date.now();
     this.pending.push({
       seq: ++this.seq,
@@ -474,7 +503,7 @@ class ReadingSession {
       this.peers.forEach((b, tab) => { if (now - b.at > ACTIVITY_RULES.peerStaleMs * 4) this.peers.delete(tab); });
       const state = activityState({
         now, visible, focused: document.hasFocus(), lastInputAt: this.lastInputAt, lastPointerAt: this.lastPointerAt,
-        idleLimitMs: measured.idleLimitMs, peers: Array.from(this.peers.values()),
+        idleLimitMs: measured.idleLimitMs, peers: Array.from(this.peers.values()), paused: this.paused,
       });
       frame = { ...measured, state };
     }
