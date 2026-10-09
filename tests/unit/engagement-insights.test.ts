@@ -370,6 +370,26 @@ await test("page headline templates", () => {
   assert.equal(pageHeadline(dp("exec", { attentionMs: 20_000, readers: 2, reachedBy: 3, blocks }), { pages: doc, openedBy: 5 }), "Nobody stopped on the row “Adjusted EBITDA”.");
   assert.equal(pageHeadline(doc[0], { pages: doc, openedBy: 0 }), null);
   assert.equal(blockPhrase('Highlight: "Recurring revenue 68%"'), "the highlight “Recurring revenue 68%”");
+  // A narrower view (a device, a date range, a segment): "in this view", never the CIM's or everyone's (HM2-1).
+  assert.equal(pageHeadline(doc[1], { pages: doc, openedBy: 4, filter: "some" }), "Most studied page in this view — 4 of 4 buyers read it, 3 times its expected reading time.");
+  assert.equal(pageHeadline(dp("exec", { attentionMs: 20_000, readers: 2, reachedBy: 3, blocks }), { pages: doc, openedBy: 5, filter: "some" }), "No buyer in this view stopped on the row “Adjusted EBITDA”.");
+});
+await test("a table's header row and footnotes are structure: never 'Nobody stopped on table header' (HM2-2)", () => {
+  const doc = [dp("exec"), dp("inc", { attentionMs: 600_000, readers: 4 })];
+  const part = (key: string, kind: "table" | "text" | "metric", label: string, attentionMs: number) =>
+    ({ key, kind, label, attentionMs, skimMs: 0, visibleMs: 0, pointerMs: 0, skimShare: 0, readers: attentionMs >= 1000 ? 2 : 0, topBuyer: null, topPoint: null });
+  const rows = [part("head", "table", "Table header", 400), part("row:0", "table", "Row: Revenue", 30_000), part("row:1", "table", "Row: Net income", 20_000), part("foot", "table", "Footnotes", 0)];
+  const page = dp("exec", { attentionMs: 50_400, readers: 2, reachedBy: 2, blocks: rows });
+  assert.equal(pageHeadline(page, { pages: doc, openedBy: 5 }), null, "header and footnotes read 0 s: not news");
+  for (const f of ["one", "some", null] as const) assert.doesNotMatch(pageHeadline(page, { pages: doc, openedBy: 5, filter: f }) ?? "", /table header|footnotes/i);
+  // A collapsible section's header neither.
+  const collapsible = dp("exec", { attentionMs: 50_400, readers: 2, reachedBy: 2, blocks: [part("summary", "text", "Summary", 9_000), ...rows], interactions: { expand: 2 } });
+  assert.equal(pageHeadline(collapsible, { pages: doc, openedBy: 5 }), null);
+  // A real row nobody stopped on is still named; another layout's "foot" part (content, not a table's footnotes) too.
+  const unreadRow = dp("exec", { attentionMs: 50_400, readers: 2, reachedBy: 2, blocks: [...rows, part("row:2", "table", "Row: Adjusted EBITDA", 0)] });
+  assert.equal(pageHeadline(unreadRow, { pages: doc, openedBy: 5 }), "Nobody stopped on the row “Adjusted EBITDA”.");
+  const org = dp("exec", { attentionMs: 20_000, readers: 2, reachedBy: 2, blocks: [part("para:0", "text", "Paragraph 1", 20_000), part("foot", "text", "Headcount & owner dependency", 0)] });
+  assert.match(pageHeadline(org, { pages: doc, openedBy: 5 }) ?? "", /^Nobody stopped on .*Headcount & owner dependency/i);
 });
 await test("reach headline: the steepest drop, or how many reached the end", () => {
   const r = (label: string, buyers: number, title = `Page ${label}`): ReachPoint => ({ index: Number(label) - 1, pageId: label, part: 0, label, title, buyers });
@@ -378,7 +398,7 @@ await test("reach headline: the steepest drop, or how many reached the end", () 
   assert.equal(reachHeadline([r("1", 4), r("2", 4)]), "All 4 buyers who opened the CIM reached the last page.");
   assert.equal(reachHeadline([r("1", 1), r("2", 1)]), "The buyer who opened the CIM reached the last page.");
   // One buyer (or a view filtered to one): never "most buyers", never a one-buyer "drop".
-  assert.equal(reachHeadline([r("1", 1), r("2", 1), r("10", 0, "Customers"), r("11", 0)]), "This buyer got as far as page 2 · Page 2.");
+  assert.equal(reachHeadline([r("1", 1), r("2", 1), r("10", 0, "Customers"), r("11", 0)]), "The buyer who opened the CIM got as far as page 2 · Page 2.");
   // A one-buyer drop in a group is noise; so is a drop under 10% of the buyers.
   assert.equal(reachHeadline([r("1", 5), r("2", 4), r("3", 4)]), "4 of 5 buyers reached the last page.");
   assert.equal(reachHeadline([r("1", 30), r("2", 28), r("3", 28)]), "28 of 30 buyers reached the last page.");
@@ -400,9 +420,14 @@ await test("reach headline over recorded pages only (old tracking): never a drop
   const flat = [r("1", 5), r("2", 5), r("3", 0, "Contact")];
   assert.equal(reachHeadline(flat, { recorded: new Set([0, 1]) }), "All 5 buyers who opened the CIM got to page 2 · Page 2, the last page recorded.");
   // Filtered to one buyer: "This buyer", never "The buyer who opened the CIM".
-  assert.equal(reachHeadline([r("1", 1), r("2", 1)], { recorded: new Set([0, 1]), filtered: true }), "This buyer got to page 2 · Page 2, the last page recorded.");
-  assert.equal(reachHeadline([r("1", 1), r("2", 1)], { filtered: true }), "This buyer reached the last page.");
-  assert.equal(reachHeadline([r("1", 1), r("2", 0), r("3", 0)], { recorded: new Set([0, 1, 2]), filtered: true }), "This buyer got as far as page 1 · Page 1.");
+  assert.equal(reachHeadline([r("1", 1), r("2", 1)], { recorded: new Set([0, 1]), filter: "one" }), "This buyer got to page 2 · Page 2, the last page recorded.");
+  assert.equal(reachHeadline([r("1", 1), r("2", 1)], { filter: "one" }), "This buyer reached the last page.");
+  assert.equal(reachHeadline([r("1", 1), r("2", 0), r("3", 0)], { recorded: new Set([0, 1, 2]), filter: "one" }), "This buyer got as far as page 1 · Page 1.");
+  // A narrower view (a device, a date range, a segment) speaks of "this view" (HM2-1): never "This buyer" for a phone filter's one reader, never "All 4 buyers who opened the CIM".
+  assert.equal(reachHeadline([r("1", 1), r("2", 0), r("3", 0)], { recorded: new Set([0, 1, 2]), filter: "some" }), "The one buyer in this view got as far as page 1 · Page 1.");
+  assert.equal(reachHeadline([r("1", 1), r("2", 1)], { filter: "some" }), "The one buyer in this view reached the last page.");
+  assert.equal(reachHeadline([r("1", 4), r("2", 4)], { filter: "some" }), "All 4 buyers in this view reached the last page.");
+  assert.equal(reachHeadline(flat, { recorded: new Set([0, 1]), filter: "some" }), "All 5 buyers in this view got to page 2 · Page 2, the last page recorded.");
   // The older form (every page up to an index) still works.
   assert.equal(reachHeadline(flat, { lastRecorded: 1 }), "All 5 buyers who opened the CIM got to page 2 · Page 2, the last page recorded.");
 });

@@ -40,6 +40,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { Link, useLocation, useSearch } from "wouter";
 import { AlertCircle, ChevronLeft, ChevronRight, ChevronUp, Eye, EyeOff, FileSearch, LayoutList, RefreshCw, Rows3, Users } from "lucide-react";
 import {
+  engagementViewScope,
   formatReadingTime,
   viewerPageKey,
   type DocumentPage,
@@ -64,7 +65,7 @@ import { HeatLegend, PageLegend } from "./Legends";
 import { CompareBar, CompareCanvases, compareBuyersOf, useMinWidth } from "./CompareView";
 import { heatChrome } from "../heat";
 import {
-  compareParam, compareReaders, compareReducer, compareStart, defaultSectionView, drawMode, effectiveScope, expandCount, firstName, heatIntensity, heatMaxMs,
+  FEW_PARTS_NOTE, scopedNobody, compareParam, compareReaders, compareReducer, compareStart, defaultSectionView, drawMode, effectiveScope, expandCount, firstName, heatIntensity, heatMaxMs,
   pageHeatMaxMs, pageInView, pageOfText, pageRank, parseCompareParam, readersText, selectPageIndex, unreadBlocks, validCompare,
   type HeatScope, type PageOrder, type SectionView,
 } from "./viewer-model";
@@ -185,9 +186,15 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
   const washCard: WashCard | null = current && mode === "wash"
     ? { time: formatReadingTime(current.attentionMs), buyers: current.buyers.length, rankText: rank?.text ?? null }
     : null;
+  // Who this view shows (a device or date filter narrows it too) — the same rule as the server's headlines.
+  const viewScope = engagementViewScope(filters);
+  // "Within this page" fell back to the whole CIM (one or two parts): said inline on wide screens, in "Why?" on phones.
+  const fewParts = !!current && paint && showHeat && scope === "page" && effectiveScope(scope, current) === "document";
+  const unreadWords = scopedNobody(viewScope, { all: "Parts nobody read", one: "Parts this buyer didn't read", some: "Parts not read in this view" });
   const statusCtx = {
     blind: rendition?.mode === "blind", showNamed, sameLayout,
-    filter: filters.buyers.length === 1 ? "one" as const : filters.buyers.length > 1 || filters.segment !== "all" ? "some" as const : null,
+    filter: viewScope,
+    fewPartsNote: isMobile && fewParts,
   };
   const sectionDefault = current ? defaultSectionView(current, servedPage) : null;
   const sectionView: SectionView | null = sectionDefault ? viewWanted ?? sectionDefault : null;
@@ -201,6 +208,44 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
   const compareName = filteredToOne ? cbuyers.find((b) => b.accessId === filters.buyers[0])?.name ?? null : null;
   const onOnlyBuyer = (accessId: string) => onFiltersChange({ ...filters, buyers: [accessId], segment: "all" });
 
+  // "Show the named version" and "Compare": icons on phones (kept on the switch row), labelled buttons on wider screens.
+  const pageButtons = (
+    <>
+      {rendition?.mode === "blind" && namedId && (
+        <button
+          type="button"
+          onClick={() => setNamedWanted(!showNamed)}
+          aria-label={showNamed ? "Show what the buyer saw" : "Show the named version"}
+          title={showNamed ? "Show what the buyer saw" : "Show the named version"}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-md border border-border text-xs text-foreground/85 hover:text-foreground",
+            isMobile ? "h-8 w-8 justify-center" : "px-2 py-1",
+          )}
+          data-testid="toggle-named-version"
+        >
+          {showNamed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+          {!isMobile && (showNamed ? "Show what the buyer saw" : "Show the named version")}
+        </button>
+      )}
+      {canCompare && compareFrom && (
+        <button
+          type="button"
+          onClick={() => { setNamedWanted(false); setShowUnread(false); dispatchCompare({ type: "start", state: compareFrom }); }}
+          aria-label={compareName ? `Compare ${firstName(compareName)} with others` : "Compare buyers"}
+          title={compareName ? `Compare ${firstName(compareName)} with others` : "Compare one buyer's reading with others"}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-md border border-border text-xs text-foreground/85 hover:text-foreground",
+            isMobile ? "h-8 w-8 justify-center" : "px-2 py-1",
+          )}
+          data-testid="compare-start"
+        >
+          <Users className="h-3.5 w-3.5" />
+          {!isMobile && (compareName ? `Compare ${firstName(compareName)} with others` : "Compare")}
+        </button>
+      )}
+    </>
+  );
+
   const panel = current ? (
     <PagePanel
       page={current}
@@ -212,6 +257,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
       onSelectKey={(k) => { setSelectedKey(k); if (k) scrollToBlock(k); }}
       onOnlyBuyer={onOnlyBuyer}
       filteredToOne={filteredToOne}
+      viewScope={viewScope}
       paint={paint}
       sectionView={paint ? sectionView : null}
       headline={isMobile ? current.headline : null}
@@ -231,6 +277,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
         selectedIndex={index}
         onOpen={(i) => { setLayout("pages"); go(i); }}
         compact={isMobile}
+        inView={viewScope === "some"}
       />
 
       {!isMobile && (
@@ -315,6 +362,8 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
                     <LayoutList className="h-4 w-4" />
                   </button>
                 )}
+                {/* Phones: the icon buttons stay on the switch row (the chrome above the paper stays under ~280 px). */}
+                {isMobile && pageButtons}
                 {paint && showHeat && (
                   <Segmented<HeatScope>
                     label="Compare parts with"
@@ -324,9 +373,8 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
                     options={[{ value: "page", label: "Within this page" }, { value: "document", label: "Across the whole CIM" }]}
                   />
                 )}
-                {paint && showHeat && scope === "page" && effectiveScope(scope, current) === "document" && (
-                  <span className="text-[11px]">This page has only one or two parts, so its colours compare with the whole CIM.</span>
-                )}
+                {/* Phones: this note is in "Why?" (statusCtx.fewPartsNote). */}
+                {!isMobile && fewParts && <span className="text-[11px]" data-testid="few-parts-note">{FEW_PARTS_NOTE}</span>}
                 {sectionView && paint && (
                   <Segmented<SectionView>
                     label="How this section is shown"
@@ -338,51 +386,24 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
                 )}
                 {paint && unreadCount > 0 && (
                   <label className="inline-flex items-center gap-2">
-                    <Switch checked={showUnread} onCheckedChange={setShowUnread} aria-label="Outline parts nobody read" />
-                    Parts nobody read ({unreadCount})
+                    <Switch checked={showUnread} onCheckedChange={setShowUnread} aria-label={`Outline ${unreadWords.toLowerCase()}`} />
+                    {unreadWords} ({unreadCount})
                   </label>
                 )}
-                {rendition?.mode === "blind" && namedId && (
-                  <button
-                    type="button"
-                    onClick={() => setNamedWanted(!showNamed)}
-                    aria-label={showNamed ? "Show what the buyer saw" : "Show the named version"}
-                    title={showNamed ? "Show what the buyer saw" : "Show the named version"}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-md border border-border text-xs text-foreground/85 hover:text-foreground",
-                      isMobile ? "h-8 w-8 justify-center" : "px-2 py-1",
-                    )}
-                    data-testid="toggle-named-version"
-                  >
-                    {showNamed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                    {!isMobile && (showNamed ? "Show what the buyer saw" : "Show the named version")}
-                  </button>
-                )}
-                {canCompare && compareFrom && (
-                  <button
-                    type="button"
-                    onClick={() => { setNamedWanted(false); setShowUnread(false); dispatchCompare({ type: "start", state: compareFrom }); }}
-                    aria-label={compareName ? `Compare ${firstName(compareName)} with others` : "Compare buyers"}
-                    title={compareName ? `Compare ${firstName(compareName)} with others` : "Compare one buyer's reading with others"}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-md border border-border text-xs text-foreground/85 hover:text-foreground",
-                      isMobile ? "h-8 w-8 justify-center" : "px-2 py-1",
-                    )}
-                    data-testid="compare-start"
-                  >
-                    <Users className="h-3.5 w-3.5" />
-                    {!isMobile && (compareName ? `Compare ${firstName(compareName)} with others` : "Compare")}
-                  </button>
-                )}
+                {!isMobile && pageButtons}
               </div>
             )}
 
             {sectionView && paint && current && !comparing && (
               <p className="text-xs text-muted-foreground" data-testid="section-view-note">
                 {sectionView === "collapsed"
-                  ? `Buyers first see this section collapsed, as shown. ${expandCount(current) === 0 ? "Nobody has opened it yet." : `Opened ${expandCount(current)} time${expandCount(current) === 1 ? "" : "s"} — switch to Opened to see what they read.`}${current.part > 0 ? " Collapsed, the whole section sits on its first page." : ""}`
+                  ? `Buyers first see this section collapsed, as shown. ${expandCount(current) === 0 ? scopedNobody(viewScope, { all: "Nobody has opened it yet.", one: "This buyer hasn't opened it.", some: "No buyer in this view has opened it." }) : `Opened ${expandCount(current)} time${expandCount(current) === 1 ? "" : "s"} — switch to Opened to see what they read.`}${current.part > 0 ? " Collapsed, the whole section sits on its first page." : ""}`
                   : expandCount(current) === 0
-                    ? "Nobody has opened this section yet, so its full view has no reading time."
+                    ? scopedNobody(viewScope, {
+                      all: "Nobody has opened this section yet, so its full view has no reading time.",
+                      one: "This buyer hasn't opened this section, so its full view has no reading time here.",
+                      some: "No buyer in this view has opened this section, so its full view has no reading time here.",
+                    })
                     : `The full section, as the buyers who opened it saw it (opened ${expandCount(current)} time${expandCount(current) === 1 ? "" : "s"}).`}
               </p>
             )}
@@ -438,6 +459,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
                   paint={paint}
                   showHeat={showHeat}
                   showUnread={showUnread}
+                  viewScope={viewScope}
                   maxMs={maxMs}
                   selectedKey={selectedKey}
                   hoveredKey={hoveredKey}
@@ -512,7 +534,7 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
               </SheetHeader>
               {(() => {
                 const b = pageInView(current, sectionView).blocks.find((x) => x.key === selectedKey);
-                return b ? <BlockDetails block={b} page={current} expectedMs={servedPage?.blocks.find((x) => x.key === b.key)?.expectedMs ?? null} /> : null;
+                return b ? <BlockDetails block={b} page={current} expectedMs={servedPage?.blocks.find((x) => x.key === b.key)?.expectedMs ?? null} viewScope={viewScope} /> : null;
               })()}
             </SheetContent>
           </Sheet>

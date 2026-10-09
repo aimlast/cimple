@@ -487,9 +487,30 @@ export interface StatusContext {
   showNamed: boolean;
   /** The shown version has the same parts as the one buyers read. */
   sameLayout: boolean;
-  /** The view shows chosen buyers: "one" (a single buyer, e.g. from "See where they read") or "some". */
+  /**
+   * Who the view shows (shared engagementViewScope): "one" = a single buyer's
+   * whole reading (e.g. from "See where they read"); "some" = any narrower
+   * view — several buyers, a segment, a device or a date range.
+   */
   filter?: "one" | "some" | null;
+  /**
+   * Phones: "Within this page" fell back to the whole CIM (a page with only
+   * one or two parts). The note moves from the switch row into "Why?".
+   */
+  fewPartsNote?: boolean;
 }
+
+/**
+ * "Nobody …" said for the view shown: every buyer (null), one buyer's whole
+ * reading ("one"), or a narrower view ("some": several buyers, a segment, a
+ * device, a date range) — where other buyers may well have done it.
+ */
+export function scopedNobody(scope: "one" | "some" | null | undefined, words: { all: string; one: string; some: string }): string {
+  return scope === "one" ? words.one : scope === "some" ? words.some : words.all;
+}
+
+/** Why a page with only one or two parts compares with the whole CIM (inline on wide screens, in "Why?" on phones). */
+export const FEW_PARTS_NOTE = "This page has only one or two parts, so its colours compare with the whole CIM.";
 
 type DocForStatus = Pick<EngagementDocumentResponse, "versionNote" | "sampleReading" | "reachBasis" | "lastRecordedIndex" | "legacyUnmatched" | "pages">;
 type PageForStatus = Pick<DocumentPage, "heat" | "attentionMs"> & { reachRecorded?: boolean };
@@ -515,7 +536,7 @@ export function statusSentence(page: PageForStatus | null, doc: DocForStatus, ct
     if (page.heat.basis === "none" || mode === "none") {
       // In a filtered view other buyers may have read it; a page nobody's reading was recorded on is unread by all.
       if (page.reachRecorded !== false && ctx.filter === "one") return "This buyer hasn't read this page.";
-      if (page.reachRecorded !== false && ctx.filter === "some") return "None of the buyers in this view has read this page.";
+      if (page.reachRecorded !== false && ctx.filter === "some") return "No buyer in this view has read this page.";
       return "Nobody has read this page yet.";
     }
     if (page.heat.basis === "page") {
@@ -542,7 +563,7 @@ export function statusSentence(page: PageForStatus | null, doc: DocForStatus, ct
 }
 
 export interface WhyNote {
-  key: "basis" | "version" | "blind" | "not_recorded" | "unmatched" | "sample";
+  key: "basis" | "scope" | "version" | "blind" | "not_recorded" | "unmatched" | "sample";
   title: string;
   text: string;
 }
@@ -565,6 +586,9 @@ export function whyNotes(page: PageForStatus | null, doc: DocForStatus, ctx: Sta
       title: "Parts and whole pages",
       text: `${k} buyer${s_(k)} read this page part by part, and the colours show where. ${m} more read it as a whole page (${formatReadingTime(page.heat.pageOnlyMs)}): before Cimple tracked each part of a page, or on a version with different parts. Their time counts in the page's total, not in the colours.`,
     });
+  }
+  if (page && ctx.fewPartsNote && mode === "parts") {
+    out.push({ key: "scope", title: "Why the colours compare with the whole CIM", text: FEW_PARTS_NOTE });
   }
   const v = doc.versionNote;
   if (v?.kind === "kept_copy") {
@@ -636,7 +660,8 @@ export function whyNotes(page: PageForStatus | null, doc: DocForStatus, ctx: Sta
  * "13 opened it · 12 with reading recorded · 6 got to page 27, the last
  * page recorded": the middle part only when the two numbers differ; the
  * last part only when the sentence above doesn't already say it (a marked
- * drop).
+ * drop). `inView` (a narrower view: buyers, a segment, a device, a date
+ * range): "5 opened it in this view" — never read as the whole deal's count.
  */
 export function reachCountsLine(input: {
   openedTotal: number;
@@ -644,8 +669,9 @@ export function reachCountsLine(input: {
   reach: ReadonlyArray<Pick<ReachPoint, "buyers" | "label">>;
   pages: ReadonlyArray<Pick<DocumentPage, "reachRecorded">>;
   oldTracking: boolean;
+  inView?: boolean;
 }): string {
-  const parts = [`${input.openedTotal} opened it`];
+  const parts = [`${input.openedTotal} opened it${input.inView ? " in this view" : ""}`];
   if (input.openedBy !== input.openedTotal) parts.push(`${input.openedBy} with reading recorded`);
   const recorded = recordedReach(input.reach, input.pages);
   const last = recorded[recorded.length - 1];

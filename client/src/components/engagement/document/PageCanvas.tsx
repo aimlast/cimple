@@ -110,6 +110,12 @@ export interface PageCanvasProps {
   onWashTap?(): void;
   /** A part outlined from elsewhere (compare: the same part on the other side). */
   outlineKey?: string | null;
+  /**
+   * Who the view shows (shared engagementViewScope): in a narrower view a
+   * part nobody here read may well have been read by other buyers, so it is
+   * "Not read" / "No buyer in this view read this part", never "Nobody".
+   */
+  viewScope?: "one" | "some" | null;
 }
 
 /** The whole-page card: "This page · 27 min 40 s from 8 buyers · whole page only". */
@@ -402,7 +408,7 @@ export function WashDetails({ card }: { card: WashCard }) {
 
 const HeatOverlay = memo(function HeatOverlay({
   page, paint, showHeat, showUnread, maxMs, rects, selectedKey, hoveredKey, onSelectKey, onHoverKey, touch, renditionPage, wrapRef, view = null,
-  mode: modeProp, washT = 0, washCard, onWashTap, outlineKey = null,
+  mode: modeProp, washT = 0, washCard, onWashTap, outlineKey = null, viewScope = null,
 }: PageCanvasProps & { rects: Map<string, Rect>; wrapRef: RefObject<HTMLDivElement> }) {
   const mode: DrawMode = modeProp ?? (paint ? "parts" : "none");
   const parts = mode === "parts";
@@ -480,7 +486,7 @@ const HeatOverlay = memo(function HeatOverlay({
                 className="absolute rounded-sm px-1.5 py-[1px] text-[10px] font-medium"
                 style={{ right: 4, bottom: 4, background: PAPER, color: BRASS, border: `1px solid ${BRASS}` }}
               >
-                Nobody read this
+                {viewScope ? "Not read" : "Nobody read this"}
               </span>
             )}
           </button>
@@ -504,14 +510,15 @@ const HeatOverlay = memo(function HeatOverlay({
           page={page}
           expectedMs={renditionPage?.blocks.find((x) => x.key === card.key)?.expectedMs ?? null}
           at={card.at}
+          viewScope={viewScope}
         />
       )}
     </div>
   );
 });
 
-function BlockHoverCard({ block, page, expectedMs, at }: {
-  block: BlockAttention; page: DocumentPage; expectedMs: number | null; at: { x: number; y: number };
+function BlockHoverCard({ block, page, expectedMs, at, viewScope = null }: {
+  block: BlockAttention; page: DocumentPage; expectedMs: number | null; at: { x: number; y: number }; viewScope?: "one" | "some" | null;
 }) {
   const W = 280;
   const H = 170;
@@ -526,13 +533,17 @@ function BlockHoverCard({ block, page, expectedMs, at }: {
       role="tooltip"
       data-testid="engagement-block-card"
     >
-      <BlockDetails block={block} page={page} expectedMs={expectedMs} />
+      <BlockDetails block={block} page={page} expectedMs={expectedMs} viewScope={viewScope} />
     </div>
   );
 }
 
 /** What the broker learns about one part: used by the hover card and the phone bottom sheet. */
-export function BlockDetails({ block, page, expectedMs }: { block: BlockAttention; page: DocumentPage; expectedMs: number | null }) {
+export function BlockDetails({ block, page, expectedMs, viewScope = null }: {
+  block: BlockAttention; page: DocumentPage; expectedMs: number | null;
+  /** Who the view shows (engagementViewScope): a narrower view never says "Nobody". */
+  viewScope?: "one" | "some" | null;
+}) {
   const nobody = block.attentionMs < 1000;
   const seen = nobody && !isUnread(block);
   return (
@@ -544,7 +555,9 @@ export function BlockDetails({ block, page, expectedMs }: { block: BlockAttentio
           <span className="text-muted-foreground">, while the parts around it took the reading time</span>
         </p>
       ) : nobody ? (
-        <p className="text-sm font-medium">Nobody read this part</p>
+        <p className="text-sm font-medium">
+          {viewScope === "one" ? "This buyer didn't read this part" : viewScope === "some" ? "No buyer in this view read this part" : "Nobody read this part"}
+        </p>
       ) : (
         <p className="text-sm">
           <span className="text-lg font-semibold tabular-nums">{formatReadingTime(block.attentionMs)}</span>

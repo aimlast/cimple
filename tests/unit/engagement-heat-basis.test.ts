@@ -197,6 +197,10 @@ test("opened = a visit or a stamped first view (the pulse); with reading = a vis
   // Over a date range, a stamped first view alone doesn't count (no visit in the range).
   const ranged = assembleFacts(base({ accesses: [acc("W", { firstViewedAt: new Date() })], filters: { ...DEFAULT_ENGAGEMENT_FILTERS, range: "7d" } }));
   assert.equal(buildDocumentResponse(ranged).openedTotal, 0);
+  // On one device, neither (a stamped first view carries no device): HM2-1 — never "12 opened it" under a Phone filter.
+  const phone = assembleFacts(base({ accesses: [acc("W", { firstViewedAt: new Date("2026-09-12T00:00:00Z") })], filters: { ...DEFAULT_ENGAGEMENT_FILTERS, device: "phone" } }));
+  assert.equal(buildDocumentResponse(phone).openedTotal, 0);
+  assert.equal(buildBuyersResponse(phone).counts.opened, 0);
 });
 
 console.log("how far buyers got (old tracking)");

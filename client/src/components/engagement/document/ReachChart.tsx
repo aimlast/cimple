@@ -24,7 +24,7 @@ import { heatIntensity, reachCountsLine, reachFallback, recordedDrop, recordedRe
 const HATCH = "repeating-linear-gradient(135deg, hsl(var(--muted-foreground) / 0.25) 0 2px, transparent 2px 5px)";
 
 export function ReachChart({
-  reach, pages, headline, openedBy, openedTotal, oldTracking, maxPageMs, selectedIndex, onOpen, compact = false,
+  reach, pages, headline, openedBy, openedTotal, oldTracking, maxPageMs, selectedIndex, onOpen, compact = false, inView = false,
 }: {
   reach: ReachPoint[];
   /** The document's pages (reading time and whether the old tracking recorded each one). */
@@ -41,6 +41,8 @@ export function ReachChart({
   selectedIndex: number;
   onOpen(index: number): void;
   compact?: boolean;
+  /** A narrower view (buyers, a segment, a device, a date range): the counts say "in this view". */
+  inView?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   if (reach.length === 0 || openedBy === 0) return null;
@@ -54,7 +56,7 @@ export function ReachChart({
   const furthestRec = lastRec.buyers > 0 ? lastRec : [...recorded].reverse().find((r) => r.buyers > 0) ?? lastRec;
   const H = compact ? 36 : 44;
   const sentence = headline ?? reachFallback(recorded, openedBy);
-  const counts = reachCountsLine({ openedTotal, openedBy, reach, pages, oldTracking });
+  const counts = reachCountsLine({ openedTotal, openedBy, reach, pages, oldTracking, inView });
   const showEvery = reach.length > 30 ? 5 : reach.length > 16 ? 2 : 1;
   const isRecorded = (i: number) => pages[i]?.reachRecorded !== false;
 

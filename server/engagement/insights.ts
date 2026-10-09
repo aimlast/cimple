@@ -27,6 +27,7 @@ import {
   READING_RULES,
   formatReadingTime,
   viewerPageKey,
+  type BlockAttention,
   type BuyerInsight,
   type BuyerQuestionRef,
   type BuyerReadingFacts,
@@ -755,8 +756,19 @@ export function rankBuyers(items: Array<{ facts: BuyerReadingFacts; insight: Buy
 // ── Headlines ────────────────────────────────────────────────────────────
 
 const QUIET_KINDS = new Set(["heading", "page", "summary", "column", "locked", "point"]);
+/**
+ * A part nobody is expected to stop on: a table's header row or its
+ * footnotes (structure, not content) — never "Nobody stopped on table header".
+ * Other layouts' "foot" parts (headcount, total space) are content.
+ */
+const quietPart = (bl: Pick<BlockAttention, "kind" | "key">) => QUIET_KINDS.has(bl.kind) || (bl.kind === "table" && /^(head|foot)$/.test(bl.key));
 
-/** One sentence above a page in the Document view, or null when nothing notable. */
+/**
+ * One sentence above a page in the Document view, or null when nothing notable.
+ * `filter` (engagementViewScope): "one" = one buyer's whole reading, "some" =
+ * any narrower view (several buyers, a segment, a device, a date range) —
+ * other buyers may well have read a page this view says is unread.
+ */
 export function pageHeadline(
   page: DocumentPage,
   doc: { pages: DocumentPage[]; openedBy: number; filter?: "one" | "some" | null },
@@ -772,6 +784,7 @@ export function pageHeadline(
     const x = ratio >= 1.5 ? `, ${timesWord(ratio)} its expected reading time` : "";
     // A view filtered to one buyer (the Buyers view's "See where they read"): their page, not the CIM's.
     if (doc.filter === "one") return `This buyer's most-read page${x}.`;
+    if (doc.filter === "some") return `Most studied page in this view — ${page.readers} of ${plural(doc.openedBy, "buyer")} read it${x}.`;
     return `Most studied page in the CIM — ${page.readers} of ${plural(doc.openedBy, "buyer")} read it${x}.`;
   }
   if (page.locked) {
@@ -803,14 +816,17 @@ export function pageHeadline(
   const partsOnly = page.heat ? page.heat.basis === "parts" : !page.pageLevelOnly;
   if (page.readers >= 2 && partsOnly && !collapsedOnly) {
     const unread = page.blocks
-      .filter((bl) => !QUIET_KINDS.has(bl.kind) && bl.attentionMs < READING_RULES.unreadBlockMs && bl.visibleMs < READING_RULES.readerMinMs)
+      .filter((bl) => !quietPart(bl) && bl.attentionMs < READING_RULES.unreadBlockMs && bl.visibleMs < READING_RULES.readerMinMs)
       .sort((a, b) => kindWeight(b.kind) - kindWeight(a.kind));
     if (unread.length > 0) {
       // A section buyers first saw collapsed: only those who opened it could stop on its rows.
       const collapsible = page.blocks.some((bl) => bl.key === "summary");
+      const who = doc.filter === "some" ? "the buyers in this view" : "the buyers";
       return collapsible
-        ? `Of the buyers who opened this section, nobody stopped on ${blockPhrase(unread[0].label)}.`
-        : `Nobody stopped on ${blockPhrase(unread[0].label)}.`;
+        ? `Of ${who} who opened this section, nobody stopped on ${blockPhrase(unread[0].label)}.`
+        : doc.filter === "some"
+          ? `No buyer in this view stopped on ${blockPhrase(unread[0].label)}.`
+          : `Nobody stopped on ${blockPhrase(unread[0].label)}.`;
     }
   }
   return null;
@@ -836,12 +852,14 @@ export function isMarkedDrop(drop: number, openedBy: number): boolean {
  * measured between recorded pages, and the last page named is the last one
  * recorded ("…, the last page recorded").
  *
- * `filtered` (the view shows chosen buyers): one buyer reads as "This buyer",
- * never "The buyer who opened the CIM".
+ * `filter` (engagementViewScope): "one" (one buyer's whole reading) reads as
+ * "This buyer"; "some" (a narrower view: buyers, a segment, a device, a date
+ * range) speaks of "the buyers in this view" — never "The buyer who opened
+ * the CIM" or "All 4 buyers who opened the CIM" when others opened it too.
  */
 export function reachHeadline(
   reach: ReachPoint[],
-  opts: { lastRecorded?: number | null; recorded?: ReadonlySet<number>; filtered?: boolean } = {},
+  opts: { lastRecorded?: number | null; recorded?: ReadonlySet<number>; filter?: "one" | "some" | null } = {},
 ): string | null {
   const limited = opts.recorded !== undefined || opts.lastRecorded !== undefined;
   const keep = (p: ReachPoint) => opts.recorded
@@ -860,15 +878,16 @@ export function reachHeadline(
   const lastWords = `got to page ${last.label} · ${last.title}, the last page recorded`;
   if (n === 1) {
     // One buyer (or a view filtered to one): where they got to, never "most buyers".
-    const who = opts.filtered ? "This buyer" : "The buyer who opened the CIM";
+    const who = opts.filter === "one" ? "This buyer" : opts.filter === "some" ? "The one buyer in this view" : "The buyer who opened the CIM";
     if (last.buyers >= 1) return limited ? `${who} ${lastWords}.` : `${who} reached the last page.`;
     const furthest = [...pts].reverse().find((p) => p.buyers >= 1);
-    return furthest ? `This buyer got as far as page ${furthest.label} · ${furthest.title}.` : null;
+    return furthest ? `${who} got as far as page ${furthest.label} · ${furthest.title}.` : null;
   }
   const significant = !!drop && isMarkedDrop(drop.from - drop.at.buyers, n);
   if (!drop || !significant) {
-    if (limited) return last.buyers === n ? `All ${n} buyers who opened the CIM ${lastWords}.` : `${last.buyers} of ${plural(n, "buyer")} ${lastWords}.`;
-    if (last.buyers === n) return `All ${n} buyers who opened the CIM reached the last page.`;
+    const all = opts.filter === "some" ? `All ${n} buyers in this view` : `All ${n} buyers who opened the CIM`;
+    if (limited) return last.buyers === n ? `${all} ${lastWords}.` : `${last.buyers} of ${plural(n, "buyer")} ${lastWords}.`;
+    if (last.buyers === n) return `${all} reached the last page.`;
     return `${last.buyers} of ${plural(n, "buyer")} reached the last page.`;
   }
   const lead = drop.at.buyers < drop.from / 2 ? "Most buyers stopped" : "The biggest drop is";

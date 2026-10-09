@@ -9,15 +9,18 @@
  *   reader of a page   a buyer with ≥ 3 s of attention on it
  *   reached            the buyer's furthest page is at or beyond it (a split
  *                      section's later parts: when any of their parts was on screen)
- *   opened             a tracked visit, or (all time) a stamped first view — the
- *                      pulse's rule; the Document view's openedTotal and the
- *                      buyers response's counts.opened (INTEGRATION §2.9)
+ *   opened             a tracked visit, or (all time, any device) a stamped first
+ *                      view — the pulse's rule; the Document view's openedTotal
+ *                      and the buyers response's counts.opened (INTEGRATION §2.9;
+ *                      a first view alone carries no device nor reading in a range)
  *   with reading       a visit of ≥ 3 s active (the reader rule, C11) — the
  *                      Document view's openedBy and counts.withReading
  */
 import {
   READING_RULES,
   blockId,
+  engagementViewScope,
+  firstViewCounts,
   viewerPageKey,
   type BlockAttention,
   type BuyerEngagementCard,
@@ -90,8 +93,12 @@ export function furthestViewerIndex(b: BuyerReadingFacts, pages: FactPage[]): nu
 
 const attentionOn = (b: BuyerReadingFacts, p: FactPage) => b.pages[viewerPageKey(p.pageId, p.part)]?.attentionMs ?? 0;
 const opened = (b: BuyerReadingFacts) => b.visits.length > 0;
-/** The pulse's "opened": a visit, or (all time) a stamped first view (tracker blocked). */
-export const openedForCounts = (b: BuyerReadingFacts, range: DealReadingFacts["filters"]["range"]) => opened(b) || (range === "all" && !!b.firstViewedAt);
+/**
+ * The pulse's "opened": a visit, or a stamped first view (tracker blocked)
+ * when the view is all time on any device — under a device or date filter
+ * only buyers with a visit in view count (firstViewCounts).
+ */
+export const openedForCounts = (b: BuyerReadingFacts, filters: Pick<DealReadingFacts["filters"], "range" | "device">) => opened(b) || (firstViewCounts(filters) && !!b.firstViewedAt);
 /** The reader rule (C11): a visit with at least READING_RULES.readerMinMs active. */
 export const withReading = (b: BuyerReadingFacts) => b.visits.some((v) => v.activeMs >= READING_RULES.readerMinMs);
 
@@ -170,7 +177,7 @@ export function unrecordedPageIds(facts: DealReadingFacts, basis: ReachBasis = r
 
 export function buildBuyersResponse(facts: DealReadingFacts): EngagementBuyersResponse {
   const ctx = insightContext(facts);
-  const shown = facts.buyers.filter((b) => openedForCounts(b, facts.filters.range));
+  const shown = facts.buyers.filter((b) => openedForCounts(b, facts.filters));
   const ranked = rankBuyers(shown.map((f) => ({ facts: f, insight: buyerInsight(f, ctx) })));
   // A page nobody has any old-tracker reading on was never "skipped" (it may not have existed yet).
   const unrecorded = unrecordedPageIds(facts);
@@ -242,7 +249,7 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
   const readersOf = facts.buyers.filter(opened);
   // "13 opened it · 12 with reading recorded": the pulse's opened, and the reader rule (INTEGRATION §2.9).
   const openedBy = facts.buyers.filter(withReading).length;
-  const openedTotal = facts.buyers.filter((b) => openedForCounts(b, facts.filters.range)).length;
+  const openedTotal = facts.buyers.filter((b) => openedForCounts(b, facts.filters)).length;
   const furthest = new Map(readersOf.map((b) => [b.accessId, furthestViewerIndex(b, facts.pages)]));
   const listed = new Set(facts.buyers.map((b) => b.accessId));
   // How far buyers got: with old tracking, a page nobody has any reading on
@@ -333,7 +340,8 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
   let lastRecordedIndex: number | null = null;
   if (reachBasis === "old_tracking") for (const p of pages) if (p.reachRecorded) lastRecordedIndex = p.index;
 
-  const filter = facts.filters.buyers.length === 1 ? "one" as const : facts.filters.buyers.length > 1 || facts.filters.segment !== "all" ? "some" as const : null;
+  // Who this view shows (a device or date filter narrows it too): "nobody" only when it is every buyer's whole reading.
+  const filter = engagementViewScope(facts.filters);
   const doc = { pages, openedBy, filter };
   for (const pg of pages) pg.headline = pageHeadline(pg, doc);
 
@@ -366,7 +374,7 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
     reach,
     reachHeadline: reachHeadline(reach, {
       ...(reachBasis === "old_tracking" ? { recorded: new Set(pages.filter((p) => p.reachRecorded).map((p) => p.index)) } : {}),
-      filtered: filter !== null,
+      filter,
     }),
     pages,
     byKind,

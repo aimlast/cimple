@@ -3,7 +3,9 @@
  * (loadDealReadingFacts over the in-memory reading store): which pages were
  * recorded is decided deal-wide, never by the filter (HM-C1), and a page
  * nobody has any reading on — anywhere in the CIM — is never a drop or
- * "skipped" (HM-C2). No DB, no AI.
+ * "skipped" (HM-C2). A device or date filter narrows the view like a buyer
+ * filter: its copy never says "nobody" about pages other buyers read, and
+ * its "opened" counts only buyers with a visit in view (HM2-1). No DB, no AI.
  *
  *   DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=disabled node_modules/.bin/tsx tests/unit/engagement-reach-recorded.test.ts
  */
@@ -40,7 +42,8 @@ s.getCimSectionsByDeal = async () => SECTIONS.map((x) => ({ ...x, analyticsLinea
 _setLiveRenditionForTests(async () => null);
 
 // Old-tracker visits (stored, no version): Ben stops after page 2; the others
-// read 1, 2, 3, 5 and (four of them) 6. Nobody has page 4.
+// read 1, 2, 3, 5 and (four of them) 6. Nobody has page 4. Nia (a5) read on a
+// phone; everyone else on a computer.
 const reads: Record<string, string[]> = {
   a0: ["p1", "p2"],
   a1: ["p1", "p2", "p3", "p5", "p6"],
@@ -55,7 +58,7 @@ function world() {
   Object.entries(reads).forEach(([accessId, pages], i) => {
     const id = `legacy-${i}`;
     store.visits.set(id, {
-      id, dealId: "deal-r", buyerAccessId: accessId, renditionId: null, mode: "blind", accessLevel: "full", deviceClass: null,
+      id, dealId: "deal-r", buyerAccessId: accessId, renditionId: null, mode: "blind", accessLevel: "full", deviceClass: accessId === "a5" ? "phone" : null,
       startedAt: at(3 + i), lastSeenAt: at(3 + i, 30), wallMs: 1_800_000, activeMs: 900_000, idleMs: 0, hiddenMs: 0, awayMs: 0, outsideMs: 0,
       maxPageIndex: null, path: pages.map((p, k) => [k * 60, p]), selfView: false, clamped: false, legacy: true, viewportW: null, viewportH: null, uaFamily: null, ipHash: null,
     } as any);
@@ -90,10 +93,38 @@ await test("filtered to a segment, a date range or a device: the same recorded p
     { ...DEFAULT_ENGAGEMENT_FILTERS, segment: "interested" as const },
     { ...DEFAULT_ENGAGEMENT_FILTERS, range: "30d" as const },
     { ...DEFAULT_ENGAGEMENT_FILTERS, buyers: ["a5"] },
+    { ...DEFAULT_ENGAGEMENT_FILTERS, device: "phone" as const },
   ]) {
     const doc = buildDocumentResponse(await load(f));
     assert.deepEqual(doc.pages.map((p) => p.reachRecorded), [true, true, true, false, true, true], JSON.stringify(f));
   }
+});
+await test("on phones only (HM2-1): pages other buyers read are never 'nobody'; opened counts buyers with a visit in view", async () => {
+  const facts = await load({ ...DEFAULT_ENGAGEMENT_FILTERS, device: "phone" });
+  const doc = buildDocumentResponse(facts);
+  // Only Nia read on a phone; she stopped at page 5. Everyone else (computer) read page 6.
+  assert.equal(doc.openedBy, 1);
+  assert.equal(doc.openedTotal, 1, "never the 6 stamped first views: a first view alone carries no device");
+  assert.equal(buildBuyersResponse(facts).counts.opened, doc.openedTotal, "the Buyers view says the same");
+  const next = doc.pages.find((p) => p.title === "Next Steps")!;
+  assert.equal(next.reachedBy, 0);
+  assert.equal(next.headline, "No buyer in this view has reached this page.");
+  for (const p of doc.pages) assert.doesNotMatch(p.headline ?? "", /^No buyer has reached|^Most studied page in the CIM/, p.title);
+  assert.match(doc.pages[0].headline ?? "", /^Most studied page in this view — 1 of 1 buyer read it/);
+  assert.equal(doc.reachHeadline, "The one buyer in this view got as far as page 5 · Fleet.");
+  // On a computer: the five buyers with a computer visit (Nia read on her phone).
+  const desk = buildDocumentResponse(await load({ ...DEFAULT_ENGAGEMENT_FILTERS, device: "desktop" }));
+  assert.equal(desk.openedTotal, 5);
+  assert.equal(desk.reachHeadline, "4 of 5 buyers got to page 6 · Next Steps, the last page recorded.");
+  // One buyer on a phone is a narrower view too (she may have read more on a computer).
+  const niaPhone = buildDocumentResponse(await load({ ...DEFAULT_ENGAGEMENT_FILTERS, buyers: ["a5"], device: "phone" }));
+  assert.equal(niaPhone.pages.find((p) => p.title === "Next Steps")!.headline, "No buyer in this view has reached this page.");
+  // Unfiltered, one buyer filter: unchanged.
+  const ben = buildDocumentResponse(await load({ ...DEFAULT_ENGAGEMENT_FILTERS, buyers: ["a0"] }));
+  assert.equal(ben.pages.find((p) => p.title === "Fleet")!.headline, "This buyer hasn't reached this page.");
+  assert.equal(ben.openedTotal, 1);
+  const all = buildDocumentResponse(await load(DEFAULT_ENGAGEMENT_FILTERS));
+  assert.equal(all.openedTotal, 6);
 });
 await test("the Buyers view's strips never call the unrecorded page skipped", async () => {
   const buyers = buildBuyersResponse(await load(DEFAULT_ENGAGEMENT_FILTERS));

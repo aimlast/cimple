@@ -36,7 +36,7 @@ import { KIND_GROUPS, kindGroupOf } from "@shared/cim-blocks";
 import { AttentionByKind } from "../AttentionByKind";
 import { heatChrome } from "../heat";
 import { Segmented } from "../FilterBar";
-import { expandCount, interactionLines, isUnread, pageInView, paintable, perReaderMs, readersText, type SectionView } from "./viewer-model";
+import { expandCount, interactionLines, isUnread, pageInView, paintable, perReaderMs, readersText, scopedNobody, type SectionView } from "./viewer-model";
 import { Link } from "wouter";
 import { cn } from "@/lib/utils";
 
@@ -82,7 +82,7 @@ function pageKinds(page: DocumentPage, renditionPage: RenditionPage | undefined)
 }
 
 export function PagePanel({
-  page, doc, dealId, renditionPage, selectedKey, onHoverKey, onSelectKey, onOnlyBuyer, filteredToOne, paint, className, sectionView = null, headline = null,
+  page, doc, dealId, renditionPage, selectedKey, onHoverKey, onSelectKey, onOnlyBuyer, filteredToOne, viewScope, paint, className, sectionView = null, headline = null,
 }: {
   page: DocumentPage;
   doc: EngagementDocumentResponse;
@@ -93,6 +93,12 @@ export function PagePanel({
   onSelectKey(key: string | null): void;
   onOnlyBuyer(accessId: string): void;
   filteredToOne: boolean;
+  /**
+   * Who the view shows (shared engagementViewScope): "one" = one buyer's whole
+   * reading, "some" = a narrower view (buyers, a segment, a device, a date
+   * range). Defaults from filteredToOne.
+   */
+  viewScope?: "one" | "some" | null;
   paint: boolean;
   className?: string;
   /** A collapsible section: the view drawn (the parts listed are that view's). */
@@ -112,6 +118,11 @@ export function PagePanel({
   const perReader = perReaderMs(page);
   const did = interactionLines(page.interactions);
   const shownParts = allParts ? parts : parts.slice(0, 8);
+  const scope = viewScope !== undefined ? viewScope : filteredToOne ? "one" : null;
+  // Nobody in this view read it: other buyers may have (unless nobody's reading was ever recorded on it).
+  const nobodyText = page.reachRecorded === false
+    ? "Nobody has read this page yet."
+    : scopedNobody(scope, { all: "Nobody has read this page yet.", one: "This buyer hasn't read this page.", some: "No buyer in this view has read this page." });
 
   return (
     <div className={cn("space-y-5 text-sm", className)} data-testid="engagement-page-panel">
@@ -181,7 +192,7 @@ export function PagePanel({
             <h4 className="mb-2 text-xs font-medium text-foreground/90">Buyers on this page</h4>
             {page.buyers.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                {filteredToOne && page.reachRecorded !== false ? "This buyer hasn't read this page." : "Nobody has read this page yet."}
+                {nobodyText}
               </p>
             ) : (
               <ul className="space-y-1.5">
@@ -223,7 +234,9 @@ export function PagePanel({
                 Parts of this page{sectionView === "collapsed" ? " (collapsed, as buyers first see it)" : sectionView === "opened" ? " (opened)" : ""}
               </h4>
               {openedNobody ? (
-                <p className="text-xs text-muted-foreground">Nobody has opened this section yet.</p>
+                <p className="text-xs text-muted-foreground">
+                  {scopedNobody(scope, { all: "Nobody has opened this section yet.", one: "This buyer hasn't opened this section.", some: "No buyer in this view has opened this section." })}
+                </p>
               ) : !paint ? (
                 <p className="text-xs text-muted-foreground">
                   {page.heat?.basis === "page"

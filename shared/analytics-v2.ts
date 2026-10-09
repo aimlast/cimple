@@ -312,6 +312,30 @@ export function parseEngagementFilters(q: Record<string, unknown>): EngagementFi
   };
 }
 
+/**
+ * Who a filtered view shows, for its copy (never "nobody" when other buyers
+ * may well have read): "one" = a single buyer's whole reading (the Buyers
+ * view's "See where they read"); "some" = any narrower view — several
+ * buyers, a segment, a device or a date range (one buyer on a phone or over
+ * 7 days is "some": they may have read the page on a computer or earlier);
+ * null = every buyer, all time, any device.
+ */
+export type EngagementViewScope = "one" | "some" | null;
+export function engagementViewScope(f: Pick<EngagementFilters, "buyers" | "segment" | "range" | "device">): EngagementViewScope {
+  const narrowed = f.range !== "all" || f.device !== "all";
+  if (f.buyers.length === 1) return narrowed ? "some" : "one";
+  return f.buyers.length > 1 || f.segment !== "all" || narrowed ? "some" : null;
+}
+
+/**
+ * The pulse's "opened" (INTEGRATION §2.9): a visit, or a stamped first view
+ * when the view is all time on any device — a first view with no visit
+ * carries no device, and its date alone isn't reading in a range.
+ */
+export function firstViewCounts(f: Pick<EngagementFilters, "range" | "device">): boolean {
+  return f.range === "all" && f.device === "all";
+}
+
 /** Query string for a filter set (defaults omitted). */
 export function engagementFiltersQuery(f: Partial<EngagementFilters>): string {
   const p = new URLSearchParams();
@@ -632,8 +656,8 @@ export interface EngagementBuyersResponse {
   legacyOnly: boolean;
   sampleReading: boolean;
   /**
-   * opened: a link with a visit, or (all time) a stamped first view — the
-   * pulse's rule, = the Document view's openedTotal. withReading: a link with
+   * opened: a link with a visit, or (all time, any device) a stamped first
+   * view — the pulse's rule, = the Document view's openedTotal. withReading: a link with
    * a visit of ≥ READING_RULES.readerMinMs active (the reader rule) — = the
    * Document view's openedBy.
    */
@@ -765,7 +789,7 @@ export interface EngagementDocumentResponse {
   renditions: RenditionSummary[];
   /** Buyers with reading recorded: a visit of ≥ READING_RULES.readerMinMs active (denominator of "7/9 read"). */
   openedBy: number;
-  /** Buyers who opened it: a visit, or (all time) a stamped first view — the pulse's rule. */
+  /** Buyers who opened it: a visit, or (all time, any device) a stamped first view — the pulse's rule (firstViewCounts). */
   openedTotal: number;
   reachBasis: ReachBasis;
   /** reachBasis "old_tracking": the last recorded viewer page (DocumentPage.reachRecorded — deal-wide, not this view's). */

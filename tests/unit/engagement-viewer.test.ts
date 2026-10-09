@@ -18,20 +18,21 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   blocksOf, blockFingerprint, expectedMsOf, partCount, topSegment,
 } from "../../shared/cim-blocks";
-import type {
-  BlockAttention, DocumentPage, EngagementRenditionResponse, RenditionPage,
+import {
+  DEFAULT_ENGAGEMENT_FILTERS, engagementViewScope, firstViewCounts,
+  type BlockAttention, type DocumentPage, type EngagementRenditionResponse, type RenditionPage,
 } from "../../shared/analytics-v2";
 import {
   effectiveScope, heatIntensity, heatMaxMs, interactionLines, legendTicks, msAtIntensity, orderPages, paperTint,
   parsePageParam, partVisibility, partVisibilityCss, pathWidths, reachFallback, readersText, selectPageIndex,
   steepestDrop, topBlocks, unreadBlocks, TINT_STRENGTH, defaultSectionView, inView, isUnread, pageInView, pageOfText,
   drawMode, statusSentence, whyNotes, washFill, WASH_MAX_ALPHA, pageRank, railTint, pageLegendTicks, recordedReach, reachCountsLine, recordedDrop, pageRunsText,
-  pageHeatMaxMs, ordinal, shortDate, type StatusContext,
+  pageHeatMaxMs, ordinal, shortDate, type StatusContext, FEW_PARTS_NOTE, scopedNobody,
   parseCompareParam, compareParam, compareGroups, defaultCompareB, compareReducer, compareStart, compareSideB, validCompare,
   perBuyerPage, sharedMaxMs, firstName, COMPARE_GROUP_MAX, type CompareBuyer, type CompareState,
 } from "../../client/src/components/engagement/document/viewer-model";
 import { compareFiltersText } from "../../client/src/components/engagement/document/CompareView";
-import { PageCanvas } from "../../client/src/components/engagement/document/PageCanvas";
+import { BlockDetails, PageCanvas } from "../../client/src/components/engagement/document/PageCanvas";
 import { PagePanel, updateNote } from "../../client/src/components/engagement/document/PagePanel";
 import { HeatLegend, PageLegend } from "../../client/src/components/engagement/document/Legends";
 
@@ -390,7 +391,7 @@ test("the status line: one sentence, first match wins (spec §3.4)", () => {
   assert.equal(statusSentence(hp(0, heat("none")), d, ctx()), "Nobody has read this page yet.");
   // Filtered views ("See where they read"): other buyers may have read it — unless nobody's reading was recorded on it.
   assert.equal(statusSentence(hp(0, heat("none")), d, ctx({ filter: "one" })), "This buyer hasn't read this page.");
-  assert.equal(statusSentence(hp(0, heat("none")), d, ctx({ filter: "some" })), "None of the buyers in this view has read this page.");
+  assert.equal(statusSentence(hp(0, heat("none")), d, ctx({ filter: "some" })), "No buyer in this view has read this page.");
   assert.equal(statusSentence({ ...hp(0, heat("none")), reachRecorded: false }, d, ctx({ filter: "one" })), "Nobody has read this page yet.");
   assert.equal(statusSentence(hp(60_000, heat("page")), docOf({ versionNote: { kind: "kept_copy", since: "2026-09-29T14:02:17Z" } }), ctx({ blind: true })),
     "Shaded as a whole page: read before Cimple tracked each part of a page.");
@@ -473,6 +474,59 @@ test("how far buyers got: pages never recorded are left out of the drop; the cou
   const flat = [5, 5, 5].map((b, i) => ({ buyers: b, label: String(i + 1) }));
   assert.equal(reachCountsLine({ openedTotal: 5, openedBy: 5, reach: flat, pages: flat.map(() => ({ reachRecorded: true })), oldTracking: false }), "5 opened it");
 });
+test("who a view shows (HM2-1): a device or date filter narrows it like a buyer filter", () => {
+  const f = DEFAULT_ENGAGEMENT_FILTERS;
+  assert.equal(engagementViewScope(f), null);
+  assert.equal(engagementViewScope({ ...f, buyers: ["a"] }), "one");
+  assert.equal(engagementViewScope({ ...f, buyers: ["a", "b"] }), "some");
+  assert.equal(engagementViewScope({ ...f, segment: "interested" }), "some");
+  assert.equal(engagementViewScope({ ...f, device: "phone" }), "some");
+  assert.equal(engagementViewScope({ ...f, device: "desktop" }), "some");
+  assert.equal(engagementViewScope({ ...f, range: "7d" }), "some");
+  // One buyer on a phone (or over 7 days) may have read the page elsewhere or earlier.
+  assert.equal(engagementViewScope({ ...f, buyers: ["a"], device: "phone" }), "some");
+  assert.equal(engagementViewScope({ ...f, buyers: ["a"], range: "30d" }), "some");
+  // A stamped first view counts as "opened" only all time on any device (it carries no device).
+  assert.equal(firstViewCounts(f), true);
+  assert.equal(firstViewCounts({ ...f, device: "phone" }), false);
+  assert.equal(firstViewCounts({ ...f, range: "7d" }), false);
+  assert.equal(scopedNobody("some", { all: "a", one: "o", some: "s" }), "s");
+  assert.equal(scopedNobody(undefined, { all: "a", one: "o", some: "s" }), "a");
+});
+test("a narrower view's counts line says 'in this view' (HM2-1)", () => {
+  const reach = [1, 1, 0].map((b, i) => ({ buyers: b, label: String(i + 1) }));
+  const pages = reach.map(() => ({ reachRecorded: true }));
+  assert.equal(reachCountsLine({ openedTotal: 1, openedBy: 1, reach, pages, oldTracking: false, inView: true }), "1 opened it in this view");
+  assert.equal(reachCountsLine({ openedTotal: 3, openedBy: 2, reach, pages, oldTracking: false, inView: true }), "3 opened it in this view · 2 with reading recorded");
+  assert.equal(reachCountsLine({ openedTotal: 13, openedBy: 12, reach, pages, oldTracking: false }), "13 opened it · 12 with reading recorded");
+});
+test("phones: 'only one or two parts' moves into Why?; wide screens keep it inline (HM2-3)", () => {
+  const two = whyNotes(hp(60_000, heat("parts")), docOf(), ctx({ fewPartsNote: true }));
+  assert.deepEqual(two.map((n) => n.key), ["scope"]);
+  assert.equal(two[0].text, FEW_PARTS_NOTE);
+  assert.deepEqual(whyNotes(hp(60_000, heat("parts")), docOf(), ctx()), [], "no note without the flag");
+  // Only when parts are painted (a washed or unread page has no part colours to explain).
+  assert.deepEqual(whyNotes(hp(0, heat("none")), docOf(), ctx({ fewPartsNote: true })), []);
+  const src = fs.readFileSync(path.join(ROOT, "client/src/components/engagement/document/DocumentView.tsx"), "utf8");
+  assert.match(src, /fewPartsNote: isMobile && fewParts/);
+  assert.match(src, /\{!isMobile && fewParts && <span[^>]*>\{FEW_PARTS_NOTE\}<\/span>\}/, "inline only on wide screens");
+  // The eye and compare icons stay on the switch row on phones: rendered before the scope switch.
+  const row = src.slice(src.indexOf('data-testid="heat-toggles"'));
+  assert.ok(row.indexOf("{isMobile && pageButtons}") > 0 && row.indexOf("{isMobile && pageButtons}") < row.indexOf('label="Compare parts with"'));
+  assert.ok(row.indexOf("{!isMobile && pageButtons}") > row.indexOf('label="Compare parts with"'));
+  // One rule for who the view shows, the same as the server's headlines.
+  assert.match(src, /const viewScope = engagementViewScope\(filters\)/);
+  assert.match(src, /filter: viewScope,/);
+  assert.match(src, /inView=\{viewScope === "some"\}/);
+  assert.doesNotMatch(src, /filters\.segment !== "all" \? "some"/, "never the old buyers/segment-only test");
+});
+test("parts and sections in a narrower view never say 'Nobody' (HM2-1)", () => {
+  const b = { key: "row:0", kind: "table", label: "Row: Revenue", attentionMs: 0, skimMs: 0, visibleMs: 0, pointerMs: 0, skimShare: 0, readers: 0, topBuyer: null, topPoint: null } as BlockAttention;
+  const pg = { readers: 1 } as DocumentPage;
+  assert.match(renderToStaticMarkup(React.createElement(BlockDetails, { block: b, page: pg, expectedMs: null })), /Nobody read this part/);
+  assert.match(renderToStaticMarkup(React.createElement(BlockDetails, { block: b, page: pg, expectedMs: null, viewScope: "some" })), /No buyer in this view read this part/);
+  assert.match(renderToStaticMarkup(React.createElement(BlockDetails, { block: b, page: pg, expectedMs: null, viewScope: "one" })), /This buyer didn(&#x27;|')t read this part/);
+});
 test("the update note on a kept copy: renamed in the update, or nothing carries it on", () => {
   const kept = { versionNote: { kind: "kept_copy", since: "x" } } as any;
   assert.equal(updateNote({ update: { status: "renamed", title: "Capital Investment & Fleet Renewal" } }, kept), "In your update this page is “Capital Investment & Fleet Renewal”.");
@@ -503,6 +557,17 @@ test("the panel on a page nobody read: no 'Only the page total is known' beside 
     selectedKey: null, onHoverKey() {}, onSelectKey() {}, onOnlyBuyer() {}, filteredToOne: true, paint: false,
   }));
   assert.match(unreadByOne, /This buyer hasn(&#x27;|')t read this page\./);
+  // A device or date filter (HM2-1): "No buyer in this view has read this page.", never "Nobody…" or "This buyer…".
+  const byScope = (viewScope: "one" | "some" | null, filteredToOne = false, reachRecorded = true) => renderToStaticMarkup(React.createElement(PagePanel, {
+    page: { ...unread, reachRecorded }, doc: { openedBy: 1, versionNote: null, byKind: [], pages: [] } as any, dealId: "d", renditionPage: undefined,
+    selectedKey: null, onHoverKey() {}, onSelectKey() {}, onOnlyBuyer() {}, filteredToOne, viewScope, paint: false,
+  }));
+  const phone = byScope("some");
+  assert.match(phone, /No buyer in this view has read this page\./);
+  assert.doesNotMatch(phone, /Nobody has read this page yet/);
+  assert.match(byScope("some", true), /No buyer in this view has read this page\./, "one buyer on a phone: they may have read it on a computer");
+  assert.match(byScope(null), /Nobody has read this page yet\./);
+  assert.match(byScope("some", false, false), /Nobody has read this page yet\./, "a page nobody's reading was ever recorded on");
   const total = { ...page(0, [block("para:0", 0), block("para:1", 0)]), attentionMs: 90_000, readers: 3, heat: heat("page"), reachRecorded: true } as DocumentPage;
   assert.match(renderPanel(total), /Only the page total is known for this reading\./);
 });
