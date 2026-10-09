@@ -5,6 +5,9 @@
  */
 import type { GlLedgerStatus, GlProblem, GlSoftware, GlYearStatus } from "./gl-types";
 
+/** The checklist row asking for the general ledger (deal_document_requirements, source "gl_tracing"). */
+export const GL_REQUIREMENT_NAME = "General Ledger (3 Years, Excel or CSV)";
+
 export const SOFTWARE_LABEL: Record<GlSoftware, string> = {
   quickbooks_online: "QuickBooks Online",
   quickbooks_desktop: "QuickBooks Desktop",

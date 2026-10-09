@@ -12,6 +12,7 @@ import { storage } from "../storage";
 import { matchIndustrySection } from "../interview/industry-loader";
 import { withoutSellerUnavailableNote } from "@shared/seller-portal";
 import { isEquipmentLeaseTitle } from "./lease-kind";
+import { GL_REQUIREMENT_NAME } from "@shared/gl-copy";
 
 interface DocRequirement {
   documentName: string;
@@ -428,7 +429,7 @@ export async function populateDocumentRequirements(
 // ─── The general-ledger row (gl spec D23, server/gl/*) ────────────────
 
 /** The checklist row asking for the general ledger. Its status is set only by the ledger reader (server/gl/requirement.ts). */
-export const GL_REQUIREMENT_NAME = "General Ledger (3 Years, Excel or CSV)";
+export { GL_REQUIREMENT_NAME };
 export const GL_REQUIREMENT_SOURCE = "gl_tracing";
 /** Sorts with the financial statements and tax returns (rows 0–5). */
 export const GL_REQUIREMENT_SORT = 5;
