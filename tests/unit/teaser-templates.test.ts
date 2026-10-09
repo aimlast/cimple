@@ -89,6 +89,8 @@ async function main() {
     assert.equal(f.yearsInBusiness, 28);
     assert.deepEqual(f.earnings, { label: "Adjusted EBITDA", value: 780_052, year: null });
     assert.equal(kn.ebitdaFromText("ebitda", "$917,000 reported EBITDA (FY2024)")!.adjusted, false);
+    assert.deepEqual(kn.ebitdaFromText("ebitda", "$3,900,000 adjusted EBITDA (FY2024)"), { value: 3_900_000, adjusted: true }, "never the year");
+    assert.deepEqual(kn.ebitdaFromText("ebitda", "Adjusted EBITDA (FY2024): $780,052"), { value: 780_052, adjusted: true });
     assert.equal(kn.yearsFromText("34 years in trucking (since 1991)", new Date("2026-10-09")), 34);
     const small = kn.figuresFrom({ deal: { industry: "HVAC" }, info: { annualRevenue: "$4,800,000", sde: "$1,312,000", ebitda: "$917,000 reported EBITDA" }, canon: null, askingPrice: null });
     assert.equal(small.earnings!.label, "SDE", "main-street size: SDE leads");

@@ -104,7 +104,8 @@ export function yearsFromText(t: string, now: Date): number | null {
 
 /** An EBITDA fact: the adjusted figure when the text gives one ("reported $660K; adjusted EBITDA $780K"). */
 export function ebitdaFromText(key: string, t: string): { value: number; adjusted: boolean } | null {
-  const adj = /adjusted\s+ebitda[^$\d]{0,24}(\$?\s*\d[\d,]*(?:\.\d+)?\s*(?:k|m|mm|million|thousand)?)/i.exec(t)
+  // A dollar figure right after "adjusted EBITDA" (never the "FY2024" that may sit between), or right before it.
+  const adj = /adjusted\s+ebitda[^$]{0,24}?(\$\s*\d[\d,]*(?:\.\d+)?\s*(?:k|m|mm|million|thousand)?)/i.exec(t)
     ?? /(\$\s*\d[\d,]*(?:\.\d+)?\s*(?:k|m|mm|million|thousand)?)\s*(?:\(?\s*)?adjusted\s+ebitda/i.exec(t);
   if (adj) {
     const v = parseMoney(adj[1]);
