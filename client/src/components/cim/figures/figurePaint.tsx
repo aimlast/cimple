@@ -84,3 +84,24 @@ export function formatLike(cimText: string | null | undefined, value: string): s
   if (minus || n < 0) return `−${text}`;
   return text;
 }
+
+/**
+ * The popover's collision padding (checker r2 R2-6): it never opens under the
+ * view room's sticky bars (the header and the section strip, both marked
+ * [data-reading-chrome]) — it keeps below them, or flips below the figure,
+ * and scrolls inside when even that is too tall. 12 px elsewhere.
+ */
+export function figurePopoverPadding(): { top: number; right: number; bottom: number; left: number } {
+  let top = 12;
+  if (typeof document !== "undefined") {
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>("[data-reading-chrome]"))) {
+      const r = el.getBoundingClientRect();
+      // Only a bar pinned at the top of the window counts (a strip not shown yet has no height).
+      if (r.height > 0 && r.top <= 1 + top && r.bottom > 0) top = Math.max(top, Math.ceil(r.bottom) + 8);
+    }
+  }
+  return { top, right: 12, bottom: 12, left: 12 };
+}
+
+/** Classes that keep a figure popover inside the room Radix found for it (it scrolls, never clips its title). */
+export const FIGURE_POPOVER_FIT = "max-h-[var(--radix-popover-content-available-height)] overflow-y-auto";

@@ -20,7 +20,7 @@ import { useCimInteraction } from "../blocks";
 import { useFigureAt, useFigureLayer } from "./FigureLayerContext";
 import { FigureBody } from "./FigureBody";
 import { FigureSheet } from "./FigureSheet";
-import { figureState, StateIcon } from "./figurePaint";
+import { FIGURE_POPOVER_FIT, figurePopoverPadding, figureState, StateIcon } from "./figurePaint";
 
 /** Touch device or a narrow screen: open a sheet, not a hover popover. */
 export function useCoarse(): boolean {
@@ -145,8 +145,8 @@ export function FigureTrigger({ fig, block, children, className, showState = tru
           side="top"
           align="center"
           sideOffset={6}
-          collisionPadding={12}
-          className="cim-doc fig-popover z-50 w-[360px] max-w-[calc(100vw-24px)] rounded-lg border border-[#E3DED0] bg-[#FBF9F4] p-3 shadow-lg outline-none"
+          collisionPadding={figurePopoverPadding()}
+          className={`cim-doc fig-popover z-50 w-[360px] max-w-[calc(100vw-24px)] rounded-lg border border-[#E3DED0] bg-[#FBF9F4] p-3 shadow-lg outline-none ${FIGURE_POPOVER_FIT}`}
           onPointerEnter={() => { if (closeTimer.current) clearTimeout(closeTimer.current); }}
           onPointerLeave={() => { if (!pinned) closeTimer.current = setTimeout(() => setOpen(false), 180); }}
           onOpenAutoFocus={(e) => { if (!pinned) e.preventDefault(); }}

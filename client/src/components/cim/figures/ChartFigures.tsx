@@ -22,7 +22,7 @@ import { useFigureLayer, useFigureLookup } from "./FigureLayerContext";
 import { FigureBody } from "./FigureBody";
 import { FigureSheet } from "./FigureSheet";
 import { useCoarse } from "./FigureValue";
-import { figureState } from "./figurePaint";
+import { FIGURE_POPOVER_FIT, figurePopoverPadding, figureState } from "./figurePaint";
 
 /** The figure shown at chart point `index` (series `series`; null for single-value charts). */
 export function useChartFigure(): (index: number | null | undefined, series?: number | null) => FigureView | null {
@@ -113,8 +113,8 @@ export function ChartFigurePopover({ pick, onClose, block }: { pick: ChartPick |
           side="top"
           align="center"
           sideOffset={8}
-          collisionPadding={12}
-          className="cim-doc fig-popover z-50 w-[360px] max-w-[calc(100vw-24px)] rounded-lg border border-[#E3DED0] bg-[#FBF9F4] p-3 shadow-lg outline-none"
+          collisionPadding={figurePopoverPadding()}
+          className={`cim-doc fig-popover z-50 w-[360px] max-w-[calc(100vw-24px)] rounded-lg border border-[#E3DED0] bg-[#FBF9F4] p-3 shadow-lg outline-none ${FIGURE_POPOVER_FIT}`}
           aria-label={label}
         >
           <FigureBody fig={pick.fig} mode={mode} audience={ctx.layer.audience} broker={ctx.broker} buyer={ctx.buyer} onClose={onClose} />
