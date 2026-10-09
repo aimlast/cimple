@@ -151,6 +151,8 @@ export interface AskResult {
   figuresRouted: number;
   preview?: boolean;
   questionIds: string[];
+  /** Figures the seller is never asked about (earnings, taxes, pay, a year to fix first), with why. */
+  refused?: Array<{ figureKey: string; reason: string }>;
 }
 
 /** The plain-language toast text for an error from these routes. */

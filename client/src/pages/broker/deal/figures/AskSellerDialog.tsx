@@ -80,6 +80,11 @@ export function AskSellerDialog({ dealId, target, onClose }: { dealId: string; t
             </div>
           </DialogDescription>
         </DialogHeader>
+        {preview && (preview.refused?.length ?? 0) > 0 && (
+          <p className="text-xs text-muted-foreground" data-testid="ask-seller-refused">
+            Not sent: {preview.refused!.map((r) => r.reason).filter((r, i, all) => all.indexOf(r) === i).join(" ")}
+          </p>
+        )}
         {preview && !empty && (
           <ul className="max-h-48 space-y-1 overflow-y-auto rounded-md border border-border px-3 py-2 text-xs">
             {preview.listed.map((x, i) => <li key={i}>{x.kind === "figure" ? "Figures" : "Discrepancies"}: {x.label}</li>)}

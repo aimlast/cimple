@@ -205,13 +205,37 @@ export function aiCandidates(input: {
 
 // ── Questions for the seller (D13) ─────────────────────────────────────────
 
-/** Lines the seller is never asked about: earnings, margins, add-back material. */
+/** Lines the seller is never asked about: earnings, margins, taxes, pay, add-back material. */
 export function askableLine(fig: Pick<RegistryFigure, "line" | "category">): boolean {
   const std = standardLineOf(fig.line);
-  if (std) return std.askable;
-  // Never pay, one-time items (add-back material) or taxes (the accountant's computation).
+  if (std && !std.askable) return false;
+  // Never pay, one-time items (add-back material) or taxes (the accountant's computation) —
+  // whatever the line is called.
   if (fig.category === "Owner Compensation" || fig.category === "Non-Recurring" || fig.category === "Taxes") return false;
   return true;
+}
+
+/**
+ * Why the seller can't be asked about a figure (null = they can): earnings,
+ * taxes, pay and one-time lines never (the money-talk rule), and nothing
+ * measured from or to a figure held because the CIM doesn't match the
+ * statements (D9a — fix it first). The route's last word before anything
+ * reaches the seller's follow-up email (checker r2 R2-4).
+ */
+export function sellerAskRefusal(
+  reg: FigureRegistry,
+  checks: ReadonlyArray<FigureCheckInput>,
+  key: string,
+  kind: "movement" | "difference" | "context" = "movement",
+): string | null {
+  const fig = reg[key];
+  if (!fig) return "That figure isn't in this CIM any more.";
+  if (!askableLine(fig)) return `Cimple doesn't ask the seller about ${fig.lineLabel.toLowerCase()}: it's worked out from other figures or by the accountant. Write the reason yourself.`;
+  const held = heldFigures(checks, reg);
+  const prev = kind === "movement" ? previousOf(reg, fig) : null;
+  const heldYear = held.has(key) ? fig.year : prev && held.has(prev.key) ? prev.year : null;
+  if (heldYear) return `The CIM's FY${heldYear} figures don't match the statements. Fix FY${heldYear} first.`;
+  return null;
 }
 
 export interface DiscrepancyLike {
@@ -290,4 +314,34 @@ export function defaultShownKeys(reg: FigureRegistry): string[] {
 export function priorKey(key: string): string | null {
   const p = parseFigureKey(key);
   return p ? figureKey(p.line, String(Number(p.year) - 1)) : null;
+}
+
+/**
+ * What an "Ask the seller" request may send (checker r2 R2-4): the questions
+ * and figures the seller may be asked about, and the refused ones with why.
+ * `reject` = nothing left to ask (the route answers 422 with the reason).
+ */
+export function planSellerAsk(
+  raw: { registry: FigureRegistry; checks: { checks: ReadonlyArray<FigureCheckInput> }; questions: ReadonlyArray<{ id: string; figureKey: string; kind: string }> },
+  req: { questionIds?: string[]; figureKeys?: string[] },
+): { questionIds: string[]; figureKeys: string[]; refused: Array<{ figureKey: string; reason: string }>; reject: string | null } {
+  const refused: Array<{ figureKey: string; reason: string }> = [];
+  const questionIds: string[] = [];
+  const figureKeys: string[] = [];
+  for (const id of req.questionIds ?? []) {
+    const q = raw.questions.find((x) => x.id === id);
+    const why = q ? sellerAskRefusal(raw.registry, raw.checks.checks, q.figureKey, q.kind as "movement" | "difference" | "context") : null;
+    if (why) refused.push({ figureKey: q!.figureKey, reason: why });
+    else questionIds.push(id);
+  }
+  for (const key of req.figureKeys ?? []) {
+    const why = sellerAskRefusal(raw.registry, raw.checks.checks, key);
+    if (why) refused.push({ figureKey: key, reason: why });
+    else figureKeys.push(key);
+  }
+  const asked = (req.questionIds?.length ?? 0) + (req.figureKeys?.length ?? 0);
+  const reject = asked > 0 && refused.length === asked
+    ? (refused.length === 1 ? refused[0].reason : "None of these can go to the seller. Write the reasons yourself.")
+    : null;
+  return { questionIds, figureKeys, refused, reject };
 }

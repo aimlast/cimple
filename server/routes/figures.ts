@@ -45,6 +45,7 @@ import { guardBrokerText } from "../cim/figures/guards";
 import { buildWorkspace } from "../cim/figures/workspace";
 import { autoAskEffective, closeAnsweredQuestions, lineWordOf, questionWording, sellerValues, planExplainQuestions } from "../cim/figures/requests";
 import { movedEnough, previousOf } from "../cim/figures/computed";
+import { planSellerAsk, sellerAskRefusal } from "../cim/figures/candidates";
 import { sendSellerFollowUps } from "../interview/seller-followups";
 
 const BASE = "/api/deals/:dealId";
@@ -496,17 +497,23 @@ export function registerFigureRoutes(app: Express): void {
     const deal = res.locals.deal as Deal;
     const preview = req.query.preview === "1";
     try {
-      const ids = new Set(parsed.data.questionIds ?? []);
+      // The money-talk rule and D9a are checked here, before anything reaches the seller: never
+      // EBITDA, net income, taxes, pay or one-time lines, and never a figure held because the CIM
+      // doesn't match the statements (checker r2 R2-4). A single refused item is a 422.
+      const plan = planSellerAsk(await loadFigureRaw(deal.id), parsed.data);
+      const refused = plan.refused;
+      if (plan.reject) return res.status(422).json({ error: plan.reject, refused });
+      const ids = new Set<string>(plan.questionIds);
       const notYet: string[] = [];
       // "Ask the seller" on a figure with no question yet: make one (seller wording, statements as issued) — in a preview, only list it.
-      for (const key of parsed.data.figureKeys ?? []) {
+      for (const key of plan.figureKeys) {
         const r = await questionForFigure(deal, key, preview);
         if (r.id) ids.add(r.id);
         else if (preview && r.label) notYet.push(r.label);
       }
       const r = await sendSellerFollowUps(deal.id, { questionIds: Array.from(ids).slice(0, 20), includeNeverAsked: true, preview });
       const listed = preview && notYet.length > 0 ? [...notYet.map((label) => ({ kind: "figure" as const, label })), ...r.listed] : r.listed;
-      res.json({ ...r, listed, questionIds: Array.from(ids) });
+      res.json({ ...r, listed, questionIds: Array.from(ids), refused });
     } catch (err) {
       console.error("[figures] ask", err);
       res.status(500).json({ error: "Couldn't send the questions. Try again in a moment." });
@@ -545,6 +552,8 @@ async function questionForFigure(deal: Deal, key: string, preview: boolean): Pro
   const raw = await loadFigureRaw(deal.id);
   const fig = raw.registry[key];
   if (!fig) return { id: null, label: null };
+  // Never a question the seller may not be asked (the route checked; this is the last word).
+  if (sellerAskRefusal(raw.registry, raw.checks.checks, key)) return { id: null, label: null };
   const prev = previousOf(raw.registry, fig);
   const existing = raw.questions.find((q) => q.figureKey === key && q.kind === "movement" && q.status !== "closed");
   if (existing) return { id: existing.id, label: null };
