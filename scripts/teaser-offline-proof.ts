@@ -89,6 +89,8 @@ async function main() {
     const c = checks.find((x) => x.blockId === b.id)!;
     const flags = [b.hidden ? "hidden" : null, b.placeholder ? "write this" : null, c.held ? `HELD: ${c.reason}` : null, c.layoutProblem ? `layout: ${c.layoutProblem}` : null, c.pinpoint.length ? `may be recognisable: ${c.pinpoint.join("; ")}` : null].filter(Boolean).join(" · ");
     console.log(`  - [${b.slot}] ${b.title || "(no title)"} · ${b.layoutType} · ${b.origin}${flags ? ` · ${flags}` : ""}`);
+    const cells = Array.isArray(b.layoutData.cells) ? (b.layoutData.cells as Array<{ label: string; value: string }>) : [];
+    if (cells.length) console.log(`      ${cells.map((c) => `${c.label}: ${c.value}`).join(" · ")}`);
   }
   const held = checks.filter((c) => c.held).length;
   console.log(`Held blocks: ${held} · pinpoint blocks: ${checks.filter((c) => c.pinpoint.length > 0).length}`);

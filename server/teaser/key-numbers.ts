@@ -16,6 +16,7 @@
 import type { Deal } from "@shared/schema";
 import {
   customerRange,
+  customerShare,
   headcountRange,
   indexedTrend,
   marginRange,
@@ -279,12 +280,21 @@ export function figuresFrom(input: FiguresInput): TeaserFigures {
   const locs = fact(info, LOCATIONS_COUNT_KEYS);
   const locations = locs ? firstNumber(locs[1]) : null;
 
-  const sale = fact(info, SALE_KEYS);
-  const saleType = sale ? saleTypeOf(sale[1]) : null;
-  if (sale && saleType) note("saleType", sale[0]);
-  const re = fact(info, RE_KEYS);
-  const realEstate = re ? realEstateOf(re[1]) : null;
-  if (re && realEstate) note("realEstate", re[0]);
+  // The first fact that says it (a premises fact that only gives an address doesn't).
+  const firstClassified = <T>(keys: readonly string[], read: (t: string) => T | null): [string, T] | null => {
+    for (const k of keys) {
+      const t = text(info[k]).trim();
+      const v = t ? read(t) : null;
+      if (v) return [k, v];
+    }
+    return null;
+  };
+  const sale = firstClassified(SALE_KEYS, saleTypeOf);
+  const saleType = sale ? sale[1] : null;
+  if (sale) note("saleType", sale[0]);
+  const re = firstClassified(RE_KEYS, realEstateOf);
+  const realEstate = re ? re[1] : null;
+  if (re) note("realEstate", re[0]);
 
   return {
     industry: input.deal.industry ?? null,
@@ -422,7 +432,7 @@ export function financialSnapshotCells(f: TeaserFigures): KeyCell[] {
     cell("trend", "Revenue trend", revenueTrendWords(f.revenueByYear)),
     f.earnings ? cell("margin", `${f.earnings.label} margin`, marginRange(f.marginPct)) : null,
     cell("recurring", "Recurring revenue", recurringRange(f.recurringPct)),
-    cell("largestCustomer", "Largest customer", customerRange(f.largestCustomerPct)),
+    cell("largestCustomer", "Largest customer", customerShare(f.largestCustomerPct)),
   ].filter((c): c is KeyCell => !!c);
 }
 

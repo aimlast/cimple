@@ -104,6 +104,16 @@ export function customerRange(pct: number | null | undefined): string | null {
   return "Largest customer over 50%";
 }
 
+/** The largest customer's share as a value under the label "Largest customer" ("20–30% of revenue"). */
+export function customerShare(pct: number | null | undefined): string | null {
+  if (typeof pct !== "number" || !Number.isFinite(pct) || pct < 0 || pct > 100) return null;
+  if (pct <= 10) return "under 10% of revenue";
+  if (pct <= 20) return "10–20% of revenue";
+  if (pct <= 30) return "20–30% of revenue";
+  if (pct <= 50) return "30–50% of revenue";
+  return "over 50% of revenue";
+}
+
 /** A recurring share (%) as a range ("40–60% recurring"). */
 export function recurringRange(pct: number | null | undefined): string | null {
   if (typeof pct !== "number" || !Number.isFinite(pct) || pct <= 0 || pct > 100) return null;
