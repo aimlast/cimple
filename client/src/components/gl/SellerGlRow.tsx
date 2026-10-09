@@ -34,7 +34,7 @@ export function SellerGlRow({ token, name, isRequired }: { token: string; name: 
   const ready = main.filter((l) => l.status === "ready");
   const reading = ledgers.some((l) => l.status === "reading");
   const trouble = !ready.length && main.find((l) => l.status === "needs_columns" || l.status === "failed");
-  const range = exportRange(data?.fiscalYearEnd ?? null);
+  const range = exportRange(data?.fiscalYearEnd ?? null, data?.requestedYears ?? []);
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: glKeys.seller(token) });
     void queryClient.invalidateQueries({ queryKey: [`/api/seller/${token}/progress`] });

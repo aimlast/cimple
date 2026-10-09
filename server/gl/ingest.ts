@@ -155,7 +155,11 @@ function deps(): GlIngestDeps {
     getDocumentsByDeal: (id) => storage.getDocumentsByDeal(id),
     getDeal: (id) => storage.getDeal(id),
     getAnalysisYears: analysisYears,
-    syncRequirement: async (dealId) => (await import("./requirement")).syncGlRequirement(dealId),
+    // (A deal from before the ledger row existed gets it now — then its status.)
+    syncRequirement: async (dealId) => {
+      const { ensureGlRequirement } = await import("../documents/requirements");
+      if (!(await ensureGlRequirement(dealId))) await (await import("./requirement")).syncGlRequirement(dealId);
+    },
     releaseNonGlRequirements: async (dealId, docId) => (await import("../documents/requirements")).releaseRequirementsFor(dealId, docId),
     afterLedgersChanged: async () => undefined,
     mapColumns: null,
@@ -319,6 +323,12 @@ export function expectedYears(analysisYears: string[], fye: string, today: Date)
   const todayIso = today.toISOString().slice(0, 10);
   const current = Number(fiscalYearOf(todayIso, fye));
   return [current - 3, current - 2, current - 1].map(String);
+}
+
+/** The fiscal years to ask the seller for, for this deal (the analysis's, else the three before this one). */
+export async function requestedYearsFor(dealId: string, fye: string): Promise<string[]> {
+  const d = effectiveDeps();
+  return expectedYears(await d.getAnalysisYears(dealId), fye, d.now());
 }
 
 /** Plain problems for a read ledger (pure). */

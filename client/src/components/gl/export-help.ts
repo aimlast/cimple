@@ -87,14 +87,17 @@ export function rememberSoftware(v: ExportSoftware): void {
   }
 }
 
-/** The three fiscal years before this one, as export dates ("Jan 1, 2022" – "Dec 31, 2024"). */
-export function exportRange(fye: string | null, today = new Date()): { start: string; end: string } {
+/**
+ * The dates to export, for the fiscal years the broker needs ("Jan 1, 2022" –
+ * "Dec 31, 2024"); without them, the three fiscal years before this one.
+ */
+export function exportRange(fye: string | null, years: string[] = [], today = new Date()): { start: string; end: string } {
   const f = fye ?? "12-31";
   const [fm, fd] = f.split("-").map(Number);
-  const todayKey = today.getUTCMonth() + 1 > fm || (today.getUTCMonth() + 1 === fm && today.getUTCDate() > fd) ? today.getUTCFullYear() + 1 : today.getUTCFullYear();
-  const first = fiscalYearRange(String(todayKey - 3), f);
-  const last = fiscalYearRange(String(todayKey - 1), f);
+  const currentKey = today.getUTCMonth() + 1 > fm || (today.getUTCMonth() + 1 === fm && today.getUTCDate() > fd) ? today.getUTCFullYear() + 1 : today.getUTCFullYear();
+  const sorted = years.filter((y) => /^\d{4}$/.test(y)).sort();
+  const first = fiscalYearRange(sorted[0] ?? String(currentKey - 3), f);
+  const last = fiscalYearRange(sorted[sorted.length - 1] ?? String(currentKey - 1), f);
   const fmt = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
   return { start: first ? fmt(first.start) : "", end: last ? fmt(last.end) : "" };
 }
-

@@ -23,13 +23,14 @@ import type { Document, GlLedger } from "@shared/schema";
 import type { GlLayout, GlLedgerView, GlRole, GlYearSummary } from "@shared/gl-types";
 import { glStore } from "../gl/store";
 import { ledgerAudience } from "../gl/audience";
-import { GL_CSV_MAX_BYTES, GL_XLSX_MAX_BYTES, dealFiscalYearEnd, readAsLedger, readAsNormalDocument, rereadWithLayout, startLedgerRead } from "../gl/ingest";
+import { GL_CSV_MAX_BYTES, GL_XLSX_MAX_BYTES, dealFiscalYearEnd, readAsLedger, readAsNormalDocument, requestedYearsFor, rereadWithLayout, startLedgerRead } from "../gl/ingest";
 import { ledgerFileKind, peekRows } from "../gl/read-file";
 import { withHeavySheetSlot } from "../documents/heavy-sheet";
 import { detectLayout } from "../gl/detect";
 import { parseLedgerRows } from "../gl/parse";
 import { cellText } from "../gl/text";
 import { restampSourceVisibility } from "../documents/source-visibility";
+import { ensureGlRequirement } from "../documents/requirements";
 
 const uploadsDir = () => process.env.UPLOADS_DIR || path.join(process.cwd(), "public", "uploads");
 
@@ -340,10 +341,13 @@ export function registerGlRoutes(app: Express): void {
   app.get("/api/deals/:dealId/gl", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const dealId = String(req.params.dealId);
-      const tracing = await glStore().getTracing(dealId);
-      const { ledgers, unread } = await brokerLedgerViews(dealId);
+      // A deal from before the ledger row existed gets it on the seller's checklist now (idempotent).
+      void ensureGlRequirement(dealId);
+      const fye = await dealFiscalYearEnd(dealId);
+      const [{ ledgers, unread }, requestedYears] = await Promise.all([brokerLedgerViews(dealId), requestedYearsFor(dealId, fye)]);
       res.json({
-        fiscalYearEnd: tracing?.fiscalYearEnd ?? null,
+        fiscalYearEnd: fye,
+        requestedYears,
         ledgers,
         unread,
       });
@@ -537,11 +541,12 @@ export function registerGlRoutes(app: Express): void {
       if (!invite) return res.status(404).json({ error: "This link isn't valid any more." });
       const rights = sellerLinkRights(invite, await storage.getDealMembers(invite.dealId));
       if (!rights.canTraceAddbacks) return res.status(403).json({ error: OWNER_OR_ACCOUNTANT_MESSAGE, code: "not_owner_or_accountant" });
+      void ensureGlRequirement(invite.dealId);
       const fye = await dealFiscalYearEnd(invite.dealId);
       const { ledgers } = await brokerLedgerViews(invite.dealId);
       // Only ledgers the seller may see — a ledger private to the broker is never listed.
       const mine = ledgers.filter((l) => l.audience === "shared").map(sellerLedgerView);
-      res.json({ state: "not_requested", fiscalYearEnd: fye, preview: await isDealOwnerSession(req, invite.dealId), ledgers: mine });
+      res.json({ state: "not_requested", fiscalYearEnd: fye, requestedYears: await requestedYearsFor(invite.dealId, fye), preview: await isDealOwnerSession(req, invite.dealId), ledgers: mine });
     } catch (err) {
       console.error("[gl] seller GET failed:", err);
       res.status(500).json({ error: "Couldn't load your books" });

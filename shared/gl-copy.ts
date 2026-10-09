@@ -39,6 +39,11 @@ export function formatPeriod(start: string | null | undefined, end: string | nul
   return m(start) === m(end) ? m(start) : `${m(start)}–${m(end)}`;
 }
 
+/** An account path for reading: "Automobile Expense:Vehicle - Owner" → "Automobile Expense › Vehicle - Owner". */
+export function accountPath(account: string | null | undefined): string {
+  return (account ?? "").split(":").map((p) => p.trim()).filter(Boolean).join(" › ");
+}
+
 /** "$1,234.56" (cents in). */
 export function formatCents(cents: number, opts: { whole?: boolean } = {}): string {
   const neg = cents < 0;

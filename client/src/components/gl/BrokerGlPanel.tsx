@@ -36,6 +36,7 @@ export function BrokerGlPanel({ dealId, variant = "full" }: { dealId: string; va
   const [keepPrivate, setKeepPrivate] = useState(false);
   const [adjustments, setAdjustments] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [addingFile, setAddingFile] = useState(false);
   const [shareFor, setShareFor] = useState<GlLedgerView | null>(null);
   const [notLedgerFor, setNotLedgerFor] = useState<GlLedgerView | null>(null);
 
@@ -52,7 +53,7 @@ export function BrokerGlPanel({ dealId, variant = "full" }: { dealId: string; va
     onError: (err: unknown) => toast({ title: "That didn't work", description: err instanceof Error ? err.message : undefined, variant: "destructive" }),
   });
 
-  const range = useMemo(() => exportRange(data?.fiscalYearEnd ?? null), [data?.fiscalYearEnd]);
+  const range = useMemo(() => exportRange(data?.fiscalYearEnd ?? null, data?.requestedYears ?? []), [data?.fiscalYearEnd, data?.requestedYears]);
   const ledgers = data?.ledgers ?? [];
   const uploadState = ledgers.map((l) => ({ ...l, progress: l.progress ? { rowsRead: l.progress.rowsRead } : null }));
 
@@ -132,6 +133,14 @@ export function BrokerGlPanel({ dealId, variant = "full" }: { dealId: string; va
           </div>
         )}
 
+        {ledgers.length > 0 && !addingFile ? (
+          <div className="px-4 py-3 border-t border-border flex flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-3">
+            <Button size="sm" variant="ghost" className="h-auto min-h-8 py-1.5 text-xs gap-1.5 -ml-2 whitespace-normal text-left" onClick={() => setAddingFile(true)} data-testid="gl-add-file">
+              <FileSpreadsheet className="h-3.5 w-3.5 shrink-0" /> Upload another file
+            </Button>
+            <span className="text-2xs text-muted-foreground">Another year, or the accountant's year-end adjusting entries.</span>
+          </div>
+        ) : (
         <div className="px-4 py-4 border-t border-border space-y-3" data-testid="gl-broker-upload">
           {ledgers.length === 0 && (
             <p className="text-sm text-muted-foreground">
@@ -167,6 +176,7 @@ export function BrokerGlPanel({ dealId, variant = "full" }: { dealId: string; va
           </button>
           {showHelp && <ExportHelp start={range.start} end={range.end} compact />}
         </div>
+        )}
       </section>
 
       <Sheet open={!!viewing} onOpenChange={(o) => !o && setViewing(null)}>
@@ -233,11 +243,11 @@ function LedgerRow({ ledger: l, busy, onOpen, onReread, onShare, onNotLedger }: 
               <Icon className={`h-3 w-3 ${l.status === "reading" ? "animate-spin" : ""}`} />
               {l.status === "reading" && l.progress?.rowsRead ? `Reading… ${formatCount(l.progress.rowsRead)} entries so far` : ledgerStatusWords(l.status, l.rowCount, period)}
             </Badge>
-            {l.role === "adjustments" && <Badge variant="outline" className="text-2xs">Year-end adjusting entries</Badge>}
+            {l.role === "adjustments" && <Badge variant="outline" className="text-2xs border-border text-muted-foreground font-normal">Year-end adjusting entries</Badge>}
             {l.audience === "broker" ? (
-              <Badge variant="outline" className="text-2xs gap-1"><Lock className="h-2.5 w-2.5" /> Private to you — the seller can't see it</Badge>
+              <Badge variant="outline" className="text-2xs gap-1 border-border text-muted-foreground font-normal"><Lock className="h-2.5 w-2.5" /> Private to you — the seller can't see it</Badge>
             ) : (
-              <Badge variant="outline" className="text-2xs">{l.uploadedBy === "seller" ? "Uploaded by the seller" : "Shared with the seller"}</Badge>
+              <Badge variant="outline" className="text-2xs border-border text-muted-foreground font-normal">{l.uploadedBy === "seller" ? "Uploaded by the seller" : "Shared with the seller"}</Badge>
             )}
           </div>
           {l.status === "ready" && (

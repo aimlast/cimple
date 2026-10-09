@@ -13,6 +13,8 @@ export const glKeys = {
 
 export interface BrokerGlData {
   fiscalYearEnd: string | null;
+  /** The fiscal years to ask for (the analysis's, else the three before this one). */
+  requestedYears: string[];
   ledgers: GlLedgerView[];
   unread: Array<{ documentId: string; name: string; reason: "not_read" | "pdf" }>;
 }
@@ -35,6 +37,7 @@ export interface SellerLedgerView {
 export interface SellerGlData {
   state: "not_requested";
   fiscalYearEnd: string;
+  requestedYears: string[];
   preview: boolean;
   ledgers: SellerLedgerView[];
 }

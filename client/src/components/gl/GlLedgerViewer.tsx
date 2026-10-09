@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getJson, glKeys, type LedgerRowsResponse } from "@/lib/gl-api";
-import { formatCents, formatCount, formatDay, softwareLabel, formatPeriod } from "@shared/gl-copy";
+import { accountPath, formatCents, formatCount, formatDay, softwareLabel, formatPeriod } from "@shared/gl-copy";
 
 const ALL = "__all__";
 
@@ -109,7 +109,7 @@ export function GlLedgerViewer({ dealId, ledgerId, initialRow }: { dealId: strin
             <SelectItem value={ALL} className="text-xs">Every account</SelectItem>
             {(data?.accounts ?? []).map((a) => (
               <SelectItem key={a.accountKey} value={a.accountKey} className="text-xs">
-                {a.account} · {formatCount(a.lines)} · {formatCents(a.netCents, { whole: true })}
+                {accountPath(a.account)} · {formatCount(a.lines)} · {formatCents(a.netCents, { whole: true })}
               </SelectItem>
             ))}
           </SelectContent>
@@ -119,7 +119,7 @@ export function GlLedgerViewer({ dealId, ledgerId, initialRow }: { dealId: strin
           <Input
             value={q}
             onChange={(e) => { setAround(null); setQ(e.target.value.slice(0, 100)); }}
-            placeholder="Search by name, description or amount — e.g. Petro-Canada or 1150"
+            placeholder="Search — e.g. Petro-Canada or 1150"
             className="h-9 pl-8 pr-8 text-xs"
             aria-label="Search the ledger"
             data-testid="gl-viewer-search"
@@ -173,7 +173,7 @@ export function GlLedgerViewer({ dealId, ledgerId, initialRow }: { dealId: strin
                     <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{formatCount(r.rowNo)}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{formatDay(r.date)}</td>
                     <td className="px-3 py-2 min-w-0">
-                      <span className="break-words">{r.account}</span>
+                      <span className="break-words">{accountPath(r.account)}</span>
                       {r.accountNumber && <span className="text-muted-foreground"> · {r.accountNumber}</span>}
                     </td>
                     <td className="px-3 py-2 break-words">{r.name ?? ""}</td>
@@ -192,11 +192,11 @@ export function GlLedgerViewer({ dealId, ledgerId, initialRow }: { dealId: strin
             {data.rows.map((r) => (
               <li key={r.rowNo} className={`px-3 py-2.5 ${around === r.rowNo ? "bg-teal/10" : ""}`} data-testid={`gl-row-m-${r.rowNo}`}>
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-sm min-w-0 break-words">{r.name || r.memo || r.account}</span>
+                  <span className="text-sm min-w-0 break-words">{r.name || r.memo || accountPath(r.account)}</span>
                   <span className="text-sm tabular-nums shrink-0">{formatCents(r.amountCents)}</span>
                 </div>
                 <div className="text-xs text-muted-foreground mt-0.5 break-words">
-                  {formatDay(r.date)} · {r.account}{r.name && r.memo ? ` · ${r.memo}` : ""} · row {formatCount(r.rowNo)}
+                  {formatDay(r.date)} · {accountPath(r.account)}{r.name && r.memo ? ` · ${r.memo}` : ""} · row {formatCount(r.rowNo)}
                 </div>
                 <RowChips hint={r.hint} duplicate={r.duplicate} />
               </li>
