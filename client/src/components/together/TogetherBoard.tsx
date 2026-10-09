@@ -181,6 +181,27 @@ function RemovedMenu({ dealId, board }: { dealId: string; board: CoverageBoard }
   );
 }
 
+/**
+ * "Seller can see this screen" on a phone: a labelled chip ("Seller view on"
+ * / "Seller view off") — a bare eye icon told the broker nothing (checker r2
+ * R2-6). Tapping it toggles.
+ */
+function SellerViewChip({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 h-7 text-xs whitespace-nowrap ${on ? "border-teal/60 bg-teal/10 text-teal" : "border-border text-muted-foreground"}`}
+      aria-pressed={on}
+      aria-label={on ? "Seller can see this screen — on. Tap to turn off." : "Seller can see this screen — off. Tap to turn on."}
+      onClick={onToggle}
+      data-testid="button-seller-sees-screen"
+    >
+      {on ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}
+      {on ? "Seller view on" : "Seller view off"}
+    </button>
+  );
+}
+
 export function TogetherBoard({ dealId, listen = false, via = "person", meetingLink }: { dealId: string; listen?: boolean; via?: TogetherVia; meetingLink?: string }) {
   return listen ? <LiveBoard dealId={dealId} via={via} meetingLink={meetingLink} /> : <ChecklistBoard dealId={dealId} />;
 }
@@ -236,17 +257,7 @@ function ChecklistBoard({ dealId }: { dealId: string }) {
       {!isPhone && <span className="text-xs text-muted-foreground shrink-0">· Interview together · Checklist</span>}
       <div className="ml-auto flex items-center gap-2 shrink-0">
         {isPhone ? (
-          <Button
-            variant="outline"
-            size="icon"
-            className={`h-8 w-8 ${state.screen ? "border-teal/60 bg-teal/10 text-teal" : ""}`}
-            aria-pressed={state.screen}
-            aria-label={state.screen ? "Seller can see this screen — on" : "Seller can see this screen — off"}
-            onClick={() => setState({ screen: !state.screen })}
-            data-testid="button-seller-sees-screen"
-          >
-            {state.screen ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-          </Button>
+          <SellerViewChip on={state.screen} onToggle={() => setState({ screen: !state.screen })} />
         ) : (
           screenToggle
         )}
@@ -517,17 +528,7 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
       <div className="ml-auto flex items-center gap-2 shrink-0">
         {sitting && !ended && pill}
         {sitting && !ended && (isPhone ? (
-          <Button
-            variant="outline"
-            size="icon"
-            className={`h-8 w-8 ${screenOn ? "border-teal/60 bg-teal/10 text-teal" : ""}`}
-            aria-pressed={screenOn}
-            aria-label={screenOn ? "Seller can see this screen — on" : "Seller can see this screen — off"}
-            onClick={() => void toggleScreen()}
-            data-testid="button-seller-sees-screen"
-          >
-            {screenOn ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-          </Button>
+          <SellerViewChip on={screenOn} onToggle={() => void toggleScreen()} />
         ) : (
           <label className="hidden lg:inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none" title="Shows only what the seller could see anyway — anything private to you reads 'On file — private to you'.">
             <Switch checked={screenOn} onCheckedChange={() => void toggleScreen()} aria-label="Seller can see this screen" data-testid="switch-seller-sees-screen" />

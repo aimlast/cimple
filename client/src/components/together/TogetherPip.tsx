@@ -48,7 +48,7 @@ export function TogetherPip({
         <span className={`text-xs ${board.totals.criticalOpen > 0 ? "text-teal font-medium" : "text-success"}`}>
           {board.totals.criticalOpen > 0 ? `${board.totals.criticalOpen} critical open` : "Every critical point on file"}
         </span>
-        <span className="ml-auto"><ListeningPill state={listenState} startedAt={startedAt} compact /></span>
+        <span className="ml-auto"><ListeningPill state={listenState} startedAt={startedAt} /></span>
       </div>
       {listenIsProblem(listenState) && <p className="px-3 py-2 text-[11px] tg-warn-text tg-warn-bg border-b border-border">{listenCopy(listenState)}</p>}
       {sitting.aiDown && <p className="px-3 py-2 text-[11px] tg-warn-text tg-warn-bg border-b border-border">Cimple can't file answers right now — everything said is kept. Keep talking.</p>}

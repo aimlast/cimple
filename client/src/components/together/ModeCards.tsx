@@ -41,7 +41,8 @@ export function ListeningPill({ state, startedAt, compact }: { state: ListenStat
       aria-live="polite"
     >
       <span className={`h-2 w-2 rounded-full ${problem ? "tg-warn-dot" : active ? "bg-teal tg-pulse" : "bg-muted-foreground/50"}`} aria-hidden />
-      {compact ? (timer && active ? timer : <span className="sr-only">{label}</span>) : <>{label}{timer && (active || state === "paused") ? ` · ${timer}` : ""}</>}
+      {/* (On a phone the state is still a word — a bare dot told the broker nothing; the timer is desktop-only.) */}
+      {compact ? label : <>{label}{timer && (active || state === "paused") ? ` · ${timer}` : ""}</>}
     </span>
   );
 }
