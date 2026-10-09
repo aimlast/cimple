@@ -20,6 +20,7 @@
  */
 import type { CimSection, CimSectionOverride, Deal } from "@shared/schema";
 import { buildBuyerCim, cimHeldFromBuyers } from "@shared/cim-buyer-view";
+import { dealPublishedForBuyers } from "@shared/buyer-publish-gate";
 import { cimModeForAccessLevel as servedModeOf } from "@shared/cim-layouts";
 import { BLIND_ACCESS_LEVEL, DD_ACCESS_LEVEL, LEGACY_ACCESS_LEVELS, NAMED_ACCESS_LEVEL } from "@shared/access-levels";
 import { anchorFigures } from "@shared/figure-anchors";
@@ -59,10 +60,17 @@ export interface ServedFigures {
   keptCopy: boolean;
   /** The CIM is held from every buyer (an update failed its checks): nothing is served. */
   held: boolean;
+  /** The CIM isn't published (not live): no buyer reads anything until the broker publishes it. */
+  notLive: boolean;
   now: Record<CimVersion, ServedVersion>;
-  /** The same once the update is published (the working copy) — null when buyers already read it. */
+  /**
+   * The same once published (the working copy) — null when buyers already read
+   * it. Always set while buyers are served nothing (held or not live), so an
+   * approved note reads "Shows once you publish the CIM", never "not on a page
+   * buyers read" (checker r2 R2-2).
+   */
   afterPublish: Record<CimVersion, ServedVersion> | null;
-  /** DD: what turning the checks on would show on the pages DD buyers read now. */
+  /** DD: what turning the checks on would show on the pages DD buyers read now (or, when nothing is served, once published). */
   ddIfOn: NonNullable<FigureLayer["summary"]> | null;
 }
 
@@ -120,29 +128,40 @@ function versionOf(deal: DealLike, raw: FigureRaw, mode: CimVersion, rows: Versi
   return out;
 }
 
-/** Pure: each version as buyers are served it now, and once the update is published. */
+/** Pure: each version as buyers are served it now, and once the update (or the CIM) is published. */
 export function servedFiguresOf(deal: DealLike, raw: FigureRaw, rows: ServedRows): ServedFigures {
   const held = cimHeldFromBuyers(deal);
+  // The view room serves nothing until the CIM is published (dealPublishedForBuyers), held or not.
+  const notLive = !dealPublishedForBuyers(deal);
+  const nothingServed = held || notLive;
   const now = {} as Record<CimVersion, ServedVersion>;
   for (const mode of CIM_VERSIONS) {
-    now[mode] = held ? empty() : versionOf(deal, raw, mode, rows.now[mode], { askingPrice: rows.askingPrice, codename: rows.keptCopy ? rows.keptCodename : null });
+    now[mode] = nothingServed ? empty() : versionOf(deal, raw, mode, rows.now[mode], { askingPrice: rows.askingPrice, codename: rows.keptCopy ? rows.keptCodename : null });
   }
+  // What buyers read once published: the update rows — or, while buyers are served nothing, the
+  // working copy as it stands (every section shown, as publishing approves them).
+  const ungated = (r: VersionRows): VersionRows => ({ ...r, published: null });
+  const updateRows = rows.update ?? (nothingServed
+    ? { normal: ungated(rows.now.normal), blind: ungated(rows.now.blind), dd: ungated(rows.now.dd) }
+    : null);
   let afterPublish: ServedFigures["afterPublish"] = null;
-  if (rows.update) {
+  if (updateRows) {
     afterPublish = {} as Record<CimVersion, ServedVersion>;
-    for (const mode of CIM_VERSIONS) afterPublish[mode] = versionOf(deal, raw, mode, rows.update[mode], { askingPrice: rows.askingPrice });
+    for (const mode of CIM_VERSIONS) afterPublish[mode] = versionOf(deal, raw, mode, updateRows[mode], { askingPrice: rows.askingPrice });
   }
-  // DD with the checks on, on the pages DD buyers read now (the CIM tab's count while they're off).
+  // DD with the checks on, on the pages DD buyers read now (the CIM tab's count while they're off);
+  // while nothing is served, on the pages they will read once it is published.
   let ddIfOn: ServedFigures["ddIfOn"] = null;
   const ddInputs = figureInputsFor(raw, { audience: "buyer", mode: "dd" });
-  if (!held && ddInputs) {
-    const on = versionOf(deal, raw, "dd", rows.now.dd, {
-      askingPrice: rows.askingPrice, codename: rows.keptCopy ? rows.keptCodename : null,
+  const ddRows = nothingServed ? updateRows?.dd ?? null : rows.now.dd;
+  if (ddInputs && ddRows) {
+    const on = versionOf(deal, raw, "dd", ddRows, {
+      askingPrice: rows.askingPrice, codename: !nothingServed && rows.keptCopy ? rows.keptCodename : null,
       inputs: { ...ddInputs, ddShownAt: ddInputs.ddShownAt ?? new Date().toISOString() },
     });
     ddIfOn = on.summary ?? null;
   }
-  return { keptCopy: rows.keptCopy, held, now, afterPublish, ddIfOn };
+  return { keptCopy: rows.keptCopy, held, notLive, now, afterPublish, ddIfOn };
 }
 
 /** The rows of every version, as the view room reads them (IO). */
@@ -160,8 +179,9 @@ export async function loadServedRows(deal: Deal): Promise<ServedRows> {
   ]);
   const now = { normal, blind, dd };
   // Buyers read something other than the working copy (the kept copy, or a live CIM's last
-  // approved versions): the update, as it will serve once published.
-  const differs = normal.fromSnapshot || !!deal.isLive;
+  // approved versions) — or nothing at all (not published yet, or held): the update / the CIM
+  // as it will serve once published.
+  const differs = normal.fromSnapshot || !!deal.isLive || cimHeldFromBuyers(deal) || !dealPublishedForBuyers(deal);
   let update: ServedRows["update"] = null;
   if (differs) {
     const [sections, blindOverrides, ddOverrides] = await Promise.all([
@@ -197,6 +217,7 @@ export function servedSummary(s: ServedFigures): WorkspaceServed {
   return {
     keptCopy: s.keptCopy,
     held: s.held,
+    notLive: s.notLive,
     normal: { notes: s.now.normal.noteIds.size, afterPublish: later("normal"), dropped: null },
     blind: { notes: s.now.blind.noteIds.size, afterPublish: later("blind"), dropped: s.now.blind.dropped },
     dd: { notes: s.now.dd.noteIds.size, afterPublish: later("dd"), dropped: null, summary: sum(s.now.dd.summary), summaryIfOn: sum(s.ddIfOn) },

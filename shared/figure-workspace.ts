@@ -44,7 +44,7 @@ export interface WorkspaceNote {
 
 /**
  * shown          approved, and buyers of at least one version read it now
- * after_publish  approved; buyers read it once you publish the update (they read the kept copy now)
+ * after_publish  approved; buyers read it once you publish the update (they read the kept copy now) — or the CIM (not published yet)
  * not_served     approved, but no page buyers read carries it (e.g. a line inside a total, with the DD checks off)
  */
 export type MoveStatus = "shown" | "after_publish" | "not_served" | "waiting" | "none" | "hidden" | "stale_figures" | "stale_seller" | "held";
@@ -173,6 +173,8 @@ export interface WorkspaceServed {
   keptCopy: boolean;
   /** The CIM is held from every buyer. */
   held: boolean;
+  /** The CIM isn't published yet: buyers read nothing until you publish it ("Shows once you publish the CIM"). */
+  notLive: boolean;
   normal: WorkspaceServedVersion;
   blind: WorkspaceServedVersion;
   dd: WorkspaceServedVersion & {
@@ -199,6 +201,8 @@ export interface FiguresWorkspace {
   };
   kpis: {
     changesExplained: number;
+    /** Approved, read by buyers once you publish (the CIM, or the update). */
+    changesAfterPublish: number;
     changesTotal: number;
     differences: number;
     differencesExplained: number;
@@ -274,6 +278,7 @@ export interface ReviewItems {
 
 /** What the review sheet lists, and what starts ticked (D9). */
 export function reviewItems(ws: FiguresWorkspace): ReviewItems {
+  const target = publishTarget(ws.served);
   const notes: ReviewItems["notes"] = [];
   const seen = new Set<string>();
   const addNote = (label: string, n: WorkspaceNote | null, place: FigurePlace = "page") => {
@@ -282,7 +287,7 @@ export function reviewItems(ws: FiguresWorkspace): ReviewItems {
     notes.push({
       id: n.id, label, text: n.text, fingerprint: n.fingerprint, ticked: !n.internalOnly,
       why: n.internalOnly ? "Based only on your internal note. Check it first."
-        : place === "update_only" ? "Buyers read it once you publish the update." : null,
+        : place === "update_only" ? `Buyers read it once you publish ${target}.` : null,
       // A line inside a total is on no page of its own: due-diligence buyers read it under the total.
       versions: place === "inside_total" ? "DD · under its total" : n.blindText ? "Full · Blind · DD" : "Full · DD",
     });
@@ -300,7 +305,7 @@ export function reviewItems(ws: FiguresWorkspace): ReviewItems {
     if (c.shownToBuyers || c.decision === "shown") continue;
     const sign = c.difference >= 0 ? "+" : "−";
     const amount = `${sign}$${Math.round(Math.abs(c.difference)).toLocaleString("en-US")}`;
-    const later = c.onBuyerPage ? "" : " · shows once you publish the update";
+    const later = c.onBuyerPage ? "" : ` · shows once you publish ${target}`;
     // A figure the broker typed ("Cimple read it wrong") is offered unticked: it shows only on their own tick.
     const yours = c.corrected ? " · your figure" : "";
     if (c.state === "ask") {
@@ -311,4 +316,19 @@ export function reviewItems(ws: FiguresWorkspace): ReviewItems {
     }
   }
   return { notes, differences, needsLook, matchesAuto };
+}
+
+/**
+ * What publishing means for this CIM, in the broker's words: "the CIM" while
+ * it isn't published yet (buyers read nothing), else "the update".
+ */
+export function publishTarget(served: Pick<WorkspaceServed, "notLive"> | null | undefined): "the CIM" | "the update" {
+  return served?.notLive ? "the CIM" : "the update";
+}
+
+/** The one line that says why nothing is "Shown to buyers" yet (null when buyers read the CIM). */
+export function nothingServedLine(served: Pick<WorkspaceServed, "notLive" | "held"> | null | undefined): string | null {
+  if (served?.notLive) return "This CIM isn't published yet — buyers see these once you publish it.";
+  if (served?.held) return "Buyers can't read this CIM right now — they see these once you publish the update.";
+  return null;
 }

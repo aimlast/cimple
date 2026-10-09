@@ -42,14 +42,24 @@ function StatePill({ c }: { c: WorkspaceCheck }) {
   return <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]", s.cls)}><s.Icon className="h-3 w-3" />{s.label}</span>;
 }
 
+export interface ChecksPublishWords {
+  /** The CIM isn't published yet: nothing shows until it is. */
+  notPublished?: boolean;
+  /** "the CIM" / "the update". */
+  publishWhat?: string;
+}
+
 /** Where the check stands for due-diligence buyers — read from what they are actually served. */
-function shownWords(c: WorkspaceCheck): string {
+function shownWords(c: WorkspaceCheck, p: ChecksPublishWords = {}): string {
+  const what = p.publishWhat ?? "the update";
   if (c.decision === "left_out") return `Left out: ${c.leftOutReason ?? "no reason given"}`;
   if (c.shownToBuyers) return "Shown to due-diligence buyers";
   // A figure the broker typed never shows by itself, even when it now matches (checker r2 R2-1).
   if (c.corrected && c.decision !== "shown") return "Not shown yet: your figure shows only when you show it";
-  if (c.afterPublish || !c.onBuyerPage) return "Shows once you publish the update";
-  if (c.decision === "shown" || c.state === "regrouped" || c.state === "match") return "Shown once the checks are on";
+  if (c.afterPublish || !c.onBuyerPage) return `Shows once you publish ${what}`;
+  if (c.decision === "shown" || c.state === "regrouped" || c.state === "match") {
+    return p.notPublished ? `Shows once the checks are on and you publish ${what}` : "Shown once the checks are on";
+  }
   return "Not shown yet";
 }
 
@@ -75,7 +85,7 @@ function YourFigure() {
   return <span className="ml-1.5 rounded border border-border px-1 py-px align-middle text-[10px] font-normal text-muted-foreground" title="The figure you entered. Buyers see it only when the document prints it on that line and you show it.">Your figure</span>;
 }
 
-function DifferenceRow({ c, a }: { c: WorkspaceCheck; a: ChecksActions }) {
+function DifferenceRow({ c, a, p }: { c: WorkspaceCheck; a: ChecksActions; p: ChecksPublishWords }) {
   const why = c.state === "regrouped" ? c.regroupedText
     : c.state === "match" ? (c.corrected ? `Your figure matches the ${c.base !== c.thisCim ? "statements as issued" : "CIM"}.` : null)
     : c.note?.text ?? null;
@@ -83,7 +93,7 @@ function DifferenceRow({ c, a }: { c: WorkspaceCheck; a: ChecksActions }) {
     <div className="grid gap-3 rounded-lg border border-border bg-card p-3 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)]" data-testid={`check-row-${c.checkKey}`}>
       <div className="min-w-0">
         <p className="text-sm font-medium">{c.label} · FY{c.year}</p>
-        <p className="text-[11px] text-muted-foreground">{shownWords(c)}</p>
+        <p className="text-[11px] text-muted-foreground">{shownWords(c, p)}</p>
       </div>
       <div className="min-w-0 text-xs tabular-nums">
         <p className="text-muted-foreground">This CIM</p>
@@ -171,7 +181,8 @@ function MatchGrid({ checks }: { checks: WorkspaceCheck[] }) {
   );
 }
 
-export function ChecksTab({ checks, group, onGroup, actions, hasOtherRecords }: { checks: WorkspaceCheck[]; group: CheckGroup; onGroup: (g: CheckGroup) => void; actions: ChecksActions; hasOtherRecords: boolean }) {
+export function ChecksTab({ checks, group, onGroup, actions, hasOtherRecords, notPublished, publishWhat }: { checks: WorkspaceCheck[]; group: CheckGroup; onGroup: (g: CheckGroup) => void; actions: ChecksActions; hasOtherRecords: boolean } & ChecksPublishWords) {
+  const p: ChecksPublishWords = { notPublished, publishWhat };
   const counts = useMemo(() => checkCounts(checks), [checks]);
   if (!hasOtherRecords || checks.length === 0) {
     return (
@@ -205,7 +216,7 @@ export function ChecksTab({ checks, group, onGroup, actions, hasOtherRecords }: 
       ) : group === "needs_checking" ? (
         <div className="space-y-2">{rows.map((c) => <NeedsCheckingRow key={c.checkKey} c={c} a={actions} />)}</div>
       ) : (
-        <div className="space-y-2">{rows.map((c) => <DifferenceRow key={c.checkKey} c={c} a={actions} />)}</div>
+        <div className="space-y-2">{rows.map((c) => <DifferenceRow key={c.checkKey} c={c} a={actions} p={p} />)}</div>
       )}
     </div>
   );

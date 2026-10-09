@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { moveCounts, type CheckGroup, type MoveFilter, type WorkspaceCheck, type WorkspaceMove, type WorkspaceQuestion } from "@shared/figure-workspace";
+import { moveCounts, nothingServedLine, publishTarget, type CheckGroup, type MoveFilter, type WorkspaceCheck, type WorkspaceMove, type WorkspaceQuestion } from "@shared/figure-workspace";
 import { useDeal } from "@/contexts/DealContext";
 import { figuresErrorText, useFigureActions, useFiguresWorkspace, FiguresError } from "./useFigures";
 import { StatusPill } from "./StatusPill";
@@ -257,7 +257,13 @@ export function NumbersWorkspace() {
       />
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5" data-testid="figures-kpis">
-        <Kpi label="Changes explained" value={`${k.changesExplained} of ${k.changesTotal}`} onClick={() => setParams({ tab: "moves", filter: "shown", note: null })} testId="kpi-changes" />
+        <Kpi
+          label="Changes explained"
+          value={`${k.changesExplained} of ${k.changesTotal}`}
+          sub={k.changesAfterPublish > 0 ? `${k.changesAfterPublish} once you publish` : undefined}
+          onClick={() => setParams({ tab: "moves", filter: k.changesExplained === 0 && k.changesAfterPublish > 0 ? "publish" : "shown", note: null })}
+          testId="kpi-changes"
+        />
         <Kpi
           label="Differences"
           value={`${k.differences}`}
@@ -270,7 +276,12 @@ export function NumbersWorkspace() {
         <Kpi label="Documents cited ↗" value={`${k.documentsCited}`} sub={k.documentsShared === null ? undefined : `${k.documentsShared} shared`} onClick={() => navigate(`/deal/${dealId}/information`)} testId="kpi-documents" className="col-span-2 sm:col-span-1" />
       </div>
 
-      {data.served?.keptCopy && (
+      {nothingServedLine(data.served) && (
+        <p className="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground" data-testid="figures-not-published">
+          {nothingServedLine(data.served)}
+        </p>
+      )}
+      {data.served?.keptCopy && !data.served.held && (
         <p className="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground" data-testid="figures-kept-copy">
           Buyers are reading the previous version of this CIM until you publish the update. “Shown to buyers” counts what they read now; notes only the update carries say “Shows once you publish the update”.
         </p>
@@ -299,6 +310,7 @@ export function NumbersWorkspace() {
         {tab === "moves" && (
           <MovesTab
             moves={data.moves}
+            publishWhat={publishTarget(data.served)}
             filter={moveFilter}
             onFilter={(f) => setParams({ filter: f })}
             showAll={showAll}
@@ -306,7 +318,7 @@ export function NumbersWorkspace() {
             actions={moveActions}
           />
         )}
-        {tab === "checks" && <ChecksTab checks={data.checks} group={groupParam ?? defaultCheckGroup(data.checks)} onGroup={(g) => setParams({ group: g })} actions={checkActions} hasOtherRecords={data.status.hasOtherRecords} />}
+        {tab === "checks" && <ChecksTab notPublished={!!data.served?.notLive} publishWhat={publishTarget(data.served)} checks={data.checks} group={groupParam ?? defaultCheckGroup(data.checks)} onGroup={(g) => setParams({ group: g })} actions={checkActions} hasOtherRecords={data.status.hasOtherRecords} />}
         {tab === "questions" && <QuestionsTab questions={data.questions} autoAsk={data.status.autoAsk} interviewDone={interviewDone} actions={questionActions} />}
       </div>
 

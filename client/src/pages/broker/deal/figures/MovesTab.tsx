@@ -19,9 +19,12 @@ import { cn } from "@/lib/utils";
 import { moveCounts, moveMatches, type MoveFilter, type MoveStatus, type WorkspaceMove } from "@shared/figure-workspace";
 import { money, signedMoney } from "./useFigures";
 
-const STATUS: Record<MoveStatus, { label: (m: WorkspaceMove) => string; tone: string; Icon: typeof CheckCircle2 }> = {
+/** "the CIM" while it isn't published yet, else "the update". */
+type PublishWhat = "the CIM" | "the update";
+
+const STATUS: Record<MoveStatus, { label: (m: WorkspaceMove, publishWhat: PublishWhat) => string; tone: string; Icon: typeof CheckCircle2 }> = {
   shown: { label: () => "Shown to buyers", tone: "text-success", Icon: CheckCircle2 },
-  after_publish: { label: () => "Shows once you publish the update", tone: "text-sky-300", Icon: Clock },
+  after_publish: { label: (_m, what) => `Shows once you publish ${what}`, tone: "text-sky-300", Icon: Clock },
   not_served: { label: () => "Approved · not on a page buyers read", tone: "text-muted-foreground", Icon: Clock },
   waiting: { label: () => "Waiting for your OK", tone: "text-amber-500", Icon: PauseCircle },
   none: { label: () => "No reason on file", tone: "text-muted-foreground", Icon: CircleDashed },
@@ -57,13 +60,13 @@ export interface MovesActions {
   bulkBusy?: boolean;
 }
 
-function Status({ m }: { m: WorkspaceMove }) {
+function Status({ m, publishWhat }: { m: WorkspaceMove; publishWhat: PublishWhat }) {
   const s = STATUS[m.status];
   return (
     <span className={cn("inline-flex items-start gap-1 text-xs", s.tone)}>
       <s.Icon className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
       <span>
-        {s.label(m)}
+        {s.label(m, publishWhat)}
         {m.status === "not_served" && m.unservedWhy && <span className="block text-[11px] text-muted-foreground">{m.unservedWhy}</span>}
       </span>
     </span>
@@ -150,9 +153,11 @@ function where(m: WorkspaceMove): string {
 }
 
 export function MovesTab({
-  moves, filter, onFilter, showAll, onShowAll, actions,
+  moves, filter, onFilter, showAll, onShowAll, actions, publishWhat = "the update",
 }: {
   moves: WorkspaceMove[];
+  /** "the CIM" while it isn't published yet (its approved notes "show once you publish the CIM"). */
+  publishWhat?: PublishWhat;
   filter: MoveFilter;
   onFilter: (f: MoveFilter) => void;
   showAll: boolean;
@@ -252,7 +257,7 @@ export function MovesTab({
                     </td>
                     <td className="px-3 py-2.5"><Reads m={m} /></td>
                     <td className="px-3 py-2.5"><Chips m={m} /></td>
-                    <td className="px-3 py-2.5"><Status m={m} /></td>
+                    <td className="px-3 py-2.5"><Status m={m} publishWhat={publishWhat} /></td>
                     <td className="px-3 py-2.5"><Actions m={m} a={actions} /></td>
                   </tr>
                 ))}
@@ -273,7 +278,7 @@ export function MovesTab({
                   <span className="shrink-0 text-right text-xs tabular-nums">{signedMoney(m.delta)}<br /><span className="text-muted-foreground">{m.pct ?? ""}</span></span>
                 </div>
                 <Reads m={m} />
-                <div className="flex flex-wrap items-center justify-between gap-2"><Status m={m} /><Chips m={m} /></div>
+                <div className="flex flex-wrap items-center justify-between gap-2"><Status m={m} publishWhat={publishWhat} /><Chips m={m} /></div>
                 <Actions m={m} a={actions} />
               </div>
             ))}

@@ -15,7 +15,7 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Calculator } from "lucide-react";
-import type { FiguresWorkspace } from "@shared/figure-workspace";
+import { nothingServedLine, publishTarget, type FiguresWorkspace } from "@shared/figure-workspace";
 import { figuresKey, figuresRequest, type FiguresStatus } from "./useFigures";
 import { ReviewSheet } from "./ReviewSheet";
 
@@ -50,12 +50,20 @@ export function FigureVersionLines({ dealId, mode }: { dealId: string; mode: "no
     const v = sv ? (mode === "blind" ? sv.blind : sv.normal) : null;
     const approved = [...d.moves.map((m) => m.note), ...d.otherNotes.map((o) => o.note)].filter((n) => n && n.status === "approved" && !n.staleReason);
     const n = v ? v.notes : mode === "blind" ? approved.filter((x) => x!.blindText).length : approved.length;
+    // Not published yet (or held): buyers read nothing now — count what they read once it's published (checker r2 R2-2).
+    const nothing = !!sv && (sv.notLive || sv.held);
+    const what = publishTarget(sv);
+    const later = v?.afterPublish ?? 0;
     return (
       <div className="space-y-0.5 text-[11px]" data-testid={`figure-lines-${mode}`}>
         <p className="text-muted-foreground">
           <Calculator className="mr-1 inline h-3 w-3" />
-          {n === 1 ? "1 figure has a note" : `${n} figures have notes`}
-          {v && v.afterPublish > 0 && <> · <button type="button" className="text-teal hover:underline" onClick={() => open("moves", "publish")}>{v.afterPublish} more once you publish the update</button></>}
+          {nothing ? (
+            <>{later === 1 ? "1 figure has a note" : `${later} figures have notes`}{later > 0 && <> · <button type="button" className="text-teal hover:underline" onClick={() => open("moves", "publish")}>buyers read {later === 1 ? "it" : "them"} once you publish {what}</button></>}</>
+          ) : (
+            <>{n === 1 ? "1 figure has a note" : `${n} figures have notes`}
+            {later > 0 && <> · <button type="button" className="text-teal hover:underline" onClick={() => open("moves", "publish")}>{later} more once you publish {what}</button></>}</>
+          )}
           {d.kpis.waiting > 0 && <> · <button type="button" className="text-teal hover:underline" onClick={() => open("moves", "waiting")}>{d.kpis.waiting} wait for your OK</button></>}
         </p>
         {v?.dropped && (
@@ -81,7 +89,8 @@ export function FigureVersionLines({ dealId, mode }: { dealId: string; mode: "no
       ) : (
         <p className="text-muted-foreground">No tax returns on file to compare with yet.</p>
       )}
-      {sv?.keptCopy && <p className="text-muted-foreground">Buyers read the previous version until you publish the update.</p>}
+      {nothingServedLine(sv) ? <p className="text-muted-foreground" data-testid="figure-lines-not-published">{nothingServedLine(sv)}</p>
+        : sv?.keptCopy && <p className="text-muted-foreground">Buyers read the previous version until you publish the update.</p>}
       {!d.status.ddShownAt && d.status.hasOtherRecords && (
         <p className="text-foreground">Due-diligence buyers don't see these checks yet. <button type="button" className="text-teal hover:underline" onClick={() => setReview(true)}>Review and show to buyers</button></p>
       )}

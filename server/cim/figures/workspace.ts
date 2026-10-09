@@ -149,11 +149,16 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
   const served = input.served ?? null;
   const nowVersions = served ? CIM_VERSIONS.map((v) => served.now[v]) : [];
   const laterVersions = served?.afterPublish ? CIM_VERSIONS.map((v) => served.afterPublish![v]) : [];
-  const onPage = served ? new Set(nowVersions.flatMap((v) => Array.from(v.anchored))) : workingKeys;
+  // While buyers are served nothing (not published yet, or held), the pages are the ones they'll
+  // read once it's published: a figure on them is "on a page", its approved note "shows once you
+  // publish" — never "not on a page buyers read" (checker r2 R2-2).
+  const nothingServed = !!served && (served.notLive || served.held) && !!served.afterPublish;
+  const pageVersions = nothingServed ? laterVersions : nowVersions;
+  const onPage = served ? new Set(pageVersions.flatMap((v) => Array.from(v.anchored))) : workingKeys;
   const anchoredKeys = Array.from(new Set([...Array.from(workingKeys), ...Array.from(onPage)]));
   const shownSet = new Set(anchoredKeys);
   const placeOf = (key: string): FigurePlace => (onPage.has(key) ? "page" : workingKeys.has(key) ? "update_only" : "inside_total");
-  const ddPage = served ? served.now.dd.anchored : workingKeys;
+  const ddPage = served ? (nothingServed ? served.afterPublish!.dd.anchored : served.now.dd.anchored) : workingKeys;
   const checks = raw.checks.checks;
   const held = heldFigures(checks, reg);
   const ddOn = !!raw.state?.ddShownAt;
@@ -218,7 +223,7 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
       status,
       ...(status === "not_served" ? { unservedWhy: place === "inside_total"
         ? (ddOn ? "Inside a total; buyers don't see this line on any page." : "A line inside a total: due-diligence buyers see it once the checks are on.")
-        : "No page buyers read shows this figure right now." } : {}),
+        : nothingServed ? "No page of the CIM shows this figure." : "No page buyers read shows this figure right now." } : {}),
       note: note ? workspaceNote(note, raw) : null,
       hint,
       question: q ? { id: q.id, status: q.status } : null,
@@ -364,6 +369,7 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
     kpis: {
       // Folded rows (derived totals and tax lines with nothing to do) aren't "changes to explain" (F10).
       changesExplained: moves.filter((m) => m.status === "shown" && !m.folded).length,
+      changesAfterPublish: moves.filter((m) => m.status === "after_publish" && !m.folded).length,
       changesTotal: moves.filter((m) => m.status !== "hidden" && !m.folded).length,
       differences: differing.length,
       differencesExplained: differing.filter((c) => c.state === "explained" || c.state === "regrouped").length,
