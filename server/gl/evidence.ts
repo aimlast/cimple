@@ -39,7 +39,8 @@ import { isBuyerVisibleLedger } from "./audience";
 import { personsFor } from "./match-run";
 import type { Person } from "./match";
 import { maskForBuyer, type BuyerMaskContext } from "./sensitive";
-import { screenForBuyers } from "./screen";
+import { screenForBuyers, screenForBuyersWith } from "./screen";
+import { mentionsHeldPerson, neutralBridgeLabel } from "../cim/sensitive-facts";
 import { gateFrom, type GlGate } from "./gate";
 import { cimModeForAccessLevel, isTeaserOnly } from "./levels";
 
@@ -141,11 +142,10 @@ export async function loadEvidenceState(dealId: string): Promise<EvidenceState> 
 const PERSONAL_CATEGORY = new Set(["discretionary", "owner_comp"]);
 const PERSONAL_LABEL = /\b(?:personal|owner|family|spouse|wife|husband|son|daughter|related|shareholder)\b/i;
 
-/** The bridge wording with any held name taken out ("Salary paid to Maria Chen" → "Salary paid"). */
-async function buyerLabel(label: string, heldNames: string[]): Promise<string> {
+/** The bridge wording with any held name taken out ("Salary paid to Maria Chen" → "Salary paid"). Pure. */
+export function buyerLabel(label: string, heldNames: readonly string[]): string {
   if (heldNames.length === 0) return label;
-  const { mentionsHeldPerson, neutralBridgeLabel } = await import("../cim/sensitive-facts");
-  return mentionsHeldPerson(label, heldNames) ? neutralBridgeLabel(label, heldNames) : label;
+  return mentionsHeldPerson(label, heldNames) ? neutralBridgeLabel(label, heldNames) || "Add-back" : label;
 }
 
 /** The buyer-facing status of a trace: the broker's verdict, never above what buyer-visible evidence supports. */
@@ -237,22 +237,22 @@ export async function snapshotFromState(
       traceId: t.id,
       addbackKey: t.addbackKey,
       lineId: glLineId(s.dealId, t.addbackKey),
-      label: await buyerLabel(t.label, s.heldNames),
+      label: buyerLabel(t.label, s.heldNames),
       status: buyerStatusFor(t, buyerComputed),
       parties: ownParties.map((p) => ({ first: p.first, last: p.last })),
       personal: PERSONAL_CATEGORY.has(t.category ?? "") || PERSONAL_LABEL.test(t.label),
       pay: t.proof === "payroll" || t.category === "owner_comp",
       share,
-      why: screenForBuyers(t.buyerReason, info),
-      brokerNote: t.brokerNoteShown ? screenForBuyers(t.brokerNote, info) : null,
-      sellerNote: t.sellerNoteShown ? screenForBuyers(t.sellerNote, info) : null,
+      why: screenForBuyersWith(t.buyerReason, info, s.heldNames),
+      brokerNote: t.brokerNoteShown ? screenForBuyersWith(t.brokerNote, info, s.heldNames) : null,
+      sellerNote: t.sellerNoteShown ? screenForBuyersWith(t.sellerNote, info, s.heldNames) : null,
       years: snapYears,
       statementDocs: t.proof === "statement" ? statementDocsFor(s, years) : [],
     });
   }
   // Buyers read the add-backs found in the books first; lines straight from the statements go last.
   lines.sort((a, b) => Number(a.status === "statement") - Number(b.status === "statement"));
-  const tieOut = tieOutRows(s.tracing, info);
+  const tieOut = tieOutRows(s.tracing, info, s.heldNames);
   const agreeYears = tieOut.filter((r) => r.state === "agrees" || r.state === "accepted").map((r) => r.year);
   const ledgerYears = Array.from(new Set(lines.filter((l) => l.status !== "statement").flatMap((l) => l.years.map((y) => y.year))));
   const ledgers = Array.from(s.buyerLedgers.values()).map(({ ledger }) => ({
@@ -279,13 +279,13 @@ export async function snapshotFromState(
 }
 
 /** The tie-out as buyers may read it (an accepted difference carries the broker's screened note). */
-function tieOutRows(tracing: GlTracing, info: Record<string, unknown> | null): GlEvidenceTieOut[] {
+function tieOutRows(tracing: GlTracing, info: Record<string, unknown> | null, heldNames: readonly string[] = []): GlEvidenceTieOut[] {
   const tie = (tracing.tieOut as Record<string, GlTieOutYear> | null) ?? {};
   const accepted = (tracing.tieOutAccepted as Record<string, { note: string }> | null) ?? {};
   return Object.keys(tie).sort().map((y) => {
     const t = tie[y];
     if (t.state === "agrees") return { year: y, state: "agrees" as const };
-    if (t.state === "differs" && accepted[y]) return { year: y, state: "accepted" as const, difference: dollars(t.differenceCents ?? 0), note: screenForBuyers(accepted[y].note, info) };
+    if (t.state === "differs" && accepted[y]) return { year: y, state: "accepted" as const, difference: dollars(t.differenceCents ?? 0), note: screenForBuyersWith(accepted[y].note, info, heldNames) };
     if (t.state === "differs") return { year: y, state: "differs" as const, difference: dollars(t.differenceCents ?? 0) };
     return { year: y, state: "cannot_check" as const };
   });
@@ -306,6 +306,21 @@ export interface TightenCurrent {
   liveKeys: ReadonlySet<string>;
   /** Years whose ledger agrees with the statements now (or the difference is accepted). */
   agreeYears: ReadonlySet<string>;
+  /**
+   * The deal's facts and held names now (staff-private people, keep-out
+   * parties incl. the seller's own requests): the published label, "Why it's
+   * added back", the notes and the accepted tie-out note are screened again
+   * with them (gl spec §9.2 "at publish and at serve"). Omitted = not
+   * re-screened here (projectEvidence still checks the held names it gets).
+   */
+  info?: Record<string, unknown> | null;
+  heldNames?: readonly string[];
+}
+
+/** Published text as buyers may read it now: screened again with the current facts and held names (null when anything is held). Pure. */
+function rescreen(text: string | null | undefined, info: Record<string, unknown> | null | undefined, heldNames: readonly string[]): string | null {
+  if (!text) return null;
+  return screenForBuyersWith(text, info ?? null, heldNames);
 }
 
 const STATUS_RANK: Record<GlBuyerStatus, number> = { not_found: 0, partly_found: 1, document: 2, found: 3, statement: 4 };
@@ -357,14 +372,33 @@ export function tightenPublished(snap: GlPublishedEvidence, cur: TightenCurrent)
     if (droppedDocs) changes.push(`${line.label}: a supporting document that was removed or made private is no longer cited.`);
     if (status !== line.status) changes.push(`${line.label}: now shown as "${status === "not_found" ? "Not found" : "Partly found"}".`);
     const statementDocs = line.statementDocs.filter((d) => cur.liveDocIds.has(d.documentId));
-    lines.push({ ...line, status, years, statementDocs });
+    // The words published with the line, screened again now: a name held back since hides them at once.
+    let { label, why, brokerNote, sellerNote } = line;
+    if (cur.info !== undefined || cur.heldNames !== undefined) {
+      const held = cur.heldNames ?? [];
+      const nextLabel = buyerLabel(line.label, held);
+      if (nextLabel !== line.label) { changes.push(`"${line.label}" now reads "${nextLabel}" for buyers — it named someone held back.`); label = nextLabel; }
+      const screened = (t: string | null) => rescreen(t, cur.info, held);
+      if (why && !screened(why)) { changes.push(`${line.label}: "Why it's added back" is no longer shown to buyers — it names someone or something now held back.`); why = null; }
+      if (brokerNote && !screened(brokerNote)) { changes.push(`${line.label}: your note is no longer shown to buyers — it names someone or something now held back.`); brokerNote = null; }
+      if (sellerNote && !screened(sellerNote)) { changes.push(`${line.label}: the seller's explanation is no longer shown to buyers — it names someone or something now held back.`); sellerNote = null; }
+    }
+    lines.push({ ...line, label, why, brokerNote, sellerNote, status, years, statementDocs });
   }
   const noteYears = snap.noteYears.filter((y) => cur.agreeYears.has(y));
   if (noteYears.length < snap.noteYears.length) changes.push(`The note no longer says the ledger agrees with the statements for ${yearsWords(snap.noteYears.filter((y) => !cur.agreeYears.has(y)))}.`);
   const ledgers = snap.ledgers
     .filter((l) => cur.liveLedgerIds.has(l.ledgerId))
     .map((l) => ({ ...l, showStaffNames: l.showStaffNames && cur.showStaffNames.get(l.ledgerId) === true }));
-  return { snapshot: { ...snap, lines, noteYears, ledgers }, changes };
+  let tieOut = snap.tieOut;
+  if ((cur.info !== undefined || cur.heldNames !== undefined) && tieOut.some((r) => r.note)) {
+    tieOut = tieOut.map((r) => {
+      if (!r.note || rescreen(r.note, cur.info, cur.heldNames ?? [])) return r;
+      changes.push(`${r.year}: your note on the accepted difference is no longer shown to buyers — it names someone or something now held back.`);
+      return { ...r, note: null };
+    });
+  }
+  return { snapshot: { ...snap, lines, noteYears, ledgers, tieOut }, changes };
 }
 
 /** The current state as tightening reads it. */
@@ -377,6 +411,8 @@ export function tightenCurrentFrom(s: EvidenceState): TightenCurrent {
     showDetails: new Map(s.links.filter((k) => k.state === "confirmed").map((k) => [k.id, k.showDetails ?? null])),
     liveKeys: new Set(s.traces.filter((t) => !t.removedAt && t.includeInCim).map((t) => t.addbackKey)),
     agreeYears: new Set(tie.filter((r) => r.state === "agrees" || r.state === "accepted").map((r) => r.year)),
+    info: (s.deal?.extractedInfo as Record<string, unknown> | null) ?? null,
+    heldNames: s.heldNames,
   };
 }
 
@@ -418,8 +454,16 @@ export function noteFor(snap: GlPublishedEvidence): string | null {
 
 export function projectEvidence(snap: GlPublishedEvidence, mode: GlEvidenceMode, ctx: ProjectContext): GlEvidencePayload | null {
   if (mode === "dd" ? !snap.versions.dd : mode === "normal" ? !snap.versions.normal : !snap.versions.blind) return null;
+  // The last word before anything is served: every published text screened
+  // with the held names and facts this payload is built with (whatever the
+  // caller's tightening did) — a held name never reaches a buyer.
+  const info = (ctx.deal?.extractedInfo as Record<string, unknown> | null | undefined) ?? null;
+  const held = ctx.heldNames ?? [];
+  const words = (t: string | null | undefined) => rescreen(t, info, held);
   // Found-in-the-books lines first, lines straight from the statements last (older snapshots too).
-  const lines = [...snap.lines].sort((a, b) => Number(a.status === "statement") - Number(b.status === "statement"));
+  const lines = [...snap.lines]
+    .sort((a, b) => Number(a.status === "statement") - Number(b.status === "statement"))
+    .map((l) => ({ ...l, label: buyerLabel(l.label, held), why: words(l.why), brokerNote: words(l.brokerNote), sellerNote: words(l.sellerNote) }));
   if (lines.length === 0) return null;
   const agree = new Set(snap.noteYears);
   const summary = summaryOf(lines);
@@ -461,15 +505,19 @@ export function projectEvidence(snap: GlPublishedEvidence, mode: GlEvidenceMode,
 
   // ── DD ──
   const ledgerOf = new Map(snap.ledgers.map((l) => [l.ledgerId, l]));
+  // The data room's deny, entry by entry: a year whose entries come from two files (the
+  // ledger and the accountant's adjustments) keeps the allowed file's entries.
+  const deniedEntry = (e: GlSnapshotEntry) => {
+    const led = e.ledgerId ? ledgerOf.get(e.ledgerId) : null;
+    return !!led && !!ctx.withheldLedgerDocs?.has(led.documentId);
+  };
   const out: GlEvidenceLine[] = lines.map((l) => {
     const parties: Person[] = l.parties.map((p) => ({ first: p.first, last: p.last }));
     const years: GlEvidenceYear[] = l.years.map((y) => {
       const found = Math.abs(y.entries.reduce((n, e) => n + e.amountCents, 0)) + y.docs.reduce((n, d) => n + d.amountCents, 0);
-      const denied = y.entries.length > 0 && y.entries.every((e) => {
-        const led = e.ledgerId ? ledgerOf.get(e.ledgerId) : null;
-        return !!led && !!ctx.withheldLedgerDocs?.has(led.documentId);
-      });
-      const shown = denied ? [] : y.entries.slice(0, GL_EVIDENCE_MAX_ENTRIES);
+      const allowed = ctx.withheldLedgerDocs?.size ? y.entries.filter((e) => !deniedEntry(e)) : y.entries;
+      const heldBack = y.entries.length - allowed.length;
+      const shown = allowed.slice(0, GL_EVIDENCE_MAX_ENTRIES);
       const entries: GlEvidenceEntry[] = shown.map((e) => {
         const led = e.ledgerId ? ledgerOf.get(e.ledgerId) : null;
         const mctx: BuyerMaskContext = {
@@ -485,8 +533,8 @@ export function projectEvidence(snap: GlPublishedEvidence, mode: GlEvidenceMode,
       return {
         year: y.year, yearLabel: y.yearLabel, claimed: dollars(y.claimedCents), target: dollars(y.targetCents), found: dollars(found),
         difference: dollars(found - y.targetCents), status: y.status, entryCount: y.entries.length, entries,
-        moreEntries: denied ? 0 : Math.max(0, y.entries.length - shown.length),
-        ...(denied ? { entriesOnRequest: true } : {}),
+        moreEntries: Math.max(0, allowed.length - shown.length),
+        ...(heldBack > 0 ? { entriesOnRequest: true, entriesHeld: heldBack } : {}),
       };
     });
     // The ledger most of this line's entries come from.
@@ -507,7 +555,7 @@ export function projectEvidence(snap: GlPublishedEvidence, mode: GlEvidenceMode,
   return {
     ...base,
     note: null,
-    tieOut: snap.tieOut,
+    tieOut: snap.tieOut.map((r) => (r.note ? { ...r, note: words(r.note) } : r)),
     confirmation: snap.confirmation,
     source: first ? { software: first.software && first.software !== "other" ? softwareLabel(first.software) : null, period: snap.ledgers.length === 1 ? first.period : starts.join("; ") } : null,
     lines: out,

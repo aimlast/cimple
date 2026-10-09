@@ -275,7 +275,7 @@ function YearBlock({ line, year: y, defaultOpen }: { line: GlEvidenceLine; year:
         <p className="mt-0.5 text-xs text-[hsl(var(--cim-ink-muted))]">{glShareText(line.label ?? "The cost's", line.share, y.target, y.claimed, money)}</p>
       )}
 
-      {y.entriesOnRequest ? (
+      {y.entriesOnRequest && y.entries.length === 0 ? (
         <p className="mt-1.5 text-xs text-[hsl(var(--cim-ink-muted))]">{y.entryCount} entr{y.entryCount === 1 ? "y" : "ies"} — the entries are available on request. Ask your broker.</p>
       ) : noSupport ? (
         <p className="mt-1.5 text-xs text-[hsl(var(--cim-ink-muted))]">No entries were found in the books for this year.</p>
@@ -293,6 +293,9 @@ function YearBlock({ line, year: y, defaultOpen }: { line: GlEvidenceLine; year:
           )}
           {y.moreEntries > 0 && (
             <p className="mt-1 text-xs text-[hsl(var(--cim-ink-muted))]">+{y.moreEntries.toLocaleString("en-US")} more in the general ledger.</p>
+          )}
+          {y.entriesOnRequest && (y.entriesHeld ?? 0) > 0 && (
+            <p className="mt-1 text-xs text-[hsl(var(--cim-ink-muted))]" data-testid={`gl-held-${y.year}`}>{y.entriesHeld} more entr{y.entriesHeld === 1 ? "y is" : "ies are"} available on request. Ask your broker.</p>
           )}
         </>
       ) : null}

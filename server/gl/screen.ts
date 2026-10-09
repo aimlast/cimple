@@ -5,7 +5,7 @@
  * not shown at all (null), never shown half-cut. Pure apart from the
  * screening rules it imports.
  */
-import { screenText, keepOutFromNotes, mentionsHeldName } from "../cim/sensitive-facts";
+import { screenText, keepOutFromNotes, mentionsHeldName, mentionsHeldPerson } from "../cim/sensitive-facts";
 import { screenStaffPrivateText, staffContextFrom, includedStaffPrivate } from "../cim/staff-private";
 import { mentionsPrivateSource } from "@shared/discrepancy-sides";
 
@@ -33,4 +33,22 @@ export function screenForBuyers(text: string | null | undefined, info: Record<st
   if (mentionsHeldName(kept, keepOut.names)) return null;
   if (keepOut.pairs.some((p) => mentionsHeldName(kept, [p.name]))) return null;
   return kept.slice(0, 1200);
+}
+
+/**
+ * screenForBuyers, plus the deal's held names (staff-private people whose
+ * matter is held back, keep-out parties): text that mentions one — even by
+ * the given name alone — is not shown at all. Used at publish AND every time
+ * the published snapshot is served (gl spec §9.2): a name held back after
+ * publishing takes the text off what buyers see at once.
+ */
+export function screenForBuyersWith(
+  text: string | null | undefined,
+  info: Record<string, unknown> | null | undefined,
+  heldNames: readonly string[],
+): string | null {
+  const kept = screenForBuyers(text, info);
+  if (!kept) return null;
+  if (heldNames.length > 0 && mentionsHeldPerson(kept, heldNames)) return null;
+  return kept;
 }

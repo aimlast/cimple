@@ -72,8 +72,10 @@ export interface GlEvidenceYear {
   entries: GlEvidenceEntry[];
   /** Entries not listed here (in the general ledger). */
   moreEntries: number;
-  /** DD: the entries of this year are held from this buyer (the data room's deny) — totals kept. */
+  /** DD: some or all of this year's entries are held from this buyer (the data room's deny on their file) — totals kept. */
   entriesOnRequest?: boolean;
+  /** DD: how many of `entryCount` are held (the rest are in `entries`). */
+  entriesHeld?: number;
 }
 
 export interface GlEvidenceLine {
