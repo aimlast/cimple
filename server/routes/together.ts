@@ -208,12 +208,16 @@ export function registerTogetherRoutes(app: Express): void {
       // their own words are filed (a focused capture); otherwise "confirmed by you".
       const sitting = sittingId ? await sittingForDeal(deal.id, sittingId) : null;
       if (sitting && sitting.status !== "ended" && filingOn(sitting) && req.body?.mode !== "mark") {
-        const chunkId = await fileNow(sitting, itemId).catch(() => null);
-        if (chunkId) {
+        // (Only an item to verify that a conversation can settle — never a conflict, which needs Resolve.)
+        const before = (await buildCoverageBoard(deal, { audience: "broker" })).sections.flatMap((x) => x.items).find((i) => i.id === itemId);
+        const code = before?.reason?.code;
+        const chunkId = before?.status === "verify" && code !== "conflict" && code !== "routed" ? await fileNow(sitting, itemId).catch(() => null) : null;
+        if (chunkId && before) {
           const part = await partFiled(chunkId, 15_000);
-          const board0 = await buildCoverageBoard(deal, { audience: "broker" });
-          const item = board0.sections.flatMap((x) => x.items).find((i) => i.id === itemId);
-          if (item && filedItem(part, item)) return res.status(200).json({ ok: true, filed: true, chunkId });
+          if (filedItem(part, before)) {
+            void publishBoard(deal.id, sitting.id);
+            return res.status(200).json({ ok: true, filed: true, chunkId });
+          }
           if (!part) return res.status(202).json({ ok: true, pending: true, chunkId });
         }
       }

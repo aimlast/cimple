@@ -279,8 +279,12 @@ export function CoverageItemRow({
       setBusy(false);
     }
   };
+  // (In a live session, words the seller has just said about it are filed as theirs; otherwise "confirmed by you".)
   const confirm = () =>
-    run(() => boardRequest("POST", `/api/deals/${dealId}/coverage-board/items/${encodeURIComponent(item.id)}/confirm`, {}, "Couldn't confirm it"), "Confirmed by you");
+    run(
+      () => boardRequest("POST", `/api/deals/${dealId}/coverage-board/items/${encodeURIComponent(item.id)}/confirm`, mode === "live" && sittingId ? { sittingId } : {}, "Couldn't confirm it"),
+      "Confirmed",
+    );
   // ✓ Answered: Cimple files what the seller just said; when there's nothing
   // it can file from, the broker types it (their call note).
   const answered = async () => {

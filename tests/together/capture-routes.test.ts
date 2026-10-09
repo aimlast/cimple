@@ -6,6 +6,8 @@
  *  - ✓ Answered (auto): a focused capture files the seller's words; nothing
  *    said → 409 no_lines; no answer for that item in the words → 409
  *    no_answer (the editor opens);
+ *  - live ✓ Confirmed: the seller's own words when they just said it,
+ *    otherwise "confirmed by you" (no AI);
  *  - "Save this answer now"; Undo (once; then 404); ✓ File it on a held
  *    possible answer (no AI); Try now; Re-file the last 10 minutes;
  *  - another brokerage → 404 on every new route; GET board calls no model.
@@ -34,6 +36,7 @@ async function main() {
     entries: [
       { match: "Summer and the cold snaps", output: { answers: [{ key: "peakPeriods", value: "June to August, December to February", quote: "Summer and the cold snaps are crazy", speaker: "seller", confidence: "confirmed", basis: "verbatim" }], topicSections: ["seasonality"] } },
       { match: "in the office three days", focus: "employees:ownerInvolvement", output: { answers: [{ key: "ownerInvolvement", value: "In the office three days a week, four in busy season", quote: "I'm in the office three days, four in busy season", speaker: "seller", confidence: "confirmed", basis: "verbatim" }] } },
+      { match: "about 20 percent of sales", focus: "revenue_sources:customerConcentration", output: { answers: [{ key: "customerConcentration", value: "Largest customer (a property group) about 20% of sales", quote: "the property group is about 20 percent of sales", speaker: "seller", confidence: "confirmed", basis: "verbatim" }] } },
       { match: "Denise runs dispatch", output: { answers: [{ key: "employeeStructure", value: "Denise runs dispatch", quote: "Denise runs dispatch", speaker: "seller", confidence: "confirmed", basis: "verbatim" }] } },
     ],
   });
@@ -98,6 +101,32 @@ async function main() {
     assert.equal(noAnswer.json.code, "no_answer");
     assert.match(noAnswer.json.error, /couldn't find the answer/);
     ok("✓ Answered: a focused capture files the seller's own words; no answer in them → the editor opens");
+
+    // ✓ Confirmed in a live session: a CRM lead the seller has just confirmed out loud is filed as THEIR words…
+    await call("POST", `/api/deals/D1/together/sittings/${sid}/lines`, { clientId: PAGE, lines: [
+      { clientSeq: 5, speaker: "dg:0", text: "Is your largest customer still around that level?", source: "deepgram" },
+      { clientSeq: 6, speaker: "dg:1", text: "Yes, the property group is about 20 percent of sales.", source: "deepgram" },
+    ] });
+    const leadBefore = items((await call("GET", `/api/deals/D1/coverage-board?sittingId=${sid}`)).json).find((i: any) => i.id === "revenue_sources:customerConcentration");
+    assert.equal(leadBefore.status, "verify");
+    const confirmed = await call("POST", `/api/deals/D1/coverage-board/items/revenue_sources:customerConcentration/confirm`, { sittingId: sid });
+    assert.equal(confirmed.status, 200, JSON.stringify(confirmed.json));
+    assert.equal(confirmed.json.filed, true, "filed from the seller's words");
+    assert.equal(w.deals.D1.extractedInfo.customerConcentration, "Largest customer (a property group) about 20% of sales");
+    assert.equal(w.deals.D1.extractedInfo._fieldSources.customerConcentration.sittingId, sid);
+    // …and with nothing said about it (another brokerage's own deal and session), it is "confirmed by you" with no AI call.
+    const s3 = await call("POST", "/api/deals/D2/together/sittings", { via: "person" }, "B2");
+    const sid3 = s3.json.sitting.id;
+    await call("POST", `/api/deals/D2/together/sittings/${sid3}/consent`, {}, "B2");
+    const callsBefore = stubCalls;
+    const mine = await call("POST", `/api/deals/D2/coverage-board/items/revenue_sources:customerConcentration/confirm`, { sittingId: sid3 }, "B2");
+    assert.equal(mine.status, 200, JSON.stringify(mine.json));
+    assert.notEqual(mine.json.filed, true);
+    assert.equal(stubCalls, callsBefore, "no lines → no capture");
+    assert.equal(items(mine.json.board).find((i: any) => i.id === "revenue_sources:customerConcentration").status, "on_file");
+    assert.equal((await call("POST", `/api/deals/D1/coverage-board/items/revenue_sources:customerConcentration/confirm`, { sittingId: sid3 }, "B2")).status, 404, "another brokerage");
+    await call("POST", `/api/deals/D2/together/sittings/${sid3}/end`, { completeInterview: false, followUps: [], documents: [], addToNextSession: false }, "B2");
+    ok("live ✓ Confirmed files the seller's own words when they just said it; otherwise confirmed by you (no AI)");
 
     // A fresh session (two unnamed voices): the answer is held; ✓ File it files it with no AI call.
     const s2 = await call("POST", "/api/deals/D1/together/sittings", { via: "cimple" });

@@ -92,7 +92,7 @@ function PipRow({ dealId, item, audience, sittingId, onShowItem }: { dealId: str
     setBusy(true);
     try {
       if (action === "confirm") {
-        await boardRequest("POST", `/api/deals/${dealId}/coverage-board/items/${encodeURIComponent(item.id)}/confirm`, {}, "Couldn't confirm it");
+        await boardRequest("POST", `/api/deals/${dealId}/coverage-board/items/${encodeURIComponent(item.id)}/confirm`, { sittingId }, "Couldn't confirm it");
         invalidateCoverage(dealId);
       } else if (action === "answered") {
         try {
