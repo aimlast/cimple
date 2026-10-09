@@ -63,13 +63,13 @@ await test("buyerCimExtras: a Teaser link gets nothing (seesCim first); servedCi
   assert.ok(r.includes("buyerCimExtras(servedDeal, accessLevel, opts.accessId ?? null)"), "§2.2 final servedCimFor call");
   // The three buyer paths, and only through the helper.
   assert.ok(src("server/routes.ts").includes("buyerCimExtras(servedDeal, access.accessLevel, access.id)"));
-  assert.ok(src("server/qa/cim-context.ts").includes("buyerCimExtras(deal, reader.accessLevel"));
+  assert.ok(src("server/qa/cim-context.ts").includes("buyerCimExtras(readerDeal as any, reader.accessLevel, reader.id ?? null)"));
 });
 
-await test("buildBuyerCim's Teaser early return carries glEvidence: null (§2.2 step 1)", async () => {
+await test("buildBuyerCim's Teaser early return carries glEvidence, figureLayer and figureLayerDropped as null (§2.2 step 1)", async () => {
   const { buildBuyerCim } = await import("../../shared/cim-buyer-view");
   const cim = buildBuyerCim({ deal: { id: "D", businessName: "X" } as any, accessLevel: "teaser_only", sections: [], overrides: [], glEvidence: { mode: "dd" } as any });
-  assert.deepEqual(cim, { mode: "blind", sections: [], preparing: false, heldBack: 0, leaked: [], leakReasons: {}, glEvidence: null });
+  assert.deepEqual(cim, { mode: "blind", sections: [], preparing: false, heldBack: 0, leaked: [], leakReasons: {}, glEvidence: null, figureLayer: null, figureLayerDropped: null });
 });
 
 await test("the data room's gl adapter is gl's own exports (C18, C19)", () => {

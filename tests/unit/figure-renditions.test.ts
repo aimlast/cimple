@@ -22,14 +22,15 @@ test("the view route and servedCimFor both build with buyerCimExtras", () => {
   const routes = src("server/routes.ts");
   const view = routes.slice(routes.indexOf('app.get("/api/view/:token"'), routes.indexOf('app.get("/api/view/:token/buyer-profile"'));
   assert.match(view, /buyerCimExtras\(servedDeal, access\.accessLevel, access\.id\)/);
-  assert.match(view, /figures: extras\.figures/);
+  // Both extras (gl's evidence, dd's figures) reach buildBuyerCim — spread whole (INTEGRATION §2.2).
+  assert.match(view, /buildBuyerCim\(\{[^}]*\.\.\.extras \}\)/);
   assert.match(view, /figureLayer: buyerCim\.figureLayer/);
   // figureLayer only on the content branch (the last res.json of the route).
   assert.equal((view.match(/figureLayer:/g) ?? []).length, 1);
   assert.ok(!/redoLeakedBlind\([^)]*figureLayerDropped/.test(view));
   const renditions = src("server/analytics/renditions.ts");
   assert.match(renditions, /buyerCimExtras\(servedDeal, accessLevel, opts\.accessId \?\? null\)/);
-  assert.match(renditions, /figures: extras\.figures/);
+  assert.match(renditions, /buildBuyerCim\(\{[^}]*\.\.\.extras \}\)/);
 });
 
 test("a teaser link gets no extras", async () => {

@@ -57,7 +57,8 @@ test("both answer paths read it (the questions route and readerCim)", () => {
   assert.match(routes, /buildAnswerContext\(answerSections\)\) \+ figureNotesContext\(chatLayer, chatSections\)/);
   const qa = readFileSync(join(ROOT, "server/qa/cim-context.ts"), "utf8");
   assert.match(qa, /figureNotesContext\(cim\.figureLayer, cim\.sections\)/);
-  assert.match(qa, /buyerCimExtras\(readerDeal as any, reader\.accessLevel, null\)/);
+  // The reader's own link (gl's per-buyer data-room tightening) since the dd merge (INTEGRATION §2.2).
+  assert.match(qa, /buyerCimExtras\(readerDeal as any, reader\.accessLevel, reader\.id \?\? null\)/);
   assert.equal(figureNotesContext(null, []), "");
 });
 
