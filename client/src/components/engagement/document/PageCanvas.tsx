@@ -50,6 +50,7 @@ import {
   type RenditionPage,
 } from "@shared/analytics-v2";
 import type { CimSection } from "@shared/schema";
+import { cn } from "@/lib/utils";
 import { CimBlocksProvider } from "@/components/cim/blocks";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { CimDesignProvider, buildCimDesign, type CimDesignPayload } from "@/components/cim/CimDesignContext";
@@ -349,7 +350,11 @@ function WashOverlay({ t, card, showHeat, touch, wrapRef, onWashTap }: {
         <button
           type="button"
           data-heat-wash-badge
-          className="pointer-events-auto absolute right-3 top-3 rounded-[4px] px-2 py-1 text-[11px] font-medium tabular-nums shadow-sm outline-none focus-visible:ring-2"
+          className={
+            touch
+              ? "pointer-events-auto absolute right-1.5 top-1.5 rounded-[4px] px-1.5 py-0.5 text-[10px] font-medium tabular-nums shadow-sm outline-none focus-visible:ring-2"
+              : "pointer-events-auto absolute right-3 top-3 rounded-[4px] px-2 py-1 text-[11px] font-medium tabular-nums shadow-sm outline-none focus-visible:ring-2"
+          }
           style={{ color: INK, background: "rgba(251, 249, 244, 0.92)", border: `1px solid ${edge}` }}
           aria-label={describe}
           onFocus={(e) => { const r = e.currentTarget.getBoundingClientRect(); setFocusAt({ x: r.left, y: r.bottom }); }}
@@ -483,7 +488,10 @@ const HeatOverlay = memo(function HeatOverlay({
       })}
       {showHeat && page.heat?.basis === "mixed" && page.heat.pageOnlyMs >= 1000 && (
         <span
-          className="absolute right-3 top-3 rounded-[4px] px-2 py-1 text-[11px] font-medium tabular-nums"
+          className={cn(
+            "absolute rounded-[4px] font-medium tabular-nums",
+            touch ? "right-1.5 top-1.5 px-1.5 py-0.5 text-[10px]" : "right-3 top-3 px-2 py-1 text-[11px]",
+          )}
           style={{ color: INK, background: "rgba(251, 249, 244, 0.92)", border: `1px solid ${BRASS}` }}
           data-heat-mixed-badge
         >

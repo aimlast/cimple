@@ -31,11 +31,21 @@ export function PageRail({
   const ordered = orderPages(pages, order);
   const maxMs = Math.max(0, ...pages.map((p) => p.attentionMs));
 
-  // Keep the open page's tile in view (scrolls the rail only, never the page).
+  // Keep the open page's tile in view (scrolls the rail only, never the page),
+  // also once the rail settles to its final height (it is sized by the window).
   useEffect(() => {
     const list = listRef.current;
-    const el = list?.querySelector<HTMLElement>(`[data-rail-index="${selectedIndex}"]`);
-    if (list && el) keepInView(list, el, "y");
+    if (!list) return;
+    const show = () => {
+      const el = list.querySelector<HTMLElement>(`[data-rail-index="${selectedIndex}"]`);
+      if (el) keepInView(list, el, "y");
+    };
+    show();
+    if (typeof ResizeObserver === "undefined") return;
+    let last = list.clientHeight;
+    const ro = new ResizeObserver(() => { if (list.clientHeight !== last) { last = list.clientHeight; show(); } });
+    ro.observe(list);
+    return () => ro.disconnect();
   }, [selectedIndex, order]);
 
   const onKey = (e: React.KeyboardEvent) => {
@@ -145,8 +155,14 @@ function keepInView(list: HTMLElement, el: HTMLElement, axis: "x" | "y") {
   if (axis === "y") {
     const top = el.offsetTop;
     const bottom = top + el.offsetHeight;
-    if (top < list.scrollTop) list.scrollTop = Math.max(0, top - 8);
-    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight + 8;
+    // Only the part of the rail that is on screen counts (the rail can be taller than what the window shows).
+    const r = list.getBoundingClientRect();
+    const hiddenAbove = Math.max(0, -r.top);
+    const onScreen = Math.max(el.offsetHeight + 16, Math.min(list.clientHeight, (typeof window !== "undefined" ? window.innerHeight : list.clientHeight) - Math.max(0, r.top)) - hiddenAbove);
+    const visTop = list.scrollTop + hiddenAbove;
+    const visBottom = visTop + onScreen;
+    if (top < visTop) list.scrollTop = Math.max(0, top - 8 - hiddenAbove);
+    else if (bottom > visBottom) list.scrollTop = Math.max(0, bottom - onScreen + 8 - hiddenAbove);
   } else {
     list.scrollLeft = Math.max(0, el.offsetLeft - (list.clientWidth - el.offsetWidth) / 2);
   }

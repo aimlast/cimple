@@ -363,6 +363,10 @@ test("rank on the page: '3rd most-read of 29', 'Most-read of 29', nothing for an
   assert.equal(pageRank(pages, pages[1])!.text, "Most-read of 5");
   assert.equal(pageRank(pages, pages[2])!.text, "3rd most-read of 5");
   assert.equal(pageRank(pages, pages[4]), null);
+  // A section printed as two parts ("2a", "2b") is one page, its parts' time together.
+  const split = [{ pageId: "a", part: 0, index: 0, attentionMs: 10_000 }, { pageId: "b", part: 0, index: 1, attentionMs: 6_000 }, { pageId: "b", part: 1, index: 2, attentionMs: 6_000 }];
+  assert.equal(pageRank(split, split[2])!.text, "Most-read of 2");
+  assert.equal(pageRank(split, split[0])!.text, "2nd most-read of 2");
   assert.deepEqual([1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 101].map(ordinal), ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd", "101st"]);
   assert.equal(pageHeatMaxMs(pages), 30_000);
 });
@@ -406,6 +410,8 @@ test("Why? lists every note that applies, in plain words", () => {
   assert.match(notes[5].text, /^This is an example deal\./);
   const held = whyNotes(hp(60_000, heat("parts")), docOf({ versionNote: { kind: "held", sample: true } }), ctx());
   assert.equal(held[0].text, "Buyers haven't seen this version yet. This sample reading is drawn on the version they'll get when you publish.");
+  const heldBlind = whyNotes(hp(60_000, heat("parts")), docOf({ versionNote: { kind: "held", sample: false } }), ctx({ blind: true }));
+  assert.equal(heldBlind[1].text, "Blind version: what blind buyers will see when you publish. Page titles in the list are the real ones, for you.");
   const heldReal = whyNotes(hp(60_000, heat("parts")), docOf({ versionNote: { kind: "held", sample: false } }), ctx());
   assert.equal(heldReal[0].text, "Buyers haven't seen this version yet. Shading shows the time they spent on the matching page of the version they read.");
   const named = whyNotes(hp(60_000, heat("parts")), docOf(), ctx({ blind: true, showNamed: true, sameLayout: false }));

@@ -369,18 +369,27 @@ export function ordinal(n: number): string {
 
 /**
  * Where a page ranks by reading time among the CIM's pages: rank (1 = most
- * read; ties share the earlier page's rank order), out of how many, and the
- * words ("3rd most-read of 29", "Most-read of 29"). Null for a page nobody read.
+ * read; ties go to the earlier page), out of how many, and the words ("3rd
+ * most-read of 29", "Most-read of 29"). A long section printed as parts
+ * ("7a", "7b") is one page here, with its parts' time together, so the count
+ * matches "Page 12 of 28". Null for a page nobody read.
  */
 export function pageRank(
   pages: ReadonlyArray<Pick<DocumentPage, "pageId" | "part" | "index" | "attentionMs">>,
   page: Pick<DocumentPage, "pageId" | "part" | "attentionMs">,
 ): { rank: number; of: number; text: string } | null {
   if (!(page.attentionMs > 0)) return null;
-  const sorted = [...pages].sort((a, b) => b.attentionMs - a.attentionMs || a.index - b.index);
-  const rank = sorted.findIndex((p) => p.pageId === page.pageId && p.part === page.part) + 1;
+  const byPage = new Map<string, { ms: number; first: number }>();
+  for (const p of pages) {
+    const e = byPage.get(p.pageId) ?? { ms: 0, first: p.index };
+    e.ms += p.attentionMs;
+    e.first = Math.min(e.first, p.index);
+    byPage.set(p.pageId, e);
+  }
+  const sorted = Array.from(byPage.entries()).sort((a, b) => b[1].ms - a[1].ms || a[1].first - b[1].first);
+  const rank = sorted.findIndex(([id]) => id === page.pageId) + 1;
   if (rank <= 0) return null;
-  const of = pages.length;
+  const of = byPage.size;
   return { rank, of, text: rank === 1 ? `Most-read of ${of}` : `${ordinal(rank)} most-read of ${of}` };
 }
 
@@ -544,7 +553,9 @@ export function whyNotes(page: PageForStatus | null, doc: DocForStatus, ctx: Sta
         ? "The named version's parts differ from what blind buyers saw, so the whole page is shaded by its reading time."
         : ctx.showNamed
           ? "Named version, for your reference. Blind buyers saw the codename version of this page; the colours are theirs."
-          : "Blind version: exactly what blind buyers saw. Page titles in the list are the real ones, for you.",
+          : v?.kind === "held"
+            ? "Blind version: what blind buyers will see when you publish. Page titles in the list are the real ones, for you."
+            : "Blind version: exactly what blind buyers saw. Page titles in the list are the real ones, for you.",
     });
   }
   if (doc.reachBasis === "old_tracking") {

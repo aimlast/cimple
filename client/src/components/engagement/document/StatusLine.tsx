@@ -40,7 +40,12 @@ export function StatusLine({
               {sentence ? "Why?" : (<><Info className="h-3 w-3" aria-hidden /> About this reading</>)}
             </button>
           </PopoverTrigger>
-          <PopoverContent align="start" className="w-[min(22rem,calc(100vw-2rem))] space-y-3 p-4 text-xs" data-testid="heat-status-notes">
+          <PopoverContent
+            align="start"
+            collisionPadding={12}
+            className="max-h-[min(28rem,var(--radix-popover-content-available-height))] w-[min(22rem,calc(100vw-2rem))] space-y-3 overflow-y-auto overscroll-contain p-4 text-xs"
+            data-testid="heat-status-notes"
+          >
             {notes.map((n) => (
               <div key={n.key} className="space-y-0.5">
                 <p className="font-semibold text-foreground">{n.title}</p>
