@@ -677,7 +677,7 @@ export function refuseReason(
   owner: string | null | undefined,
   buyers: ReadonlyArray<{ email: string | null }>,
   realVisitCount: number,
-  env: { ANTHROPIC_API_KEY?: string } = process.env,
+  env: { ANTHROPIC_API_KEY?: string } = { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY },
 ): string | null {
   const key = env.ANTHROPIC_API_KEY;
   if (key && key !== "disabled" && key !== "unused") return "Run this with ANTHROPIC_API_KEY=disabled (it never calls the AI).";
