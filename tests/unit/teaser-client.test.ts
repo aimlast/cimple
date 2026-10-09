@@ -143,6 +143,23 @@ test("the Teaser tab's summary: the green tick only when nothing is held and the
   // A hidden block the broker took off isn't counted.
   const hidden = checkSummary({ ...doc, blocks: [doc.blocks[0], { ...doc.blocks[1], hidden: true }] }, [ok, { ...ok, blockId: "hl", held: true, reason: "x" }], null);
   assert.equal(hidden.clean, true);
+  // Checker r2 (R2-1): a codename problem stops publishing — no tick above it; the codename line leads and says where to fix it.
+  const problem = "It shares “Coast” with “Pacific Coast Logistics Ltd.”.";
+  const underReview = checkSummary(doc, [ok, { ...ok, blockId: "hl" }], null, { problem, served: "Project Coastline", dealCodename: "Project Shoreline" });
+  assert.equal(underReview.clean, false, "no green tick above the codename problem");
+  assert.equal(underReview.codename!.fixAt, "overview");
+  assert.equal(underReview.codename!.text, `Blind buyers still read the published CIM under “Project Coastline”, which could point to the business: ${problem} Publish the CIM update on the Overview so they get “Project Shoreline”, then publish the teaser.`);
+  const own = checkSummary(doc, [ok, { ...ok, blockId: "hl" }], null, { problem, served: "Project Coastline", dealCodename: "Project Coastline" });
+  assert.equal(own.clean, false);
+  assert.equal(own.codename!.fixAt, "versions");
+  assert.match(own.codename!.text, /^The codename could point buyers to the business: .* Change it on the Versions tab \(Blind CIM card\) before publishing\.$/);
+  const fine = checkSummary(doc, [ok, { ...ok, blockId: "hl" }], null, { problem: null, served: "Project Drift", dealCodename: "Project Drift" });
+  assert.deepEqual([fine.clean, fine.codename], [true, null]);
+  // Every combination: the tick and a problem line are never both shown.
+  for (const cp of [null, problem]) for (const hp of [null, "x"]) for (const held of [false, true]) {
+    const r = checkSummary(doc, [{ ...ok, held, reason: held ? "it names “X”" : null }, { ...ok, blockId: "hl" }], hp, { problem: cp, served: "Project A", dealCodename: "Project A" });
+    assert.equal(r.clean, !r.codename && !r.header && !r.held, `tick xor problems (${cp}/${hp}/${held})`);
+  }
 });
 
 test("on paper the 'ask from this page' step names the firm and its contact; the Questions line goes", () => {

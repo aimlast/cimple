@@ -67,6 +67,21 @@ export async function buyerTeaserFor(deal: Deal, row: TeaserRow, opts: { draft?:
   return { teaser, design, contact, codename };
 }
 
+/**
+ * Who the link was sent to, as the page may show it. Teaser links go out in
+ * bulk and still open when forwarded, so until the link's own address is
+ * confirmed (the 6-digit code, a signed-in account with that address, or a
+ * demo deal) the page gets the MASKED address — the watermark uses it — and
+ * no name. After the check, the full address and name.
+ */
+export function linkRecipientFor(
+  access: Pick<BuyerAccess, "buyerEmail" | "buyerName">,
+  check: { verified: boolean; maskedEmail: string },
+): { buyerEmail: string; buyerName: string | null } {
+  if (check.verified) return { buyerEmail: access.buyerEmail, buyerName: access.buyerName ?? null };
+  return { buyerEmail: check.maskedEmail, buyerName: null };
+}
+
 export const TEASER_NOT_PUBLISHED = { code: "not_published", teaser: true, error: "This summary isn't available right now." } as const;
 
 type RenditionWriterLike = import("../analytics/renditions").RenditionWriter;
@@ -113,13 +128,14 @@ export async function serveTeaser(req: Request, res: Response, access: BuyerAcce
   ]);
   const req2 = requestStateFor(access.id, requests as never);
   const pass = latestPass(access);
+  const who = linkRecipientFor(access, emailCheck);
   res.json({
     document: "teaser",
     access: {
       id: access.id,
       dealId: access.dealId,
-      buyerEmail: access.buyerEmail,
-      buyerName: access.buyerName,
+      buyerEmail: who.buyerEmail,
+      buyerName: who.buyerName,
       accessLevel: TEASER_ACCESS_LEVEL,
       ndaSigned: access.ndaSigned,
       ndaSignedAt: access.ndaSignedAt,

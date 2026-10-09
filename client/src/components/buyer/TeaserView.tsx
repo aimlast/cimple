@@ -29,7 +29,9 @@ export interface TeaserViewData {
   access: {
     id: string;
     dealId: string;
+    /** The link's address — MASKED ("n•••@firm.com") until the email check is done; the watermark uses it. */
     buyerEmail: string;
+    /** Null until the email check is done (a forwarded link never shows the recipient's name). */
     buyerName: string | null;
     accessLevel: string;
     ndaSigned: boolean | null;

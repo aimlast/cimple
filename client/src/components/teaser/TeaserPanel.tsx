@@ -187,7 +187,7 @@ function TeaserWritten({ dealId, api, state }: { dealId: string; api: TeaserApi;
   const design = useMemo(() => buildCimDesign(state.design ?? null, "blind"), [state.design]);
   const sections = useMemo(() => draftSections(t.draft, dealId, state.fill), [t.draft, dealId, state.fill]);
   const header = t.draft.header ? { ...t.draft.header, codename: t.codename } : null;
-  const summary = checkSummary(t.draft, t.checks, t.headerProblem);
+  const summary = checkSummary(t.draft, t.checks, t.headerProblem, { problem: t.codenameProblem, served: t.codename, dealCodename });
   const pin = pinpointBlocks(t.draft, t.checks);
   const visibleBlocks = t.draft.blocks.filter((b) => !b.hidden && !b.placeholder).length;
   const placeholders = t.draft.blocks.filter((b) => b.placeholder).length;
@@ -246,7 +246,22 @@ function TeaserWritten({ dealId, api, state }: { dealId: string; api: TeaserApi;
         </button>
 
         <div className="min-w-0 flex-1 space-y-3">
-          {/* The check line: the green tick only when nothing is held and the header is clean (never "Anonymous ✓"). */}
+          {/* The codename leads: it stops the teaser from being published. */}
+          {summary.codename && (
+            <div className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs" role="alert" data-testid="teaser-codename-problem">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+              <span className="min-w-0 flex-1">{summary.codename.text}</span>
+              <button
+                type="button"
+                className="shrink-0 text-teal hover:underline"
+                onClick={() => navigate(summary.codename!.fixAt === "overview" ? `/deal/${dealId}/overview` : `/deal/${dealId}/cim?view=versions`)}
+                data-testid="button-teaser-codename-fix"
+              >
+                {summary.codename.fixAt === "overview" ? "Go to the Overview" : "Change it"}
+              </button>
+            </div>
+          )}
+          {/* The check line: the green tick only when nothing is held, the header is clean and the codename is fine (never "Anonymous ✓"). */}
           {summary.clean && (
             <div className="flex gap-2 text-xs" data-testid="teaser-check-summary">
               <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
@@ -296,17 +311,6 @@ function TeaserWritten({ dealId, api, state }: { dealId: string; api: TeaserApi;
               )}
             </div>
           )}
-          {t.codenameProblem && (
-            <p className="flex gap-2 text-xs text-amber-500" data-testid="teaser-codename-problem">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              {dealCodename && dealCodename !== t.codename ? (
-                <span>Blind buyers still read the published CIM under “{t.codename}”, which could point to the business: {t.codenameProblem} Publish the CIM update on the Overview so they get “{dealCodename}”, then publish the teaser.</span>
-              ) : (
-                <span>The codename could point buyers to the business: {t.codenameProblem} Change it on the Versions tab (Blind CIM card) before publishing.</span>
-              )}
-            </p>
-          )}
-
           {s.status !== "none" && (s.status === "published" || s.status === "offline" || s.counts.links > 0) && (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs" data-testid="teaser-counts">
               <span className="text-muted-foreground">

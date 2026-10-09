@@ -131,6 +131,10 @@ async function main() {
     assert.ok(JSON.stringify(v.json.teaser.blocks).includes("$17.5M–$20M"), "price as a range");
     assert.equal(v.json.emailCheck.needed, true);
     assert.equal(v.json.emailCheck.maskedEmail, "n•••@cascaderidge.invalid");
+    // Checker r2 (R2-6): a forwarded link shows neither the recipient's address nor their name before the code — the watermark uses the masked address.
+    assert.equal(v.json.access.buyerEmail, "n•••@cascaderidge.invalid");
+    assert.equal(v.json.access.buyerName, null);
+    for (const secret of ["natalie@cascaderidge.invalid", "Natalie", "Vasconcelos"]) assert.ok(!v.text.includes(secret), `${secret} must not be in the payload before the email check`);
     assert.deepEqual(v.json.cimRequest, { state: "none", at: null });
     assert.ok(v.json.reading?.renditionId, "reading present");
     assert.equal(v.json.reading.pageOrder[0], "teaser_header");
@@ -177,12 +181,24 @@ async function main() {
     assert.equal(v.status, 200, v.text);
     const p2 = await call("GET", `/api/view/${fwd.accessToken}/buyer-profile`);
     assert.equal(p2.status, 200, p2.text);
+    // …and the page itself now has the full address and the name (the watermark too).
+    const fv = await call("GET", `/api/view/${fwd.accessToken}`);
+    assert.equal(fv.status, 200, fv.text);
+    assert.deepEqual([fv.json.access.buyerEmail, fv.json.access.buyerName], ["anya@northfield.invalid", "Anya Brooks"]);
     assert.equal(p2.json.onFile.phone, "416-555-0142");
     assert.equal(p2.json.email, "anya@northfield.invalid");
     // A CIM-level link (personal, behind the NDA) is unchanged.
     const cim = mkAccess({ accessLevel: "blind", buyerEmail: "anya@northfield.invalid", buyerUserId: "BU-ANYA" });
     assert.equal((await call("GET", `/api/view/${cim.accessToken}/buyer-profile`)).status, 200);
     h.codes.splice(0, h.codes.length);
+  });
+
+  await check("the page shows who the link was sent to only once the address is confirmed (code, own account or demo deal)", async () => {
+    const { linkRecipientFor } = await import("../../server/teaser/serve");
+    const a = { buyerEmail: "natalie@cascaderidge.invalid", buyerName: "Natalie Vasconcelos" };
+    assert.deepEqual(linkRecipientFor(a, { verified: false, maskedEmail: "n•••@cascaderidge.invalid" }), { buyerEmail: "n•••@cascaderidge.invalid", buyerName: null });
+    assert.deepEqual(linkRecipientFor(a, { verified: true, maskedEmail: "n•••@cascaderidge.invalid" }), { buyerEmail: "natalie@cascaderidge.invalid", buyerName: "Natalie Vasconcelos" });
+    assert.deepEqual(linkRecipientFor({ buyerEmail: "x@y.invalid", buyerName: null }, { verified: true, maskedEmail: "x•••@y.invalid" }), { buyerEmail: "x@y.invalid", buyerName: null });
   });
 
   await check("sign-nda on a teaser link without the email check → 400 email_check_required", async () => {

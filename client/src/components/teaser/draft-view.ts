@@ -97,17 +97,43 @@ export function heldBlocks(doc: TeaserDoc | null | undefined, checks: TeaserBloc
 }
 
 /**
+ * The codename line: why the codename blocks publishing, and where to fix it.
+ * `served` is the codename blind buyers read now; `dealCodename` the deal's
+ * (they differ while a live CIM's update waits for review — buyers keep the
+ * published copy's codename until the update is published).
+ */
+export function codenameSentence(problem: string | null | undefined, served: string, dealCodename: string | null | undefined): { text: string; fixAt: "overview" | "versions" } | null {
+  if (!problem) return null;
+  if (dealCodename && dealCodename !== served) {
+    return {
+      text: `Blind buyers still read the published CIM under “${served}”, which could point to the business: ${problem} Publish the CIM update on the Overview so they get “${dealCodename}”, then publish the teaser.`,
+      fixAt: "overview",
+    };
+  }
+  return { text: `The codename could point buyers to the business: ${problem} Change it on the Versions tab (Blind CIM card) before publishing.`, fixAt: "versions" };
+}
+
+/**
  * The Teaser tab's check summary. The green "No names, places or contacts
- * found" shows only when nothing is held and the header is clean; otherwise
- * the red lines lead (a tick above "1 block is held back" contradicted it).
+ * found" shows only when nothing is held, the header is clean AND the
+ * codename is fine; otherwise the problem lines lead — the codename first,
+ * since it stops the teaser from being published (a tick above "1 block is
+ * held back" or above a codename problem contradicted it).
  */
 export function checkSummary(
   doc: TeaserDoc | null | undefined,
   checks: TeaserBlockCheck[] | null | undefined,
   headerProblem: string | null | undefined,
-): { clean: boolean; header: string | null; held: { blocks: TeaserBlock[]; sentence: string } | null } {
+  codename?: { problem: string | null | undefined; served: string; dealCodename: string | null | undefined } | null,
+): {
+  clean: boolean;
+  codename: { text: string; fixAt: "overview" | "versions" } | null;
+  header: string | null;
+  held: { blocks: TeaserBlock[]; sentence: string } | null;
+} {
   const held = heldBlocks(doc, checks);
   const header = headerProblem ? "The header names the business, so buyers see a plain header instead. Open the header in the editor to reword it." : null;
+  const name = codename ? codenameSentence(codename.problem, codename.served, codename.dealCodename) : null;
   let sentence = "";
   if (held.length > 0) {
     const names = held.map((b) => blockName(b)).join(", ");
@@ -118,7 +144,12 @@ export function checkSummary(
       ? `${n === 1 ? "1 block names" : `${n} blocks name`} something that could identify the business, so buyers won't see ${it}: ${names}. Open ${it} in the editor to reword.`
       : `${n === 1 ? "1 block is held back" : `${n} blocks are held back`} from buyers: ${names}. Open ${it} in the editor to fix ${it}.`;
   }
-  return { clean: held.length === 0 && !header, header, held: held.length > 0 ? { blocks: held, sentence } : null };
+  return {
+    clean: held.length === 0 && !header && !name,
+    codename: name,
+    header,
+    held: held.length > 0 ? { blocks: held, sentence } : null,
+  };
 }
 
 /** Visible blocks with pinpointing wording. */
