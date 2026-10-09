@@ -20,7 +20,7 @@ import { brightwater } from "./_brightwater";
 import { refreshGl } from "../../server/gl/service";
 import { GlLedgerNotFound, isBuyerVisibleLedger, isGlDocument, ledgerRowsForBuyer, ledgerStatusForVdr } from "../../server/gl/viewer";
 
-const B = brightwater({ extractedInfo: { ownerName: "Dan Brightwater", keyEmployees: "Mei Chen (office manager), Raj Singh (lead plumber)", _brokerPrivateNotes: ["Harvest Lane bid — keep out of the CIM."] } } as any);
+const B = brightwater({ extractedInfo: { ownerName: "Dan Brightwater", keyEmployees: "Mei Chen (office manager), Raj Singh (lead plumber)", salesPipeline: "A bid for Harvest Lane is pending.", _brokerPrivateNotes: ["Harvest Lane bid — keep out of the CIM."] } } as any);
 const dealId = B.deal.id;
 const doc = await B.readLedger("qbo-classic.csv");
 await refreshGl(dealId, { force: true });
@@ -106,6 +106,72 @@ await test("the view is logged once per new query", async () => {
   await ledgerRowsForBuyer(dd, doc.id, { q: "Petro" });
   assert.equal(logs.length, 1, "Lexus was logged in an earlier test; Petro is new");
   assert.equal(logs[0].q, "Petro");
+});
+
+await test("an account titled with a kept-out party or an employee: folded in the list, its own key finds nothing (checker r2 GL-R2-01)", async () => {
+  const data = (store as any).data as { transactions: any[] };
+  const legal = data.transactions.filter((r) => r.ledgerId === ledger.id && /legal/i.test(r.account));
+  assert.ok(legal.length > 0);
+  for (const r of legal) { r.account = "Consulting - Harvest Lane"; r.accountKey = "consulting - harvest lane"; }
+  const wages = data.transactions.filter((r) => r.ledgerId === ledger.id && r.accountKey === "wages and salaries").slice(0, 5);
+  for (const r of wages) { r.account = "Wages - M. Chen"; r.accountKey = "wages m chen"; }
+  try {
+    const all = await ledgerRowsForBuyer(dd, doc.id, {});
+    const shown = JSON.stringify(all.accounts);
+    assert.ok(!/harvest/i.test(shown), `the account list names the kept-out party: ${shown}`);
+    assert.ok(!/chen/i.test(shown), "the account list names an employee");
+    const other = all.accounts.find((a) => a.account === "Other account");
+    assert.ok(other && other.accountKey === "withheld-other" && other.lines === legal.length, "one folded entry with an opaque key");
+    const staff = all.accounts.find((a) => a.account === "Employee pay account");
+    assert.ok(staff && staff.accountKey === "withheld-staff" && staff.lines === wages.length);
+    assert.ok(all.accounts.some((a) => a.accountKey === "wages officers" && a.account === "Wages - Officers"), "an ordinary account keeps its title and key");
+
+    // The account's own key (as the checker guessed it) finds nothing — the same as an account that doesn't exist.
+    for (const key of ["consulting - harvest lane", "wages m chen", "no such account"]) {
+      const r = await ledgerRowsForBuyer(dd, doc.id, { account: key });
+      assert.equal(r.total, 0, key);
+      const s = await ledgerRowsForBuyer(dd, doc.id, { account: key, q: "e" });
+      assert.equal(s.total, 0, `${key} (search)`);
+    }
+    // The opaque key opens the folded rows, every one masked.
+    const folded = await ledgerRowsForBuyer(dd, doc.id, { account: "withheld-other" });
+    assert.equal(folded.total, legal.length);
+    assert.ok(folded.rows.every((r) => r.account === "Other account" && r.withheld === "keep_out" && r.name === null));
+    const pay = await ledgerRowsForBuyer(dd, doc.id, { account: "withheld-staff" });
+    assert.equal(pay.total, wages.length);
+    assert.ok(pay.rows.every((r) => r.account === "Employee pay account" && r.name === null));
+    // A year filter keeps the folded key working (the map is over the whole ledger).
+    const y = legal[0].fiscalYear;
+    const inYear = await ledgerRowsForBuyer(dd, doc.id, { account: "withheld-other", fy: y });
+    assert.equal(inYear.total, legal.filter((r) => r.fiscalYear === y).length);
+    // Searching the party's name finds nothing; the page's rows never carry it.
+    const h = await ledgerRowsForBuyer(dd, doc.id, { q: "Harvest" });
+    assert.equal(h.total, 0);
+    assert.ok(!/harvest|chen/i.test(JSON.stringify((await ledgerRowsForBuyer(dd, doc.id, { page: 0 })).rows)));
+    // The broker's "show staff names" brings the employee's pay account back (the kept-out party stays folded).
+    await store.updateLedger(ledger.id, { showStaffNames: true } as any);
+    const withNames = await ledgerRowsForBuyer(dd, doc.id, {});
+    assert.ok(withNames.accounts.some((a) => a.account === "Wages - M. Chen"));
+    assert.ok(!/harvest/i.test(JSON.stringify(withNames.accounts)));
+  } finally {
+    await store.updateLedger(ledger.id, { showStaffNames: false } as any);
+    for (const r of legal) { r.account = "Legal & Professional Fees"; r.accountKey = "legal and professional fees"; }
+    for (const r of wages) { r.account = "Wages & Salaries"; r.accountKey = "wages and salaries"; }
+  }
+});
+
+await test("the owner's own pay account keeps its title (the add-back's party)", async () => {
+  const data = (store as any).data as { transactions: any[] };
+  const officers = data.transactions.filter((r) => r.ledgerId === ledger.id && r.accountKey === "wages officers");
+  for (const r of officers) { r.account = "Salary - D. Brightwater"; r.accountKey = "salary d brightwater"; }
+  try {
+    const all = await ledgerRowsForBuyer(dd, doc.id, {});
+    assert.ok(all.accounts.some((a) => a.account === "Salary - D. Brightwater" && a.accountKey === "salary d brightwater"));
+    const own = await ledgerRowsForBuyer(dd, doc.id, { account: "salary d brightwater" });
+    assert.ok(own.total > 0 && own.rows.every((r) => r.account === "Salary - D. Brightwater"));
+  } finally {
+    for (const r of officers) { r.account = "Wages - Officers"; r.accountKey = "wages officers"; }
+  }
 });
 
 cleanup(B.w);

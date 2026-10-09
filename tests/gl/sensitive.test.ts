@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { test, done } from "./_harness";
-import { maskForBuyer, maskLongNumbers, type BuyerMaskContext } from "../../server/gl/sensitive";
+import { buyerAccountLabel, maskForBuyer, maskLongNumbers, type BuyerMaskContext } from "../../server/gl/sensitive";
 
 const base: BuyerMaskContext = { staffNames: ["Priya Shah", "Daniel Okafor"], heldNames: [], parties: [{ first: "tony", last: "moretti" }], personalAddback: false, showStaffNames: false };
 
@@ -65,6 +65,20 @@ await test("account and card numbers keep their last 4", () => {
   assert.equal(maskLongNumbers("Invoice 2024-118"), "Invoice 2024-118");
   const m = maskForBuyer({ account: "Bank charges", name: "RBC", memo: "Acct 00123456789" }, base);
   assert.equal(m.memo, "Acct ••••6789");
+});
+
+await test("account titles: a held party → 'Other account'; an employee's pay account → 'Employee pay account'; others unchanged", () => {
+  const ctx = { ...base, heldNames: ["Harvest Lane"], staffNames: ["Mei Chen"], parties: [{ first: "dan", last: "brightwater" }] };
+  assert.equal(buyerAccountLabel("Consulting - Harvest Lane", ctx), "Other account");
+  assert.equal(buyerAccountLabel("Wages - M. Chen", ctx), "Employee pay account", "an initial and a surname");
+  assert.equal(buyerAccountLabel("Salaries:Mei Chen", ctx), "Employee pay account", "known staff from the facts");
+  assert.equal(buyerAccountLabel("Salary - D. Brightwater", ctx), "Salary - D. Brightwater", "the add-back's own party");
+  assert.equal(buyerAccountLabel("Wages - Office Staff", ctx), "Wages - Office Staff", "Title Case words are not a person");
+  assert.equal(buyerAccountLabel("Wages - Service Technicians", ctx), "Wages - Service Technicians");
+  assert.equal(buyerAccountLabel("Consulting - M. Chen", ctx), "Consulting - M. Chen", "only pay accounts fold for staff");
+  assert.equal(buyerAccountLabel("Wages - M. Chen", { ...ctx, showStaffNames: true }), "Wages - M. Chen", "the broker shows staff names");
+  const row = maskForBuyer({ account: "Wages - M. Chen", name: "Payroll", memo: "Pay run" }, ctx);
+  assert.equal(row.account, "Employee pay account", "a row's account folds the same way");
 });
 
 done("sensitive");

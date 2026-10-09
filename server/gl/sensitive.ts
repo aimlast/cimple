@@ -79,6 +79,45 @@ export function maskLongNumbers(text: string | null): string | null {
   });
 }
 
+/** What a buyer reads instead of an account title that names a held or kept-out party ("Consulting — Harvest Lane"). */
+export const GL_OTHER_ACCOUNT = "Other account";
+/** What a buyer reads instead of a pay account titled with an employee's name ("Wages — K. Holt"). */
+export const GL_STAFF_PAY_ACCOUNT = "Employee pay account";
+
+/** "K. Holt", "D. Brightwater" — an initial and a surname: a person, whatever the words around it. */
+const INITIAL_SURNAME_RE = /\b([A-Z])\.\s?([A-Z][a-z]+(?:[-'][A-Z][a-z]+)?)\b/g;
+
+/** People an account title names: known staff (from the facts) and initial + surname forms — never Title Case words alone ("Wages — Office Staff" names nobody). */
+function peopleInAccount(account: string, staffNames: string[]): Person[] {
+  const out: Person[] = [];
+  for (const m of Array.from(account.matchAll(INITIAL_SURNAME_RE))) out.push({ first: m[1].toLowerCase(), last: m[2].toLowerCase() });
+  const staff = staffNames.length ? mentionsHeldName(account, staffNames) : null;
+  if (staff) {
+    const p = personsIn(staff)[0];
+    if (p) out.push(p);
+    else out.push({ first: "", last: staff.toLowerCase() });
+  }
+  return out;
+}
+
+/**
+ * The account title as a buyer may read it (gl spec §9.2, checker r2): a
+ * title naming a held or kept-out party → "Other account"; a pay account
+ * titled with an employee (not the add-back's own party) → "Employee pay
+ * account", unless the broker shows staff names. Used for every row AND
+ * the account list, so a name withheld from the rows never reaches the
+ * buyer through the list or its filter.
+ */
+export function buyerAccountLabel(account: string, ctx: Pick<BuyerMaskContext, "heldNames" | "staffNames" | "parties" | "showStaffNames">): string {
+  if (!account) return account;
+  if (ctx.heldNames.length > 0 && mentionsHeldName(account, ctx.heldNames)) return GL_OTHER_ACCOUNT;
+  if (!ctx.showStaffNames && PAYROLL_ACCOUNT_RE.test(account)) {
+    const people = peopleInAccount(account, ctx.staffNames);
+    if (people.some((p) => !ctx.parties.some((q) => q.last === p.last && (!p.first || !q.first || q.first[0] === p.first[0])))) return GL_STAFF_PAY_ACCOUNT;
+  }
+  return account;
+}
+
 /** A party of the add-back named in this text (the owner on "Payroll — D. Moretti"). */
 function namesAParty(text: string, parties: Person[]): boolean {
   return !!text.trim() && parties.some((p) => namesPerson(text, p, parties));
@@ -105,10 +144,11 @@ export function maskForBuyer(row: MaskableRow, ctx: BuyerMaskContext, showDetail
   const account = row.account ?? "";
   const name = (row.name ?? "").trim() || null;
   const memo = (row.memo ?? "").trim() || null;
-  const reveal = (): BuyerMaskedEntry => ({ account, name: maskLongNumbers(name), memo: maskLongNumbers(memo) });
+  // A held name or an employee in the account title itself goes too ("Consulting — Harvest Lane").
+  const shownAccount = buyerAccountLabel(account, ctx);
+  const reveal = (): BuyerMaskedEntry => ({ account: showDetails === true ? account : shownAccount, name: maskLongNumbers(name), memo: maskLongNumbers(memo) });
   const withhold = (kind: "personal" | "staff" | "keep_out"): BuyerMaskedEntry => ({
-    // A held name in the account itself goes too ("Consulting — Harvest Lane").
-    account: kind === "keep_out" && ctx.heldNames.length > 0 && mentionsHeldName(account, ctx.heldNames) ? "Other account" : account,
+    account: shownAccount,
     name: null,
     memo: GL_WITHHELD_WORDS[kind],
     withheld: kind,

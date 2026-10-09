@@ -18,6 +18,8 @@ export interface LedgerRowsQuery {
   ledgerId: string;
   fy?: string | null;
   accountKey?: string | null;
+  /** Any of these accounts (a buyer's folded "Other account"); an empty list matches nothing. */
+  accountKeys?: string[] | null;
   q?: string | null;
   page?: number;
   pageSize?: number;
@@ -116,7 +118,7 @@ export interface GlStore {
    * `limit` (2,000) candidates, in file order; the caller re-checks each on
    * the masked view.
    */
-  buyerSearchRows(q: { ledgerId: string; fy?: string | null; accountKey?: string | null; q: string; limit?: number }): Promise<GlTransaction[]>;
+  buyerSearchRows(q: { ledgerId: string; fy?: string | null; accountKey?: string | null; accountKeys?: string[] | null; q: string; limit?: number }): Promise<GlTransaction[]>;
   /**
    * "Move the ticked entries to…" (an add-back renamed by a re-run of the
    * analysis): the decided links of `from` for these years move to `to`;
@@ -199,6 +201,7 @@ function rowsWhere(q: LedgerRowsQuery): SQL {
   const parts: SQL[] = [eq(glTransactions.ledgerId, q.ledgerId)];
   if (q.fy) parts.push(eq(glTransactions.fiscalYear, q.fy));
   if (q.accountKey) parts.push(eq(glTransactions.accountKey, q.accountKey));
+  if (q.accountKeys) parts.push(q.accountKeys.length ? inArray(glTransactions.accountKey, q.accountKeys) : sql`false`);
   const term = (q.q ?? "").trim().slice(0, 100);
   if (term) parts.push(searchCondition(term));
   return and(...parts)!;
@@ -573,6 +576,7 @@ export const pgStore: GlStore = {
     const parts: SQL[] = [eq(glTransactions.ledgerId, q.ledgerId)];
     if (q.fy) parts.push(eq(glTransactions.fiscalYear, q.fy));
     if (q.accountKey) parts.push(eq(glTransactions.accountKey, q.accountKey));
+    if (q.accountKeys) parts.push(q.accountKeys.length ? inArray(glTransactions.accountKey, q.accountKeys) : sql`false`);
     const never = sql`(lower(${glTransactions.account}) LIKE ${like} ESCAPE '\\' OR lower(coalesce(${glTransactions.txnNumber}, '')) LIKE ${like} ESCAPE '\\'${cents !== null ? sql` OR abs(${glTransactions.amountCents}) = ${Math.abs(cents)}` : sql``})`;
     const words = sql`(${glTransactions.accountKey} !~* ${PAYROLL_KEY_SQL} AND (lower(coalesce(${glTransactions.name}, '')) LIKE ${like} ESCAPE '\\' OR lower(coalesce(${glTransactions.memo}, '')) LIKE ${like} ESCAPE '\\'))`;
     parts.push(sql`(${never} OR ${words})`);
@@ -671,6 +675,7 @@ export function memoryStore(data: MemoryStoreData = { tracing: [], ledgers: [], 
     if (t.ledgerId !== q.ledgerId) return false;
     if (q.fy && t.fiscalYear !== q.fy) return false;
     if (q.accountKey && t.accountKey !== q.accountKey) return false;
+    if (q.accountKeys && !q.accountKeys.includes(t.accountKey)) return false;
     const term = (q.q ?? "").trim().slice(0, 100).toLowerCase();
     if (term) {
       const cents = /\d/.test(term) ? parseMoneyToCents(term) : null;
@@ -949,7 +954,7 @@ export function memoryStore(data: MemoryStoreData = { tracing: [], ledgers: [], 
       const cents = /\d/.test(term) ? parseMoneyToCents(term) : null;
       const has = (v: string | null | undefined) => (v ?? "").toLowerCase().includes(term);
       return data.transactions
-        .filter((t) => t.ledgerId === q.ledgerId && (!q.fy || t.fiscalYear === q.fy) && (!q.accountKey || t.accountKey === q.accountKey))
+        .filter((t) => t.ledgerId === q.ledgerId && (!q.fy || t.fiscalYear === q.fy) && (!q.accountKey || t.accountKey === q.accountKey) && (!q.accountKeys || q.accountKeys.includes(t.accountKey)))
         .filter((t) => has(t.account) || has(t.txnNumber) || (cents !== null && Math.abs(t.amountCents) === Math.abs(cents)) || (!PAYROLL_KEY_RE.test(t.accountKey) && (has(t.name) || has(t.memo))))
         .sort((a, b) => a.rowNo - b.rowNo)
         .slice(0, Math.min(q.limit ?? 2000, 2000));

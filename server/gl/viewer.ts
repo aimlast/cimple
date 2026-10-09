@@ -18,7 +18,7 @@ import { glStore } from "./store";
 import { isGlDocument } from "./audience";
 import { formatCount, formatPeriod, softwareLabel } from "@shared/gl-copy";
 import type { GlLedgerStatus } from "@shared/gl-types";
-import { maskForBuyer, type BuyerMaskContext } from "./sensitive";
+import { buyerAccountLabel, maskForBuyer, GL_OTHER_ACCOUNT, GL_STAFF_PAY_ACCOUNT, type BuyerMaskContext } from "./sensitive";
 import { isBuyerVisibleLedger } from "./audience";
 import { personsFor } from "./match-run";
 import { personsIn, type Person } from "./match";
@@ -110,9 +110,14 @@ const BUYER_SEARCH_CAP = 2000;
 const loggedQueries = new Map<string, number>();
 
 /** The masking context of every row of a deal's ledgers, for one request. */
-async function rowMasking(dealId: string): Promise<{ maskFor: (t: GlTransaction, showStaffNames: boolean) => ReturnType<typeof maskForBuyer> }> {
+async function rowMasking(dealId: string): Promise<{
+  maskFor: (t: GlTransaction, showStaffNames: boolean) => ReturnType<typeof maskForBuyer>;
+  /** The account title as the buyer's account list shows it (every add-back's own parties count). */
+  accountLabel: (account: string, showStaffNames: boolean) => string;
+}> {
   const s = await loadEvidenceState(dealId);
   const owners: Person[] = personsIn(s.ownerText).slice(0, 3);
+  const allParties: Person[] = [...owners, ...s.traces.filter((t) => !t.removedAt).flatMap((t) => personsFor(t, s.ownerText))];
   const byRow = new Map<string, { parties: Person[]; personal: boolean; show: boolean | null }>();
   const traces = new Map(s.traces.map((t) => [t.id, t]));
   for (const k of s.links) {
@@ -137,9 +142,56 @@ async function rowMasking(dealId: string): Promise<{ maskFor: (t: GlTransaction,
         staffNames: s.staffNames, heldNames: s.heldNames, parties: r ? [...owners, ...r.parties] : owners,
         personalAddback: r?.personal ?? false, showStaffNames,
       };
-      return maskForBuyer({ account: t.account, name: t.name, memo: t.memo }, ctx, r?.show ?? null);
+      const m = maskForBuyer({ account: t.account, name: t.name, memo: t.memo }, ctx, r?.show ?? null);
+      // The account title exactly as the account list shows it (every add-back's parties count there).
+      return r?.show === true ? m : { ...m, account: buyerAccountLabel(t.account, { heldNames: s.heldNames, staffNames: s.staffNames, parties: allParties, showStaffNames }) };
     },
+    accountLabel: (account, showStaffNames) =>
+      buyerAccountLabel(account, { heldNames: s.heldNames, staffNames: s.staffNames, parties: allParties, showStaffNames }),
   };
+}
+
+/** The opaque keys a buyer filters folded accounts by (never the account's own key, which spells the name). */
+const FOLDED_KEY: Record<string, string> = { [GL_OTHER_ACCOUNT]: "withheld-other", [GL_STAFF_PAY_ACCOUNT]: "withheld-staff" };
+
+export interface BuyerAccountList {
+  /** What the buyer's account picker shows: folded accounts merged into one entry each, with an opaque key. */
+  accounts: Array<{ accountKey: string; account: string; lines: number; netCents: number }>;
+  /** Every key a buyer may filter by → the ledger's own account keys. */
+  keyMap: Map<string, string[]>;
+}
+
+/**
+ * A buyer's account list (pure): an account whose title the buyer may not
+ * read (a held or kept-out party, an employee's pay account) folds into one
+ * "Other account" / "Employee pay account" entry with an opaque key; the
+ * filter accepts only keys from this list, so a held account's own key
+ * ("consulting - harvest lane") finds nothing.
+ */
+export function foldAccountsForBuyer(
+  totals: ReadonlyArray<{ accountKey: string; account: string; lines: number; netCents: number }>,
+  labelOf: (account: string) => string,
+): BuyerAccountList {
+  const accounts: BuyerAccountList["accounts"] = [];
+  const keyMap = new Map<string, string[]>();
+  const folded = new Map<string, { accountKey: string; account: string; lines: number; netCents: number }>();
+  for (const a of totals) {
+    const label = labelOf(a.account);
+    const opaque = label !== a.account ? FOLDED_KEY[label] : undefined;
+    if (!opaque) {
+      accounts.push({ ...a });
+      keyMap.set(a.accountKey, [a.accountKey]);
+      continue;
+    }
+    const f = folded.get(opaque) ?? { accountKey: opaque, account: label, lines: 0, netCents: 0 };
+    f.lines += a.lines;
+    f.netCents += a.netCents;
+    folded.set(opaque, f);
+    keyMap.set(opaque, [...(keyMap.get(opaque) ?? []), a.accountKey]);
+  }
+  for (const f of Array.from(folded.values())) accounts.push(f);
+  accounts.sort((x, y) => y.lines - x.lines);
+  return { accounts, keyMap };
 }
 
 function shown(t: GlTransaction, m: ReturnType<typeof maskForBuyer>): BuyerLedgerRow {
@@ -176,18 +228,30 @@ export async function ledgerRowsForBuyer(ctx: GlBuyerDocCtx, documentId: string,
   const account = (query.account ?? "").slice(0, 300) || null;
   const q = (query.q ?? "").trim().slice(0, 100);
   const page = Math.max(0, Math.min(100_000, Math.floor(Number(query.page) || 0)));
-  const { maskFor } = await rowMasking(ctx.deal.id);
+  const { maskFor, accountLabel } = await rowMasking(ctx.deal.id);
   const showStaff = !!ledger.showStaffNames;
+  const labelOf = (a: string) => accountLabel(a, showStaff);
+  // The account list as the buyer sees it — and the filter accepts only its keys
+  // (over the whole ledger, so a year switch keeps a picked account).
+  const list = foldAccountsForBuyer(await store.accountTotals(ledger.id, fy), labelOf);
+  let accountKeys: string[] | null = null;
+  if (account) {
+    const whole = fy ? foldAccountsForBuyer(await store.accountTotals(ledger.id, null), labelOf) : list;
+    accountKeys = whole.keyMap.get(account) ?? [];
+  }
   let out: { rows: BuyerLedgerRow[]; total: number; page: number; capped: boolean };
-  if (q) {
-    const candidates = await store.buyerSearchRows({ ledgerId: ledger.id, fy, accountKey: account, q, limit: BUYER_SEARCH_CAP });
+  if (accountKeys && accountKeys.length === 0) {
+    // Not an account this buyer was shown: nothing (the same answer as an account that doesn't exist).
+    out = { rows: [], total: 0, page: 0, capped: false };
+  } else if (q) {
+    const candidates = await store.buyerSearchRows({ ledgerId: ledger.id, fy, accountKeys, q, limit: BUYER_SEARCH_CAP });
     const kept = candidates.map((t) => shown(t, maskFor(t, showStaff))).filter((r) => stillMatches(r, q));
     out = { rows: kept.slice(page * BUYER_PAGE, page * BUYER_PAGE + BUYER_PAGE), total: kept.length, page, capped: candidates.length >= BUYER_SEARCH_CAP };
   } else {
-    const r = await store.ledgerRows({ ledgerId: ledger.id, fy, accountKey: account, page, pageSize: BUYER_PAGE, around: query.around ?? null });
+    const r = await store.ledgerRows({ ledgerId: ledger.id, fy, accountKeys, page, pageSize: BUYER_PAGE, around: query.around ?? null });
     out = { rows: r.rows.map((t) => shown(t, maskFor(t, showStaff))), total: r.total, page: r.page, capped: false };
   }
-  const accounts = await store.accountTotals(ledger.id, fy);
+  const accounts = list.accounts;
   if (ctx.logView) {
     const key = `${ctx.accessId ?? ""}|${documentId}|${fy ?? ""}|${account ?? ""}|${q}`;
     const now = Date.now();
