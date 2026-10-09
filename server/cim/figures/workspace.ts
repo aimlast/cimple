@@ -7,9 +7,10 @@ import { anchorFigures } from "@shared/figure-anchors";
 import { agrees, percentOf } from "@shared/figure-compare";
 import { cimMismatchWarning, notLocatedMessage } from "@shared/figure-copy";
 import { checkState, preTicked } from "@shared/figure-states";
-import { figureKey } from "@shared/figure-lines";
+import { baseLineOf, figureKey } from "@shared/figure-lines";
+import { DERIVED_TOTAL_LINES, figureCitationLabel } from "@shared/figure-layer";
 import type {
-  FiguresWorkspace, FixFirstItem, MoveStatus, WorkspaceAnswer, WorkspaceCheck, WorkspaceMove, WorkspaceNote, WorkspaceQuestion, WorkspaceSource,
+  FigurePlace, FiguresWorkspace, FixFirstItem, MoveStatus, WorkspaceAnswer, WorkspaceCheck, WorkspaceMove, WorkspaceNote, WorkspaceQuestion, WorkspaceSource,
 } from "@shared/figure-workspace";
 import type { CimFigureNote, CimFigureQuestion, FigureBuildStatus } from "@shared/schema";
 import { askableLine, heldFigures } from "./candidates";
@@ -18,6 +19,7 @@ import { mismatchMessage } from "./checks";
 import { hintsFor } from "./hints";
 import { questionDisplay } from "./requests";
 import type { FigureRaw } from "./serve";
+import { CIM_VERSIONS, servedSummary, type ServedFigures, type ServedVersion } from "./served";
 
 const SOURCE_LABEL: Record<string, string> = {
   computed: "Worked out",
@@ -25,6 +27,15 @@ const SOURCE_LABEL: Record<string, string> = {
   transcript: "A conversation with the owner",
   fact: "The owner",
   hint: "Cimple's analysis (you checked it)",
+};
+
+/** Short chip words ("Based on" column); the long label is the chip's tooltip. */
+const CHIP_LABEL: Record<string, string> = {
+  computed: "Worked out",
+  interview: "Owner · interview",
+  transcript: "Owner · call",
+  fact: "The owner",
+  hint: "Cimple's analysis",
 };
 
 function dateWord(v: string | Date | null | undefined): string {
@@ -41,9 +52,17 @@ export function workspaceNote(n: CimFigureNote, raw: Pick<FigureRaw, "docs">): W
       : SOURCE_LABEL[s.kind] ?? s.kind;
     return { kind: s.kind, label, quote: s.quote ?? null, page: s.page ?? null, documentId: doc ? doc.id : null, href: doc?.fileUrl ?? null, ...(s.internal ? { internal: true } : {}) };
   });
-  const chips = Array.from(new Set(
-    n.origin === "broker" ? ["Your note"] : sources.map((s) => (s.kind === "computed" ? "Worked out" : s.label)),
-  )).slice(0, 3);
+  // One-line chips (F1): a document by its kind ("Lease", "Financial statements 2023"), the full
+  // title on hover; other sources by a short word.
+  const chipOf = (src: NonNullable<CimFigureNote["sources"]>[number], ws: WorkspaceSource): { label: string; title: string } => {
+    if (src.kind === "document") {
+      const doc = src.documentId ? raw.docs.get(src.documentId) : undefined;
+      return { label: doc ? figureCitationLabel({ kind: doc.kind, period: doc.period }) : "A document", title: ws.label };
+    }
+    return { label: CHIP_LABEL[src.kind] ?? (src.kind === "discrepancy" ? (src.internal ? "Your resolution note" : "A settled difference") : ws.label), title: ws.label };
+  };
+  const chipList = n.origin === "broker" ? [{ label: "Your note", title: "Written by you" }] : (n.sources ?? []).map((src, i) => chipOf(src, sources[i]));
+  const chips = chipList.filter((c, i) => chipList.findIndex((x) => x.label === c.label) === i).slice(0, 3);
   const internalOnly = (n.sources ?? []).length > 0 && (n.sources ?? []).every((s) => s.internal === true);
   return {
     id: n.id,
@@ -82,13 +101,24 @@ function workedOutGrouping(n: Pick<CimFigureNote, "origin" | "kind">): boolean {
   return n.origin === "computed" && n.kind === "difference";
 }
 
-function moveStatus(note: CimFigureNote | undefined, held: boolean): MoveStatus {
+function moveStatus(note: CimFigureNote | undefined, held: boolean, served: { now: ServedVersion[]; later: ServedVersion[] } | null): MoveStatus {
   if (!note) return held ? "held" : "none";
   if (note.status === "hidden") return "hidden";
   if (note.staleReason === "seller_flagged") return "stale_seller";
   if (note.staleReason) return "stale_figures";
   if (held) return "held";
-  return note.status === "approved" ? "shown" : "waiting";
+  if (note.status !== "approved") return "waiting";
+  // "Shown to buyers" only when some buyer is served it now (checker r1 F3) — never from the working copy alone.
+  if (!served) return "shown";
+  if (served.now.some((v) => v.noteIds.has(note.id))) return "shown";
+  if (served.later.some((v) => v.noteIds.has(note.id))) return "after_publish";
+  return "not_served";
+}
+
+/** Derived totals and tax lines: the broker can rarely do more than write a reason for them (F10). */
+function foldLine(fig: { line: string; category?: string }): boolean {
+  const base = baseLineOf(String(fig.line));
+  return DERIVED_TOTAL_LINES.has(base) || base === "incomeTaxes" || fig.category === "Taxes";
 }
 
 export interface WorkspaceInput {
@@ -102,14 +132,28 @@ export interface WorkspaceInput {
   dailyLimit: boolean;
   oldDdWording: boolean;
   leftOutReasons?: Record<string, string>;
+  /**
+   * What each version serves now (server/cim/figures/served.ts). Omitted: the
+   * working copy stands in (tests, or when it couldn't be worked out).
+   */
+  served?: ServedFigures | null;
 }
 
 export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
   const { raw } = input;
   const reg = raw.registry;
   const anchors = input.sections.flatMap((s) => anchorFigures(s, reg));
-  const anchoredKeys = Array.from(new Set(anchors.map((a) => a.figureKey)));
+  const workingKeys = new Set(anchors.map((a) => a.figureKey));
+  // What buyers read now (any version) — and, while a kept copy or approved versions are served,
+  // the figures only the update shows. Without served info the working copy stands in.
+  const served = input.served ?? null;
+  const nowVersions = served ? CIM_VERSIONS.map((v) => served.now[v]) : [];
+  const laterVersions = served?.afterPublish ? CIM_VERSIONS.map((v) => served.afterPublish![v]) : [];
+  const onPage = served ? new Set(nowVersions.flatMap((v) => Array.from(v.anchored))) : workingKeys;
+  const anchoredKeys = Array.from(new Set([...Array.from(workingKeys), ...Array.from(onPage)]));
   const shownSet = new Set(anchoredKeys);
+  const placeOf = (key: string): FigurePlace => (onPage.has(key) ? "page" : workingKeys.has(key) ? "update_only" : "inside_total");
+  const ddPage = served ? served.now.dd.anchored : workingKeys;
   const checks = raw.checks.checks;
   const held = heldFigures(checks, reg);
   const ddOn = !!raw.state?.ddShownAt;
@@ -154,6 +198,11 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
     const isHeld = held.has(key) || (!!prev && held.has(prev.key));
     const q = prev ? questionsBy.get(`${key}|movement|${prev.year}`) : undefined;
     const delta = prev ? Math.abs(fig.value) - Math.abs(prev.value) : null;
+    const place = placeOf(key);
+    const status = moveStatus(note, isHeld, served ? { now: nowVersions, later: laterVersions } : null);
+    // D9a: nothing measured from or to a held figure is offered for buyers — fix it first.
+    const hint = isHeld || (note && note.status === "approved") ? null : hints[key] ?? null;
+    const answer = q ? answerFor(facts, q.captureKey) : null;
     moves.push({
       figureKey: key,
       label: fig.lineLabel,
@@ -163,14 +212,18 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
       to: fig.value,
       delta,
       pct: prev && delta !== null ? percentOf(delta, prev.value, "change") : null,
-      shown: shownSet.has(key),
-      status: moveStatus(note, isHeld),
+      shown: place === "page",
+      place,
+      status,
+      ...(status === "not_served" ? { unservedWhy: place === "inside_total"
+        ? (ddOn ? "A line inside a total that no page buyers read shows." : "A line inside a total: due-diligence buyers see it once the checks are on.")
+        : "No page buyers read shows this figure right now." } : {}),
       note: note ? workspaceNote(note, raw) : null,
-      // D9a: nothing measured from or to a held figure is offered for buyers — fix it first.
-      hint: isHeld || (note && note.status === "approved") ? null : hints[key] ?? null,
+      hint,
       question: q ? { id: q.id, status: q.status } : null,
-      answer: q ? answerFor(facts, q.captureKey) : null,
+      answer,
       askable: !isHeld && askableLine(fig),
+      folded: foldLine(fig) && (status === "none" || status === "held") && !hint && !answer && !q,
       ...(isHeld ? { heldYear: held.has(key) ? fig.year : prev!.year } : {}),
     });
   }
@@ -200,7 +253,10 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
     const refusal = mismatch ? "Your CIM differs from the statements on this figure. Fix it first."
       : !c.located && !agrees(c.size) ? "Cimple couldn't find it in the document."
       : null;
-    const shownToBuyers = ddOn && !mismatch && c.located && c.decision !== "left_out" && (state === "match" || state === "regrouped" || c.decision === "shown");
+    // Read from what DD buyers are actually served (the kept copy while an update waits), when known.
+    const shownToBuyers = served ? served.now.dd.checkKeys.has(c.key)
+      : ddOn && !mismatch && c.located && c.decision !== "left_out" && (state === "match" || state === "regrouped" || c.decision === "shown");
+    const afterPublish = !shownToBuyers && !!served?.afterPublish?.dd.checkKeys.has(c.key);
     const missing = raw.checks.notLocated.find((n) => n.checkKey === c.key);
     wsChecks.push({
       checkKey: c.key,
@@ -225,6 +281,8 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
       note: note ? workspaceNote(note, raw) : null,
       group,
       shownToBuyers,
+      afterPublish,
+      onBuyerPage: ddPage.has(c.figureKey),
       preTicked: preTicked(state, { cimMismatch: mismatch, located: c.located }),
       refusal,
       baseDocument: docRef(c.baseCitation?.documentId),
@@ -297,8 +355,9 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
       dailyLimit: input.dailyLimit,
     },
     kpis: {
-      changesExplained: moves.filter((m) => m.status === "shown").length,
-      changesTotal: moves.filter((m) => m.status !== "hidden").length,
+      // Folded rows (derived totals and tax lines with nothing to do) aren't "changes to explain" (F10).
+      changesExplained: moves.filter((m) => m.status === "shown" && !m.folded).length,
+      changesTotal: moves.filter((m) => m.status !== "hidden" && !m.folded).length,
       differences: differing.length,
       differencesExplained: differing.filter((c) => c.state === "explained" || c.state === "regrouped").length,
       waiting,
@@ -312,6 +371,7 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
     questions,
     otherNotes,
     oldDdWording: input.oldDdWording,
+    served: served ? servedSummary(served) : null,
   };
 }
 

@@ -151,7 +151,12 @@ export function registerFigureRoutes(app: Express): void {
       ]);
       const stale = state?.refreshedFingerprint !== fingerprint;
       if (stale) scheduleFigureRefresh(deal.id, "workspace");
+      // What buyers of each version are actually served (the kept copy while an update waits) —
+      // "Shown to buyers" and the counts read that, never the working copy alone (checker r1 F3).
+      const { servedFigures } = await import("../cim/figures/served");
+      const served = await servedFigures(deal, raw);
       const ws = buildWorkspace({
+        served,
         raw,
         sections: (sections as CimSection[]).filter((s) => s.isVisible !== false),
         build: effectiveBuild(state?.build ?? null, figureBuildRunning(deal.id)),

@@ -45,8 +45,39 @@ test("Pacific: movements — facility rent carries the analysis hint; a total me
   }
   assert.ok(w.moves.every((m) => m.delta === null || m.to !== undefined));
   const counts = moveCounts(w.moves);
-  assert.equal(counts.all, w.moves.filter((m) => m.status !== "hidden").length);
+  assert.equal(counts.all, w.moves.filter((m) => m.status !== "hidden" && !m.folded).length);
+  assert.equal(moveCounts(w.moves, { all: true }).all, w.moves.filter((m) => m.status !== "hidden").length);
   assert.ok(moveMatches(rent!, "none") && !moveMatches(rent!, "waiting"));
+});
+
+test("F10: derived totals and tax lines with nothing to do are folded and left out of 'Changes explained'; the list opens on what needs you", async () => {
+  const w = await ws("pacific");
+  const folded = w.moves.filter((m) => m.folded);
+  assert.ok(folded.length >= 8, folded.map((m) => m.figureKey).join(", "));
+  for (const m of folded) {
+    assert.match(m.figureKey, /^(grossProfit|ebitda|incomeBeforeTax|netIncome|incomeTaxes)(@statements)?\||^line:(current|future)/, m.figureKey);
+    assert.ok(!m.hint && !m.note && !m.question);
+  }
+  for (const k of ["netIncome|2023", "ebitda|2024", "incomeTaxes|2023"]) assert.ok(folded.some((m) => m.figureKey === k), k);
+  assert.equal(w.kpis.changesTotal, w.moves.filter((m) => m.status !== "hidden" && !m.folded).length);
+  // "Needs you": the facility-rent hint and the lines the seller can be asked about — never a folded total.
+  const needs = w.moves.filter((m) => moveMatches(m, "needs"));
+  assert.ok(needs.some((m) => /^line:facility-rent/.test(m.figureKey)));
+  assert.ok(!needs.some((m) => m.folded || m.status === "shown"));
+  // A folded total with a note waiting is not folded (it needs the broker).
+  const waitingNote = noteRow({ figureKey: "netIncome|2024", kind: "movement", compareKey: "2023", status: "suggested", origin: "ai", text: "A reason.", valuesSnapshot: { year: "2024", value: 972960, fromYear: "2023", fromValue: 665915 } });
+  const w2 = await ws("pacific", { notes: [waitingNote] });
+  const ni = w2.moves.find((m) => m.figureKey === "netIncome|2024")!;
+  assert.equal(ni.folded, false);
+  assert.ok(moveMatches(ni, "needs"));
+  // Chips are one line: a document by its kind, the full title on hover (F1).
+  const leaseNote = noteRow({ figureKey: "line:facility-rent-warehouse|2023", kind: "movement", compareKey: "2022", status: "suggested", origin: "ai", text: "The warehouse lease started Oct 1, 2022.",
+    sources: [{ kind: "document", documentId: "6d52f471-8934-411d-88f0-0b81c2baab9b", quote: "The Commencement Date is October 1, 2022." }, { kind: "interview", quote: "We moved in October." }],
+    valuesSnapshot: { year: "2023", value: 0 } });
+  const w3 = await ws("pacific", { notes: [leaseNote] });
+  const rentChips = w3.moves.find((m) => /^line:facility-rent/.test(m.figureKey) && m.year === "2023")!.note!.chips;
+  assert.deepEqual(rentChips.map((c) => c.label), ["Lease", "Owner · interview"]);
+  assert.equal(rentChips[0].title, "Warehouse lease — 19220 Campbell Ridge Drive (15 yrs + 2×5-yr options)");
 });
 
 test("checks: interest and operating expenses are grouped differently; matches counted; KPIs add up", async () => {

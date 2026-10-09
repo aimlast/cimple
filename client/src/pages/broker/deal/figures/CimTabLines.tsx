@@ -42,27 +42,46 @@ export function FigureVersionLines({ dealId, mode }: { dealId: string; mode: "no
   const ws = useWorkspace(dealId);
   const d = ws.data;
   if (!d || !d.status.hasCim || d.status.noFigures) return null;
-  const open = (tab?: string) => navigate(`/deal/${dealId}/cim?view=numbers${tab ? `&tab=${tab}` : ""}`);
-  const approved = [...d.moves.map((m) => m.note), ...d.otherNotes.map((o) => o.note)].filter((n) => n && n.status === "approved" && !n.staleReason);
+  const open = (tab?: string, filter?: string) => navigate(`/deal/${dealId}/cim?view=numbers${tab ? `&tab=${tab}` : ""}${filter ? `&filter=${filter}` : ""}`);
+  // Counts read what buyers of each version are served now (the kept copy while an update waits) —
+  // never the working copy alone (checker r1 F3). Without that (an error), the approved notes stand in.
+  const sv = d.served;
   if (mode !== "dd") {
-    const n = mode === "blind" ? approved.filter((x) => x!.blindText).length : approved.length;
+    const v = sv ? (mode === "blind" ? sv.blind : sv.normal) : null;
+    const approved = [...d.moves.map((m) => m.note), ...d.otherNotes.map((o) => o.note)].filter((n) => n && n.status === "approved" && !n.staleReason);
+    const n = v ? v.notes : mode === "blind" ? approved.filter((x) => x!.blindText).length : approved.length;
     return (
-      <p className="text-[11px] text-muted-foreground" data-testid={`figure-lines-${mode}`}>
-        <Calculator className="mr-1 inline h-3 w-3" />
-        {n === 1 ? "1 figure has a note" : `${n} figures have notes`}
-        {d.kpis.waiting > 0 && <> · <button type="button" className="text-teal hover:underline" onClick={() => open("moves")}>{d.kpis.waiting} wait for your OK</button></>}
-      </p>
+      <div className="space-y-0.5 text-[11px]" data-testid={`figure-lines-${mode}`}>
+        <p className="text-muted-foreground">
+          <Calculator className="mr-1 inline h-3 w-3" />
+          {n === 1 ? "1 figure has a note" : `${n} figures have notes`}
+          {v && v.afterPublish > 0 && <> · <button type="button" className="text-teal hover:underline" onClick={() => open("moves", "publish")}>{v.afterPublish} more once you publish the update</button></>}
+          {d.kpis.waiting > 0 && <> · <button type="button" className="text-teal hover:underline" onClick={() => open("moves", "waiting")}>{d.kpis.waiting} wait for your OK</button></>}
+        </p>
+        {v?.dropped && (
+          <p className="flex items-start gap-1 text-amber-500"><AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />Held back from the Blind CIM: {v.dropped}.</p>
+        )}
+      </div>
     );
   }
-  const checked = d.checks.filter((c) => c.decision !== "left_out").length;
+  // DD: the check page as due-diligence buyers read it (or would, once the checks are on).
+  const s = sv ? sv.dd.summary ?? sv.dd.summaryIfOn : null;
+  const checked = s ? s.checked : d.checks.filter((c) => c.decision !== "left_out").length;
+  const differences = s ? s.regrouped + s.differing : d.kpis.differences;
+  const explained = s ? s.regrouped + s.explained : d.kpis.differencesExplained;
+  const pending = d.checks.filter((c) => c.group === "difference" && !c.shownToBuyers && c.onBuyerPage && !c.refusal && c.decision !== "left_out" && c.decision !== "shown").length;
   const mismatches = d.fixFirst.filter((f) => f.kind === "mismatch");
   return (
     <div className="space-y-1 text-[11px]" data-testid="figure-lines-dd">
       {d.status.hasOtherRecords ? (
-        <p className="text-muted-foreground"><Calculator className="mr-1 inline h-3 w-3" />{checked} figures checked · {d.kpis.differences} {d.kpis.differences === 1 ? "difference" : "differences"} ({d.kpis.differencesExplained} explained)</p>
+        <p className="text-muted-foreground">
+          <Calculator className="mr-1 inline h-3 w-3" />{checked} {checked === 1 ? "figure" : "figures"} checked · {differences} {differences === 1 ? "difference" : "differences"} ({explained === differences && differences > 0 ? "all explained" : `${explained} explained`})
+          {pending > 0 && <> · <button type="button" className="text-teal hover:underline" onClick={() => open("checks")}>{pending} more {pending === 1 ? "waits" : "wait"} for your OK</button></>}
+        </p>
       ) : (
         <p className="text-muted-foreground">No tax returns on file to compare with yet.</p>
       )}
+      {sv?.keptCopy && <p className="text-muted-foreground">Buyers read the previous version until you publish the update.</p>}
       {!d.status.ddShownAt && d.status.hasOtherRecords && (
         <p className="text-foreground">Due-diligence buyers don't see these checks yet. <button type="button" className="text-teal hover:underline" onClick={() => setReview(true)}>Review and show to buyers</button></p>
       )}

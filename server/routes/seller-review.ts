@@ -234,7 +234,8 @@ export function registerSellerReviewRoutes(app: Express) {
         return res.status(404).json({ error: "That note isn't shown any more." });
       }
       const sections = await storage.getCimSectionsByDeal(deal.id);
-      const cim = buildBuyerCim({ deal, accessLevel: "loi", sections, overrides: [], media: [], askingPrice: listedAskingPrice(deal) });
+      const { levelServing } = await import("../cim/figures/served");
+      const cim = buildBuyerCim({ deal, accessLevel: levelServing("normal"), sections, overrides: [], media: [], askingPrice: listedAskingPrice(deal) });
       const { flagSellerFigureNote } = await import("../cim/figures/seller");
       const note = await flagSellerFigureNote(deal, cim.sections, String(req.params.noteId), comment);
       if (!note) return res.status(404).json({ error: "That note isn't shown any more." });

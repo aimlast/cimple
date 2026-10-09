@@ -42,9 +42,11 @@ function StatePill({ c }: { c: WorkspaceCheck }) {
   return <span className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]", s.cls)}><s.Icon className="h-3 w-3" />{s.label}</span>;
 }
 
+/** Where the check stands for due-diligence buyers — read from what they are actually served. */
 function shownWords(c: WorkspaceCheck): string {
   if (c.decision === "left_out") return `Left out: ${c.leftOutReason ?? "no reason given"}`;
   if (c.shownToBuyers) return "Shown to due-diligence buyers";
+  if (c.afterPublish || !c.onBuyerPage) return "Shows once you publish the update";
   if (c.decision === "shown" || c.state === "regrouped" || c.state === "match") return "Shown once the checks are on";
   return "Not shown yet";
 }

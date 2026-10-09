@@ -9,8 +9,18 @@ import { AlertTriangle, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { FixFirstItem } from "@shared/figure-workspace";
 
-export function FixFirst({ items, dealId, onCorrect, onNavigate }: { items: FixFirstItem[]; dealId: string; onCorrect: (checkKey: string) => void; onNavigate: (to: string) => void }) {
-  const [open, setOpen] = useState(false);
+export function FixFirst({ items, dealId, onCorrect, onNavigate, open: openProp, onOpenChange }: {
+  items: FixFirstItem[]; dealId: string; onCorrect: (checkKey: string) => void; onNavigate: (to: string) => void;
+  /** Controlled (a held row's "Fix FY2022 first" opens it); omitted = toggles itself. */
+  open?: boolean; onOpenChange?: (open: boolean) => void;
+}) {
+  const [openState, setOpenState] = useState(false);
+  const open = openProp ?? openState;
+  const setOpen = (next: boolean | ((o: boolean) => boolean)) => {
+    const v = typeof next === "function" ? next(open) : next;
+    if (openProp === undefined) setOpenState(v);
+    onOpenChange?.(v);
+  };
   if (items.length === 0) return null;
   const mismatch = items.filter((i) => i.kind === "mismatch");
   const head = mismatch.length > 0

@@ -14,7 +14,7 @@
  */
 import type { Deal } from "@shared/schema";
 import { buildBuyerCim } from "@shared/cim-buyer-view";
-import { NAMED_ACCESS_LEVEL, DD_ACCESS_LEVEL } from "@shared/access-levels";
+import { levelServing } from "./served";
 import { DD_SOURCE_CHECK_PAGE_ID, type FigureInputs, type FigureLayer, type FigureNoteView } from "@shared/figure-layer";
 import { figureInputsFor, loadFigureRaw, type FigureRaw } from "./serve";
 import { flagNoteBySeller } from "./store";
@@ -91,10 +91,12 @@ export function _setSellerFigureDepsForTests(d: Partial<SellerDeps> | null): voi
 /** The layers buyers are served over these (named) sections: Full CIM, and DD once its checks are on. */
 function buyerLayers(deal: Pick<Deal, "id" | "businessName" | "blindCodename" | "extractedInfo">, sections: SectionLike[], raw: FigureRaw): FigureLayer[] {
   const out: FigureLayer[] = [];
-  for (const [level, mode] of [[NAMED_ACCESS_LEVEL, "normal"], [DD_ACCESS_LEVEL, "dd"]] as const) {
+  // levelServing: the level buildBuyerCim reads as that version on either side of the access-level merge
+  // (the new "named" key read as the Blind CIM here before teaser's registry lands).
+  for (const mode of ["normal", "dd"] as const) {
     const inputs: FigureInputs | null = figureInputsFor(raw, { audience: "buyer", mode });
     if (!inputs) continue;
-    const cim = buildBuyerCim({ deal: deal as any, accessLevel: level, sections: sections as any, overrides: [], media: [], figures: inputs });
+    const cim = buildBuyerCim({ deal: deal as any, accessLevel: levelServing(mode), sections: sections as any, overrides: [], media: [], figures: inputs });
     if (cim.figureLayer) out.push(cim.figureLayer);
   }
   return out;

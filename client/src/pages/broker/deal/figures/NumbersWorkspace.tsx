@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import type { CheckGroup, MoveFilter, WorkspaceCheck, WorkspaceMove, WorkspaceQuestion } from "@shared/figure-workspace";
+import { moveCounts, type CheckGroup, type MoveFilter, type WorkspaceCheck, type WorkspaceMove, type WorkspaceQuestion } from "@shared/figure-workspace";
 import { useDeal } from "@/contexts/DealContext";
 import { figuresErrorText, useFigureActions, useFiguresWorkspace, FiguresError } from "./useFigures";
 import { StatusPill } from "./StatusPill";
@@ -35,7 +35,7 @@ import { AskSellerDialog, type AskTarget } from "./AskSellerDialog";
 
 type TabKey = "moves" | "checks" | "questions";
 const TAB_LABEL: Record<TabKey, string> = { moves: "Why figures moved", checks: "Statements vs tax returns", questions: "Questions for the seller" };
-const MOVE_FILTERS: MoveFilter[] = ["all", "waiting", "none", "shown", "look", "hidden"];
+const MOVE_FILTERS: MoveFilter[] = ["needs", "all", "waiting", "none", "shown", "publish", "look", "hidden"];
 const CHECK_GROUPS: CheckGroup[] = ["difference", "regrouped", "needs_checking", "match", "left_out"];
 
 function aiFailureText(error: string | undefined): string {
@@ -75,7 +75,8 @@ export function NumbersWorkspace() {
   const params = useMemo(() => new URLSearchParams(search), [search]);
   const tab = (["moves", "checks", "questions"].includes(params.get("tab") ?? "") ? params.get("tab") : "moves") as TabKey;
   const noteId = params.get("note");
-  const moveFilter = (MOVE_FILTERS.includes(params.get("filter") as MoveFilter) ? params.get("filter") : "all") as MoveFilter;
+  const filterParam = MOVE_FILTERS.includes(params.get("filter") as MoveFilter) ? (params.get("filter") as MoveFilter) : null;
+  const showAll = params.get("all") === "1";
   const groupParam = CHECK_GROUPS.includes(params.get("group") as CheckGroup) ? (params.get("group") as CheckGroup) : null;
   const setParams = (next: Record<string, string | null>) => {
     const p = new URLSearchParams(search);
@@ -94,6 +95,7 @@ export function NumbersWorkspace() {
   const [reviewOpen, setReviewOpen] = useState(false);
   const [checkDialog, setCheckDialog] = useState<CheckDialogState>(null);
   const [askTarget, setAskTarget] = useState<AskTarget>(null);
+  const [fixOpen, setFixOpen] = useState(false);
   const drawerTarget: NoteDrawerTarget | null = noteId ? { noteId } : newNote;
 
   const back = () => navigate(`/deal/${dealId}/cim`);
@@ -133,7 +135,7 @@ export function NumbersWorkspace() {
   );
 
   const shell = (body: React.ReactNode) => (
-    <div className="mx-auto max-w-5xl space-y-4 px-4 py-6 sm:px-6" data-testid="numbers-workspace">
+    <div className="mx-auto max-w-6xl space-y-4 px-4 py-6 sm:px-6" data-testid="numbers-workspace">
       {header}
       {body}
     </div>
@@ -186,7 +188,13 @@ export function NumbersWorkspace() {
       .then((r) => toast({ title: `${r.approved} ${r.approved === 1 ? "note" : "notes"} shown to buyers`, description: r.skipped.length > 0 ? `${r.skipped.length} changed meanwhile and ${r.skipped.length === 1 ? "was" : "were"} left as ${r.skipped.length === 1 ? "it was" : "they were"}.` : undefined }))
       .catch(fail("Couldn't show those notes")),
     bulkBusy: actions.approveNotes.isPending,
+    onFixFirst: () => {
+      setFixOpen(true);
+      document.querySelector('[data-testid="figures-fix-first"]')?.scrollIntoView({ behavior: "smooth", block: "center" });
+    },
   };
+  // Opens on what needs the broker; when nothing does, on every change (never an empty list by default).
+  const moveFilter: MoveFilter = filterParam ?? (moveCounts(data.moves, { all: showAll }).needs > 0 ? "needs" : "all");
   const checkActions = {
     onShow: (c: WorkspaceCheck) => actions.putCheck.mutateAsync({ checkKey: c.checkKey, state: "shown" })
       .then(() => toast({ title: data.status.ddShownAt ? "Shown to due-diligence buyers" : "Ready to show", description: data.status.ddShownAt ? undefined : "Due-diligence buyers see it once you turn the checks on." }))
@@ -217,7 +225,7 @@ export function NumbersWorkspace() {
   };
 
   const counts = {
-    moves: data.moves.filter((m) => m.status !== "hidden").length,
+    moves: data.moves.filter((m) => m.status !== "hidden" && (showAll || !m.folded)).length,
     checks: data.checks.length,
     questions: data.questions.filter((q) => q.status !== "closed").length,
   };
@@ -262,7 +270,12 @@ export function NumbersWorkspace() {
         <Kpi label="Documents cited ↗" value={`${k.documentsCited}`} sub={k.documentsShared === null ? undefined : `${k.documentsShared} shared`} onClick={() => navigate(`/deal/${dealId}/information`)} testId="kpi-documents" className="col-span-2 sm:col-span-1" />
       </div>
 
-      <FixFirst items={data.fixFirst} dealId={dealId} onNavigate={navigate} onCorrect={(key) => { const c = data.checks.find((x) => x.checkKey === key); if (c) setCheckDialog({ kind: "read_wrong", check: c }); }} />
+      {data.served?.keptCopy && (
+        <p className="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground" data-testid="figures-kept-copy">
+          Buyers are reading the previous version of this CIM until you publish the update. “Shown to buyers” counts what they read now; notes only the update carries say “Shows once you publish the update”.
+        </p>
+      )}
+      <FixFirst open={fixOpen} onOpenChange={setFixOpen} items={data.fixFirst} dealId={dealId} onNavigate={navigate} onCorrect={(key) => { const c = data.checks.find((x) => x.checkKey === key); if (c) setCheckDialog({ kind: "read_wrong", check: c }); }} />
       {data.oldDdWording && (
         <p className="text-xs text-muted-foreground">Refresh the due-diligence version's sections in the CIM builder to replace its old wording about checks.</p>
       )}
@@ -283,7 +296,16 @@ export function NumbersWorkspace() {
       </Tabs>
 
       <div role="tabpanel" aria-label={tabTitle(tab)}>
-        {tab === "moves" && <MovesTab moves={data.moves} filter={moveFilter} onFilter={(f) => setParams({ filter: f === "all" ? null : f })} actions={moveActions} />}
+        {tab === "moves" && (
+          <MovesTab
+            moves={data.moves}
+            filter={moveFilter}
+            onFilter={(f) => setParams({ filter: f })}
+            showAll={showAll}
+            onShowAll={(all) => setParams({ all: all ? "1" : null })}
+            actions={moveActions}
+          />
+        )}
         {tab === "checks" && <ChecksTab checks={data.checks} group={groupParam ?? defaultCheckGroup(data.checks)} onGroup={(g) => setParams({ group: g })} actions={checkActions} hasOtherRecords={data.status.hasOtherRecords} />}
         {tab === "questions" && <QuestionsTab questions={data.questions} autoAsk={data.status.autoAsk} interviewDone={interviewDone} actions={questionActions} />}
       </div>
