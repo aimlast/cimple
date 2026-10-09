@@ -24,7 +24,6 @@ import { assembleLines, findPersonalNumbers, applyMasks, piecesTouched, personal
 import { openPdf, renderPage } from "./pdf";
 import { sanitisePdf } from "./sanitise";
 import { visiblePart, visibleChars, wordChars, type PixelBox } from "./hidden";
-import { loadPdfjs } from "./libs";
 import type { PageTextRow, PrepareResult } from "../render-jobs";
 
 /** A cover, as fractions (0..1) of the page image: [x0, y0, x1, y1]. */
@@ -61,7 +60,6 @@ type PageWork = {
 };
 
 async function preparePage(doc: PDFDocumentProxy, n: number, width: 700 | 1400, annotations: "all" | "none", keep: string | null): Promise<PageWork> {
-  const pdfjs = await loadPdfjs();
   const r = await renderPage(doc, n, width, annotations);
   const { page, viewport, canvas } = r;
   const W = r.width, H = r.height;
@@ -141,7 +139,6 @@ async function preparePage(doc: PDFDocumentProxy, n: number, width: 700 | 1400, 
   if (text.length > MAX_PAGE_TEXT) text = text.slice(0, MAX_PAGE_TEXT);
   const base = page.getViewport({ scale: 1 });
   page.cleanup();
-  void pdfjs;
   return {
     hasText: visible >= 20,
     w: Math.round(base.width),
