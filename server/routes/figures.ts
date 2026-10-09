@@ -42,7 +42,7 @@ import { refreshFingerprint, runFigureRefresh, scheduleFigureRefresh } from "../
 import { dailyLimitReached, effectiveBuild, figureBuildRunning, guardCtxFor, startFigureBuild } from "../cim/figures/build";
 import { guardBrokerText } from "../cim/figures/guards";
 import { buildWorkspace } from "../cim/figures/workspace";
-import { autoAskEffective, closeAnsweredQuestions, questionWording, sellerValues, planExplainQuestions } from "../cim/figures/requests";
+import { autoAskEffective, closeAnsweredQuestions, lineWordOf, questionWording, sellerValues, planExplainQuestions } from "../cim/figures/requests";
 import { movedEnough, previousOf } from "../cim/figures/computed";
 import { sendSellerFollowUps } from "../interview/seller-followups";
 
@@ -473,13 +473,16 @@ export function registerFigureRoutes(app: Express): void {
     const preview = req.query.preview === "1";
     try {
       const ids = new Set(parsed.data.questionIds ?? []);
-      // "Ask the seller" on a figure with no question yet: make one (seller wording, statements as issued).
+      const notYet: string[] = [];
+      // "Ask the seller" on a figure with no question yet: make one (seller wording, statements as issued) — in a preview, only list it.
       for (const key of parsed.data.figureKeys ?? []) {
-        const id = await questionForFigure(deal, key, preview);
-        if (id) ids.add(id);
+        const r = await questionForFigure(deal, key, preview);
+        if (r.id) ids.add(r.id);
+        else if (preview && r.label) notYet.push(r.label);
       }
       const r = await sendSellerFollowUps(deal.id, { questionIds: Array.from(ids).slice(0, 20), includeNeverAsked: true, preview });
-      res.json({ ...r, questionIds: Array.from(ids) });
+      const listed = preview && notYet.length > 0 ? [...notYet.map((label) => ({ kind: "figure" as const, label })), ...r.listed] : r.listed;
+      res.json({ ...r, listed, questionIds: Array.from(ids) });
     } catch (err) {
       console.error("[figures] ask", err);
       res.status(500).json({ error: "Couldn't send the questions. Try again in a moment." });
@@ -512,16 +515,18 @@ export function registerFigureRoutes(app: Express): void {
  * row with none yet). Returns its id (an existing one for the same figure, or
  * a new suggested row). In a preview nothing is written (null when none exists).
  */
-async function questionForFigure(deal: Deal, key: string, preview: boolean): Promise<string | null> {
+async function questionForFigure(deal: Deal, key: string, preview: boolean): Promise<{ id: string | null; label: string | null }> {
   const parsed = parseFigureKey(key);
-  if (!parsed) return null;
+  if (!parsed) return { id: null, label: null };
   const raw = await loadFigureRaw(deal.id);
   const fig = raw.registry[key];
-  if (!fig) return null;
+  if (!fig) return { id: null, label: null };
   const prev = previousOf(raw.registry, fig);
   const existing = raw.questions.find((q) => q.figureKey === key && q.kind === "movement" && q.status !== "closed");
-  if (existing) return existing.id;
-  if (!prev || !movedEnough(prev.value, fig.value) || preview) return null;
+  if (existing) return { id: existing.id, label: null };
+  if (!prev || !movedEnough(prev.value, fig.value)) return { id: null, label: null };
+  const label = `${lineWordOf({ line: fig.line, lineLabel: fig.lineLabel })} ${fig.year}`;
+  if (preview) return { id: null, label };
   const candidate = {
     key: `${key}|movement|${prev.year}`, figureKey: key, kind: "movement" as const, compareKey: prev.year, line: fig.line, lineLabel: fig.lineLabel,
     year: fig.year, value: fig.value, fromYear: prev.year, fromValue: prev.value, weight: 0, total: !!fig.total, valuesFingerprint: "",
@@ -541,9 +546,9 @@ async function questionForFigure(deal: Deal, key: string, preview: boolean): Pro
     status: "suggested", routedBy: null,
   });
   invalidateFigureRaw(deal.id);
-  if (id) return id;
+  if (id) return { id, label };
   const again = (await loadFigureRaw(deal.id)).questions.find((q) => q.figureKey === key && q.kind === "movement");
-  return again?.id ?? null;
+  return { id: again?.id ?? null, label };
 }
 
 // (anchorFigures is used by the workspace builder; re-exported here for scripts.)

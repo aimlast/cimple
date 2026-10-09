@@ -7,7 +7,7 @@
  * sets the project codename pre-NDA buyers know the deal by.
  */
 import { useState } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, CheckCircle2, Eye, EyeOff, FileText, Loader2, Lock, RefreshCw, ShieldCheck, Sparkles, Users, Wand2,
@@ -40,6 +40,9 @@ import { regenerateBuyerImpact, reviewingUpdate } from "@shared/cim-generation-w
 import { cn } from "@/lib/utils";
 import { CimDesignCard } from "@/components/cim-design/CimDesignCard";
 import type { CimSection } from "@shared/schema";
+// dd: Numbers & sources (the CIM tab's `numbers` view) and its lines on this page.
+import { NumbersWorkspace } from "./figures/NumbersWorkspace";
+import { FigureNotesWaitingLine, FigureVersionLines } from "./figures/CimTabLines";
 
 function when(v: string | Date | null | undefined): string {
   if (!v) return "—";
@@ -48,7 +51,14 @@ function when(v: string | Date | null | undefined): string {
     " at " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
+/** INTEGRATOR: teaser's dashboard registers NumbersWorkspace as CIM_TAB_VIEWS `numbers` ("Numbers & sources"). */
 export function CimTab() {
+  const view = new URLSearchParams(useSearch()).get("view");
+  if (view === "numbers") return <NumbersWorkspace />;
+  return <CimDashboard />;
+}
+
+function CimDashboard() {
   const { deal, dealId } = useDeal();
   const [, navigate] = useLocation();
   const { toast } = useToast();
@@ -161,6 +171,7 @@ export function CimTab() {
           onOpenSection={(id) => navigate(`/deal/${dealId}/design?section=${id}`)}
         />
       )}
+      {hasSections && !generation.isRunning && <FigureNotesWaitingLine dealId={dealId} />}
       {/* Private staff matters held out of every version — each with an Include switch. */}
       <HeldPrivateCard dealId={dealId} />
       {gate.blockedReason && (
@@ -190,6 +201,7 @@ export function CimTab() {
                 who="LOI buyers"
                 status={<span className="text-success">Ready</span>}
                 detail="The named CIM — business name, people and places shown."
+                extra={<FigureVersionLines dealId={dealId} mode="normal" />}
                 onPreview={() => openBuilder("loi")}
               />
               <VersionCard
@@ -212,6 +224,7 @@ export function CimTab() {
                       </p>
                     )}
                     <CodenameEditor dealId={dealId} codename={data.blind.codename} onSaved={() => { refetch(); qc.invalidateQueries({ queryKey: ["/api/deals", dealId] }); }} />
+                    <FigureVersionLines dealId={dealId} mode="blind" />
                   </>
                 }
                 onPreview={() => openBuilder("teaser")}
@@ -233,7 +246,9 @@ export function CimTab() {
                       ? <span className="text-blue-400">{data.dd.outOfDate} section{data.dd.outOfDate === 1 ? "" : "s"} out of date</span>
                       : <span className="text-success">Ready</span>}
                 detail="The named CIM plus customer names and verification notes."
-                extra={!ddRun.busy && data.dd.lastRun && (data.dd.lastRun.error || data.dd.lastRun.warnings.length > 0) ? (
+                extra={<>
+                  <FigureVersionLines dealId={dealId} mode="dd" />
+                  {!ddRun.busy && data.dd.lastRun && (data.dd.lastRun.error || data.dd.lastRun.warnings.length > 0) ? (
                   <div className="text-[11px] text-amber-500 leading-snug space-y-1" role="status" data-testid="dd-last-run">
                     {data.dd.lastRun.error
                       ? <p className="flex items-start gap-1"><AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" /><span>{data.dd.lastRun.error}</span></p>
@@ -242,7 +257,8 @@ export function CimTab() {
                       ))}
                     {!data.dd.lastRun.error && data.dd.lastRun.warnings.length > 4 && <p>…and {data.dd.lastRun.warnings.length - 4} more.</p>}
                   </div>
-                ) : undefined}
+                ) : null}
+                </>}
                 onPreview={() => openBuilder("due_diligence")}
                 action={{
                   label: data.dd.generated ? "Refresh" : "Generate",

@@ -30,6 +30,7 @@ import { FigureLayerProvider } from "@/components/cim/figures/FigureLayerContext
 import { DdBanner } from "@/components/cim/figures/DdBanner";
 import { DdPreviewBar } from "@/components/cim/figures/DdPreviewBar";
 import { usePreviewFigureLayer, withPreviewExtras } from "@/components/cim/figures/usePreviewFigureLayer";
+import { usePreviewFigureActions } from "@/pages/broker/deal/figures/usePreviewFigureActions";
 
 export type PreviewAs = "editor" | "teaser" | "full" | "loi" | "due_diligence";
 
@@ -196,6 +197,7 @@ function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId
   // Notes on the figures (+ DD checks) as this buyer would see them, with the
   // broker's marks on what buyers don't see yet (dd, D21).
   const fig = usePreviewFigureLayer(deal.id, previewAs);
+  const figActions = usePreviewFigureActions(deal.id);
   if (view.preparing) return null; // the page shows the "not generated yet" banner
   const shown = withPreviewExtras(view.sections, fig.data?.extraSections) as unknown as CimSection[];
   // This buyer's version of the design (Blind: no business branding), with
@@ -222,8 +224,10 @@ function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId
         refreshing={!!fig.data?.refreshing}
         hasOtherRecords={fig.data?.hasOtherRecords}
         dropped={fig.data?.dropped ?? null}
+        onReview={figActions.openReview}
       />
-      <FigureLayerProvider layer={fig.data?.layer ?? null} broker={{ dealId: deal.id }}>
+      {figActions.overlays}
+      <FigureLayerProvider layer={fig.data?.layer ?? null} broker={figActions.hooks}>
       <CimSheet className="px-4 py-6 sm:px-10 sm:py-12">
         {!shown.some((s) => s.layoutType === "cover_page") && <DdBanner />}
         {withBrokeragePages(shown, flags).map((item) =>

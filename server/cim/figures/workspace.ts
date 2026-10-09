@@ -39,7 +39,7 @@ export function workspaceNote(n: CimFigureNote, raw: Pick<FigureRaw, "docs">): W
     const label = s.kind === "document" ? doc?.name || "A document"
       : s.kind === "discrepancy" ? (s.internal ? "Your resolution note (internal)" : "A settled difference")
       : SOURCE_LABEL[s.kind] ?? s.kind;
-    return { kind: s.kind, label, quote: s.quote ?? null, page: s.page ?? null, documentId: doc ? doc.id : null, ...(s.internal ? { internal: true } : {}) };
+    return { kind: s.kind, label, quote: s.quote ?? null, page: s.page ?? null, documentId: doc ? doc.id : null, href: doc?.fileUrl ?? null, ...(s.internal ? { internal: true } : {}) };
   });
   const chips = Array.from(new Set(
     n.origin === "broker" ? ["Your note"] : sources.map((s) => (s.kind === "computed" ? "Worked out" : s.label)),
@@ -174,7 +174,7 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
   const wsChecks: WorkspaceCheck[] = [];
   const docRef = (id: string | null | undefined) => {
     const d = id ? raw.docs.get(id) : undefined;
-    return d ? { id: d.id, name: d.name || "A document" } : null;
+    return d ? { id: d.id, name: d.name || "A document", href: d.fileUrl ?? null } : null;
   };
   for (const c of checks) {
     if (c.kind === "cim_statements" || c.blank) continue;
@@ -252,7 +252,7 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
   for (const n of raw.checks.notLocated) {
     if (!shownSet.has(n.figureKey)) continue;
     const doc = docRef(n.documentId);
-    fixFirst.push({ id: `located:${n.checkKey}`, kind: "not_located", message: notLocatedMessage(n.value, n.docWord), checkKey: n.checkKey, documentId: doc?.id, documentName: doc?.name });
+    fixFirst.push({ id: `located:${n.checkKey}`, kind: "not_located", message: notLocatedMessage(n.value, n.docWord), checkKey: n.checkKey, documentId: doc?.id, documentName: doc?.name, documentHref: doc?.href ?? null });
   }
 
   // Other notes (difference / context notes not listed as a movement row) — for the review sheet.

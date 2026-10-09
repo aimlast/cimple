@@ -15,6 +15,8 @@ export interface WorkspaceSource {
   quote?: string | null;
   page?: number | null;
   documentId?: string | null;
+  /** The broker's link to open the document (never sent to buyers or the seller). */
+  href?: string | null;
   internal?: boolean;
 }
 
@@ -100,8 +102,8 @@ export interface WorkspaceCheck {
   preTicked: boolean;
   /** Why it can't be shown (needs checking, a CIM mismatch). */
   refusal: string | null;
-  baseDocument: { id: string; name: string } | null;
-  otherDocument: { id: string; name: string } | null;
+  baseDocument: { id: string; name: string; href: string | null } | null;
+  otherDocument: { id: string; name: string; href: string | null } | null;
   notLocatedMessage: string | null;
 }
 
@@ -128,6 +130,7 @@ export interface FixFirstItem {
   year?: string;
   documentId?: string;
   documentName?: string;
+  documentHref?: string | null;
   checkKey?: string;
 }
 

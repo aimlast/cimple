@@ -5,8 +5,9 @@
  * don't lock the CIM; the broker chooses — email the seller (their click,
  * never automatic; demo deals never email) or resolve it themselves.
  */
-import { useMutation } from "@tanstack/react-query";
-import { MailQuestion, Loader2 } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
+import { Calculator, MailQuestion, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -69,7 +70,8 @@ export function NeverAskedFollowUpsNotice({
   className?: string;
 }) {
   const email = useEmailSellerFollowUps(dealId);
-  if (rows.length === 0) return null;
+  const figures = <FigureQuestionsReadyLine dealId={dealId} className={className} />;
+  if (rows.length === 0) return figures;
   const names = rows.slice(0, 3).map((d) => `“${discrepancyFieldLabel(d)}”`);
   const more = rows.length > 3 ? ` and ${rows.length - 3} more` : "";
   const it = rows.length === 1 ? "it" : "them";
@@ -96,6 +98,35 @@ export function NeverAskedFollowUpsNotice({
           Resolve it yourself
         </Button>
       </div>
+      <FigureQuestionsReadyLine dealId={dealId} className="mt-2 border-0 bg-transparent p-0 pl-6" />
     </div>
+  );
+}
+
+/**
+ * Questions about the CIM's figures that Cimple suggested and the broker
+ * hasn't sent yet (stream dd): "2 questions about the figures are ready to
+ * send · Review" — they go out through the same one follow-up email, from
+ * Numbers & sources › Questions for the seller. Never sent on its own.
+ */
+export function FigureQuestionsReadyLine({ dealId, className = "" }: { dealId: string; className?: string }) {
+  const [, navigate] = useLocation();
+  const q = useQuery<{ counts?: { questionsSuggested: number } }>({
+    queryKey: ["/api/deals", dealId, "figures", "status", "counts"],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/figures/status?counts=1`, { credentials: "include" });
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    },
+    staleTime: 30_000,
+  });
+  const n = q.data?.counts?.questionsSuggested ?? 0;
+  if (n === 0) return null;
+  return (
+    <p className={`flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs ${className}`} data-testid="figure-questions-ready">
+      <Calculator className="h-3.5 w-3.5 text-teal" aria-hidden="true" />
+      <span>{n === 1 ? "1 question about the figures is" : `${n} questions about the figures are`} ready to send.</span>
+      <button type="button" className="text-teal hover:underline" onClick={() => navigate(`/deal/${dealId}/cim?view=numbers&tab=questions`)}>Review</button>
+    </p>
   );
 }

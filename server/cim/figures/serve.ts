@@ -76,6 +76,8 @@ export interface DocMeta {
   updatedAt: string;
   sourceKind: string | null;
   visibility: string | null;
+  /** The broker's link to the file (/uploads/docs/…, gated by the broker's session) — broker payloads only. */
+  fileUrl: string | null;
 }
 
 // ── Raw inputs (audience-neutral, cached) ──────────────────────────────────
@@ -160,6 +162,7 @@ export function assembleFigureRaw(dealId: string, rows: RawSourceRows, stamp = "
     docs.set(d.id, {
       id: d.id, name: d.name ?? "", citable: figureCitableDocument(d), kind: docKindOf(d), period: periodOf(d),
       updatedAt: d.updatedAt ? new Date(d.updatedAt as any).toISOString() : "", sourceKind: d.sourceKind, visibility: d.visibility,
+      fileUrl: d.fileUrl ?? null,
     });
   }
   let fin = null;
