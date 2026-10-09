@@ -31,6 +31,12 @@ import { parseLedgerRows } from "../gl/parse";
 import { cellText } from "../gl/text";
 import { restampSourceVisibility } from "../documents/source-visibility";
 import { ensureGlRequirement } from "../documents/requirements";
+// Pass 2: the add-backs (installs the ledger reader's follow-up — tie-out and proposals — on import).
+import { refreshGl } from "../gl/service";
+import { loadGlContext } from "../gl/context";
+import { buildBrokerView } from "../gl/broker-view";
+import { registerGlBrokerRoutes } from "../gl/routes-broker";
+import { registerGlSellerRoutes, sellerBooksPayload, SUPPORT_MAX_BYTES } from "../gl/routes-seller";
 
 const uploadsDir = () => process.env.UPLOADS_DIR || path.join(process.cwd(), "public", "uploads");
 
@@ -324,6 +330,15 @@ export function applyGlRateLimits(app: Express): void {
     keyGenerator: sellerKey,
     message: { error: "Too many requests" },
   }));
+  app.use("/api/seller/:token/gl/search", rateLimit({
+    windowMs: 60 * 1000,
+    limit: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `${sellerKey(req)}:search`,
+    message: { error: "Too many searches — wait a moment and try again." },
+  }));
+  app.use("/api/seller/:token/gl/traces/:traceId/support-docs", (req, res, next) => (req.method === "POST" ? perIp(req, res, next) : next()));
   app.use("/api/seller/:token/gl/ledgers", uploadOnly(rateLimit({
     windowMs: 60 * 60 * 1000,
     limit: 10,
@@ -345,11 +360,21 @@ export function registerGlRoutes(app: Express): void {
       void ensureGlRequirement(dealId);
       const fye = await dealFiscalYearEnd(dealId);
       const [{ ledgers, unread }, requestedYears] = await Promise.all([brokerLedgerViews(dealId), requestedYearsFor(dealId, fye)]);
+      // The add-backs (synced with the analysis first — skipped when nothing changed). A failure here
+      // never hides the ledgers: the panel says the add-backs couldn't load.
+      let view: Awaited<ReturnType<typeof buildBrokerView>> | null = null;
+      try {
+        await refreshGl(dealId);
+        view = await buildBrokerView(await loadGlContext(dealId));
+      } catch (err) {
+        console.error("[gl] add-backs view failed:", err);
+      }
       res.json({
         fiscalYearEnd: fye,
         requestedYears,
         ledgers,
         unread,
+        ...(view ?? { tracesError: true }),
       });
     } catch (err) {
       console.error("[gl] GET failed:", err);
@@ -534,6 +559,10 @@ export function registerGlRoutes(app: Express): void {
     }
   });
 
+  // ── Pass 2: the add-backs (broker and seller) ──
+  registerGlBrokerRoutes(app);
+  registerGlSellerRoutes(app, { supportGate: glUploadGate("seller", SUPPORT_MAX_BYTES) });
+
   // ── Seller (token in the path) ──
   app.get("/api/seller/:token/gl", async (req, res) => {
     try {
@@ -546,7 +575,14 @@ export function registerGlRoutes(app: Express): void {
       const { ledgers } = await brokerLedgerViews(invite.dealId);
       // Only ledgers the seller may see — a ledger private to the broker is never listed.
       const mine = ledgers.filter((l) => l.audience === "shared").map(sellerLedgerView);
-      res.json({ state: "not_requested", fiscalYearEnd: fye, requestedYears: await requestedYearsFor(invite.dealId, fye), preview: await isDealOwnerSession(req, invite.dealId), ledgers: mine });
+      const deal = await storage.getDeal(invite.dealId);
+      const preview = await isDealOwnerSession(req, invite.dealId);
+      const base = { fiscalYearEnd: fye, requestedYears: await requestedYearsFor(invite.dealId, fye), preview, ledgers: mine, businessName: deal?.businessName ?? null };
+      if (!deal) return res.json({ state: "not_requested", ...base });
+      // The costs (gl spec §9.1 — a whitelist). Synced with the analysis first (fingerprint-skipped).
+      await refreshGl(invite.dealId).catch((err) => console.warn("[gl] seller sync failed:", err));
+      const view = await sellerBooksPayload({ invite, deal, members: await storage.getDealMembers(invite.dealId), role: rights.role, memberId: rights.memberId, preview });
+      res.json({ ...view, ...base, state: view.state });
     } catch (err) {
       console.error("[gl] seller GET failed:", err);
       res.status(500).json({ error: "Couldn't load your books" });

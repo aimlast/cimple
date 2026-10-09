@@ -8,10 +8,11 @@
  */
 import { and, asc, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import {
-  glLedgers, glTransactions, glTracing, glTraceLinks,
+  glLedgers, glTransactions, glTracing, glTraceLinks, glAddbackTraces,
   type GlLedger, type InsertGlLedger, type GlTransaction, type InsertGlTransaction, type GlTracing, type GlTraceLink,
+  type GlAddbackTrace, type InsertGlAddbackTrace, type InsertGlTraceLink,
 } from "@shared/schema";
-import { escapeLike, parseMoneyToCents } from "./text";
+import { escapeLike, escapeRegexTerm, parseMoneyToCents } from "./text";
 
 export interface LedgerRowsQuery {
   ledgerId: string;
@@ -62,6 +63,91 @@ export interface GlStore {
   /** Orphaned links of the deal re-attach to an entry of `ledgerId` with the same date, account, amount, name and memo. */
   reattachOrphans(dealId: string, ledgerId: string): Promise<number>;
   linksOfDeal(dealId: string): Promise<GlTraceLink[]>;
+
+  // ── Traced add-backs (pass 2) ──
+  listTraces(dealId: string): Promise<GlAddbackTrace[]>;
+  getTrace(id: string): Promise<GlAddbackTrace | undefined>;
+  /** Insert, or update the analysis-owned fields given, by (deal_id, addback_key). */
+  upsertTrace(row: InsertGlAddbackTrace & { dealId: string; addbackKey: string }): Promise<GlAddbackTrace>;
+  updateTrace(id: string, patch: Partial<GlAddbackTrace>): Promise<GlAddbackTrace | undefined>;
+
+  // ── Links (pass 2) ──
+  linksOfTrace(traceId: string): Promise<GlTraceLink[]>;
+  /**
+   * A proposal run for one trace: deletes ONLY its `proposed` links in
+   * these years, then inserts the new ones ON CONFLICT DO NOTHING — a
+   * confirmed or rejected entry is never touched or proposed again.
+   */
+  replaceProposals(traceId: string, years: string[], rows: InsertGlTraceLink[]): Promise<void>;
+  /** One decision on one ledger entry (upsert on trace + ledger + row): confirmed or rejected, with who decided. */
+  decideEntryLink(row: InsertGlTraceLink & { traceId: string; ledgerId: string; rowNo: number; state: "confirmed" | "rejected" | "proposed" }): Promise<GlTraceLink>;
+  /** "Untick": a confirmed entry goes back to a proposal when Cimple had proposed it, else the link goes. */
+  removeEntryLink(traceId: string, ledgerId: string, rowNo: number): Promise<void>;
+  /** A document link for one year (upsert on trace + document + year). */
+  upsertDocLink(row: InsertGlTraceLink & { traceId: string; documentId: string; fiscalYear: string }): Promise<GlTraceLink>;
+  deleteDocLinks(where: { documentId?: string; traceId?: string; fiscalYear?: string }): Promise<number>;
+  setLinkShowDetails(ids: string[], showDetails: boolean | null): Promise<void>;
+  updateLink(id: string, patch: Partial<GlTraceLink>): Promise<void>;
+
+  // ── Entries for matching, search and tie-out (pass 2) ──
+  /** Candidate entries for one fiscal year (§7.1): by account, a term in account/name/memo, or an amount. Never copies. */
+  candidateRows(q: CandidateQuery): Promise<GlTransaction[]>;
+  /** Entries by (ledger, row) — only of the deal. */
+  rowsForKeys(dealId: string, keys: Array<{ ledgerId: string; rowNo: number }>): Promise<GlTransaction[]>;
+  /** A search over the given ledgers (seller "Add an entry we missed", broker search) — at most `limit` rows. */
+  searchRows(q: SearchQuery): Promise<GlTransaction[]>;
+  /** Per fiscal year and account: entries and net amount over the given ledgers (copies left out). */
+  dealAccountTotals(dealId: string, ledgerIds: string[]): Promise<DealAccountTotal[]>;
+  /** Every entry of these accounts in one year (whole-account proposals). */
+  accountRows(dealId: string, ledgerIds: string[], fiscalYear: string, accountKeys: string[]): Promise<GlTransaction[]>;
+  /** The fiscal-year end changed (D26): entries and links move to the right years, proposals go — one transaction. */
+  changeFiscalYearEnd(dealId: string, fiscalYearEnd: string): Promise<void>;
+  /** Per ledger and fiscal year: entries, debits, credits, accounts, first and last date (copies included, as when read). */
+  ledgerYearSummaries(dealId: string): Promise<Array<{ ledgerId: string; fiscalYear: string; lines: number; debitCents: number; creditCents: number; accounts: number; firstDate: string; lastDate: string }>>;
+}
+
+export interface CandidateQuery {
+  dealId: string;
+  fiscalYear: string;
+  ledgerIds: string[];
+  accountKeys: string[];
+  /** Plain words (each escaped); matched case-insensitively anywhere in account / name / memo. */
+  terms: string[];
+  /** Amounts in cents; an entry within 1% matches. */
+  amounts: number[];
+  limit?: number;
+}
+
+export interface SearchQuery {
+  dealId: string;
+  ledgerIds: string[];
+  fiscalYears?: string[] | null;
+  q?: string | null;
+  minCents?: number | null;
+  maxCents?: number | null;
+  accountKey?: string | null;
+  limit?: number;
+}
+
+export interface DealAccountTotal {
+  fiscalYear: string;
+  accountKey: string;
+  account: string;
+  accountType: string | null;
+  accountNumber: string | null;
+  lines: number;
+  netCents: number;
+}
+
+/** "MM-DD" fiscal-year end → the fiscal year of a yyyy-mm-dd date, in SQL (D26). */
+function fiscalYearSql(dateCol: SQL, fye: string): SQL {
+  return sql`CASE WHEN substr(${dateCol}, 6, 5) > ${fye} THEN (substr(${dateCol}, 1, 4)::int + 1)::text ELSE substr(${dateCol}, 1, 4) END`;
+}
+
+/** The terms of a candidate query as one case-insensitive pattern (each term a literal). */
+export function termsPattern(terms: string[]): string | null {
+  const clean = Array.from(new Set(terms.map((t) => t.toLowerCase().trim()).filter((t) => t.length >= 3 && t.length <= 40))).slice(0, 40);
+  return clean.length ? clean.map(escapeRegexTerm).join("|") : null;
 }
 
 const PAGE_SIZE = 100;
@@ -245,6 +331,204 @@ export const pgStore: GlStore = {
     const db = await pgDb();
     return db.select().from(glTraceLinks).where(eq(glTraceLinks.dealId, dealId));
   },
+
+  async listTraces(dealId) {
+    const db = await pgDb();
+    return db.select().from(glAddbackTraces).where(eq(glAddbackTraces.dealId, dealId)).orderBy(asc(glAddbackTraces.createdAt));
+  },
+  async getTrace(id) {
+    const db = await pgDb();
+    const [row] = await db.select().from(glAddbackTraces).where(eq(glAddbackTraces.id, id)).limit(1);
+    return row;
+  },
+  async upsertTrace(row) {
+    const db = await pgDb();
+    const { dealId, addbackKey, ...rest } = row as any;
+    const set: Record<string, unknown> = { ...rest, updatedAt: new Date() };
+    delete set.id;
+    delete set.createdAt;
+    const [out] = await db
+      .insert(glAddbackTraces)
+      .values({ dealId, addbackKey, ...rest } as any)
+      .onConflictDoUpdate({ target: [glAddbackTraces.dealId, glAddbackTraces.addbackKey], set: set as any })
+      .returning();
+    return out;
+  },
+  async updateTrace(id, patch) {
+    const db = await pgDb();
+    const [row] = await db.update(glAddbackTraces).set({ ...patch, updatedAt: new Date() } as any).where(eq(glAddbackTraces.id, id)).returning();
+    return row;
+  },
+
+  async linksOfTrace(traceId) {
+    const db = await pgDb();
+    return db.select().from(glTraceLinks).where(eq(glTraceLinks.traceId, traceId));
+  },
+  async replaceProposals(traceId, years, rows) {
+    const db = await pgDb();
+    await db.transaction(async (tx) => {
+      if (years.length) {
+        await tx.delete(glTraceLinks).where(and(eq(glTraceLinks.traceId, traceId), eq(glTraceLinks.state, "proposed"), inArray(glTraceLinks.fiscalYear, years)));
+      }
+      for (let i = 0; i < rows.length; i += 500) {
+        await tx.insert(glTraceLinks).values(rows.slice(i, i + 500) as any).onConflictDoNothing();
+      }
+    });
+  },
+  async decideEntryLink(row) {
+    const db = await pgDb();
+    // Hand-written upsert (the partial unique index needs its WHERE): one statement, no lock.
+    const res = await db.execute(sql`
+      INSERT INTO gl_trace_links (trace_id, deal_id, fiscal_year, ledger_id, row_no, txn_date, account, name, memo, amount_cents, state, proposed_by, confidence, reason, decided_by, decided_by_member, decided_at)
+      VALUES (${row.traceId}, ${row.dealId}, ${row.fiscalYear}, ${row.ledgerId}, ${row.rowNo}, ${row.txnDate ?? null}, ${row.account ?? null}, ${row.name ?? null}, ${row.memo ?? null},
+              ${row.amountCents}, ${row.state}, ${row.proposedBy ?? null}, ${row.confidence ?? null}, ${row.reason ?? null}, ${row.decidedBy ?? null}, ${row.decidedByMember ?? null}, ${row.decidedAt ?? null})
+      ON CONFLICT (trace_id, ledger_id, row_no) WHERE ledger_id IS NOT NULL
+      DO UPDATE SET state = EXCLUDED.state, decided_by = EXCLUDED.decided_by, decided_by_member = EXCLUDED.decided_by_member,
+                    decided_at = EXCLUDED.decided_at, fiscal_year = EXCLUDED.fiscal_year, updated_at = now()
+      RETURNING id`);
+    const id = ((res as any).rows ?? res)[0]?.id as string;
+    const [out] = await db.select().from(glTraceLinks).where(eq(glTraceLinks.id, id)).limit(1);
+    return out;
+  },
+  async removeEntryLink(traceId, ledgerId, rowNo) {
+    const db = await pgDb();
+    const where = and(eq(glTraceLinks.traceId, traceId), eq(glTraceLinks.ledgerId, ledgerId), eq(glTraceLinks.rowNo, rowNo));
+    // Cimple had proposed it → it goes back to a proposal; ticked from a search → the link goes.
+    await db.update(glTraceLinks)
+      .set({ state: "proposed", decidedBy: null, decidedByMember: null, decidedAt: null, updatedAt: new Date() } as any)
+      .where(and(where, inArray(glTraceLinks.proposedBy, ["rules", "ai"])));
+    await db.delete(glTraceLinks).where(and(where, sql`coalesce(${glTraceLinks.proposedBy}, '') NOT IN ('rules', 'ai')`));
+  },
+  async upsertDocLink(row) {
+    const db = await pgDb();
+    const res = await db.execute(sql`
+      INSERT INTO gl_trace_links (trace_id, deal_id, fiscal_year, document_id, doc_amount_check, amount_cents, state, proposed_by, decided_by, decided_by_member, decided_at)
+      VALUES (${row.traceId}, ${row.dealId}, ${row.fiscalYear}, ${row.documentId}, ${row.docAmountCheck ?? null}, ${row.amountCents}, ${row.state ?? "confirmed"},
+              ${row.proposedBy ?? "seller_document"}, ${row.decidedBy ?? null}, ${row.decidedByMember ?? null}, ${row.decidedAt ?? null})
+      ON CONFLICT (trace_id, document_id, fiscal_year) WHERE document_id IS NOT NULL
+      DO UPDATE SET amount_cents = EXCLUDED.amount_cents, doc_amount_check = EXCLUDED.doc_amount_check, state = EXCLUDED.state,
+                    decided_by = EXCLUDED.decided_by, decided_by_member = EXCLUDED.decided_by_member, decided_at = EXCLUDED.decided_at, updated_at = now()
+      RETURNING id`);
+    const id = ((res as any).rows ?? res)[0]?.id as string;
+    const [out] = await db.select().from(glTraceLinks).where(eq(glTraceLinks.id, id)).limit(1);
+    return out;
+  },
+  async deleteDocLinks(where) {
+    const db = await pgDb();
+    const parts: SQL[] = [sql`${glTraceLinks.documentId} IS NOT NULL`];
+    if (where.documentId) parts.push(eq(glTraceLinks.documentId, where.documentId));
+    if (where.traceId) parts.push(eq(glTraceLinks.traceId, where.traceId));
+    if (where.fiscalYear) parts.push(eq(glTraceLinks.fiscalYear, where.fiscalYear));
+    if (parts.length === 1) return 0;
+    const res = await db.delete(glTraceLinks).where(and(...parts)).returning({ id: glTraceLinks.id });
+    return res.length;
+  },
+  async setLinkShowDetails(ids, showDetails) {
+    if (ids.length === 0) return;
+    const db = await pgDb();
+    await db.update(glTraceLinks).set({ showDetails, updatedAt: new Date() } as any).where(inArray(glTraceLinks.id, ids));
+  },
+
+  async updateLink(id, patch) {
+    const db = await pgDb();
+    await db.update(glTraceLinks).set({ ...patch, updatedAt: new Date() } as any).where(eq(glTraceLinks.id, id));
+  },
+  async candidateRows(q) {
+    if (q.ledgerIds.length === 0) return [];
+    const db = await pgDb();
+    const ors: SQL[] = [];
+    if (q.accountKeys.length) ors.push(inArray(glTransactions.accountKey, q.accountKeys));
+    const pattern = termsPattern(q.terms);
+    if (pattern) {
+      ors.push(sql`${glTransactions.account} ~* ${pattern}`);
+      ors.push(sql`coalesce(${glTransactions.name}, '') ~* ${pattern}`);
+      ors.push(sql`coalesce(${glTransactions.memo}, '') ~* ${pattern}`);
+    }
+    for (const a of q.amounts.slice(0, 12)) {
+      const lo = Math.floor(Math.abs(a) * 0.99);
+      const hi = Math.ceil(Math.abs(a) * 1.01);
+      ors.push(sql`abs(${glTransactions.amountCents}) BETWEEN ${lo} AND ${hi}`);
+    }
+    if (ors.length === 0) return [];
+    return db.select().from(glTransactions)
+      .where(and(eq(glTransactions.dealId, q.dealId), eq(glTransactions.fiscalYear, q.fiscalYear), eq(glTransactions.duplicate, false), inArray(glTransactions.ledgerId, q.ledgerIds), sql`(${sql.join(ors, sql` OR `)})`))
+      .orderBy(asc(glTransactions.txnDate), asc(glTransactions.rowNo))
+      .limit(Math.min(q.limit ?? 3000, 3000));
+  },
+  async rowsForKeys(dealId, keys) {
+    if (keys.length === 0) return [];
+    const db = await pgDb();
+    const pairs = keys.slice(0, 2000).map((k) => sql`(${k.ledgerId}, ${k.rowNo})`);
+    return db.select().from(glTransactions)
+      .where(and(eq(glTransactions.dealId, dealId), sql`(${glTransactions.ledgerId}, ${glTransactions.rowNo}) IN (${sql.join(pairs, sql`, `)})`));
+  },
+  async searchRows(q) {
+    if (q.ledgerIds.length === 0) return [];
+    const db = await pgDb();
+    const parts: SQL[] = [eq(glTransactions.dealId, q.dealId), inArray(glTransactions.ledgerId, q.ledgerIds), eq(glTransactions.duplicate, false)];
+    if (q.fiscalYears && q.fiscalYears.length) parts.push(inArray(glTransactions.fiscalYear, q.fiscalYears));
+    if (q.accountKey) parts.push(eq(glTransactions.accountKey, q.accountKey));
+    if (q.minCents !== null && q.minCents !== undefined) parts.push(sql`abs(${glTransactions.amountCents}) >= ${Math.abs(q.minCents)}`);
+    if (q.maxCents !== null && q.maxCents !== undefined) parts.push(sql`abs(${glTransactions.amountCents}) <= ${Math.abs(q.maxCents)}`);
+    const term = (q.q ?? "").trim().slice(0, 100);
+    if (term) parts.push(searchCondition(term));
+    return db.select().from(glTransactions).where(and(...parts)).orderBy(asc(glTransactions.txnDate), asc(glTransactions.rowNo)).limit(Math.min(q.limit ?? 50, 200));
+  },
+  async dealAccountTotals(dealId, ledgerIds) {
+    if (ledgerIds.length === 0) return [];
+    const db = await pgDb();
+    const rows = await db
+      .select({
+        fiscalYear: glTransactions.fiscalYear,
+        accountKey: glTransactions.accountKey,
+        account: sql<string>`min(${glTransactions.account})`,
+        accountType: sql<string | null>`min(${glTransactions.accountType})`,
+        accountNumber: sql<string | null>`min(${glTransactions.accountNumber})`,
+        lines: sql<number>`count(*)::int`,
+        netCents: sql<number>`coalesce(sum(${glTransactions.amountCents}), 0)::bigint`,
+      })
+      .from(glTransactions)
+      .where(and(eq(glTransactions.dealId, dealId), inArray(glTransactions.ledgerId, ledgerIds), eq(glTransactions.duplicate, false)))
+      .groupBy(glTransactions.fiscalYear, glTransactions.accountKey);
+    return rows.map((r) => ({ ...r, netCents: Number(r.netCents) }));
+  },
+  async accountRows(dealId, ledgerIds, fiscalYear, accountKeys) {
+    if (ledgerIds.length === 0 || accountKeys.length === 0) return [];
+    const db = await pgDb();
+    return db.select().from(glTransactions)
+      .where(and(eq(glTransactions.dealId, dealId), inArray(glTransactions.ledgerId, ledgerIds), eq(glTransactions.fiscalYear, fiscalYear), inArray(glTransactions.accountKey, accountKeys), eq(glTransactions.duplicate, false)))
+      .orderBy(asc(glTransactions.txnDate), asc(glTransactions.rowNo))
+      .limit(5000);
+  },
+  async changeFiscalYearEnd(dealId, fye) {
+    const db = await pgDb();
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`UPDATE gl_transactions SET fiscal_year = ${fiscalYearSql(sql`txn_date`, fye)} WHERE deal_id = ${dealId}`);
+      await tx.execute(sql`UPDATE gl_trace_links SET fiscal_year = ${fiscalYearSql(sql`txn_date`, fye)}, updated_at = now() WHERE deal_id = ${dealId} AND document_id IS NULL AND txn_date IS NOT NULL`);
+      await tx.execute(sql`DELETE FROM gl_trace_links WHERE deal_id = ${dealId} AND state = 'proposed'`);
+      await tx.execute(sql`UPDATE gl_addback_traces SET proposal_fingerprint = NULL, updated_at = now() WHERE deal_id = ${dealId}`);
+      await tx.execute(sql`UPDATE gl_ledgers SET fiscal_year_end_used = ${fye}, updated_at = now() WHERE deal_id = ${dealId}`);
+      await tx.execute(sql`UPDATE gl_tracing SET fiscal_year_end = ${fye}, synced_fingerprint = NULL, tie_out = NULL, updated_at = now() WHERE deal_id = ${dealId}`);
+    });
+  },
+  async ledgerYearSummaries(dealId) {
+    const db = await pgDb();
+    const rows = await db
+      .select({
+        ledgerId: glTransactions.ledgerId,
+        fiscalYear: glTransactions.fiscalYear,
+        lines: sql<number>`count(*)::int`,
+        debitCents: sql<number>`coalesce(sum(coalesce(${glTransactions.debitCents}, greatest(${glTransactions.amountCents}, 0))), 0)::bigint`,
+        creditCents: sql<number>`coalesce(sum(coalesce(${glTransactions.creditCents}, greatest(-${glTransactions.amountCents}, 0))), 0)::bigint`,
+        accounts: sql<number>`count(distinct ${glTransactions.accountKey})::int`,
+        firstDate: sql<string>`min(${glTransactions.txnDate})`,
+        lastDate: sql<string>`max(${glTransactions.txnDate})`,
+      })
+      .from(glTransactions)
+      .where(eq(glTransactions.dealId, dealId))
+      .groupBy(glTransactions.ledgerId, glTransactions.fiscalYear);
+    return rows.map((r) => ({ ...r, debitCents: Number(r.debitCents), creditCents: Number(r.creditCents) }));
+  },
 };
 
 // ── Memory (tests; GL_STORE=memory locally) ──────────────────────────────
@@ -252,14 +536,30 @@ export const pgStore: GlStore = {
 let seq = 0;
 const newId = () => `mem-${(++seq).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
+function memLink(r: Partial<GlTraceLink> & InsertGlTraceLink): GlTraceLink {
+  const at = new Date();
+  return {
+    id: newId(), ledgerId: null, rowNo: null, documentId: null, docAmountCheck: null, txnDate: null, account: null, name: null, memo: null,
+    proposedBy: null, confidence: null, reason: null, decidedBy: null, decidedByMember: null, decidedAt: null, showDetails: null,
+    createdAt: at, updatedAt: at, ...r,
+  } as GlTraceLink;
+}
+
 export interface MemoryStoreData {
   tracing: GlTracing[];
   ledgers: GlLedger[];
   transactions: GlTransaction[];
   links: GlTraceLink[];
+  traces: GlAddbackTrace[];
 }
 
-export function memoryStore(data: MemoryStoreData = { tracing: [], ledgers: [], transactions: [], links: [] }): GlStore & { data: MemoryStoreData } {
+/** The fiscal year of a date for a fiscal-year end, the same way the SQL does it. */
+function fiscalYearJs(date: string, fye: string): string {
+  return date.slice(5, 10) > fye ? String(Number(date.slice(0, 4)) + 1) : date.slice(0, 4);
+}
+
+export function memoryStore(data: MemoryStoreData = { tracing: [], ledgers: [], transactions: [], links: [], traces: [] }): GlStore & { data: MemoryStoreData } {
+  if (!data.traces) data.traces = [];
   const now = () => new Date();
   const matches = (t: GlTransaction, q: LedgerRowsQuery) => {
     if (t.ledgerId !== q.ledgerId) return false;
@@ -396,6 +696,157 @@ export function memoryStore(data: MemoryStoreData = { tracing: [], ledgers: [], 
       return n;
     },
     async linksOfDeal(dealId) { return data.links.filter((k) => k.dealId === dealId); },
+
+    async listTraces(dealId) { return data.traces.filter((t) => t.dealId === dealId).sort((a, b) => +a.createdAt - +b.createdAt); },
+    async getTrace(id) { return data.traces.find((t) => t.id === id); },
+    async upsertTrace(row) {
+      const existing = data.traces.find((t) => t.dealId === row.dealId && t.addbackKey === row.addbackKey);
+      if (existing) {
+        const patch = { ...(row as any) };
+        delete patch.id;
+        delete patch.createdAt;
+        Object.assign(existing, patch, { updatedAt: now() });
+        return existing;
+      }
+      const created = {
+        id: newId(), analysisId: null, analysisAddbackId: null, category: null, proof: "ledger", proofByBroker: false, sharePct: null, shareBasis: null,
+        shareBasisDoc: null, yearLabels: null, sellerHint: null, privateEvidence: false, sentAt: null, sellerStatus: "not_started", reopenedNote: null,
+        sellerNote: null, sellerNoteShown: false, notInLedger: null, question: null, brokerVerdict: null, reviewedAt: null, brokerNote: null,
+        brokerNoteShown: false, buyerReason: null, leftOut: null, includeInCim: true, computed: null, proposalFingerprint: null, removedAt: null,
+        createdAt: new Date(Date.now() + data.traces.length), updatedAt: now(), ...(row as any),
+      } as GlAddbackTrace;
+      data.traces.push(created);
+      return created;
+    },
+    async updateTrace(id, patch) {
+      const row = data.traces.find((t) => t.id === id);
+      if (!row) return undefined;
+      Object.assign(row, patch, { updatedAt: now() });
+      return row;
+    },
+    async linksOfTrace(traceId) { return data.links.filter((k) => k.traceId === traceId); },
+    async replaceProposals(traceId, years, rows) {
+      data.links = data.links.filter((k) => !(k.traceId === traceId && k.state === "proposed" && years.includes(k.fiscalYear)));
+      for (const r of rows) {
+        const clash = data.links.some((k) =>
+          k.traceId === r.traceId && ((r.ledgerId && k.ledgerId === r.ledgerId && k.rowNo === r.rowNo) || (r.documentId && k.documentId === r.documentId && k.fiscalYear === r.fiscalYear)));
+        if (clash) continue;
+        data.links.push(memLink(r));
+      }
+    },
+    async decideEntryLink(row) {
+      const existing = data.links.find((k) => k.traceId === row.traceId && k.ledgerId === row.ledgerId && k.rowNo === row.rowNo);
+      if (existing) {
+        Object.assign(existing, { state: row.state, decidedBy: row.decidedBy ?? null, decidedByMember: row.decidedByMember ?? null, decidedAt: row.decidedAt ?? null, fiscalYear: row.fiscalYear, updatedAt: now() });
+        return existing;
+      }
+      const created = memLink(row);
+      data.links.push(created);
+      return created;
+    },
+    async removeEntryLink(traceId, ledgerId, rowNo) {
+      const k = data.links.find((x) => x.traceId === traceId && x.ledgerId === ledgerId && x.rowNo === rowNo);
+      if (!k) return;
+      if (k.proposedBy === "rules" || k.proposedBy === "ai") Object.assign(k, { state: "proposed", decidedBy: null, decidedByMember: null, decidedAt: null, updatedAt: now() });
+      else data.links = data.links.filter((x) => x !== k);
+    },
+    async upsertDocLink(row) {
+      const existing = data.links.find((k) => k.traceId === row.traceId && k.documentId === row.documentId && k.fiscalYear === row.fiscalYear);
+      if (existing) {
+        Object.assign(existing, { amountCents: row.amountCents, docAmountCheck: row.docAmountCheck ?? null, state: row.state ?? "confirmed", decidedBy: row.decidedBy ?? null, decidedByMember: row.decidedByMember ?? null, decidedAt: row.decidedAt ?? null, updatedAt: now() });
+        return existing;
+      }
+      const created = memLink({ state: "confirmed", proposedBy: "seller_document", ...row });
+      data.links.push(created);
+      return created;
+    },
+    async deleteDocLinks(where) {
+      if (!where.documentId && !where.traceId && !where.fiscalYear) return 0;
+      const before = data.links.length;
+      data.links = data.links.filter((k) => !(k.documentId && (!where.documentId || k.documentId === where.documentId) && (!where.traceId || k.traceId === where.traceId) && (!where.fiscalYear || k.fiscalYear === where.fiscalYear)));
+      return before - data.links.length;
+    },
+    async setLinkShowDetails(ids, showDetails) {
+      for (const k of data.links) if (ids.includes(k.id)) Object.assign(k, { showDetails, updatedAt: now() });
+    },
+    async updateLink(id, patch) {
+      const k = data.links.find((x) => x.id === id);
+      if (k) Object.assign(k, patch, { updatedAt: now() });
+    },
+    async candidateRows(q) {
+      if (q.ledgerIds.length === 0) return [];
+      const pattern = termsPattern(q.terms);
+      const re = pattern ? new RegExp(pattern, "i") : null;
+      return data.transactions
+        .filter((t) => t.dealId === q.dealId && t.fiscalYear === q.fiscalYear && !t.duplicate && q.ledgerIds.includes(t.ledgerId))
+        .filter((t) =>
+          q.accountKeys.includes(t.accountKey) ||
+          (re && (re.test(t.account) || re.test(t.name ?? "") || re.test(t.memo ?? ""))) ||
+          q.amounts.slice(0, 12).some((a) => Math.abs(t.amountCents) >= Math.floor(Math.abs(a) * 0.99) && Math.abs(t.amountCents) <= Math.ceil(Math.abs(a) * 1.01)))
+        .sort((a, b) => (a.txnDate === b.txnDate ? a.rowNo - b.rowNo : a.txnDate < b.txnDate ? -1 : 1))
+        .slice(0, Math.min(q.limit ?? 3000, 3000));
+    },
+    async rowsForKeys(dealId, keys) {
+      return data.transactions.filter((t) => t.dealId === dealId && keys.some((k) => k.ledgerId === t.ledgerId && k.rowNo === t.rowNo));
+    },
+    async searchRows(q) {
+      if (q.ledgerIds.length === 0) return [];
+      const term = (q.q ?? "").trim().slice(0, 100);
+      return data.transactions
+        .filter((t) => t.dealId === q.dealId && q.ledgerIds.includes(t.ledgerId) && !t.duplicate)
+        .filter((t) => !q.fiscalYears || q.fiscalYears.length === 0 || q.fiscalYears.includes(t.fiscalYear))
+        .filter((t) => !q.accountKey || t.accountKey === q.accountKey)
+        .filter((t) => q.minCents === null || q.minCents === undefined || Math.abs(t.amountCents) >= Math.abs(q.minCents))
+        .filter((t) => q.maxCents === null || q.maxCents === undefined || Math.abs(t.amountCents) <= Math.abs(q.maxCents))
+        .filter((t) => !term || matches(t, { ledgerId: t.ledgerId, q: term }))
+        .sort((a, b) => (a.txnDate === b.txnDate ? a.rowNo - b.rowNo : a.txnDate < b.txnDate ? -1 : 1))
+        .slice(0, Math.min(q.limit ?? 50, 200));
+    },
+    async dealAccountTotals(dealId, ledgerIds) {
+      const map = new Map<string, DealAccountTotal>();
+      for (const t of data.transactions) {
+        if (t.dealId !== dealId || t.duplicate || !ledgerIds.includes(t.ledgerId)) continue;
+        const k = `${t.fiscalYear}|${t.accountKey}`;
+        const a = map.get(k) ?? { fiscalYear: t.fiscalYear, accountKey: t.accountKey, account: t.account, accountType: t.accountType ?? null, accountNumber: t.accountNumber ?? null, lines: 0, netCents: 0 };
+        a.lines++;
+        a.netCents += t.amountCents;
+        if (t.account < a.account) a.account = t.account;
+        if (t.accountType && (!a.accountType || t.accountType < a.accountType)) a.accountType = t.accountType;
+        if (t.accountNumber && (!a.accountNumber || t.accountNumber < a.accountNumber)) a.accountNumber = t.accountNumber;
+        map.set(k, a);
+      }
+      return Array.from(map.values());
+    },
+    async accountRows(dealId, ledgerIds, fiscalYear, accountKeys) {
+      return data.transactions
+        .filter((t) => t.dealId === dealId && ledgerIds.includes(t.ledgerId) && t.fiscalYear === fiscalYear && accountKeys.includes(t.accountKey) && !t.duplicate)
+        .sort((a, b) => (a.txnDate === b.txnDate ? a.rowNo - b.rowNo : a.txnDate < b.txnDate ? -1 : 1));
+    },
+    async changeFiscalYearEnd(dealId, fye) {
+      for (const t of data.transactions) if (t.dealId === dealId) t.fiscalYear = fiscalYearJs(t.txnDate, fye);
+      for (const k of data.links) if (k.dealId === dealId && !k.documentId && k.txnDate) k.fiscalYear = fiscalYearJs(k.txnDate, fye);
+      data.links = data.links.filter((k) => !(k.dealId === dealId && k.state === "proposed"));
+      for (const t of data.traces) if (t.dealId === dealId) t.proposalFingerprint = null;
+      for (const l of data.ledgers) if (l.dealId === dealId) l.fiscalYearEndUsed = fye;
+      const tr = data.tracing.find((t) => t.dealId === dealId);
+      if (tr) Object.assign(tr, { fiscalYearEnd: fye, syncedFingerprint: null, tieOut: null, updatedAt: now() });
+    },
+    async ledgerYearSummaries(dealId) {
+      const map = new Map<string, { ledgerId: string; fiscalYear: string; lines: number; debitCents: number; creditCents: number; accounts: number; firstDate: string; lastDate: string; keys: Set<string> }>();
+      for (const t of data.transactions) {
+        if (t.dealId !== dealId) continue;
+        const k = `${t.ledgerId}|${t.fiscalYear}`;
+        const a = map.get(k) ?? { ledgerId: t.ledgerId, fiscalYear: t.fiscalYear, lines: 0, debitCents: 0, creditCents: 0, accounts: 0, firstDate: t.txnDate, lastDate: t.txnDate, keys: new Set<string>() };
+        a.lines++;
+        a.debitCents += t.debitCents ?? Math.max(t.amountCents, 0);
+        a.creditCents += t.creditCents ?? Math.max(-t.amountCents, 0);
+        a.keys.add(t.accountKey);
+        if (t.txnDate < a.firstDate) a.firstDate = t.txnDate;
+        if (t.txnDate > a.lastDate) a.lastDate = t.txnDate;
+        map.set(k, a);
+      }
+      return Array.from(map.values()).map(({ keys, ...r }) => ({ ...r, accounts: keys.size }));
+    },
   };
   return store;
 }

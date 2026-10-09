@@ -90,6 +90,9 @@ export async function deleteDocumentAndProvenance(docId: string): Promise<string
   if (doc.subcategory === "general_ledger") {
     const { onLedgerDocumentDeleted } = await import("../gl/ingest");
     await onLedgerDocumentDeleted(doc);
+  } else if (doc.subcategory === "addback_support") {
+    const { onGlSupportDocumentDeleted } = await import("../gl/support-docs");
+    await onGlSupportDocumentDeleted(doc);
   }
 
   await removeDocumentFile(doc);

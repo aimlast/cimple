@@ -1655,6 +1655,9 @@ export const NOTIFICATION_ROUTING: Record<string, { teams: string[]; roles?: str
   // The seller's answer on the CIM review page (/seller/:token/review).
   cim_seller_approved: { teams: ["broker"], roles: ["lead", "associate"] },
   cim_changes_requested: { teams: ["broker"], roles: ["lead", "associate"] },
+  // gl (Add-backs in the books) — founder question Q21; behind GL_NOTIFICATION_ROUTING (server/gl/notify.ts), which falls back to the follow-up events when these two lines are removed.
+  seller_gl_request: { teams: ["seller"], roles: ["owner", "accountant"] },
+  gl_needs_broker: { teams: ["broker"], roles: ["lead", "associate"] },
 };
 
 // Buyer decision next-step options (shown after "interested in moving forward")
@@ -2968,7 +2971,7 @@ export const glAddbackTraces = pgTable("gl_addback_traces", {
   reopenedNote: text("reopened_note"),
   sellerNote: text("seller_note"),
   sellerNoteShown: boolean("seller_note_shown").notNull().default(false),
-  notInLedger: jsonb("not_in_ledger").$type<{ reason: "personal" | "other_document" | "unsure"; at: string } | null>(),
+  notInLedger: jsonb("not_in_ledger").$type<{ reason: "personal" | "other_document" | "unsure"; at: string; years?: string[] } | null>(),
   question: jsonb("question").$type<{ text: string; askedAt: string; answer?: string; answeredAt?: string } | null>(),
   brokerVerdict: text("broker_verdict"),          // found | partly_found | not_found
   reviewedAt: timestamp("reviewed_at"),

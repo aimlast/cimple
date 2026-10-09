@@ -505,6 +505,11 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
   } finally {
     stopHeartbeat();
     activeReads.delete(doc.id);
+    // INTEGRATION §2.17 finally step 1: an add-back's supporting document (a T4,
+    // an invoice) was read — the amounts the seller typed are looked for in it.
+    if (doc.subcategory === "addback_support") {
+      void import("../gl/support-docs").then((m) => m.onGlSupportDocumentRead(doc.id)).catch(() => undefined);
+    }
   }
 }
 

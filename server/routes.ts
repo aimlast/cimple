@@ -4280,34 +4280,8 @@ Return JSON only.`,
 
   // One invite per seller email per deal — both the questionnaire invite and
   // the NDA flow share the same token. Validates through the insert schema.
-  const findOrCreateSellerInvite = async (
-    dealId: string,
-    sellerEmail: string,
-    sellerName?: string | null,
-  ) => {
-    const { insertSellerInviteSchema } = await import("@shared/schema");
-    const existing = await storage.getSellerInvitesByDealId(dealId);
-    const match = sellerEmail
-      ? existing.find(
-          (i) => (i.sellerEmail || "").toLowerCase() === sellerEmail.toLowerCase(),
-        )
-      : undefined;
-    if (match) {
-      // Keep the seller's name current on re-invite.
-      if (sellerName && sellerName !== match.sellerName) {
-        const updated = await storage.updateSellerInvite(match.id, { sellerName });
-        if (updated) return updated;
-      }
-      return match;
-    }
-    const validated = insertSellerInviteSchema.parse({
-      dealId,
-      token: crypto.randomUUID(),
-      sellerEmail: sellerEmail || null,
-      sellerName: sellerName || null,
-    });
-    return storage.createSellerInvite(validated);
-  };
+  // (Moved to server/deals/seller-invites.ts unchanged — "Add-backs in the books" uses it too.)
+  const { findOrCreateSellerInvite } = await import("./deals/seller-invites");
 
   const sellerInviteEmailHtml = (
     sellerName: string | null,
@@ -4687,6 +4661,10 @@ Return JSON only.`,
         todo,
         followUpQuestions,
         cimReview: { stage: reviewStage, canApprove: linkRights.canApproveCim },
+        // "Show us where a few costs are in your books" (gl) — only for a link that may do it (owner / accountant).
+        glTracing: linkRights.canTraceAddbacks
+          ? await (await import("./gl/progress")).sellerGlProgress(invite, await storage.getDealMembers(deal.id))
+          : null,
         pendingApprovals: pendingSeller.length,
         pendingApprovalItems: pendingSeller
           .filter((q) => !!q.sellerApprovalToken)
@@ -6152,6 +6130,9 @@ Return JSON only.`,
         if (err instanceof CimGenerationRunningError) {
           return res.status(409).json({ error: "CIM generation is already running for this deal", job: err.job });
         }
+        // The broker's hold on "Add-backs in the books" (gl spec §6.9).
+        const glGate = await import("./gl/gate");
+        if (glGate.isGlTraceRequiredError(err)) return res.status(409).json(glGate.glGateBody(err));
         throw err;
       }
     } catch (error: any) {
@@ -6201,6 +6182,17 @@ Return JSON only.`,
       // disputed figure would reach due-diligence buyers straight away.
       const openCritical = await blockingCriticalDiscrepancies(dealId);
       if (openCritical.length > 0) return discrepancyBlockResponse(res, openCritical, "generating the due-diligence CIM");
+      // The due-diligence CIM shows the ledger entries behind each add-back: it waits for
+      // "Add-backs in the books" (reviewed, or gone ahead without the ledger) — gl spec §6.9.
+      {
+        const glGate = await import("./gl/gate");
+        try {
+          await glGate.assertGlGate(deal, "dd");
+        } catch (err) {
+          if (glGate.isGlTraceRequiredError(err)) return res.status(409).json(glGate.glGateBody(err));
+          throw err;
+        }
+      }
 
       // DD context: shared documents only, CIM-safe facts, the computed
       // financial analysis (never the analyzer's raw JSON or its internal
@@ -7030,6 +7022,9 @@ Return JSON only.`,
         if (err instanceof CimGenerationRunningError) {
           return res.status(409).json({ error: "CIM generation is already running for this deal", job: err.job });
         }
+        // The broker's hold on "Add-backs in the books" (gl spec §6.9).
+        const glGate = await import("./gl/gate");
+        if (glGate.isGlTraceRequiredError(err)) return res.status(409).json(glGate.glGateBody(err));
         throw err;
       }
     } catch (error: any) {
