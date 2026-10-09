@@ -137,6 +137,8 @@ export interface GlPublishPreview {
   agreeYears: string[];
   /** The CIM's earnings bridge (its title) when it shows other add-backs or amounts — Full/Blind wait until it's regenerated. */
   bridgeMismatch: string | null;
+  /** The previous version buyers still read has an earnings bridge with other add-backs (Full/Blind note off, DD page notice). */
+  keptBridgeMismatch?: string | null;
 }
 
 export interface GlProgressData { glTracing: GlTracingProgress | null; gate?: GlGate | null }

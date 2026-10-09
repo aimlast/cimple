@@ -569,6 +569,8 @@ export function projectEvidence(snap: GlPublishedEvidence, mode: GlEvidenceMode,
   return {
     ...base,
     note: null,
+    // buildBuyerCim compares the earnings bridge before the page with these (never shown on the page).
+    bridge: bridgeChecksFor(lines),
     tieOut: snap.tieOut.map((r) => (r.note ? { ...r, note: words(r.note) } : r)),
     confirmation: snap.confirmation,
     source: first ? { software: first.software && first.software !== "other" ? softwareLabel(first.software) : null, period: snap.ledgers.length === 1 ? first.period : starts.join("; ") } : null,
@@ -739,6 +741,13 @@ export interface PublishPreview {
   warnings: string[];
   /** The CIM's earnings bridge (its title) when it shows other add-backs or amounts: Full/Blind can't be shown until it's regenerated. */
   bridgeMismatch: string | null;
+  /**
+   * The earnings bridge (its title) of the previous version buyers still read
+   * (a live CIM under an update) when it shows other add-backs or amounts:
+   * the Full/Blind note stays off it and the DD page opens with a notice
+   * until the broker publishes the updated CIM.
+   */
+  keptBridgeMismatch: string | null;
   published: { at: string; versions: GlPublishedEvidence["versions"]; leaveOut: string[] } | null;
   changes: string[];
   /** Years whose ledger agrees with the statements (or the difference was accepted): the dialog rewrites the note exactly as lines are left out. */
@@ -772,9 +781,9 @@ export async function publishPreview(dealId: string): Promise<PublishPreview> {
     d.versions.blind = false;
     d.reasons.normal = reason;
     d.reasons.blind = reason;
-    warnings.push(`Your CIM's "${bridge}" shows different add-backs or amounts from the latest financial analysis. Until you regenerate it, the Full and Blind note stays off what buyers see, and due-diligence buyers see this page's amounts next to the older bridge.`);
+    warnings.push(`Your CIM's "${bridge}" shows different add-backs or amounts from the latest financial analysis. Until you regenerate it, the Full and Blind note stays off what buyers see — and due-diligence buyers read this page right after that older bridge, so the page opens by telling them its amounts are the current ones and to ask you about the difference.`);
   } else if (mismatch?.keptCopy) {
-    warnings.push(`Buyers are still reading the previous version of your CIM, whose "${mismatch.title}" shows other add-backs or amounts. The Full and Blind note stays off what they see until you publish the updated CIM.`);
+    warnings.push(`Buyers are still reading the previous version of your CIM, whose "${mismatch.title}" shows other add-backs or amounts. Until you publish the updated CIM, the Full and Blind note stays off what they see, and due-diligence buyers read this page right after that older bridge — the page opens by telling them its amounts are the current ones and to ask you about the difference.`);
   } else {
     const stale = await bridgeOlderThanAnalysis(dealId).catch(() => null);
     if (stale) warnings.push(`Your CIM's "${stale}" was written before the latest financial analysis — regenerate it so the bridge and the note show the same add-backs.`);
@@ -803,6 +812,7 @@ export async function publishPreview(dealId: string): Promise<PublishPreview> {
     }),
     warnings,
     bridgeMismatch: bridge,
+    keptBridgeMismatch: mismatch?.keptCopy ? mismatch.title : null,
     published: pub && pub.v === 1 ? { at: pub.publishedAt, versions: pub.versions, leaveOut: pub.leaveOut } : null,
     changes,
     agreeYears: snapshot.tieOut.filter((r) => r.state === "agrees" || r.state === "accepted").map((r) => r.year),
@@ -845,12 +855,13 @@ export async function bridgeMismatch(dealId: string, snap: GlPublishedEvidence):
   };
   const now = misfit((await storage.getCimSectionsByDeal(dealId)) ?? []);
   if (now) return { title: now, keptCopy: false };
-  // A live CIM under an update: buyers still read the kept copy.
+  // A live CIM under an update: buyers still read the kept copy (the same sections at every level).
   const deal = await storage.getDeal(dealId);
   if (!deal) return null;
-  const { buyerCimRows } = await import("../cim/published-snapshot");
-  const rows = await buyerCimRows(deal, "loi").catch(() => null);
-  const kept = rows?.fromSnapshot ? misfit(rows.sections) : null;
+  const [{ servesPublishedSnapshot }, { getPublishedSnapshot }] = await Promise.all([import("@shared/cim-buyer-view"), import("../cim/published-snapshot")]);
+  if (!servesPublishedSnapshot(deal)) return null;
+  const snapshot = await getPublishedSnapshot(dealId).catch(() => null);
+  const kept = snapshot ? misfit(snapshot.sections) : null;
   return kept ? { title: kept, keptCopy: true } : null;
 }
 
@@ -858,10 +869,18 @@ export async function bridgeMismatch(dealId: string, snap: GlPublishedEvidence):
 async function changesSincePublished(s: EvidenceState, pub: GlPublishedEvidence): Promise<string[]> {
   const tight = tightenPublished(pub, tightenCurrentFrom(s));
   const out = [...tight.changes];
-  if (pub.versions.normal || pub.versions.blind) {
+  if (pub.versions.normal || pub.versions.blind || pub.versions.dd) {
     const bridge = await bridgeMismatch(s.dealId, tight.snapshot).catch(() => null);
-    if (bridge?.keptCopy) out.push(`The Full and Blind note is held back from buyers: the version of your CIM they read ("${bridge.title}") shows other add-backs or amounts. It appears once you publish the updated CIM.`);
-    else if (bridge) out.push(`The Full and Blind note is held back from buyers: your CIM's "${bridge.title}" shows different add-backs or amounts. Regenerate it, then update what buyers see.`);
+    const where = bridge?.keptCopy ? `the version of your CIM they read ("${bridge.title}")` : bridge ? `your CIM's "${bridge.title}"` : "";
+    const fix = bridge?.keptCopy ? "publish the updated CIM" : "regenerate it, then update what buyers see";
+    if (bridge && (pub.versions.normal || pub.versions.blind)) {
+      out.push(bridge.keptCopy
+        ? `The Full and Blind note is held back from buyers: ${where} shows other add-backs or amounts. It appears once you publish the updated CIM.`
+        : `The Full and Blind note is held back from buyers: ${where} shows different add-backs or amounts. Regenerate it, then update what buyers see.`);
+    }
+    if (bridge && pub.versions.dd) {
+      out.push(`Due-diligence buyers read the add-backs page right after ${where}, which shows other add-backs or amounts — the page tells them its amounts are the current ones. To show one set of numbers, ${fix}.`);
+    }
   }
   const { snapshot: live } = await snapshotFromState(s, { versions: pub.versions, leaveOut: pub.leaveOut, publishedBy: null });
   const was = new Map(tight.snapshot.lines.map((l) => [l.addbackKey, l]));

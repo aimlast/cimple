@@ -53,7 +53,7 @@ import { blindIdentifiers, blindTitleRedactor } from "./blind-identifiers";
 import { blindLeakTerms, blindPlaceholders, collectStrings, findBlindLeaks } from "./blind-guard";
 import { buyerMediaLayoutData, dealAddressFragments, isMediaLayout, type MediaAssetRef } from "./cim-media";
 import { factAmounts, parseChartNumber, withStatedChartTotal } from "./cim-chart-values";
-import { GL_EVIDENCE_LAYOUT, GL_EVIDENCE_SECTION_KEY, GL_EVIDENCE_TITLE, glEvidenceAnchor, glEvidenceAnchorInfo, glNoteFitsAnchor, type GlAnchorKind, type GlEvidencePayload, type GlNoteData } from "./gl-evidence";
+import { GL_EVIDENCE_LAYOUT, GL_EVIDENCE_SECTION_KEY, GL_EVIDENCE_TITLE, glEvidenceAnchorInfo, glNoteFitsAnchor, type GlAnchorKind, type GlEvidencePayload, type GlNoteData } from "./gl-evidence";
 
 export interface BuyerSection {
   id: string;
@@ -454,8 +454,15 @@ interface BuyerCimInput {
   glEvidence?: GlEvidencePayload | null;
 }
 
-/** gl: the DD page "Where each add-back is in the books" (never passes withCurrentFigures — its figures are the published ones). */
-function glEvidencePage(dealId: string, payload: GlEvidencePayload, after: BuyerSection | undefined): BuyerSection {
+/**
+ * gl: the DD page "Where each add-back is in the books" (never passes
+ * withCurrentFigures — its figures are the published ones). `olderBridge`:
+ * the bridge before it shows other add-backs or amounts — the page says so.
+ */
+function glEvidencePage(dealId: string, payload: GlEvidencePayload, after: BuyerSection | undefined, olderBridge: string | null = null): BuyerSection {
+  // The bridge check is the server's input to this placement, never page content.
+  const { bridge: _checks, olderBridge: _was, ...rest } = payload;
+  const layoutData: GlEvidencePayload = olderBridge ? { ...rest, olderBridge } : "bridge" in payload || "olderBridge" in payload ? rest : payload;
   return {
     id: payload.pageId,
     dealId,
@@ -463,7 +470,7 @@ function glEvidencePage(dealId: string, payload: GlEvidencePayload, after: Buyer
     sectionTitle: GL_EVIDENCE_TITLE,
     order: (after?.order ?? 0) + 0.5,
     layoutType: GL_EVIDENCE_LAYOUT,
-    layoutData: payload,
+    layoutData,
     aiDraftContent: null,
     brokerEditedContent: null,
     isVisible: true,
@@ -576,10 +583,14 @@ function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
       sections.push(withCurrentFigures(o ? { ...base(s), ...pick(applySectionOverride(s, o, "dd")) } : base(s)));
     }
     // gl: the page "Where each add-back is in the books", right after the earnings bridge.
+    // A bridge written from an earlier analysis (other add-backs or amounts) keeps the page,
+    // which then opens by saying so — DD buyers never read two lists back to back unwarned.
     const ev = input.glEvidence;
     if (ev && ev.mode === "dd" && ev.lines.length > 0 && sections.length > 0) {
-      const at = glEvidenceAnchor(sections);
-      sections.splice(at + 1, 0, glEvidencePage(deal.id, ev, sections[at]));
+      const anchor = glEvidenceAnchorInfo(sections);
+      const at = anchor.index;
+      const older = anchor.kind !== "other" && !glNoteFitsAnchor(sections[at], anchor.kind, ev.bridge) ? sections[at].sectionTitle || "Earnings bridge" : null;
+      sections.splice(at + 1, 0, glEvidencePage(deal.id, ev, sections[at], older));
       return { mode, sections, preparing: false, heldBack: 0, leaked: [], leakReasons: {}, glEvidence: ev };
     }
     return { mode, sections, preparing: false, heldBack: 0, leaked: [], leakReasons: {}, glEvidence: null };

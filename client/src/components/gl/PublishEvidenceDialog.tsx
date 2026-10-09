@@ -126,6 +126,12 @@ export function PublishEvidenceDialog({ open, onOpenChange, dealId }: { open: bo
               <section className="space-y-3" aria-label="Versions">
                 <VersionRow id="gl-v-dd" checked={versions.dd} onChange={(v) => setVersions((x) => ({ ...x, dd: v }))} title="Due-diligence CIM">
                   The page "Where each add-back is in the books": the entries behind each add-back, the documents, and your reasons.
+                  {(data.bridgeMismatch || data.keptBridgeMismatch) && (
+                    <span className="mt-1 flex gap-1.5 text-xs text-amber-600 dark:text-amber-400" data-testid="gl-publish-dd-older-bridge">
+                      <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      <span>It follows “{data.bridgeMismatch || data.keptBridgeMismatch}”, which shows other add-backs or amounts — the page will open by saying its amounts are the current ones.</span>
+                    </span>
+                  )}
                   <button type="button" className="mt-1 flex items-center gap-1 text-xs text-teal hover:underline" onClick={() => setPreviewing(true)} data-testid="gl-publish-see-page">
                     <Eye className="h-3.5 w-3.5" /> See the page
                   </button>

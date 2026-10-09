@@ -19,7 +19,7 @@ import { createContext, useContext, useState } from "react";
 import { useRoute } from "wouter";
 import { BookCheck, FileText, Loader2, MessageSquare } from "lucide-react";
 import {
-  GL_BUYER_STATUS_WORDS, GL_EVIDENCE_FIRST_ENTRIES, glConfirmationText, glIntroText, glShareText, glTieOutLines, isGlEvidencePayload,
+  GL_BUYER_STATUS_WORDS, GL_EVIDENCE_FIRST_ENTRIES, glConfirmationText, glIntroText, glOlderBridgeText, glShareText, glTieOutLines, isGlEvidencePayload,
   type GlBuyerStatus, type GlEvidenceEntry, type GlEvidenceLine, type GlEvidencePayload, type GlEvidenceYear,
 } from "@shared/gl-evidence";
 import { accountPath, formatDay } from "@shared/gl-copy";
@@ -60,6 +60,11 @@ export function GlEvidenceBlock({ layoutData }: Props) {
       {p.preview && (
         <p className="rounded-md border border-[hsl(var(--cim-brass)/0.4)] bg-[hsl(var(--cim-brass)/0.08)] px-3 py-2 text-xs text-[hsl(var(--cim-ink-soft))]" data-testid="gl-evidence-preview">
           Not shown to buyers yet — this is what they'll see after you publish it on Financials → Add-backs in the books.
+        </p>
+      )}
+      {p.olderBridge && (
+        <p className="rounded-md border border-[hsl(var(--cim-caution)/0.45)] bg-[hsl(var(--cim-caution)/0.08)] px-3 py-2 text-sm leading-relaxed text-[hsl(var(--cim-ink))]" role="note" data-testid="gl-evidence-older-bridge">
+          {glOlderBridgeText(p.olderBridge)}
         </p>
       )}
       <p className="text-sm leading-relaxed text-[hsl(var(--cim-ink-soft))]" {...ba("intro")}>{glIntroText(p.source)}</p>

@@ -10,11 +10,16 @@
  * owner / related-party pay; reads the ledger like an upload; ticks the
  * entries as if the seller had confirmed them ("correct to the best of my
  * knowledge"); marks every add-back reviewed with Cimple's suggestion.
- * Showing it to buyers needs --publish (the publish dialog's defaults).
+ * Showing it to buyers needs --publish (the publish dialog's defaults). It
+ * refuses while the earnings bridge buyers read (the CIM's, or the kept copy
+ * of a live CIM under an update) shows other add-backs or amounts — buyers
+ * would read two different lists — unless --accept-older-bridge (the DD page
+ * then opens with a notice; the Full/Blind note stays off). The fix: publish
+ * the CIM update (or regenerate the bridge) first, then "Show to buyers…".
  *
  *   Dry run (default — writes nothing, prints the plan and the tie-out):
  *     DATABASE_URL=… ANTHROPIC_API_KEY=disabled DISABLE_SCHEDULERS=1 npx tsx scripts/seed-demo-gl.ts --deal <demoKey|dealId>
- *   Apply:      … --deal <…> --apply [--publish]
+ *   Apply:      … --deal <…> --apply [--publish [--accept-older-bridge]]
  *   Remove:     … --deal <…> --remove [--apply]
  *
  * Files are written under UPLOADS_DIR/docs — run where the uploads live (the
@@ -45,11 +50,14 @@ import { uploadsRoot } from "../server/documents/document-path";
 import { publishEvidence, publishPreview } from "../server/gl/evidence";
 import { claimedYears } from "@shared/gl-reconcile";
 
-type Args = { deal: string | null; apply: boolean; publish: boolean; remove: boolean; force: boolean };
+type Args = { deal: string | null; apply: boolean; publish: boolean; remove: boolean; force: boolean; acceptOlderBridge: boolean };
 function args(): Args {
   const a = process.argv.slice(2);
   const i = a.indexOf("--deal");
-  return { deal: i >= 0 ? a[i + 1] ?? null : null, apply: a.includes("--apply"), publish: a.includes("--publish"), remove: a.includes("--remove"), force: a.includes("--force") };
+  return {
+    deal: i >= 0 ? a[i + 1] ?? null : null, apply: a.includes("--apply"), publish: a.includes("--publish"), remove: a.includes("--remove"), force: a.includes("--force"),
+    acceptOlderBridge: a.includes("--accept-older-bridge"),
+  };
 }
 
 const seeded = (d: { sourceMeta?: unknown }) => (d.sourceMeta as { demoSeed?: string } | null)?.demoSeed === DEMO_SEED_TAG;
@@ -197,6 +205,16 @@ async function main() {
     }
     for (const w of p.warnings) console.log(`  ! ${w}`);
     if (!p.versions.normal && p.reasons.normal) console.log(`  Full/Blind note: ${p.reasons.normal}`);
+    const older = p.bridgeMismatch ?? p.keptBridgeMismatch;
+    if (older && !o.acceptOlderBridge) {
+      console.log(`Not shown to buyers: the earnings bridge buyers read ("${older}") shows other add-backs or amounts than the ones found in the books, so they would read two different lists.`);
+      console.log(p.keptBridgeMismatch
+        ? "  Publish the updated CIM first (CIM tab → Publish update), then Financials → Add-backs in the books → Show to buyers…"
+        : "  Regenerate that section first, then Financials → Add-backs in the books → Show to buyers…");
+      console.log("  (Or re-run the seed with --accept-older-bridge to show the due-diligence page anyway — it opens by saying its amounts are the current ones.)");
+      console.log(`Done (not published). Undo with: --deal ${deal.id} --remove --apply`);
+      return;
+    }
     const r = await publishEvidence(deal.id, { versions: p.versions, leaveOut: [] }, null);
     console.log(`Shown to buyers: ${Object.entries(r.versions).filter(([, v]) => v).map(([k]) => k).join(", ")} (${r.lines} add-backs).`);
   } else {

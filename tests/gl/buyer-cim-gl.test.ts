@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { test, done } from "./_harness";
 import { buildBuyerCim } from "../../shared/cim-buyer-view";
-import { glBridgeShows, glEvidenceAnchor, glEvidenceAnchorInfo, glNoteFitsAnchor, sectionFigures, sectionListsAddbacks, GL_EVIDENCE_LAYOUT, GL_EVIDENCE_SECTION_KEY, type GlEvidencePayload } from "../../shared/gl-evidence";
+import { glBridgeShows, glEvidenceAnchor, glEvidenceAnchorInfo, glNoteFitsAnchor, glOlderBridgeText, sectionFigures, sectionListsAddbacks, GL_EVIDENCE_LAYOUT, GL_EVIDENCE_SECTION_KEY, type GlEvidencePayload } from "../../shared/gl-evidence";
 import type { CimSection, CimSectionOverride } from "../../shared/schema";
 
 const deal = { id: "d1", businessName: "Lakeshore Home Comfort Ltd.", blindCodename: "Project Harbour", extractedInfo: { businessName: "Lakeshore Home Comfort Ltd.", city: "Mississauga", ownerName: "Tony Moretti" } };
@@ -207,6 +207,41 @@ await test("GL-R1-05: an adjusted-EBITDA section that lists no add-backs can't c
   const adj = section({ sectionTitle: "Adjusted EBITDA & Margin", layoutType: "comparison_table", layoutData: table.layoutData });
   const out = buildBuyerCim({ deal, accessLevel: "loi", sections: [fin, adj], overrides: [], glEvidence: { ...note("normal"), bridge: tracedChecks } });
   assert.ok((out.sections.find((x) => x.id === adj.id)!.layoutData as any)._glNote);
+});
+
+await test("GL-R2-02: DD — after a bridge written from an earlier analysis the page opens by saying so; after a matching one it doesn't", () => {
+  const fin = section({ sectionTitle: "Financial Overview", layoutType: "financial_table", layoutData: { rows: [] } });
+  const stale = section({ sectionTitle: "EBITDA Normalization & Adjustments", layoutType: "waterfall_chart", layoutData: stalePacificBridge });
+  const payload: GlEvidencePayload = { ...ddPayload, bridge: tracedChecks };
+  const out = buildBuyerCim({ deal, accessLevel: "due_diligence", sections: [fin, stale], overrides: [], glEvidence: payload });
+  const page = out.sections.find((x) => x.layoutType === GL_EVIDENCE_LAYOUT)!;
+  assert.ok(page, "the page is still served");
+  assert.equal(out.sections.indexOf(page), out.sections.indexOf(out.sections.find((x) => x.id === stale.id)!) + 1, "right after the bridge");
+  const data = page.layoutData as GlEvidencePayload;
+  assert.equal(data.olderBridge, "EBITDA Normalization & Adjustments");
+  assert.equal("bridge" in data, false, "the check itself is never page content");
+  assert.match(glOlderBridgeText(data.olderBridge), /latest financial analysis.*“EBITDA Normalization & Adjustments”.*earlier one.*ask the broker/);
+  assert.equal(out.glEvidence, payload);
+
+  const fresh = section({ sectionTitle: "SDE Bridge", layoutType: "waterfall_chart", layoutData: { items: [
+    { label: "Net income", value: 3_100_000 }, { label: "Personal vehicle expenses", value: 18_000 }, { label: "Personal club dues", value: 15_000 },
+    { label: "One-time employment claim", value: 55_000 }, { label: "One-time TMS migration", value: 72_000 },
+  ] } });
+  const ok = buildBuyerCim({ deal, accessLevel: "due_diligence", sections: [fin, fresh], overrides: [], glEvidence: payload });
+  const okPage = ok.sections.find((x) => x.layoutType === GL_EVIDENCE_LAYOUT)!.layoutData as GlEvidencePayload;
+  assert.equal(okPage.olderBridge, undefined);
+  assert.equal("bridge" in okPage, false);
+
+  // No bridge at all (an adjusted-EBITDA table listing no add-backs, or a plain financial section): nothing to contradict.
+  const adj = section({ sectionTitle: "Adjusted EBITDA & Margin", layoutType: "comparison_table", layoutData: { rows: [{ label: "Adjusted EBITDA", left: "$3,310,000", right: "$3,900,000" }] } });
+  for (const secs of [[fin, adj], [section({ sectionTitle: "Overview" }), fin]]) {
+    const r = buildBuyerCim({ deal, accessLevel: "due_diligence", sections: secs, overrides: [], glEvidence: payload });
+    assert.equal((r.sections.find((x) => x.layoutType === GL_EVIDENCE_LAYOUT)!.layoutData as GlEvidencePayload).olderBridge, undefined);
+  }
+  // An adjusted-EBITDA section that lists other add-backs counts as a bridge.
+  const listing = section({ sectionTitle: "Adjusted EBITDA", layoutType: "financial_table", layoutData: { rows: [{ label: "Adjusted EBITDA", value: "$3,900,000" }, { label: "Personal vehicle expenses", value: "$38,000" }] } });
+  const l = buildBuyerCim({ deal, accessLevel: "due_diligence", sections: [fin, listing], overrides: [], glEvidence: payload });
+  assert.equal((l.sections.find((x) => x.layoutType === GL_EVIDENCE_LAYOUT)!.layoutData as GlEvidencePayload).olderBridge, "Adjusted EBITDA");
 });
 
 done("buyer CIM + GL");

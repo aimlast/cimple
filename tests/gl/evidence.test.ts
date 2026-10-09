@@ -265,7 +265,17 @@ await test("GL-R1-05: buyers still reading a kept copy whose bridge shows other 
     layoutData: { items: [{ label: "Personal vehicle expenses", value: 38_000, type: "add" }, { label: "Non-working family salary", value: 62_000, type: "add" }] } }], blindOverrides: [], ddOverrides: [], blindCodename: null } as any);
   const p = await publishPreview(dealId);
   assert.equal(p.bridgeMismatch, null, "the broker's current CIM doesn't contradict it");
+  assert.equal(p.keptBridgeMismatch, "EBITDA Normalization & Adjustments", "GL-R2-02: the kept copy's bridge is named for the dialog and the seed script");
   assert.ok(p.warnings.some((w) => /still reading the previous version of your CIM, whose "EBITDA Normalization & Adjustments"/.test(w)), p.warnings.join(" | "));
+  assert.ok(p.warnings.some((w) => /due-diligence buyers read this page right after that older bridge/.test(w)), "GL-R2-02: the DD side is warned too");
+  // Published (DD + Full): the KPI's changes say what each version's buyers see now.
+  const pubBefore = (await store.getTracing(dealId))?.published ?? null;
+  await publishEvidence(dealId, { versions: { dd: true, normal: true, blind: false }, leaveOut: [] }, "b");
+  const { evidenceChangeCount } = await import("../../server/gl/evidence");
+  const ch = await evidenceChangeCount(dealId);
+  assert.ok(ch.changes.some((c) => /Full and Blind note is held back.*the version of your CIM they read/.test(c)), ch.changes.join(" | "));
+  assert.ok(ch.changes.some((c) => /Due-diligence buyers read the add-backs page right after the version of your CIM they read.*publish the updated CIM/.test(c)), ch.changes.join(" | "));
+  await store.updateTracing(dealId, { published: pubBefore } as any);
   const m = await bridgeMismatch(dealId, (await snapshotFromState(await loadEvidenceState(dealId), { versions: { dd: true, normal: true, blind: true }, leaveOut: [], publishedBy: null })).snapshot);
   assert.deepEqual(m, { title: "EBITDA Normalization & Adjustments", keptCopy: true });
   st.getDeal = realDeal;

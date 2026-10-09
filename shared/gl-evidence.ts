@@ -133,11 +133,19 @@ export interface GlEvidencePayload {
   /** Broker previews only: this is the live data, not what buyers see yet. */
   preview?: boolean;
   /**
-   * Normal/Blind: what the earnings bridge the note sits under must show for
-   * the note to stand — each add-back's amounts (dollars, any year). Read by
-   * buildBuyerCim (glBridgeShows), never placed on a page.
+   * What the earnings bridge must show to agree with these add-backs — each
+   * add-back's amounts (dollars, any year). Read by buildBuyerCim
+   * (glBridgeShows): Normal/Blind hold the note back under a bridge that
+   * disagrees; DD keeps the page and says so at its top (olderBridge). Never
+   * placed on a page.
    */
   bridge?: GlBridgeCheck[];
+  /**
+   * DD page only, set by buildBuyerCim: the title of the earnings bridge just
+   * before the page when it shows other add-backs or amounts (written from an
+   * earlier analysis) — the page opens with a plain line saying so.
+   */
+  olderBridge?: string | null;
 }
 
 /** One add-back the earnings bridge must show: its amounts in dollars (one of them, any year). */
@@ -266,6 +274,17 @@ export function glIntroText(source: { software: string | null; period: string } 
   const what = source?.software ? `${source.software}${source.period ? `, ${source.period}` : ""}` : source?.period ?? "";
   const from = what ? ` (${what})` : "";
   return `Each add-back below is matched to entries in the company's general ledger${from}. This shows where each cost is recorded. It was matched by the owner and reviewed by the broker; it is not an audit or a quality-of-earnings review.`;
+}
+
+/**
+ * The DD page's opening line when the earnings bridge just before it was
+ * written from an earlier analysis (other add-backs or amounts): a
+ * due-diligence buyer must never read two different add-back lists back to
+ * back without being told which is current.
+ */
+export function glOlderBridgeText(title: string | null | undefined): string {
+  const name = (title ?? "").trim();
+  return `The amounts on this page come from the latest financial analysis. The earnings bridge just before it${name ? ` (“${name}”)` : ""} was written from an earlier one, so some add-backs or amounts differ — ask the broker which figures are current.`;
 }
 
 /** The DD page's tie-out lines ("2022 and 2024: the ledger's revenue and net income agree with the financial statements."). */
