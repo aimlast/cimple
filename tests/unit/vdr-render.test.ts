@@ -90,7 +90,11 @@ async function waitGone(pid: number, ms = 3000) {
     }
   }
   // The web-process side never imports pdf.js or the canvas at all.
-  for (const f of ["server/vdr/render-pool.ts", "server/vdr/health.ts", "server/routes/data-room.ts", "server/vdr/render-jobs.ts", "server/vdr/canary-pdf.ts"]) {
+  for (const f of [
+    "server/vdr/render-pool.ts", "server/vdr/health.ts", "server/routes/data-room.ts", "server/vdr/render-jobs.ts", "server/vdr/canary-pdf.ts",
+    "server/vdr/prepare.ts", "server/vdr/setup.ts", "server/vdr/files.ts", "server/vdr/store.ts", "server/vdr/auto-file.ts", "server/vdr/gl-adapter.ts", "server/vdr/requests.ts",
+    "shared/vdr.ts", "shared/vdr-sensitive.ts",
+  ]) {
     const src = fs.readFileSync(path.join(root, f), "utf8");
     for (const m of src.matchAll(/^\s*import\s+(?!type\b)[^;]*?from\s+["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/gm)) {
       const spec = m[1] ?? m[2];
