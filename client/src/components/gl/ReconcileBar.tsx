@@ -24,11 +24,13 @@ export function ReconcileBar({ tickedCents, targetCents, claimedCents, sharePct,
   const pct = targetCents ? Math.min(100, Math.round((got / Math.abs(targetCents)) * 100)) : 0;
   const tone = r.status === "found" ? "bg-success" : r.status === "close" ? "bg-teal" : "bg-amber-500";
   const lower = label.charAt(0).toLowerCase() + label.slice(1);
+  // Entries are ticked; a document (a T4) shows the amount.
+  const verb = documentCents > 0 && tickedCents === 0 ? "Shown" : documentCents > 0 ? "Ticked and shown" : "Ticked";
   const lead = payroll
-    ? <>Ticked <strong>{dollars(got)}</strong> of your <strong>{dollars(targetCents)}</strong> pay for {year}.</>
+    ? <>{verb} <strong>{dollars(got)}</strong> of your <strong>{dollars(targetCents)}</strong> pay for {year}.</>
     : sharePct
-      ? <>Ticked <strong>{dollars(got)}</strong> of your <strong>{dollars(targetCents)}</strong> {lower} (your broker counts {sharePct === 50 ? "half" : `${sharePct}%`} of it — {dollars(claimedCents)} — as personal).</>
-      : <>Ticked <strong>{dollars(got)}</strong> of <strong>{dollars(targetCents)}</strong>.</>;
+      ? <>{verb} <strong>{dollars(got)}</strong> of your <strong>{dollars(targetCents)}</strong> {lower} (your broker counts {sharePct === 50 ? "half" : `${sharePct}%`} of it — {dollars(claimedCents)} — as personal).</>
+      : <>{verb} <strong>{dollars(got)}</strong> of <strong>{dollars(targetCents)}</strong>.</>;
   return (
     <div className="sticky top-0 z-10 -mx-4 px-4 sm:mx-0 sm:px-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 py-3 border-b border-border" data-testid="reconcile-bar">
       <div aria-live="polite" className="space-y-1.5">

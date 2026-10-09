@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { BrokerTrace } from "@/lib/gl-api";
 import { Pill, dollars, statusTone } from "./gl-ui";
-import { VERDICT_WORDS } from "@shared/gl-copy";
+import { VERDICT_WORDS, yearsWords } from "@shared/gl-copy";
 
 const verdictTone = (v: string | null) => (v === "found" ? "good" : v === "partly_found" ? "close" : "warn") as "good" | "close" | "warn";
 
@@ -90,6 +90,9 @@ export function AddbackGrid({ traces, onOpen, onReview, busy }: {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium break-words">{t.label}</p>
                 <p className="text-2xs text-muted-foreground mt-0.5">{t.proofLabel}{t.sharePct ? ` · ${t.sharePct}% added back` : ""}{t.privateEvidence ? " · From your private notes" : ""}</p>
+                {t.proposedYears.length > 0 && Object.values(t.cells).some((c) => c.status === "not_started") && (
+                  <p className="text-2xs text-teal mt-0.5 flex items-center gap-1"><Search className="h-2.5 w-2.5" /> Cimple found likely entries for {yearsWords(t.proposedYears)}</p>
+                )}
               </div>
               <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
             </button>

@@ -155,10 +155,14 @@ export function tieOutWords(year: string, t: GlTieOutYear, accepted?: { note: st
       default: return `${year}: can't check yet.`;
     }
   }
-  const which = t.revenue && Math.abs(t.revenue.ledger - t.revenue.statements) > Math.abs((t.netIncome?.ledger ?? 0) - (t.netIncome?.statements ?? 0)) ? "revenue" : "net income";
   if (t.likelyReason === "cash_basis") return `${year}: the ledger was exported on a cash basis — ask for an accrual export.`;
   if (t.likelyReason === "year_end_entries") return `${year}: the ledger's net income differs from the statements by ${amt(t.differenceCents ?? 0)} — likely the accountant's year-end entries (amortization and income taxes), which aren't in this export.`;
-  return `${year}: the ledger's ${which} differs from the statements by ${amt(t.differenceCents ?? 0)} — Cimple can't tell why.`;
+  const dRev = t.revenue ? Math.abs(t.revenue.ledger - t.revenue.statements) : 0;
+  const dNet = t.netIncome ? Math.abs(t.netIncome.ledger - t.netIncome.statements) : 0;
+  const tol = Math.max(100_000, Math.abs(t.revenue?.statements ?? 0) * 0.005);
+  const parts = [dRev > tol ? `revenue by ${amt(dRev)}` : "", dNet > tol ? `net income by ${amt(dNet)}` : ""].filter(Boolean);
+  if (parts.length === 2) return `${year}: the ledger's revenue differs from the statements by ${amt(dRev)} and its net income by ${amt(dNet)} — Cimple can't tell why.`;
+  return `${year}: the ledger's ${parts[0] ? parts[0].replace(" by ", " differs from the statements by ") : `figures differ from the statements by ${amt(t.differenceCents ?? 0)}`} — Cimple can't tell why.`;
 }
 
 /** The KPI cell's one line: "2022–2024 match" / "2023 differs by $41,200 — likely the accountant's year-end entries". */

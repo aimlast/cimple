@@ -97,7 +97,10 @@ export function SendToSellerDialog({ open, onOpenChange, dealId, data, previewHr
                     <span className="text-sm font-medium">{t.sellerLabel}</span>
                     {t.sentAt && <span className="text-2xs text-muted-foreground"> · already sent</span>}
                     {t.sellerHint && <span className="block text-xs text-muted-foreground">{t.sellerHint}</span>}
-                    <span className="block text-xs text-muted-foreground">{proofWords(t, slips)} · {Object.keys(t.claims).filter((y) => /^\d{4}$/.test(y)).sort().map((y) => `${y}: ${dollars(t.claims[y])}`).join(" · ")}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {t.proof === "payroll" ? "" : `${proofWords(t, slips)} · `}
+                      {Object.keys(t.claims).filter((y) => /^\d{4}$/.test(y)).sort().map((y) => `${y}: ${dollars(t.claims[y])}${t.sharePct ? ` (${t.sharePct}% of ${dollars(Math.round(t.claims[y] / (t.sharePct / 100)))})` : ""}`).join(" · ")}
+                    </span>
                     {t.privateEvidence && !t.sentAt && <span className="mt-0.5 flex items-center gap-1 text-2xs text-amber-600 dark:text-amber-400"><Lock className="h-2.5 w-2.5" /> From your private notes — not sent unless you tick it.</span>}
                   </span>
                 </label>

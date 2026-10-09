@@ -91,6 +91,7 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, onClo
         <div className="flex gap-1.5 overflow-x-auto pb-1" role="tablist" aria-label="Year">
           {years.map((yy) => (
             <button key={yy} type="button" role="tab" aria-selected={yy === year} onClick={() => setYear(yy)}
+              ref={(el) => { if (el && yy === year) el.scrollIntoView({ block: "nearest", inline: "nearest" }); }}
               className={cn("shrink-0 rounded-full border px-3 py-1 text-xs min-h-[32px]", yy === year ? "border-teal bg-teal/10 text-teal" : "border-border text-muted-foreground hover:text-foreground")}>
               {yy} · {trace.cells[yy]?.words ?? "—"}
             </button>

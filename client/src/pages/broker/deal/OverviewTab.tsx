@@ -2103,6 +2103,8 @@ function Phase4Center() {
           Open CIM builder
         </Button>
       </div>
+      {/* "Add-backs in the books" stays visible in Design too (the DD CIM waits for it). */}
+      <GlTraceCard dealId={dealId} />
       <NeverAskedFollowUpsNotice dealId={dealId} rows={neverAsked} onResolve={setFocusDiscrepancy} />
       {(publishBlocked || focusDiscrepancy) && (
         <div className="space-y-3">

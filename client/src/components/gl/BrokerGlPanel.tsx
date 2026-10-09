@@ -155,7 +155,7 @@ export function BrokerGlPanel({ dealId, variant = "full" }: { dealId: string; va
       {url.view === "seller" && <SuggestionsPanel dealId={dealId} data={data} />}
 
       <Sheet open={!!open} onOpenChange={(o) => !o && url.set({ addback: null, year: null })}>
-        <SheetContent side="right" className="w-full sm:max-w-xl p-4 sm:p-6 overflow-y-auto" data-testid="gl-drawer-sheet">
+        <SheetContent side="right" className="w-full sm:max-w-xl p-4 sm:p-6 overflow-y-auto" data-testid="gl-drawer-sheet" onOpenAutoFocus={(e) => e.preventDefault()}>
           <SheetHeader className="text-left">
             <SheetTitle className="pr-6 break-words">{open?.label}</SheetTitle>
             <SheetDescription>Where this add-back is in the books.</SheetDescription>

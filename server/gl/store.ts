@@ -81,8 +81,11 @@ export interface GlStore {
   replaceProposals(traceId: string, years: string[], rows: InsertGlTraceLink[]): Promise<void>;
   /** One decision on one ledger entry (upsert on trace + ledger + row): confirmed or rejected, with who decided. */
   decideEntryLink(row: InsertGlTraceLink & { traceId: string; ledgerId: string; rowNo: number; state: "confirmed" | "rejected" | "proposed" }): Promise<GlTraceLink>;
+  /** Many decisions at once (one statement per 500): the seller's "Tick all", "Yes, that's right". */
+  decideEntryLinks(rows: Array<InsertGlTraceLink & { traceId: string; ledgerId: string; rowNo: number; state: "confirmed" | "rejected" | "proposed" }>): Promise<void>;
   /** "Untick": a confirmed entry goes back to a proposal when Cimple had proposed it, else the link goes. */
   removeEntryLink(traceId: string, ledgerId: string, rowNo: number): Promise<void>;
+  removeEntryLinks(traceId: string, refs: Array<{ ledgerId: string; rowNo: number }>): Promise<void>;
   /** A document link for one year (upsert on trace + document + year). */
   upsertDocLink(row: InsertGlTraceLink & { traceId: string; documentId: string; fiscalYear: string }): Promise<GlTraceLink>;
   deleteDocLinks(where: { documentId?: string; traceId?: string; fiscalYear?: string }): Promise<number>;
@@ -381,7 +384,7 @@ export const pgStore: GlStore = {
     const res = await db.execute(sql`
       INSERT INTO gl_trace_links (trace_id, deal_id, fiscal_year, ledger_id, row_no, txn_date, account, name, memo, amount_cents, state, proposed_by, confidence, reason, decided_by, decided_by_member, decided_at)
       VALUES (${row.traceId}, ${row.dealId}, ${row.fiscalYear}, ${row.ledgerId}, ${row.rowNo}, ${row.txnDate ?? null}, ${row.account ?? null}, ${row.name ?? null}, ${row.memo ?? null},
-              ${row.amountCents}, ${row.state}, ${row.proposedBy ?? null}, ${row.confidence ?? null}, ${row.reason ?? null}, ${row.decidedBy ?? null}, ${row.decidedByMember ?? null}, ${row.decidedAt ?? null})
+              ${row.amountCents}, ${row.state}, ${row.proposedBy ?? null}, ${row.confidence ?? null}, ${row.reason ?? null}, ${row.decidedBy ?? null}, ${row.decidedByMember ?? null}, ${row.decidedAt ? new Date(row.decidedAt as any).toISOString() : null}::timestamp)
       ON CONFLICT (trace_id, ledger_id, row_no) WHERE ledger_id IS NOT NULL
       DO UPDATE SET state = EXCLUDED.state, decided_by = EXCLUDED.decided_by, decided_by_member = EXCLUDED.decided_by_member,
                     decided_at = EXCLUDED.decided_at, fiscal_year = EXCLUDED.fiscal_year, updated_at = now()
@@ -399,12 +402,37 @@ export const pgStore: GlStore = {
       .where(and(where, inArray(glTraceLinks.proposedBy, ["rules", "ai"])));
     await db.delete(glTraceLinks).where(and(where, sql`coalesce(${glTraceLinks.proposedBy}, '') NOT IN ('rules', 'ai')`));
   },
+  async decideEntryLinks(rows) {
+    if (rows.length === 0) return;
+    const db = await pgDb();
+    const ts = (d: unknown) => (d ? new Date(d as any).toISOString() : null);
+    for (let i = 0; i < rows.length; i += 500) {
+      const values = rows.slice(i, i + 500).map((r) => sql`(${r.traceId}, ${r.dealId}, ${r.fiscalYear}, ${r.ledgerId}, ${r.rowNo}, ${r.txnDate ?? null}, ${r.account ?? null}, ${r.name ?? null}, ${r.memo ?? null},
+        ${r.amountCents}, ${r.state}, ${r.proposedBy ?? null}, ${r.confidence ?? null}, ${r.reason ?? null}, ${r.decidedBy ?? null}, ${r.decidedByMember ?? null}, ${ts(r.decidedAt)}::timestamp)`);
+      await db.execute(sql`
+        INSERT INTO gl_trace_links (trace_id, deal_id, fiscal_year, ledger_id, row_no, txn_date, account, name, memo, amount_cents, state, proposed_by, confidence, reason, decided_by, decided_by_member, decided_at)
+        VALUES ${sql.join(values, sql`, `)}
+        ON CONFLICT (trace_id, ledger_id, row_no) WHERE ledger_id IS NOT NULL
+        DO UPDATE SET state = EXCLUDED.state, decided_by = EXCLUDED.decided_by, decided_by_member = EXCLUDED.decided_by_member,
+                      decided_at = EXCLUDED.decided_at, fiscal_year = EXCLUDED.fiscal_year, updated_at = now()`);
+    }
+  },
+  async removeEntryLinks(traceId, refs) {
+    if (refs.length === 0) return;
+    const db = await pgDb();
+    const pairs = sql.join(refs.slice(0, 2000).map((r) => sql`(${r.ledgerId}, ${r.rowNo})`), sql`, `);
+    const where = sql`${glTraceLinks.traceId} = ${traceId} AND (${glTraceLinks.ledgerId}, ${glTraceLinks.rowNo}) IN (${pairs})`;
+    await db.update(glTraceLinks)
+      .set({ state: "proposed", decidedBy: null, decidedByMember: null, decidedAt: null, updatedAt: new Date() } as any)
+      .where(and(where, inArray(glTraceLinks.proposedBy, ["rules", "ai"])));
+    await db.delete(glTraceLinks).where(and(where, sql`coalesce(${glTraceLinks.proposedBy}, '') NOT IN ('rules', 'ai')`));
+  },
   async upsertDocLink(row) {
     const db = await pgDb();
     const res = await db.execute(sql`
       INSERT INTO gl_trace_links (trace_id, deal_id, fiscal_year, document_id, doc_amount_check, amount_cents, state, proposed_by, decided_by, decided_by_member, decided_at)
       VALUES (${row.traceId}, ${row.dealId}, ${row.fiscalYear}, ${row.documentId}, ${row.docAmountCheck ?? null}, ${row.amountCents}, ${row.state ?? "confirmed"},
-              ${row.proposedBy ?? "seller_document"}, ${row.decidedBy ?? null}, ${row.decidedByMember ?? null}, ${row.decidedAt ?? null})
+              ${row.proposedBy ?? "seller_document"}, ${row.decidedBy ?? null}, ${row.decidedByMember ?? null}, ${row.decidedAt ? new Date(row.decidedAt as any).toISOString() : null}::timestamp)
       ON CONFLICT (trace_id, document_id, fiscal_year) WHERE document_id IS NOT NULL
       DO UPDATE SET amount_cents = EXCLUDED.amount_cents, doc_amount_check = EXCLUDED.doc_amount_check, state = EXCLUDED.state,
                     decided_by = EXCLUDED.decided_by, decided_by_member = EXCLUDED.decided_by_member, decided_at = EXCLUDED.decided_at, updated_at = now()
@@ -749,6 +777,12 @@ export function memoryStore(data: MemoryStoreData = { tracing: [], ledgers: [], 
       if (!k) return;
       if (k.proposedBy === "rules" || k.proposedBy === "ai") Object.assign(k, { state: "proposed", decidedBy: null, decidedByMember: null, decidedAt: null, updatedAt: now() });
       else data.links = data.links.filter((x) => x !== k);
+    },
+    async decideEntryLinks(rows) {
+      for (const r of rows) await store.decideEntryLink(r);
+    },
+    async removeEntryLinks(traceId, refs) {
+      for (const r of refs) await store.removeEntryLink(traceId, r.ledgerId, r.rowNo);
     },
     async upsertDocLink(row) {
       const existing = data.links.find((k) => k.traceId === row.traceId && k.documentId === row.documentId && k.fiscalYear === row.fiscalYear);

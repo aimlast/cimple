@@ -62,21 +62,21 @@ export async function writeLinks(
     if (!years.has(row.fiscalYear)) return { ok: false, status: 400, error: `That entry is in ${row.fiscalYear}, which isn't one of the years for this cost.` };
   }
   const at = new Date();
-  const decide = async (ref: EntryRef, state: "confirmed" | "rejected") => {
+  const decide = (ref: EntryRef, state: "confirmed" | "rejected") => {
     const r = byKey.get(`${ref.ledgerId}:${ref.rowNo}`)!;
-    await store.decideEntryLink({
+    return {
       traceId: trace.id, dealId: c.dealId, fiscalYear: r.fiscalYear, ledgerId: r.ledgerId, rowNo: r.rowNo,
       txnDate: r.txnDate, account: r.account, name: r.name, memo: r.memo, amountCents: r.amountCents,
       state, proposedBy: who.by === "seller" ? "seller_search" : "broker",
       decidedBy: who.by, decidedByMember: who.memberId, decidedAt: at,
-    } as any);
+    } as any;
   };
-  for (const ref of w.add ?? []) await decide(ref, "confirmed");
-  for (const ref of w.reject ?? []) await decide(ref, "rejected");
-  for (const ref of w.remove ?? []) await store.removeEntryLink(trace.id, ref.ledgerId, ref.rowNo);
+  // One statement for the lot ("Tick all" on 40 entries is one round trip, not 40).
+  await store.decideEntryLinks([...(w.add ?? []).map((r) => decide(r, "confirmed")), ...(w.reject ?? []).map((r) => decide(r, "rejected"))]);
+  await store.removeEntryLinks(trace.id, w.remove ?? []);
   if (who.by === "seller" && trace.sellerStatus === "not_started") await store.updateTrace(trace.id, { sellerStatus: "in_progress" } as Partial<GlAddbackTrace>);
   await recomputeTraces(c.dealId, [trace.id], c);
-  return { ok: true, links: await store.linksOfTrace(trace.id) };
+  return { ok: true, links: [] };
 }
 
 /** "Yes, that's right": every high-confidence proposed entry of the cost, every claimed year, confirmed in one go. */
@@ -86,14 +86,12 @@ export async function confirmSummary(trace: GlAddbackTrace, who: { by: "seller" 
   const left = (trace.leftOut as { years?: string[] } | null)?.years ?? [];
   const props = (await store.linksOfTrace(trace.id)).filter((k) => k.state === "proposed" && k.confidence === "high" && k.ledgerId && allowed.has(k.ledgerId) && !left.includes(k.fiscalYear));
   const at = new Date();
-  for (const k of props) {
-    await store.decideEntryLink({
-      traceId: trace.id, dealId: c.dealId, fiscalYear: k.fiscalYear, ledgerId: k.ledgerId!, rowNo: k.rowNo!,
-      txnDate: k.txnDate, account: k.account, name: k.name, memo: k.memo, amountCents: k.amountCents,
-      state: "confirmed", proposedBy: k.proposedBy, confidence: k.confidence, reason: k.reason,
-      decidedBy: who.by, decidedByMember: who.memberId, decidedAt: at,
-    } as any);
-  }
+  await store.decideEntryLinks(props.map((k) => ({
+    traceId: trace.id, dealId: c.dealId, fiscalYear: k.fiscalYear, ledgerId: k.ledgerId!, rowNo: k.rowNo!,
+    txnDate: k.txnDate, account: k.account, name: k.name, memo: k.memo, amountCents: k.amountCents,
+    state: "confirmed", proposedBy: k.proposedBy, confidence: k.confidence, reason: k.reason,
+    decidedBy: who.by, decidedByMember: who.memberId, decidedAt: at,
+  } as any)));
   if (who.by === "seller") await store.updateTrace(trace.id, { sellerStatus: "done", reopenedNote: null, notInLedger: null } as Partial<GlAddbackTrace>);
   await recomputeTraces(c.dealId, [trace.id], c);
   return props.length;

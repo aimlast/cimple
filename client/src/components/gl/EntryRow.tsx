@@ -19,7 +19,7 @@ import { ledgerDate, money } from "./gl-ui";
 
 export const entryKey = (e: { ledgerId: string; rowNo: number }) => `${e.ledgerId}:${e.rowNo}`;
 
-export function EntryRow({ e, checked, onChange, disabled, showAccount = false }: { e: SellerEntry; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; showAccount?: boolean }) {
+export function EntryRow({ e, checked, onChange, disabled, showAccount = false, hideReason = false }: { e: SellerEntry; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; showAccount?: boolean; hideReason?: boolean }) {
   const id = `entry-${e.ledgerId}-${e.rowNo}`;
   return (
     <label htmlFor={id} className={cn("flex items-start gap-3 px-3 py-2.5 min-h-[44px] cursor-pointer hover:bg-muted/30", disabled && "opacity-60 cursor-default")} data-testid="entry-row">
@@ -31,7 +31,7 @@ export function EntryRow({ e, checked, onChange, disabled, showAccount = false }
           <span className="font-medium break-words">{e.name || "—"}</span>
         </span>
         <span className="block text-xs text-muted-foreground break-words">{e.memo || ""}{showAccount ? `${e.memo ? " · " : ""}${accountPath(e.account)}` : ""}</span>
-        {e.reason && e.state === "proposed" && <span className="mt-0.5 inline-block rounded bg-muted px-1.5 py-0.5 text-2xs text-muted-foreground">{e.reason}</span>}
+        {e.reason && e.state === "proposed" && !hideReason && <span className="mt-0.5 inline-block rounded bg-muted px-1.5 py-0.5 text-2xs text-muted-foreground">{e.reason}</span>}
       </span>
       <span className="text-sm tabular-nums font-medium shrink-0">{money(e.amountCents)}</span>
     </label>
@@ -48,14 +48,20 @@ export function EntryGroup({ account, entries, isChecked, onToggle, onAll, disab
 }) {
   const total = entries.reduce((s, e) => s + e.amountCents, 0);
   const allOn = entries.every(isChecked);
+  // One reason for the whole group ("The whole Vehicle – Owner account") is said once, in the header.
+  const reasons = Array.from(new Set(entries.map((e) => e.reason).filter(Boolean)));
+  const common = reasons.length === 1 && entries.every((e) => e.reason === reasons[0]) ? reasons[0]! : null;
   return (
     <div className="rounded-lg border border-border bg-card" data-testid="entry-group">
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-border bg-muted/20">
-        <p className="text-sm font-medium break-words">{accountPath(account)} <span className="font-normal text-muted-foreground">· {entries.length} entr{entries.length === 1 ? "y" : "ies"} · {money(total)}</span></p>
+        <div className="min-w-0">
+          <p className="text-sm font-medium break-words">{accountPath(account)} <span className="font-normal text-muted-foreground">· {entries.length} entr{entries.length === 1 ? "y" : "ies"} · {money(total)}</span></p>
+          {common && <p className="text-2xs text-muted-foreground">{common}</p>}
+        </div>
         <Button size="sm" variant="ghost" className="h-8 text-xs" disabled={disabled} onClick={() => onAll(!allOn)}>{allOn ? "Untick all" : "Tick all"}</Button>
       </div>
       <div className="divide-y divide-border">
-        {entries.map((e) => <EntryRow key={entryKey(e)} e={e} checked={isChecked(e)} onChange={(v) => onToggle(e, v)} disabled={disabled} />)}
+        {entries.map((e) => <EntryRow key={entryKey(e)} e={e} checked={isChecked(e)} onChange={(v) => onToggle(e, v)} disabled={disabled} hideReason={!!common} />)}
       </div>
     </div>
   );
