@@ -161,6 +161,13 @@ export function buildDdContext(input: {
   resolved?: ResolvedDiscrepancyNote[];
   /** Items that must not reach buyers (keep-out.ts); the private-note rules when absent. */
   keepOut?: KeepOut | null;
+  /**
+   * gl: the add-backs found in the general ledger, from the broker's
+   * PUBLISHED evidence (server/gl/evidence.ts glWriterLines) — label, status,
+   * per-year amounts and entry counts; never a vendor or a description. When
+   * present they replace the old add-back verification lines.
+   */
+  glLines?: string[] | null;
 }): DdInputs {
   const parts: string[] = [];
   const { confirmed } = splitFactsForCim(input.extractedInfo ?? {});
@@ -184,7 +191,10 @@ export function buildDdContext(input: {
     parts.push(`## Real customer and supplier data (the only names you may reveal)\n${customerFacts.map(([k, v]) => `- ${k}: ${factValueText(v)}`).join("\n")}`);
   }
 
-  if (input.addbackVerification) {
+  if (input.glLines && input.glLines.length > 0) {
+    // gl: what the published "Where each add-back is in the books" page shows (a held name never reaches it).
+    parts.push(`## Add-backs found in the general ledger (matched by the owner, reviewed by the broker; not an audit)\n${input.glLines.filter((l) => !mentionsHeldPerson(l, heldNames)).join("\n")}`);
+  } else if (input.addbackVerification) {
     const av = input.addbackVerification;
     // Only lines the CIM's analysis adds back: a dividend, a rejected line
     // or a clawback the rules took out is never presented as an add-back.
@@ -269,6 +279,7 @@ export async function loadDdInputs(deal: Pick<Deal, "id" | "extractedInfo">): Pr
     documents: docs.map((d) => ({ name: d.name, category: d.category || "other", visibility: (d as { visibility?: string | null }).visibility ?? null })),
     resolved: currentResolvedNotes(settled.notes),
     keepOut: await keepOutFor(deal.id, extractedInfo),
+    glLines: await import("../gl/evidence").then((m) => m.glWriterLines(deal.id)).catch(() => []),
   });
 }
 

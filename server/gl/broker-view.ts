@@ -15,6 +15,7 @@ import { tieOutWords, tieOutSummary } from "./tie-out";
 import { possibleAddbacks, type PossibleAddback } from "./discover";
 import type { GlDealContext } from "./context";
 import { glSellerEvent } from "./notify";
+import { assistantWords, glAssistantState } from "./rank-ai";
 
 export interface BrokerTraceView {
   id: string;
@@ -51,6 +52,8 @@ export interface BrokerTraceView {
   cells: Record<string, { words: string; status: string; tone: "good" | "close" | "warn" | "muted" }>;
   /** Cimple found likely entries (proposals) for these years. */
   proposedYears: string[];
+  /** What Cimple's assistant is doing (or did) for this add-back, in words (null = nothing). */
+  assistant: { state: string; words: string } | null;
 }
 
 export interface GlRecipient { id: string; name: string | null; email: string; role: string; via: "members" | "seller_invite"; muted: boolean }
@@ -109,6 +112,7 @@ export function brokerTraceView(t: GlAddbackTrace, links: GlTraceLink[], docShor
     reopenedNote: t.reopenedNote, sellerNote: t.sellerNote, sellerNoteShown: t.sellerNoteShown, notInLedger: (t.notInLedger as any) ?? null,
     question: (t.question as any) ?? null, brokerVerdict: t.brokerVerdict, reviewedAt: iso(t.reviewedAt), brokerNote: t.brokerNote, brokerNoteShown: t.brokerNoteShown,
     buyerReason: t.buyerReason, leftOut: (t.leftOut as any) ?? null, includeInCim: t.includeInCim, computed, cells, proposedYears,
+    assistant: (() => { const a = glAssistantState(t.id); const words = assistantWords(a); return a && words ? { state: a.state, words } : null; })(),
   };
 }
 

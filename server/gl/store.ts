@@ -107,7 +107,26 @@ export interface GlStore {
   changeFiscalYearEnd(dealId: string, fiscalYearEnd: string): Promise<void>;
   /** Per ledger and fiscal year: entries, debits, credits, accounts, first and last date (copies included, as when read). */
   ledgerYearSummaries(dealId: string): Promise<Array<{ ledgerId: string; fiscalYear: string; lines: number; debitCents: number; creditCents: number; accounts: number; firstDate: string; lastDate: string }>>;
+
+  // ── Buyers (pass 3) ──
+  /**
+   * A buyer's search of one ledger (§9.3): `q` matched only against fields
+   * never withheld (account, number, the amount when it is money) — and the
+   * name / description only on accounts that aren't payroll-type. At most
+   * `limit` (2,000) candidates, in file order; the caller re-checks each on
+   * the masked view.
+   */
+  buyerSearchRows(q: { ledgerId: string; fy?: string | null; accountKey?: string | null; q: string; limit?: number }): Promise<GlTransaction[]>;
+  /** The atomic AI budget reservation (§7.4): true when this call fits today's cap. */
+  reserveAi(dealId: string, kind: GlAiKind, cap: number, day: string): Promise<boolean>;
 }
+
+/** The four AI counters of gl_tracing (broker / seller × mapping / ranking). */
+export type GlAiKind = "broker_mapping" | "broker_ranking" | "seller_mapping" | "seller_ranking";
+
+/** Payroll-type account keys (SQL and the memory twin agree; a little broader than sensitive.ts's PAYROLL_ACCOUNT_RE — safe: more rows lose name search). */
+export const PAYROLL_KEY_SQL = "(wage|salar|payroll|remuneration|employee benefit|bonus|commission|vacation pay|cpp|ei expense|wsib)";
+const PAYROLL_KEY_RE = new RegExp(PAYROLL_KEY_SQL, "i");
 
 export interface CandidateQuery {
   dealId: string;
@@ -539,6 +558,39 @@ export const pgStore: GlStore = {
       await tx.execute(sql`UPDATE gl_tracing SET fiscal_year_end = ${fye}, synced_fingerprint = NULL, tie_out = NULL, updated_at = now() WHERE deal_id = ${dealId}`);
     });
   },
+  async buyerSearchRows(q) {
+    const db = await pgDb();
+    const term = q.q.trim().slice(0, 100).toLowerCase();
+    if (!term) return [];
+    const like = `%${escapeLike(term)}%`;
+    const cents = /\d/.test(term) ? parseMoneyToCents(term) : null;
+    const parts: SQL[] = [eq(glTransactions.ledgerId, q.ledgerId)];
+    if (q.fy) parts.push(eq(glTransactions.fiscalYear, q.fy));
+    if (q.accountKey) parts.push(eq(glTransactions.accountKey, q.accountKey));
+    const never = sql`(lower(${glTransactions.account}) LIKE ${like} ESCAPE '\\' OR lower(coalesce(${glTransactions.txnNumber}, '')) LIKE ${like} ESCAPE '\\'${cents !== null ? sql` OR abs(${glTransactions.amountCents}) = ${Math.abs(cents)}` : sql``})`;
+    const words = sql`(${glTransactions.accountKey} !~* ${PAYROLL_KEY_SQL} AND (lower(coalesce(${glTransactions.name}, '')) LIKE ${like} ESCAPE '\\' OR lower(coalesce(${glTransactions.memo}, '')) LIKE ${like} ESCAPE '\\'))`;
+    parts.push(sql`(${never} OR ${words})`);
+    return db.select().from(glTransactions).where(and(...parts)).orderBy(asc(glTransactions.rowNo)).limit(Math.min(q.limit ?? 2000, 2000));
+  },
+  async reserveAi(dealId, kind, cap, day) {
+    const db = await pgDb();
+    // One statement (§7.4): a new UTC day resets all four counters; otherwise only under the cap.
+    // Every SET expression reads the row as it was, so ai_day below is the old day.
+    const COLS = { broker_mapping: "ai_broker_mapping", broker_ranking: "ai_broker_ranking", seller_mapping: "ai_seller_mapping", seller_ranking: "ai_seller_ranking" } as const;
+    const col = sql.raw(COLS[kind]);
+    const sets: SQL[] = [
+      sql`ai_day = ${day}`,
+      sql`updated_at = now()`,
+      sql`${col} = CASE WHEN ai_day = ${day} THEN ${col} + 1 ELSE 1 END`,
+      ...Object.values(COLS).filter((c) => c !== COLS[kind]).map((c) => sql`${sql.raw(c)} = CASE WHEN ai_day = ${day} THEN ${sql.raw(c)} ELSE 0 END`),
+    ];
+    const res = await db.execute(sql`
+      UPDATE gl_tracing SET ${sql.join(sets, sql`, `)}
+      WHERE deal_id = ${dealId} AND (ai_day IS DISTINCT FROM ${day} OR ${col} < ${Math.max(0, Math.floor(cap))})
+      RETURNING ${col}
+    `);
+    return ((res as unknown as { rowCount?: number | null }).rowCount ?? 0) > 0;
+  },
   async ledgerYearSummaries(dealId) {
     const db = await pgDb();
     const rows = await db
@@ -864,6 +916,31 @@ export function memoryStore(data: MemoryStoreData = { tracing: [], ledgers: [], 
       for (const l of data.ledgers) if (l.dealId === dealId) l.fiscalYearEndUsed = fye;
       const tr = data.tracing.find((t) => t.dealId === dealId);
       if (tr) Object.assign(tr, { fiscalYearEnd: fye, syncedFingerprint: null, tieOut: null, updatedAt: now() });
+    },
+    async buyerSearchRows(q) {
+      const term = q.q.trim().slice(0, 100).toLowerCase();
+      if (!term) return [];
+      const cents = /\d/.test(term) ? parseMoneyToCents(term) : null;
+      const has = (v: string | null | undefined) => (v ?? "").toLowerCase().includes(term);
+      return data.transactions
+        .filter((t) => t.ledgerId === q.ledgerId && (!q.fy || t.fiscalYear === q.fy) && (!q.accountKey || t.accountKey === q.accountKey))
+        .filter((t) => has(t.account) || has(t.txnNumber) || (cents !== null && Math.abs(t.amountCents) === Math.abs(cents)) || (!PAYROLL_KEY_RE.test(t.accountKey) && (has(t.name) || has(t.memo))))
+        .sort((a, b) => a.rowNo - b.rowNo)
+        .slice(0, Math.min(q.limit ?? 2000, 2000));
+    },
+    async reserveAi(dealId, kind, cap, day) {
+      // Synchronous read-modify-write: the memory twin of the one-statement reservation (no await inside).
+      const row = data.tracing.find((t) => t.dealId === dealId);
+      if (!row) return false;
+      const r = row as unknown as Record<string, unknown>;
+      const col = { broker_mapping: "aiBrokerMapping", broker_ranking: "aiBrokerRanking", seller_mapping: "aiSellerMapping", seller_ranking: "aiSellerRanking" }[kind];
+      if (r.aiDay !== day) {
+        r.aiDay = day;
+        for (const c of ["aiBrokerMapping", "aiBrokerRanking", "aiSellerMapping", "aiSellerRanking"]) r[c] = 0;
+      }
+      if (Number(r[col] ?? 0) >= cap) return false;
+      r[col] = Number(r[col] ?? 0) + 1;
+      return true;
     },
     async ledgerYearSummaries(dealId) {
       const map = new Map<string, { ledgerId: string; fiscalYear: string; lines: number; debitCents: number; creditCents: number; accounts: number; firstDate: string; lastDate: string; keys: Set<string> }>();

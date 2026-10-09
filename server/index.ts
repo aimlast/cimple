@@ -202,7 +202,7 @@ app.use("/api/view/:token/reading", rateLimit({
 // Ledger uploads: 20 an hour per IP (broker and seller GL upload routes
 // together), checked before a byte is written; seller GL routes keyed by a
 // hash of the link. Defined in server/routes/gl.ts (applyGlRateLimits).
-applyGlRateLimits(app);
+applyGlRateLimits(app, aiLimiter);
 
 // Session type augmentation
 declare module "express-session" {

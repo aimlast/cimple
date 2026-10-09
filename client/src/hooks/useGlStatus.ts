@@ -14,7 +14,7 @@ export function useBrokerGl(dealId: string, opts: { enabled?: boolean } = {}) {
     queryKey: glKeys.broker(dealId),
     queryFn: () => getJson<BrokerGlData>(`/api/deals/${dealId}/gl`),
     enabled: opts.enabled ?? true,
-    refetchInterval: (q) => ((q.state.data?.ledgers ?? []).some((l) => l.status === "reading") ? 2000 : 30_000),
+    refetchInterval: (q) => ((q.state.data?.ledgers ?? []).some((l) => l.status === "reading") ? 2000 : (q.state.data?.traces ?? []).some((t) => t.assistant?.state === "looking") ? 3000 : 30_000),
     refetchOnWindowFocus: true,
   });
 }

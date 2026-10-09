@@ -37,6 +37,10 @@ import { loadGlContext } from "../gl/context";
 import { buildBrokerView } from "../gl/broker-view";
 import { registerGlBrokerRoutes } from "../gl/routes-broker";
 import { registerGlSellerRoutes, sellerBooksPayload, SUPPORT_MAX_BYTES } from "../gl/routes-seller";
+import { registerGlBuyerRoutes } from "../gl/routes-buyer";
+// The assistant's two jobs install themselves on load: the column mapper (ledger reader) and the ranker (proposal run).
+import "../gl/map-columns-ai";
+import "../gl/rank-ai";
 
 const uploadsDir = () => process.env.UPLOADS_DIR || path.join(process.cwd(), "public", "uploads");
 
@@ -312,7 +316,18 @@ const sellerKey = (req: Request) => `gl:${createHash("sha256").update(String(req
 
 export const GL_UPLOADS_PER_IP_PER_HOUR = 20;
 
-export function applyGlRateLimits(app: Express): void {
+export function applyGlRateLimits(app: Express, aiLimiter?: import("express").RequestHandler): void {
+  // "Look again" may ask Cimple's assistant: the AI endpoints' per-IP ceiling (its daily budget caps the cost).
+  if (aiLimiter) app.use("/api/deals/:dealId/gl/traces/:traceId/look-again", aiLimiter);
+  // A buyer's private question about a ledger entry (P2): 20 an hour per link.
+  app.use("/api/view/:token/gl/question", rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: sellerKey,
+    message: { error: "Too many questions — please try again later." },
+  }));
   const perIp = rateLimit({
     windowMs: 60 * 60 * 1000,
     limit: GL_UPLOADS_PER_IP_PER_HOUR,
@@ -562,6 +577,8 @@ export function registerGlRoutes(app: Express): void {
   // ── Pass 2: the add-backs (broker and seller) ──
   registerGlBrokerRoutes(app);
   registerGlSellerRoutes(app, { supportGate: glUploadGate("seller", SUPPORT_MAX_BYTES) });
+  // ── Pass 3: buyers ("Ask about this entry"; the ledger rows are served by the data room through viewer.ts) ──
+  registerGlBuyerRoutes(app);
 
   // ── Seller (token in the path) ──
   app.get("/api/seller/:token/gl", async (req, res) => {

@@ -61,6 +61,8 @@ export interface BrokerTrace {
   computed: GlTraceComputed | null;
   cells: Record<string, { words: string; status: string; tone: "good" | "close" | "warn" | "muted" }>;
   proposedYears: string[];
+  /** What Cimple's assistant is doing (or did) for this add-back, in words. */
+  assistant?: { state: string; words: string } | null;
 }
 
 export interface GlRecipient { id: string; name: string | null; email: string; role: string; via: "members" | "seller_invite"; muted: boolean }
@@ -149,6 +151,8 @@ export interface SellerCost {
   question: { text: string; askedAt: string; answer: string | null } | null;
   note: string | null;
   notInLedger: string | null;
+  /** Cimple's assistant is looking for more entries right now. */
+  assistantLooking?: boolean;
 }
 
 export interface SellerEntry {

@@ -56,7 +56,7 @@ export default function SellerBooks() {
   const { data, error, isLoading, refetch } = useQuery<SellerGlData, Error & { status?: number }>({
     queryKey: glKeys.seller(token!),
     queryFn: () => getJson<SellerGlData>(`/api/seller/${token}/gl`),
-    refetchInterval: (q) => ((q.state.data?.ledgers ?? []).some((l) => l.status === "reading") ? 2000 : false),
+    refetchInterval: (q) => ((q.state.data?.ledgers ?? []).some((l) => l.status === "reading") ? 2000 : ((q.state.data as any)?.costs ?? []).some((c: any) => c.assistantLooking) ? 3000 : false),
     retry: false,
   });
   const invalidate = () => {

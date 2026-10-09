@@ -3,8 +3,13 @@
  * (gl spec §3.4 "Ledger viewer"). Broker mode: every entry, with hints for
  * employees' pay, personal entries and copies of an earlier file. Year and
  * account filters (with totals), search, "Jump to row". A table on wide
- * screens, two-line rows on a phone. (The buyer mode — masked rows, through
- * the data room — comes with the DD evidence.)
+ * screens, two-line rows on a phone.
+ *
+ * Buyer mode (`buyerRowsUrl`, rendered by the data room's viewer for a
+ * due-diligence buyer): the rows server/gl/viewer.ts ledgerRowsForBuyer
+ * serves — masked; a withheld entry keeps its date, account and amount and
+ * says why in place of its name and description. The entries behind the
+ * add-backs can be highlighted (`highlightRows`).
  */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
@@ -31,7 +36,24 @@ const HINT_LABEL: Record<string, string> = {
   personal: "Personal",
 };
 
-export function GlLedgerViewer({ dealId, ledgerId, initialRow }: { dealId: string; ledgerId: string; initialRow?: number | null }) {
+type ViewerRow = LedgerRowsResponse["rows"][number] & { withheld?: string };
+type ViewerData = Omit<LedgerRowsResponse, "rows" | "ledger"> & {
+  rows: ViewerRow[];
+  ledger: { software: string | null; rowCount: number; periodStart?: string | null; periodEnd?: string | null; accountCount: number; period?: string };
+  capped?: boolean;
+};
+
+export function GlLedgerViewer({ dealId, ledgerId, initialRow, buyerRowsUrl, highlightRows }: {
+  dealId?: string;
+  ledgerId?: string;
+  initialRow?: number | null;
+  /** Buyer mode: the data room's rows URL for this ledger (masked rows). */
+  buyerRowsUrl?: string;
+  /** Rows to highlight (the entries behind an add-back). */
+  highlightRows?: number[];
+}) {
+  const buyer = !!buyerRowsUrl;
+  const marked = useMemo(() => new Set(highlightRows ?? []), [highlightRows]);
   const [fy, setFy] = useState<string>(ALL);
   const [account, setAccount] = useState<string>(ALL);
   const [q, setQ] = useState("");
@@ -44,8 +66,8 @@ export function GlLedgerViewer({ dealId, ledgerId, initialRow }: { dealId: strin
   useEffect(() => { setPage(0); }, [fy, account, query]);
 
   const params = useMemo(() => ({ fy: fy === ALL ? "" : fy, account: account === ALL ? "" : account, q: query, page, around }), [fy, account, query, page, around]);
-  const { data, isLoading, isFetching, error, refetch } = useQuery<LedgerRowsResponse>({
-    queryKey: glKeys.rows(dealId, ledgerId, params),
+  const { data, isLoading, isFetching, error, refetch } = useQuery<ViewerData>({
+    queryKey: buyer ? ["gl-buyer-rows", buyerRowsUrl, params] : glKeys.rows(dealId ?? "", ledgerId ?? "", params),
     queryFn: () => {
       const sp = new URLSearchParams();
       if (params.fy) sp.set("fy", params.fy);
@@ -53,7 +75,7 @@ export function GlLedgerViewer({ dealId, ledgerId, initialRow }: { dealId: strin
       if (params.q) sp.set("q", params.q);
       if (params.around) sp.set("around", String(params.around));
       else sp.set("page", String(params.page));
-      return getJson<LedgerRowsResponse>(`/api/deals/${dealId}/gl/ledgers/${ledgerId}/rows?${sp.toString()}`);
+      return getJson<ViewerData>(buyer ? `${buyerRowsUrl}?${sp.toString()}` : `/api/deals/${dealId}/gl/ledgers/${ledgerId}/rows?${sp.toString()}`);
     },
     placeholderData: keepPreviousData,
   });
@@ -84,8 +106,8 @@ export function GlLedgerViewer({ dealId, ledgerId, initialRow }: { dealId: strin
     <div className="space-y-3" data-testid="gl-viewer">
       {ledger && (
         <div className="text-xs text-muted-foreground">
-          {softwareLabel(ledger.software)} · {formatCount(ledger.rowCount)} entries
-          {ledger.periodStart && ledger.periodEnd ? ` · ${formatPeriod(ledger.periodStart, ledger.periodEnd)}` : ""}
+          {buyer ? ledger.software ?? "General ledger" : softwareLabel(ledger.software)} · {formatCount(ledger.rowCount)} entries
+          {ledger.period ? ` · ${ledger.period}` : ledger.periodStart && ledger.periodEnd ? ` · ${formatPeriod(ledger.periodStart, ledger.periodEnd)}` : ""}
           {ledger.accountCount ? ` · ${formatCount(ledger.accountCount)} accounts` : ""}
         </div>
       )}
@@ -169,7 +191,7 @@ export function GlLedgerViewer({ dealId, ledgerId, initialRow }: { dealId: strin
               </thead>
               <tbody className="divide-y divide-border">
                 {data.rows.map((r) => (
-                  <tr key={r.rowNo} className={`${around === r.rowNo ? "bg-teal/10" : ""} ${r.duplicate ? "text-muted-foreground" : ""}`} data-testid={`gl-row-${r.rowNo}`}>
+                  <tr key={r.rowNo} className={`${around === r.rowNo || marked.has(r.rowNo) ? "bg-teal/10" : ""} ${r.duplicate ? "text-muted-foreground" : ""}`} data-testid={`gl-row-${r.rowNo}`}>
                     <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{formatCount(r.rowNo)}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{formatDay(r.date)}</td>
                     <td className="px-3 py-2 min-w-0">
@@ -178,8 +200,8 @@ export function GlLedgerViewer({ dealId, ledgerId, initialRow }: { dealId: strin
                     </td>
                     <td className="px-3 py-2 break-words">{r.name ?? ""}</td>
                     <td className="px-3 py-2 break-words">
-                      {r.memo ?? ""}
-                      <RowChips hint={r.hint} duplicate={r.duplicate} />
+                      {r.withheld ? <span className="italic text-muted-foreground">{r.memo}</span> : r.memo ?? ""}
+                      {!buyer && <RowChips hint={r.hint} duplicate={r.duplicate} />}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{formatCents(r.amountCents)}</td>
                   </tr>
@@ -190,21 +212,21 @@ export function GlLedgerViewer({ dealId, ledgerId, initialRow }: { dealId: strin
           {/* Phones: two-line rows */}
           <ul className="md:hidden rounded-lg border border-border divide-y divide-border">
             {data.rows.map((r) => (
-              <li key={r.rowNo} className={`px-3 py-2.5 ${around === r.rowNo ? "bg-teal/10" : ""}`} data-testid={`gl-row-m-${r.rowNo}`}>
+              <li key={r.rowNo} className={`px-3 py-2.5 ${around === r.rowNo || marked.has(r.rowNo) ? "bg-teal/10" : ""}`} data-testid={`gl-row-m-${r.rowNo}`}>
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-sm min-w-0 break-words">{r.name || r.memo || accountPath(r.account)}</span>
+                  <span className={`text-sm min-w-0 break-words ${r.withheld ? "italic text-muted-foreground" : ""}`}>{r.name || r.memo || accountPath(r.account)}</span>
                   <span className="text-sm tabular-nums shrink-0">{formatCents(r.amountCents)}</span>
                 </div>
                 <div className="text-xs text-muted-foreground mt-0.5 break-words">
                   {formatDay(r.date)} · {accountPath(r.account)}{r.name && r.memo ? ` · ${r.memo}` : ""} · row {formatCount(r.rowNo)}
                 </div>
-                <RowChips hint={r.hint} duplicate={r.duplicate} />
+                {!buyer && <RowChips hint={r.hint} duplicate={r.duplicate} />}
               </li>
             ))}
           </ul>
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
             <span aria-live="polite">
-              {isFetching ? "Loading…" : `Showing ${formatCount(from)}–${formatCount(to)} of ${formatCount(data.total)}`}
+              {isFetching ? "Loading…" : data.capped ? "Showing the first 2,000 matches — narrow your search" : `Showing ${formatCount(from)}–${formatCount(to)} of ${formatCount(data.total)}`}
             </span>
             <div className="flex items-center gap-1">
               <Button size="sm" variant="outline" className="h-8 w-8 p-0" disabled={data.page === 0} onClick={() => goto(data.page - 1)} aria-label="Previous page">

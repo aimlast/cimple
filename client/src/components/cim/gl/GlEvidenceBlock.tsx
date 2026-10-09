@@ -15,8 +15,9 @@
  * Phones: entries stack as two-line rows; nothing scrolls sideways.
  * Paper colours only (.cim-doc is theme-locked).
  */
-import { useState } from "react";
-import { BookCheck, FileText } from "lucide-react";
+import { createContext, useContext, useState } from "react";
+import { useRoute } from "wouter";
+import { BookCheck, FileText, Loader2, MessageSquare } from "lucide-react";
 import {
   GL_BUYER_STATUS_WORDS, GL_EVIDENCE_FIRST_ENTRIES, glConfirmationText, glIntroText, glShareText, glTieOutLines, isGlEvidencePayload,
   type GlBuyerStatus, type GlEvidenceEntry, type GlEvidenceLine, type GlEvidencePayload, type GlEvidenceYear,
@@ -41,8 +42,15 @@ interface Props {
   layoutData: unknown;
 }
 
+/** "Ask about this entry" — only in a buyer's view room (/view/:token), never in a broker preview. */
+type AskTarget = { lineId: string; rowNo: number | null; about: string };
+const AskContext = createContext<{ token: string | null; ask: (t: AskTarget) => void } | null>(null);
+
 export function GlEvidenceBlock({ layoutData }: Props) {
   const ba = useBlockAttrs();
+  const [, params] = useRoute("/view/:token");
+  const token = params?.token ?? null;
+  const [asking, setAsking] = useState<AskTarget | null>(null);
   if (!isGlEvidencePayload(layoutData)) return null;
   const p = layoutData as GlEvidencePayload;
   const tie = glTieOutLines(p.tieOut, money);
@@ -70,10 +78,77 @@ export function GlEvidenceBlock({ layoutData }: Props) {
         </div>
       )}
 
-      <div className="space-y-4">
-        {p.lines.map((line, i) => <LineBlock key={line.lineId} line={line} attrs={ba(`item:${i}`)} />)}
-      </div>
+      <AskContext.Provider value={token && !p.preview ? { token, ask: setAsking } : null}>
+        <div className="space-y-4">
+          {p.lines.map((line, i) => (
+            <LineBlock key={line.lineId} line={line} attrs={ba(`item:${i}`)} asking={asking?.lineId === line.lineId ? asking : null} onDone={() => setAsking(null)} />
+          ))}
+        </div>
+      </AskContext.Provider>
     </div>
+  );
+}
+
+function AskForm({ target, onDone }: { target: AskTarget; onDone: () => void }) {
+  const ctx = useContext(AskContext);
+  const [text, setText] = useState("");
+  const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+  if (!ctx) return null;
+  const send = async () => {
+    setState("sending");
+    setError(null);
+    try {
+      const r = await fetch(`/api/view/${ctx.token}/gl/question`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ lineId: target.lineId, rowNo: target.rowNo, text }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body?.error || "Your question couldn't be sent — try again.");
+      setState("sent");
+    } catch (e) {
+      setState("error");
+      setError(e instanceof Error ? e.message : "Your question couldn't be sent — try again.");
+    }
+  };
+  return (
+    <div className="mt-3 rounded-md border border-[hsl(var(--cim-line))] bg-[hsl(var(--cim-paper))] p-3" data-testid="gl-ask-form">
+      {state === "sent" ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-[hsl(var(--cim-ink-soft))]">
+          <span>Sent to your broker. Their answer will appear with your questions.</span>
+          <button type="button" className="text-xs font-medium text-[hsl(var(--cim-brass))] hover:underline" onClick={onDone}>Close</button>
+        </div>
+      ) : (
+        <>
+          <label htmlFor={`gl-ask-${target.lineId}`} className="block text-xs font-medium text-[hsl(var(--cim-ink-soft))]">Ask your broker — {target.about}</label>
+          <textarea
+            id={`gl-ask-${target.lineId}`}
+            className="mt-1.5 w-full rounded-md border border-[hsl(var(--cim-line))] bg-[hsl(var(--cim-card))] px-2.5 py-2 text-sm text-[hsl(var(--cim-ink))] focus:outline-none focus:ring-1 focus:ring-[hsl(var(--cim-brass))]"
+            rows={3} maxLength={1000} value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Is this lease for the owner's own car?"
+          />
+          {error && <p className="mt-1 text-xs text-[hsl(var(--cim-caution))]">{error}</p>}
+          <div className="mt-2 flex flex-wrap justify-end gap-2">
+            <button type="button" className="h-8 rounded-md px-3 text-xs text-[hsl(var(--cim-ink-muted))] hover:text-[hsl(var(--cim-ink))]" onClick={onDone}>Cancel</button>
+            <button
+              type="button" disabled={text.trim().length < 3 || state === "sending"} onClick={send}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[hsl(var(--cim-ink))] px-3 text-xs font-medium text-[hsl(var(--cim-paper))] disabled:opacity-50"
+            >
+              {state === "sending" && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Send privately
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function AskButton({ target, label = "Ask" }: { target: AskTarget; label?: string }) {
+  const ctx = useContext(AskContext);
+  if (!ctx) return null;
+  return (
+    <button type="button" className="inline-flex items-center gap-1 text-[11px] font-medium text-[hsl(var(--cim-brass))] hover:underline" onClick={() => ctx.ask(target)} data-testid="gl-ask">
+      <MessageSquare className="h-3 w-3" aria-hidden /> {label}
+    </button>
   );
 }
 
@@ -87,8 +162,9 @@ function StatusPill({ status }: { status: GlBuyerStatus }) {
   );
 }
 
-function LineBlock({ line, attrs }: { line: GlEvidenceLine; attrs: Record<string, string> }) {
+function LineBlock({ line, attrs, asking, onDone }: { line: GlEvidenceLine; attrs: Record<string, string>; asking: AskTarget | null; onDone: () => void }) {
   const links = useGlLinks();
+  const askable = !!useContext(AskContext);
   const years = (line.years ?? []).filter((y) => y.status !== "left_out");
   const rows = years.flatMap((y) => y.entries.map((e) => e.rowNo).filter((n): n is number => typeof n === "number"));
   const ledgerLink = line.ledger
@@ -135,7 +211,13 @@ function LineBlock({ line, attrs }: { line: GlEvidenceLine; attrs: Record<string
         </div>
       )}
 
-      {ledgerLink && line.status !== "statement" && <div className="mt-3 text-xs">{ledgerLink}</div>}
+      {(ledgerLink && line.status !== "statement") || askable ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <span>{line.status !== "statement" ? ledgerLink : null}</span>
+          <AskButton target={{ lineId: line.lineId, rowNo: null, about: `the add-back "${line.label ?? "Add-back"}"` }} label="Ask about this add-back" />
+        </div>
+      ) : null}
+      {asking && <AskForm target={asking} onDone={onDone} />}
     </section>
   );
 }
@@ -163,7 +245,7 @@ function YearBlock({ line, year: y }: { line: GlEvidenceLine; year: GlEvidenceYe
         <p className="mt-1.5 text-xs text-[hsl(var(--cim-ink-muted))]">No entries were found in the books for this year.</p>
       ) : y.entries.length > 0 ? (
         <>
-          <EntriesTable entries={shown} />
+          <EntriesTable entries={shown} lineId={line.lineId} />
           {y.entries.length > GL_EVIDENCE_FIRST_ENTRIES && (
             <button type="button" className="mt-1.5 text-xs font-medium text-[hsl(var(--cim-brass))] hover:underline" onClick={() => setAll((v) => !v)} aria-expanded={all}>
               {all ? "Show fewer" : `Show all ${y.entries.length}`}
@@ -202,7 +284,11 @@ function EntryText({ e }: { e: GlEvidenceEntry }) {
   return <>{e.memo || "—"}</>;
 }
 
-function EntriesTable({ entries }: { entries: GlEvidenceEntry[] }) {
+function entryAbout(e: GlEvidenceEntry): string {
+  return `the entry of ${formatDay(e.date) || e.date}, ${exact(e.amount)} in ${accountPath(e.account)}`;
+}
+
+function EntriesTable({ entries, lineId }: { entries: GlEvidenceEntry[]; lineId: string }) {
   return (
     <>
       {/* ≥ sm: a table */}
@@ -223,7 +309,10 @@ function EntriesTable({ entries }: { entries: GlEvidenceEntry[] }) {
                 <td className="py-1.5 pr-2 tabular-nums whitespace-nowrap">{formatDay(e.date) || e.date}</td>
                 <td className="py-1.5 pr-2 break-words">{accountPath(e.account)}</td>
                 <td className="py-1.5 pr-2 break-words">{e.name || <span className="text-[hsl(var(--cim-ink-faint))]">—</span>}</td>
-                <td className="py-1.5 pr-2 break-words"><EntryText e={e} /></td>
+                <td className="py-1.5 pr-2 break-words">
+                  <EntryText e={e} />
+                  {e.rowNo !== null && <span className="ml-1.5 align-middle"><AskButton target={{ lineId, rowNo: e.rowNo, about: entryAbout(e) }} /></span>}
+                </td>
                 <td className="py-1.5 text-right tabular-nums whitespace-nowrap">{exact(e.amount)}</td>
               </tr>
             ))}
@@ -241,7 +330,10 @@ function EntriesTable({ entries }: { entries: GlEvidenceEntry[] }) {
             <p className="mt-0.5 break-words text-[hsl(var(--cim-ink-soft))]">
               {accountPath(e.account)}{e.name ? ` · ${e.name}` : ""}
             </p>
-            <p className="break-words text-[hsl(var(--cim-ink-muted))]"><EntryText e={e} /></p>
+            <p className="break-words text-[hsl(var(--cim-ink-muted))]">
+              <EntryText e={e} />
+              {e.rowNo !== null && <span className="ml-1.5"><AskButton target={{ lineId, rowNo: e.rowNo, about: entryAbout(e) }} /></span>}
+            </p>
           </li>
         ))}
       </ul>

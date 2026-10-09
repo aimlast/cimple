@@ -86,6 +86,11 @@ export function SellerCostCard({ cost, payDoc, onOpen, onConfirmSummary, onUploa
         <Button variant="outline" className="h-11 sm:h-9 self-start" onClick={() => onOpen()} data-testid="cost-check">Check the entries</Button>
       )}
 
+      {cost.assistantLooking && (
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite" data-testid="cost-assistant-looking">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Cimple's assistant is looking for more entries…
+        </p>
+      )}
       <div className="flex flex-wrap gap-1.5">
         {cost.years.map((y) => (
           <button key={y.year} type="button" onClick={() => onOpen(y.year)} className="min-h-[32px]">

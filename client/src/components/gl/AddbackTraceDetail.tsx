@@ -11,7 +11,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, FileText, Loader2, Lock, MessageSquare, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, FileText, Loader2, Lock, MessageSquare, RefreshCw, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -158,6 +158,13 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, onClo
         </section>
       )}
 
+      {trace.assistant && (
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite" data-testid="gl-assistant-line">
+          {trace.assistant.state === "looking" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+          {trace.assistant.words}
+        </p>
+      )}
+
       {/* Ask */}
       {trace.sentAt && (
         <section className="space-y-2">
@@ -205,7 +212,7 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, onClo
         <button type="button" className="text-sm text-teal flex items-center gap-1" onClick={() => setMore((v) => !v)} aria-expanded={more} data-testid="gl-drawer-more">
           {more ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />} More options
         </button>
-        {more && <MoreOptions dealId={dealId} trace={trace} year={year} busy={act.isPending} patch={patch} onLookAgain={() => act.mutate({ method: "POST", url: `/api/deals/${dealId}/gl/traces/${trace.id}/look-again` }, { onSuccess: () => toast({ title: "Cimple looked again", description: "The suggested entries are up to date." }) })} rejected={rejected} onUnreject={(e) => links({ remove: [{ ledgerId: e.ledgerId, rowNo: e.rowNo }] })} docShort={docShort} />}
+        {more && <MoreOptions dealId={dealId} trace={trace} year={year} busy={act.isPending} patch={patch} onLookAgain={() => act.mutate({ method: "POST", url: `/api/deals/${dealId}/gl/traces/${trace.id}/look-again` }, { onSuccess: (r: any) => toast({ title: "Cimple looked again", description: r?.unconfident && trace.sentAt ? "The rules' suggestions are up to date; Cimple's assistant may add a few more in a moment." : "The suggested entries are up to date." }) })} rejected={rejected} onUnreject={(e) => links({ remove: [{ ledgerId: e.ledgerId, rowNo: e.rowNo }] })} docShort={docShort} />}
       </section>
 
       <div className="pt-1">

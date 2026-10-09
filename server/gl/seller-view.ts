@@ -12,6 +12,7 @@ import type { GlLedgerView, GlCostSummary, GlYearStatus } from "@shared/gl-types
 import { reconcileTrace, targetCents, type ReconcileContext } from "@shared/gl-reconcile";
 import { payDocWords, sellerChipWords, type PayCountry } from "@shared/gl-copy";
 import { costSummary } from "./match";
+import { glAssistantState } from "./rank-ai";
 
 export type SellerGlState =
   | "not_requested" | "requested" | "in_progress" | "question" | "reopened" | "waiting_for_accountant" | "waiting_for_broker" | "withdrawn" | "done";
@@ -45,6 +46,8 @@ export interface SellerCost {
   question: { text: string; askedAt: string; answer: string | null } | null;
   note: string | null;
   notInLedger: string | null;
+  /** Cimple's assistant is looking for more entries for this cost right now (the card says so; nothing else about the assistant reaches the seller). */
+  assistantLooking: boolean;
 }
 
 export interface SellerBooksView {
@@ -141,6 +144,7 @@ export function sellerBooksView(input: SellerViewInput): SellerBooksView {
       question: q ? { text: q.text, askedAt: q.askedAt, answer: q.answer ?? null } : null,
       note: t.sellerNote,
       notInLedger: nil?.reason ?? null,
+      assistantLooking: glAssistantState(t.id)?.state === "looking",
     };
   });
   const acc = input.tracing.accountantRequest as { name: string; sentAt?: string; declinedAt?: string } | null;
@@ -162,7 +166,7 @@ export function sellerBooksView(input: SellerViewInput): SellerBooksView {
 }
 
 /** The keys a seller-view cost may carry — the unit test checks nothing else leaks. */
-export const SELLER_COST_KEYS = ["id", "sellerLabel", "sellerHint", "proof", "shareWords", "years", "summary", "sellerStatus", "reopenedNote", "question", "note", "notInLedger"] as const;
+export const SELLER_COST_KEYS = ["id", "sellerLabel", "sellerHint", "proof", "shareWords", "years", "summary", "sellerStatus", "reopenedNote", "question", "note", "notInLedger", "assistantLooking"] as const;
 
 /** One row of the seller's entries list (only what the seller's own ledger shows). */
 export function sellerEntry(t: { ledgerId: string; rowNo: number; txnDate: string; account: string; name: string | null; memo: string | null; amountCents: number; fiscalYear: string }) {
