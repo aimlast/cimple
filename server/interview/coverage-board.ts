@@ -387,8 +387,9 @@ function bestValue(
     const text = coverageValueText(facts[k]);
     if (text === null) continue;
     const src = sources[k];
-    // (A live capture's own confidence on its row wins — knowledge-base.ts §3.4.)
-    const conf = src && isRowBackedSource(src) && src.confidence ? src.confidence : confidence?.[k];
+    // (A live capture's own confidence on its row wins — knowledge-base.ts §3.4;
+    // a value a session together wrote never reads an older session's confidence.)
+    const conf = src && isRowBackedSource(src) && src.confidence ? src.confidence : src?.sittingId ? src.confidence ?? "confirmed" : confidence?.[k];
     candidates.push({ key: k, text, lead: isLead(k), confidence: conf });
   }
   return candidates.find((c) => !c.lead) ?? candidates[0] ?? null;
@@ -527,7 +528,7 @@ function itemStatus(
       if (confirmedNow) return onFileConfirmed();
       return draft({ status: "verify", reason: { code: "estimate" } });
     }
-    return draft({ status: "on_file", estimate: true, ...(confirmedNow ? { confirmedByYou: true } : {}) });
+    return draft({ status: "on_file", estimate: true, ...(isBrokerCallNote(src) ? { yourNote: true } : {}), ...(confirmedNow ? { confirmedByYou: true } : {}) });
   }
   // 9. On file.
   return draft({ status: "on_file", ...(isBrokerCallNote(src) ? { yourNote: true } : {}), ...(confirmedNow ? { confirmedByYou: true } : {}) });
@@ -761,7 +762,9 @@ function screenItem(
   out.value = clip(sellerBest.text, VALUE_DISPLAY_MAX);
   out.valueKey = sellerBest.key;
   out.source = sourceLabelFor(sellerSrc, docName);
-  if (out.source) delete out.source.excerpt;
+  // (The seller's own words from a session together were said aloud to the broker — shown;
+  // any other source's wording is not.)
+  if (out.source && !sellerSrc?.sittingId) delete out.source.excerpt;
   return out;
 }
 

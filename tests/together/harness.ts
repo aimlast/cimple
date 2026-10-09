@@ -122,11 +122,13 @@ export function lakeshoreDeal(id = "D1"): any {
       reasonForSale: "Retiring after 30 years",
       ownerName: "Tony Moretti",
       retentionPlan: "Dave K. - retention plan needed",
+      customerConcentration: "Largest customer about 20% (from the CRM)",
       _fieldSources: {
         annualRevenue: { source: "document", documentId: "STMT" },
         reasonForSale: { source: "interview" },
         ownerName: { source: "interview" },
         retentionPlan: { source: "crm", documentId: "CRM1", brokerOnly: true },
+        customerConcentration: { source: "crm", documentId: "CRM1", brokerOnly: true },
       },
       _sellerKeepOut: [{ detail: "Dave's divorce settlement", terms: ["divorce"] }],
     },

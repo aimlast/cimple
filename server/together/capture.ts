@@ -44,6 +44,8 @@ export interface CaptureCatalogue {
   routed: string[];
   /** writable member key → item id. */
   byKey: Map<string, string>;
+  /** any key an item reads (members, aliases) → item id — for "doesn't know" and "you said…" (never a filing). */
+  byReadKey: Map<string, string>;
   /** Item ids + members (a change re-renders the cached text). */
   structureKey: string;
 }
@@ -55,6 +57,7 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trim
 export function catalogueFromBoard(board: CoverageBoard): CaptureCatalogue {
   const items: CatalogueItem[] = [];
   const byKey = new Map<string, string>();
+  const byReadKey = new Map<string, string>();
   for (const s of board.sections) {
     for (const i of s.items) {
       const onFile = i.privateValue || i.moneyTalk ? null : i.value;
@@ -73,10 +76,11 @@ export function catalogueFromBoard(board: CoverageBoard): CaptureCatalogue {
         ask: i.ask,
       });
       for (const m of i.members) if (m.writable && !byKey.has(m.key)) byKey.set(m.key, i.id);
+      for (const k of i.readKeys ?? []) if (!byReadKey.has(k)) byReadKey.set(k, i.id);
     }
   }
   const structureKey = items.map((i) => `${i.itemId}=${i.members.map((m) => `${m.key}${m.writable ? "" : "!"}`).join(",")}`).join("|");
-  return { items, routed: board.routed.map((r) => r.label), byKey, structureKey };
+  return { items, routed: board.routed.map((r) => r.label), byKey, byReadKey, structureKey };
 }
 
 /** The checklist as the model reads it (one line per item, grouped by section). Pure. */

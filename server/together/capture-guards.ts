@@ -205,7 +205,7 @@ export function guardCaptured(output: CaptureOutput, ctx: GuardContext): Guarded
     );
     if (agrees.length === 0) {
       if (unknownAround) { hold(); continue; }
-      out.brokerUnconfirmed.push({ key: shape.key, itemId: shape.itemId, value: a.value, quote: a.quote });
+      out.brokerUnconfirmed.push({ key: shape.key, itemId: shape.itemId ?? ctx.catalogue.byReadKey?.get(shape.key) ?? null, value: a.value, quote: a.quote });
       continue;
     }
     const brokerWords = brokerLines.map((l) => l.text.trim()).join(" ");
@@ -327,13 +327,13 @@ export function guardCaptured(output: CaptureOutput, ctx: GuardContext): Guarded
   }
   for (const n of output.notKnown) {
     const key = canonicalFieldName(n.key);
-    const itemId = ctx.catalogue.byKey.get(key) ?? null;
+    const itemId = ctx.catalogue.byKey.get(key) ?? ctx.catalogue.byReadKey?.get(key) ?? null;
     if (!itemId) continue;
     out.notKnown.push({ key, itemId, ...(n.whoHasIt ? { whoHasIt: n.whoHasIt } : {}), quote: n.quote });
   }
   for (const b of output.brokerUnconfirmed) {
     const key = canonicalFieldName(b.key);
-    out.brokerUnconfirmed.push({ key, itemId: ctx.catalogue.byKey.get(key) ?? null, value: b.value, quote: b.quote });
+    out.brokerUnconfirmed.push({ key, itemId: ctx.catalogue.byKey.get(key) ?? ctx.catalogue.byReadKey?.get(key) ?? null, value: b.value, quote: b.quote });
   }
   for (const p of output.private) out.privateNotes.push({ note: p.note, reason: PRIVATE_REASON[p.reason] });
   return out;

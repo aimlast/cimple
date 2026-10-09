@@ -119,7 +119,8 @@ export interface CaptureStateShape {
   liveHeld?: boolean;
   transcriptWrittenAt?: string;
   lastFiled?: { at: string; count: number; chunkId: string };
-  timing?: number[];
+  /** Seller's last word → filed, per part (ms), with how long the part waited first (the roles wait, the queue). */
+  timing?: Array<{ ms: number; waited: number; reason: string }>;
 }
 
 export function captureStateOf(s: Pick<TogetherSitting, "captureState">): CaptureStateShape {
@@ -349,6 +350,7 @@ async function createChunks(s: TogetherSitting, r: Runner, c: ChunkClose): Promi
       focusItemId: c.focusItemId ?? null,
       status: open ? "waiting" : "queued",
       attempts: 0,
+      createdAt: new Date(deps.now()),
     });
     ids.push(row.id);
     // "Filing what the seller said about Seasonality…"
@@ -711,8 +713,11 @@ async function recordOnSitting(s: TogetherSitting, chunk: TogetherChunk, result:
     followUp: result.followUp ? { ...result.followUp, at: deps.now() } : st.hints?.followUp ?? null,
     topicSections: result.topicSections.length > 0 ? result.topicSections : st.hints?.topicSections ?? [],
   };
-  const lastLine = await togetherStore().lastLines(s.id, 1);
-  const latency = lastLine[0] ? Math.max(0, deps.now() - new Date(lastLine[0].at).getTime()) : 0;
+  // Latency: from the part's last line to now; and how long it waited before its call started.
+  const last = (await togetherStore().linesBetween(s.id, chunk.seqTo, chunk.seqTo))[0];
+  const fresh2 = await togetherStore().getChunk(chunk.id);
+  const latency = last ? Math.max(0, deps.now() - new Date(last.at).getTime()) : 0;
+  const waited = fresh2?.startedAt ? Math.max(0, new Date(fresh2.startedAt).getTime() - new Date(fresh2.createdAt).getTime()) : 0;
   await togetherStore().mergeCaptureState(s.id, {
     chunksDone: (st.chunksDone ?? 0) + 1,
     held,
@@ -722,7 +727,7 @@ async function recordOnSitting(s: TogetherSitting, chunk: TogetherChunk, result:
     longSession: budget.throttleMs > 0 || budget.held,
     liveHeld: budget.held,
     ...(result.filed.length > 0 ? { lastFiled: { at, count: result.filed.filter((f) => !f.undoneAt).length, chunkId: chunk.id } } : {}),
-    timing: [...(st.timing ?? []), latency].slice(-200),
+    timing: [...(st.timing ?? []), { ms: latency, waited, reason: chunk.reason }].slice(-200),
   });
 }
 
@@ -845,7 +850,7 @@ export async function promoteHeldAnswers(sitting: TogetherSitting, opts: { only?
     const guarded = guardCaptured(output, { newLines, catalogue, sellerFacts: inputs.sellerFacts, keepOut: getSellerKeepOut(inputs.brokerFacts), onFileText: onFileTextOf(inputs.sellerFacts) });
     const first = Math.min(...newLines.map((l) => l.seq));
     const last = Math.max(...newLines.map((l) => l.seq));
-    const chunk = await store.insertChunk({ sittingId: s.id, dealId: s.dealId, seqFrom: first, seqTo: last, reason: "promote", status: "applying", attempts: 0, delta: { guarded, sellerLabel: `${Object.values(speakers).find((x) => x.role === "seller" && x.name)?.name || "The owner"} (seller)` } as never });
+    const chunk = await store.insertChunk({ sittingId: s.id, dealId: s.dealId, seqFrom: first, seqTo: last, reason: "promote", status: "applying", attempts: 0, createdAt: new Date(deps.now()), delta: { guarded, sellerLabel: `${Object.values(speakers).find((x) => x.role === "seller" && x.name)?.name || "The owner"} (seller)` } as never });
     const r = runnerFor(s);
     await finishChunk(s, r, chunk, guarded, (chunk.delta as { sellerLabel: string }).sellerLabel, catalogue, null);
     filed = guarded.spoken.length;

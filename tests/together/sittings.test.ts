@@ -12,7 +12,7 @@
  *    `board` event is the screen board; the poll fallback;
  *  - the notetaker's lines join only the sitting whose bot it is (token and
  *    bot id), a redelivered webhook adds nothing;
- *  - ✓ Answered: auto → type it (pass 2); note → the broker's call note
+ *  - ✓ Answered: auto → type it (live filing is off here); note → the broker's call note
  *    (never final; a stronger value stays and keeps it beside; an add-back
  *    treatment is refused);
  *  - end: follow-ups screened (nothing written when one is private), the
