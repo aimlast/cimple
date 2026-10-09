@@ -10,8 +10,10 @@
  *     (an employee's name, "fertility", a kept-out party); LIKE wildcards
  *     are literal; at most 2,000 candidates;
  *   - the view is logged once per new query.
- * (vdr's pure itemVisibility / downloadDecision cases — ledger_dd_only,
- * ledger_pending — are added to this file at the vdr merge.)
+ * (vdr's pure itemVisibility / downloadDecision cases — dd_only,
+ * ledger_pending — live in tests/unit/vdr-visibility.test.ts and
+ * vdr-shares.test.ts; the room's adapter onto these functions is checked in
+ * tests/gl/gl-merge-wiring.test.ts.)
  */
 import assert from "node:assert/strict";
 import { test, done } from "./_harness";
