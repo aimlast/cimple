@@ -5,6 +5,7 @@ import pg from "pg";
 import path from "path";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import { applyAnalyticsRateLimits } from "./analytics-dashboard/limits";
 import { createHash } from "crypto";
 import * as Sentry from "@sentry/node";
 import { registerRoutes } from "./routes";
@@ -201,6 +202,10 @@ app.use("/api/view/:token/reading", rateLimit({
   keyGenerator: (req) => `reading:${createHash("sha256").update(String(req.params.token ?? "")).digest("hex").slice(0, 32)}`,
   message: { error: "Too many requests" },
 }));
+// ── analytics limiters ──
+// The analytics dashboards (sidebar Analytics, the deal Engagement tab's
+// numbers): read-only, 120 a minute per IP (server/analytics-dashboard/limits.ts).
+applyAnalyticsRateLimits(app);
 
 // Session type augmentation
 declare module "express-session" {

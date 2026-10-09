@@ -1,10 +1,11 @@
 /**
- * TeamTab — Team management, seller profile, activity timeline.
+ * TeamTab — the deal team, the seller's profile, and the latest buyer
+ * activity (every visit included; the full feed is on the Engagement tab).
  */
 import { useDeal } from "@/contexts/DealContext";
 import { TeamPanel } from "@/components/deal/TeamPanel";
 import { SellerProfilePanel } from "@/components/deal/SellerProfilePanel";
-import { ActivityTimeline } from "@/components/deal/ActivityTimeline";
+import { ActivityFeed } from "@/components/analytics/ActivityFeed";
 
 export function TeamTab() {
   const { dealId } = useDeal();
@@ -17,9 +18,13 @@ export function TeamTab() {
         <TeamPanel dealId={dealId} />
       </div>
 
-      <div className="pt-2 border-t border-border">
-        <ActivityTimeline dealId={dealId} />
-      </div>
+      <section className="pt-4 border-t border-border space-y-3" data-testid="team-activity">
+        <div>
+          <h2 className="text-sm font-semibold">Buyer activity</h2>
+          <p className="text-xs text-muted-foreground">The latest from buyers on this deal, newest first.</p>
+        </div>
+        <ActivityFeed scope="deal" dealId={dealId} limit={10} compact />
+      </section>
     </div>
   );
 }

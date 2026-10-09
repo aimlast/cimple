@@ -17,7 +17,10 @@ import { cn } from "@/lib/utils";
 import {
   Check, ChevronDown, ChevronUp, FileSearch, History, Loader2, Mail, MessageSquare, PhoneCall, Sparkles, X,
 } from "lucide-react";
-import { PageStrip, StatusChip, agoText, buyerTypeWord, initials } from "./parts";
+import { Link } from "wouter";
+import { PageStrip, StatusChip, StripLegend, buyerTypeWord, initials } from "./parts";
+import { linkRanOutWords, whenWords } from "@shared/analytics-dashboard";
+import { Chip } from "@/components/analytics/parts";
 import type { EngagementNav } from "../types";
 import { accessLevelRank } from "@shared/access-levels";
 
@@ -53,6 +56,17 @@ export interface BuyerCardProps {
   briefing: boolean;
   brief: { text: string; generatedAt: string } | null;
   onCloseBrief: () => void;
+  /** The deal, as a line at the top (the cross-deal Analytics page). */
+  dealName?: string;
+  dealHref?: string;
+  /** Chips beside the deal line (Example · Not live). */
+  dealExtra?: React.ReactNode;
+  /** Show the strip's legend under it (the master–detail views). */
+  legend?: boolean;
+  /** Their link has run out (ISO): a "Link ran out" line with Extend. */
+  linkRanOutAt?: string | null;
+  /** Where Extend goes (the deal's Buyers tab, Have the CIM). */
+  extendHref?: string;
 }
 
 function PageLink({ refs, onOpen }: { refs: PageRef[]; onOpen: (r: PageRef) => void }) {
@@ -94,6 +108,16 @@ export function BuyerCard(props: BuyerCardProps) {
       )}
       data-testid={`buyer-card-${card.accessId}`}
     >
+      {props.dealName && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-border/60 pb-2.5 text-xs" data-testid="buyer-card-deal">
+          {props.dealHref ? (
+            <Link href={props.dealHref} className="font-medium text-teal hover:underline">{props.dealName} →</Link>
+          ) : (
+            <span className="font-medium text-foreground/90">{props.dealName}</span>
+          )}
+          {props.dealExtra}
+        </div>
+      )}
       {/* Who, and where they stand */}
       <div className="flex items-start gap-3">
         <div className="hidden sm:flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-muted/40 font-mono text-xs text-muted-foreground">
@@ -105,7 +129,7 @@ export function BuyerCard(props: BuyerCardProps) {
             {card.company && <span className="text-sm text-muted-foreground">{card.company}</span>}
             <StatusChip status={card.status} label={card.statusLabel} />
             {contactedRecently && !/^Contacted/.test(card.statusLabel) && (
-              <span className="inline-flex items-center gap-1 text-[11px] text-sky-400"><PhoneCall className="h-3 w-3" />Contacted {agoText(card.contactedAt)}</span>
+              <span className="inline-flex items-center gap-1 text-[11px] text-sky-400"><PhoneCall className="h-3 w-3" />Contacted {whenWords(card.contactedAt)}</span>
             )}
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
@@ -114,16 +138,28 @@ export function BuyerCard(props: BuyerCardProps) {
         </div>
         <div className="shrink-0 text-right">
           <p className="text-sm font-medium tabular-nums text-foreground">{formatReadingTime(card.activeMs)}</p>
-          <p className="text-2xs text-muted-foreground">{card.visits} visit{card.visits === 1 ? "" : "s"} · {agoText(card.lastSeenAt)}</p>
+          <p className="text-2xs text-muted-foreground">{card.visits} visit{card.visits === 1 ? "" : "s"} · {whenWords(card.lastSeenAt)}</p>
         </div>
       </div>
+
+      {/* Their link ran out: they can't open the CIM until the broker extends it */}
+      {props.linkRanOutAt && (
+        <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-1.5 text-xs text-foreground/90" data-testid="buyer-link-ran-out">
+          <Chip tone="warning" title={linkRanOutWords(props.linkRanOutAt)}>Link ran out</Chip>
+          <span className="min-w-0 flex-1">{linkRanOutWords(props.linkRanOutAt)}</span>
+          {props.extendHref && (
+            <Link href={props.extendHref} className="shrink-0 font-medium text-teal hover:underline" data-testid="buyer-extend">Extend</Link>
+          )}
+        </p>
+      )}
 
       {/* Why */}
       <p className="mt-3 text-sm leading-relaxed text-foreground/90" data-testid="buyer-why">{card.why}</p>
 
       {/* Where they read */}
-      <div className="mt-3">
+      <div className="mt-3" title={`See where ${card.name.split(" ")[0]} read →`}>
         <PageStrip cells={card.pageStrip} titles={card.mode === "blind" ? blindTitles : titles} maxMs={maxMs} onOpen={(c: PageStripCell) => openPage(c)} />
+        {props.legend && card.pageStrip.length > 0 && <StripLegend className="mt-1.5" />}
       </div>
 
       {/* What to say */}

@@ -58,6 +58,8 @@ import { loadMediaAssets } from "./cim/media-store.js";
 import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
 import { registerEngagementRoutes } from "./routes/engagement.js";
 import { registerEngagementInsightRoutes } from "./routes/engagement-insights.js";
+import { registerAnalyticsDashboardRoutes } from "./routes/analytics-dashboard.js";
+import { questionWaitingOn } from "@shared/analytics-dashboard";
 import { registerTeaserRoutes } from "./routes/teaser.js";
 import { registerDataRoomRoutes } from "./routes/data-room.js";
 import { registerReadingRoutes } from "./routes/reading.js";
@@ -2255,7 +2257,7 @@ Return JSON only.`,
 
         // Unanswered Q&A
         for (const q of questions) {
-          if (q.status === "pending_broker") {
+          if (questionWaitingOn(q.status, !!q.publishedAnswer) === "broker") {
             unansweredQuestions.push({
               dealId: deal.id,
               dealName: deal.businessName,
@@ -8225,6 +8227,7 @@ Return JSON only.`,
   registerReadingRoutes(app);
   registerEngagementRoutes(app);
   registerEngagementInsightRoutes(app);
+  registerAnalyticsDashboardRoutes(app);
   registerTeaserRoutes(app, { grant: (request, deal, baseUrl, review, opts) => grantApprovedBuyer(request as any, deal, baseUrl, review, opts) });
   // Data room (vdr). Wave 0: only the renderer canary, GET /api/vdr/health.
   registerDataRoomRoutes(app);
