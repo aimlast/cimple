@@ -1190,6 +1190,53 @@ export function recordFactSpeakers(info: Info, speakers: unknown, documentId: st
 }
 
 /**
+ * Live capture ("Interview together", specs/together.md §5.7): how sure the
+ * seller was of each value a session's transcript filed, and a guard's
+ * verify flag ("number" / "date" / "legal"). Stamped only where the current
+ * source is this document. Mutates `info`.
+ */
+export function recordFactConfidence(info: Info, confidence: unknown, documentId: string, verify?: unknown): number {
+  const conf = confidence && typeof confidence === "object" && !Array.isArray(confidence) ? (confidence as Record<string, unknown>) : {};
+  const ver = verify && typeof verify === "object" && !Array.isArray(verify) ? (verify as Record<string, unknown>) : {};
+  const keys = new Set([...Object.keys(conf), ...Object.keys(ver)]);
+  if (keys.size === 0) return 0;
+  const sources = { ...getFieldSources(info) };
+  let n = 0;
+  for (const rawKey of Array.from(keys)) {
+    const key = canonicalFieldName(rawKey, Object.keys(info));
+    const src = sources[key];
+    if (!src || src.documentId !== documentId) continue;
+    const c = conf[rawKey];
+    const v = ver[rawKey];
+    sources[key] = {
+      ...src,
+      ...(c === "confirmed" || c === "approximate" || c === "inferred" ? { confidence: c } : {}),
+      ...(v === "number" || v === "date" || v === "legal" ? { verify: v } : {}),
+    };
+    n++;
+  }
+  if (n > 0) info["_fieldSources"] = sources;
+  return n;
+}
+
+/** The seller's words each live-filed value came from (≤ 200 chars), where the current source is this document. Mutates `info`. */
+export function recordFactExcerpts(info: Info, excerpts: unknown, documentId: string): number {
+  if (!excerpts || typeof excerpts !== "object" || Array.isArray(excerpts)) return 0;
+  const sources = { ...getFieldSources(info) };
+  let n = 0;
+  for (const [rawKey, text] of Object.entries(excerpts as Record<string, unknown>)) {
+    if (typeof text !== "string" || !text.trim()) continue;
+    const key = canonicalFieldName(rawKey, Object.keys(info));
+    const src = sources[key];
+    if (!src || src.documentId !== documentId) continue;
+    sources[key] = { ...src, excerpt: text.trim().slice(0, 200) };
+    n++;
+  }
+  if (n > 0) info["_fieldSources"] = sources;
+  return n;
+}
+
+/**
  * Who a recorded speaker is, relative to the seller: "seller" (only the
  * seller), "joint" (the seller and someone else — "Luis Ortega (operations
  * manager) and Gord McAllister (seller)"), or "other" (a manager, a

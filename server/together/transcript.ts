@@ -152,7 +152,32 @@ export async function writeTranscriptText(sitting: TogetherSitting): Promise<voi
   const broker = await storage.getUser(sitting.brokerId).catch(() => undefined);
   const meta = { ...((doc.sourceMeta ?? {}) as Record<string, unknown>), durationMin, participants: participantsText(sitting, (broker as { name?: string | null } | undefined)?.name ?? null) };
   await storage.updateDocument(doc.id, { extractedText: text, fileSize: Buffer.byteLength(text, "utf-8"), sourceMeta: meta } as never);
-  const state = { ...((sitting.captureState ?? {}) as Record<string, unknown>), transcriptWrittenAt: new Date().toISOString() };
-  await togetherStore().updateSitting(sitting.id, { captureState: state });
-  sitting.captureState = state;
+  const row = await togetherStore().mergeCaptureState(sitting.id, { transcriptWrittenAt: new Date().toISOString() });
+  if (row) sitting.captureState = row.captureState;
+}
+
+/**
+ * The broker deleted a session's transcript (the source delete already
+ * removed the facts it filed): the session stops filing for good, its
+ * parts' deltas and results are cleared and its lines are deleted (the
+ * sitting keeps only its counts). The row is never recreated (§5.8).
+ */
+export async function onTogetherSourceDeleted(doc: Pick<Document, "id" | "sourceMeta">): Promise<void> {
+  if (!isTogetherSitting(doc)) return;
+  const sittingId = String(((doc.sourceMeta ?? {}) as { recordId?: unknown }).recordId ?? "");
+  if (!sittingId) return;
+  const store = togetherStore();
+  const s = await store.getSitting(sittingId);
+  if (!s || s.transcriptDocumentId !== doc.id) return;
+  const { stopFiling } = await import("./pipeline");
+  stopFiling(s.id);
+  const lines = await store.countLines(s.id);
+  await store.clearChunkData(s.id);
+  await store.deleteLines(s.id);
+  const row = await store.mergeCaptureState(s.id, { sourceDeleted: true, held: [], brokerUnconfirmed: [], linesBeforeDelete: lines });
+  const hub = await import("./hub");
+  if (row) {
+    const { sittingView } = await import("./sittings");
+    hub.publish(s.id, { type: "sitting", sitting: sittingView(row) });
+  }
 }

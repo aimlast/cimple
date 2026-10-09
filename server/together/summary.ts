@@ -117,6 +117,7 @@ export function buildSittingSummary(args: {
         yourNote: !!item.yourNote,
         status: item.status,
         ...(item.filedByChunkId ? { chunkId: item.filedByChunkId } : {}),
+        ...(item.valueKey ? { key: item.valueKey } : {}),
       });
       continue;
     }
@@ -203,6 +204,8 @@ export interface SittingEndHooks {
   explainQuestionsRaised?(dealId: string, sittingId: string, messages: Array<{ role: "ai" | "user"; content: string }>): Promise<{ answered: number } | void>;
   scheduleFigureBuild?(dealId: string, reason: string): void;
   planExplainQuestions?(dealId: string): Promise<unknown> | void;
+  /** How long the end waits for parts being filed (tests shorten it). */
+  endWaitMs?: number;
 }
 
 const defaultHooks: SittingEndHooks = {
@@ -248,7 +251,9 @@ export function linesAsMessages(sitting: Pick<TogetherSitting, "speakers">, line
 export async function currentSummary(sitting: TogetherSitting, deal: Deal): Promise<SittingSummary> {
   const audience = sitting.sellerSeesScreen ? "screen" : "broker";
   const board = await hooks.loadBoard(deal, audience);
-  return buildSittingSummary({ sitting, board, facts: ((deal.extractedInfo ?? {}) as Record<string, unknown>) });
+  const { chunkCounts } = await import("./pipeline");
+  const counts = chunkCounts(await togetherStore().listChunks(sitting.id).catch(() => []));
+  return { ...buildSittingSummary({ sitting, board, facts: ((deal.extractedInfo ?? {}) as Record<string, unknown>) }), waiting: counts.waiting + counts.failed };
 }
 
 /**
@@ -276,6 +281,13 @@ export async function endSitting(sitting: TogetherSitting, deal: Deal, body: End
     }
   }
 
+  // Whatever the seller was saying is filed first (≤ 20 s for what's in flight).
+  {
+    const { flush, waitForIdle } = await import("./pipeline");
+    const current = (await togetherStore().getSitting(sitting.id)) ?? sitting;
+    await flush(current, "end").catch(() => undefined);
+    await waitForIdle(sitting.id, hooks.endWaitMs ?? 20_000).catch(() => false);
+  }
   return withSittingQueue(sitting.id, async () => {
     const store = togetherStore();
     const fresh = (await store.getSitting(sitting.id)) ?? sitting;
@@ -302,14 +314,23 @@ export async function endSitting(sitting: TogetherSitting, deal: Deal, body: End
     }
     if (body.completeInterview) await hooks.completeInterview(deal.id, messages);
 
+    // The summary from the board as it stands after the last filing.
+    const finalDeal = (await storage.getDeal(deal.id)) ?? deal;
+    const finalBoard = await hooks.loadBoard(finalDeal, audience);
+    const chunks = await store.listChunks(fresh.id);
+    const { chunkCounts, stopRunner } = await import("./pipeline");
+    const counts = chunkCounts(chunks);
     const summary: SittingSummary = {
-      ...buildSittingSummary({ sitting: { ...fresh, endedAt }, board, facts: ((deal.extractedInfo ?? {}) as Record<string, unknown>) }),
+      ...buildSittingSummary({ sitting: { ...fresh, endedAt }, board: finalBoard, facts: ((finalDeal.extractedInfo ?? {}) as Record<string, unknown>) }),
+      waiting: counts.waiting + counts.failed,
       completeInterview: body.completeInterview,
       followUpsAdded: followUps.length,
     };
     const row = (await store.updateSitting(fresh.id, { status: "ended", endedAt, summary, interviewCompleted: body.completeInterview })) ?? fresh;
-    hub.publish(fresh.id, { type: "sitting", sitting: sittingView(row) });
+    hub.publish(fresh.id, { type: "sitting", sitting: sittingView(row, { chunks }) });
     hub.closeSitting(fresh.id);
+    // (Parts still waiting for the AI are filed later by the retry; nothing waits here.)
+    if (counts.waiting + counts.failed === 0) stopRunner(fresh.id);
     return { sitting: row, summary, followUpsAdded: followUps.length };
   });
 }

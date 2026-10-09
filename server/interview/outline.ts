@@ -475,6 +475,46 @@ export async function addFollowUpItems(dealId: string, items: NewFollowUpItem[])
   });
 }
 
+/**
+ * "Also noted" (specs/together.md §5.7): a useful fact the seller said on a
+ * session together that fits no checklist item becomes an item of its own
+ * (origin "noted"), so the board counts it and the broker sees it. Re-read
+ * and written under the facts lock (after the filing returns — never nested).
+ */
+export function outlineWithNotedItems(current: InterviewOutline, items: Array<{ key: string; label: string; sectionKey: string }>, now = new Date()): InterviewOutline {
+  const added = [...(current.addedItems ?? [])];
+  let changed = false;
+  for (const it of items) {
+    if (!it.key || added.some((a) => a.key === it.key)) continue;
+    added.push({ key: it.key, label: it.label.slice(0, 120), sectionKey: it.sectionKey, origin: "noted" });
+    changed = true;
+  }
+  return changed ? { ...current, addedItems: added, updatedAt: now.toISOString() } : current;
+}
+
+export async function appendNotedItems(dealId: string, items: Array<{ key: string; label: string; sectionKey: string }>): Promise<void> {
+  if (items.length === 0) return;
+  await withDealFactsLock(dealId, async () => {
+    const fresh = await storage.getDeal(dealId);
+    if (!fresh) return;
+    const current = getInterviewOutline(fresh);
+    const next = outlineWithNotedItems(current, items);
+    if (next !== current) await storage.updateDeal(dealId, { interviewOutline: next } as never);
+  });
+}
+
+/** Undo of an "also noted" filing: its item goes (a broker-added item never does). */
+export async function removeNotedItem(dealId: string, key: string): Promise<void> {
+  await withDealFactsLock(dealId, async () => {
+    const fresh = await storage.getDeal(dealId);
+    if (!fresh) return;
+    const current = getInterviewOutline(fresh);
+    const addedItems = (current.addedItems ?? []).filter((a) => !(a.key === key && a.origin === "noted"));
+    if (addedItems.length === (current.addedItems ?? []).length) return;
+    await storage.updateDeal(dealId, { interviewOutline: { ...current, addedItems, updatedAt: new Date().toISOString() } } as never);
+  });
+}
+
 const FOLLOW_UP_STOP = new Set(["with", "from", "your", "what", "which", "about", "that", "this", "have", "does", "there", "their", "they", "would", "could", "much", "many", "last", "year"]);
 
 /**

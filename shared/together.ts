@@ -189,6 +189,20 @@ export interface TogetherSittingView {
   /** Chunks waiting to be filed (Cimple's AI was unavailable). */
   waiting: number;
   sourceDeleted: boolean;
+  /** Live filing: Cimple's AI can't be reached right now (the "keep talking" banner). */
+  aiDown?: boolean;
+  /** A long session: answers are filed every couple of minutes instead of after each one. */
+  longSession?: boolean;
+  /** Parts that couldn't be filed after a day of retries ("Try again"). */
+  failed?: number;
+  /** Is live filing running for this session (on this server)? */
+  filingOn?: boolean;
+  /** What the broker said aloud that the seller didn't confirm (newest last). */
+  brokerUnconfirmed?: BrokerUnconfirmedView[];
+  /** The last filing's ideas for "Suggest what to ask next". */
+  hints?: CaptureHints;
+  /** The last filing: when, and how many answers. */
+  lastFiled?: { at: string; count: number; chunkId: string } | null;
   /** The Zoom / Meet / Teams notetaker's last known state (the server watches it). */
   notetaker: ListenState | null;
 }
@@ -316,11 +330,39 @@ export const SILENCE_WATCHDOG_MS = 60_000;
 // Live events (SSE, §7.2)
 // ─────────────────────────────────────────────────────────────────────────
 
+/** What the broker said aloud that the seller didn't confirm (never filed). */
+export interface BrokerUnconfirmedView {
+  itemId: string;
+  key: string;
+  label: string;
+  value: string;
+  quote: string;
+  chunkId: string;
+  at: string;
+}
+
+/** The last filing's ideas for "Suggest what to ask next". */
+export interface CaptureHints {
+  followUp?: { itemId?: string; ask: string; at: number } | null;
+  topicSections?: string[];
+}
+
+/** A board diff after a filing (§5.7): applied when the page's board version equals prevVersion, else the page re-reads it. */
+export interface BoardDiff {
+  items: unknown[];
+  sectionCounts: Record<string, unknown>;
+  totals: unknown;
+  percentCollected: number;
+  quality: unknown;
+  version: string;
+  prevVersion: string;
+}
+
 export type TogetherEvent =
   | { type: "hello"; eventSeq: number; sitting: TogetherSittingView }
   | { type: "lines"; lines: TogetherLineView[] }
-  | { type: "filing"; section?: string | null }
-  | { type: "filed"; items: unknown[]; totals: unknown; version: string; prevVersion: string }
+  | { type: "filing"; section?: string | null; sectionTitle?: string | null; chunkId?: string }
+  | ({ type: "filed"; chunkId?: string; filedCount: number; nothing?: boolean; brokerUnconfirmed?: BrokerUnconfirmedView[]; hints?: CaptureHints; diff?: BoardDiff | null })
   | { type: "board"; board: unknown }
   | { type: "listen"; state: ListenState; detail?: string }
   | { type: "status"; captureState: Record<string, unknown> }
@@ -344,6 +386,8 @@ export interface SummaryFiledRow {
   yourNote: boolean;
   status: "on_file" | "partial" | "verify" | "missing";
   chunkId?: string;
+  /** The key the filing wrote (Undo names it). */
+  key?: string;
 }
 
 export interface SummaryOpenRow {

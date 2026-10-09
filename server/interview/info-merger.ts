@@ -744,6 +744,8 @@ export interface FieldSource {
   verify?: "number" | "date" | "legal";
   /** The "Interview together" session that wrote it (sessionId stays reserved for interview sessions). */
   sittingId?: string;
+  /** The part of that session's conversation it was filed from (Undo names it). */
+  chunkId?: string;
 }
 export const FIELD_SOURCES_KEY = "_fieldSources";
 export const FIELD_ALTERNATES_KEY = "_fieldAlternates";

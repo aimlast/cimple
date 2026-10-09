@@ -14,7 +14,7 @@
  * automatic rules of shared/together-speakers.ts. Only the seller's words
  * ever reach the transcript document (transcript.ts).
  */
-import type { Deal, InsertTogetherLine, TogetherLine, TogetherSitting } from "@shared/schema";
+import type { Deal, InsertTogetherLine, TogetherChunk, TogetherLine, TogetherSitting } from "@shared/schema";
 import {
   defaultSellerSeesScreen,
   isCrossSpeakerDuplicate,
@@ -35,6 +35,8 @@ import * as hub from "./hub";
 import { TOGETHER_LIMITS } from "./limits";
 import { notetakerStateOf } from "./notetaker";
 import { togetherStore } from "./store";
+import { withSittingQueue, _resetSittingQueuesForTests } from "./queue";
+import { chunkCounts, filingOn, flush as flushFiling, onLines as fileLines, promoteHeldAnswers } from "./pipeline";
 import { TRANSCRIPT_WRITE_EVERY_MS, ensureTranscriptDocument, hasSellerLine, writeTranscriptText } from "./transcript";
 
 /** Where a sitting was created — a process only ever captures its own kind (§5.3). */
@@ -56,11 +58,17 @@ export function lastActiveAt(s: Pick<TogetherSitting, "startedAt" | "lastLineAt"
 interface CaptureStateLike {
   chunksWaiting?: number;
   sourceDeleted?: boolean;
+  circuitOpenAt?: string | null;
+  longSession?: boolean;
+  brokerUnconfirmed?: TogetherSittingView["brokerUnconfirmed"];
+  hints?: TogetherSittingView["hints"];
+  lastFiled?: TogetherSittingView["lastFiled"];
 }
 
-/** The sitting as the broker's page sees it. */
-export function sittingView(s: TogetherSitting, opts: { botActive?: boolean } = {}): TogetherSittingView {
+/** The sitting as the broker's page sees it (`chunks`, when loaded, gives the waiting / failed counts). */
+export function sittingView(s: TogetherSitting, opts: { botActive?: boolean; chunks?: TogetherChunk[] } = {}): TogetherSittingView {
   const state = (s.captureState ?? {}) as CaptureStateLike;
+  const counts = opts.chunks ? chunkCounts(opts.chunks) : { waiting: Number(state.chunksWaiting ?? 0), failed: 0 };
   return {
     id: s.id,
     dealId: s.dealId,
@@ -78,9 +86,16 @@ export function sittingView(s: TogetherSitting, opts: { botActive?: boolean } = 
     botActive: !!opts.botActive || (!!s.botId && s.status !== "ended"),
     interviewCompleted: !!s.interviewCompleted,
     summary: (s.summary ?? null) as TogetherSittingView["summary"],
-    waiting: Number(state.chunksWaiting ?? 0),
+    waiting: counts.waiting,
+    failed: counts.failed,
     sourceDeleted: !!state.sourceDeleted,
     notetaker: notetakerStateOf(s.id),
+    aiDown: !!state.circuitOpenAt,
+    longSession: !!state.longSession,
+    filingOn: filingOn(s),
+    brokerUnconfirmed: (state.brokerUnconfirmed ?? []).slice(-10),
+    hints: state.hints ?? {},
+    lastFiled: state.lastFiled ?? null,
   };
 }
 
@@ -95,20 +110,8 @@ export function lineView(l: TogetherLine): TogetherLineView {
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// One action at a time per sitting (lines, roles, pause, end)
-// ─────────────────────────────────────────────────────────────────────────
-
-const queues = new Map<string, Promise<unknown>>();
-
-export function withSittingQueue<T>(sittingId: string, fn: () => Promise<T>): Promise<T> {
-  const prev = queues.get(sittingId) ?? Promise.resolve();
-  const next = prev.catch(() => undefined).then(fn);
-  const tail = next.catch(() => undefined);
-  queues.set(sittingId, tail);
-  void tail.then(() => { if (queues.get(sittingId) === tail) queues.delete(sittingId); });
-  return next;
-}
+// One action at a time per sitting (lines, roles, pause, end): queue.ts.
+export { withSittingQueue } from "./queue";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Reading
@@ -208,6 +211,8 @@ export async function pauseSitting(s: TogetherSitting): Promise<TogetherSitting>
     if (fresh.status !== "live") return fresh;
     const row = (await togetherStore().updateSitting(s.id, { status: "paused", pausedAt: new Date() })) ?? fresh;
     await writeTranscriptText(row).catch((err) => console.warn(`[together] transcript write failed on pause (${s.id}):`, (err as Error).message));
+    // Whatever the seller was saying is filed now.
+    await flushFiling(row, "manual").catch((err) => console.warn(`[together] couldn't file the open part on pause (${s.id}):`, (err as Error).message));
     hub.publish(s.id, { type: "sitting", sitting: sittingView(row) });
     return row;
   });
@@ -240,6 +245,8 @@ export async function recordConsent(s: TogetherSitting): Promise<TogetherSitting
 export interface AppendContext {
   /** The visible items' suggested questions (the room's broker guess). Loaded lazily. */
   asks?: () => Promise<string[]>;
+  /** The checklist items' asks and labels (for "asked" marks). Loaded lazily, cached 5 min. */
+  askItems?: () => Promise<AskItem[]>;
   /** The broker's display name (meeting participants). */
   brokerName?: () => Promise<string>;
   /** For the transcript document. */
@@ -343,8 +350,40 @@ export async function appendLines(sittingId: string, clientId: string | null, in
 
     hub.publish(s.id, { type: "lines", lines: inserted.map(lineView) });
     if (roles.changed) hub.publish(s.id, { type: "sitting", sitting: sittingView(s) });
+    // Live filing reads the new lines (the chunker decides when a part closes).
+    await fileLines(s, inserted).catch((err) => console.warn(`[together] live filing couldn't take the new lines (${s.id}):`, (err as Error).message));
+    // A broker line that reads an item's suggested question marks it asked (Suggest next ranks it lower).
+    if (ctx.askItems) void markAsked(s, inserted, ctx.askItems).catch(() => undefined);
+    if (roles.changed) void promoteHeldAnswers(s).catch(() => undefined);
     return { accepted: inserted.map(lineView), skipped, lastSeq };
   });
+}
+
+export interface AskItem { itemId: string; sectionKey: string; ask: string; label: string; open: boolean }
+
+const askItemCache = new Map<string, { at: number; items: AskItem[] }>();
+
+/**
+ * "Asked" marks (§5.9): a broker line that reads an item's suggested question
+ * (or its label) — token overlap ≥ 0.6 — marks the item asked this session.
+ */
+async function markAsked(s: TogetherSitting, lines: TogetherLine[], load: () => Promise<AskItem[]>): Promise<number> {
+  const speakers = (s.speakers ?? {}) as SpeakerMap;
+  const broker = lines.filter((l) => l.source !== "typed" && lineRole(speakers, { speaker: l.speaker, attested: !!l.attestedSellerAt }) === "broker");
+  if (broker.length === 0) return 0;
+  const hit = askItemCache.get(s.id);
+  const items = hit && Date.now() - hit.at < ASKS_TTL_MS ? hit.items : await load().catch(() => [] as AskItem[]);
+  if (!hit || Date.now() - hit.at >= ASKS_TTL_MS) askItemCache.set(s.id, { at: Date.now(), items });
+  const { looksLikeQuestionEcho } = await import("@shared/together-speakers");
+  const { setMark } = await import("./marks");
+  let n = 0;
+  for (const l of broker) {
+    const item = items.find((i) => i.open && (looksLikeQuestionEcho(l.text, i.ask) || looksLikeQuestionEcho(i.label, l.text)));
+    if (!item) continue;
+    await setMark({ dealId: s.dealId, itemId: item.itemId, sectionKey: item.sectionKey, kind: "asked", sittingId: s.id, createdBy: "system" });
+    n++;
+  }
+  return n;
 }
 
 async function cachedAsks(sittingId: string, load: () => Promise<string[]>): Promise<string[]> {
@@ -371,6 +410,8 @@ export async function setSpeakerRole(sittingId: string, speaker: string, role: E
     }
     if (row.transcriptDocumentId) await writeTranscriptText(row).catch(() => undefined);
     hub.publish(s.id, { type: "sitting", sitting: sittingView(row) });
+    // Held possible answers are re-checked with the new roles at once (no AI) — after this step.
+    void promoteHeldAnswers(row).catch((err) => console.warn(`[together] couldn't re-check held answers (${s.id}):`, (err as Error).message));
     return row;
   });
 }
@@ -397,7 +438,8 @@ export function sittingAudience(s: Pick<TogetherSitting, "sellerSeesScreen">): "
 /** Exported for tests. */
 export function _resetSittingCachesForTests(): void {
   askCache.clear();
-  queues.clear();
+  askItemCache.clear();
+  _resetSittingQueuesForTests();
 }
 
 export { asDate };
