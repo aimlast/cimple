@@ -116,6 +116,38 @@ async function main() {
     assert.equal(calls, 2);
   });
 
+  await test("once per build: an item whose phrasing was refused is never sent again (checker r2 R2-1)", async () => {
+    _resetPhrasingForTests();
+    let plan: any = structuredClone(deal.interviewPlan);
+    let calls = 0;
+    let lastSent: string[] = [];
+    _setPhrasingModelForTests(async ({ user }) => {
+      calls++;
+      lastSent = user.split("\n").filter((l) => l.includes(" | ") && !l.startsWith("Checklist items")).map((l) => l.split(" | ")[0]);
+      return { items: [
+        { key: "tsaaLicenseStatus", askAs: "Is your TSSA registration held by the company or by you?", whyItMatters: "A registration held personally may not transfer." },
+        { key: "comfortClubRenewalRate", askAs: "Does Dave run the 2024 renewals?", whyItMatters: "Buyers check continuity." },
+      ] };
+    });
+    const deps = { readDeal: async () => ({ ...deal, interviewPlan: plan }), writePlan: async (_id: string, p: any) => { plan = p; return true; } };
+    assert.equal(await ensurePlanPhrasing({ ...deal, interviewPlan: plan }, deps), "done");
+    assert.equal(calls, 1);
+    assert.deepEqual(plan.phrasingTried.sort(), ["comfortClubRenewalRate", "emrRating", "tsaaLicenseStatus"], "every item sent is recorded — refused and omitted ones too");
+    assert.equal(plan.items.find((i: any) => i.key === "comfortClubRenewalRate").askAs, undefined, "the refused one keeps the template");
+    // Later triggers (every session start / resume, a page load): no model call.
+    for (let i = 0; i < 3; i++) {
+      _resetPhrasingForTests();
+      assert.equal(await ensurePlanPhrasing({ ...deal, interviewPlan: plan }, deps), "skipped");
+    }
+    assert.equal(calls, 1, "a second trigger with a refused item makes 0 model calls");
+    // A new item added by a rebuild of the same plan is the only one sent.
+    plan = { ...plan, items: [...plan.items, { key: "fleetVans", label: "Number of service vans", sectionKey: "operations", critical: false }] };
+    _resetPhrasingForTests();
+    await ensurePlanPhrasing({ ...deal, interviewPlan: plan }, deps);
+    assert.equal(calls, 2);
+    assert.deepEqual(lastSent, ["fleetVans"]);
+  });
+
   _setPhrasingModelForTests(null);
   console.log(`\n${passed} phrasing checks passed`);
 }

@@ -29,7 +29,9 @@ async function main() {
     .map((d) => {
       const plan = d.interviewPlan as InterviewPlan | null;
       const items = plan?.status === "ready" ? plan.items ?? [] : [];
-      const missing = items.filter((i) => !i.askAs).length;
+      // (Items already sent for this build — refused phrasings keep the template — are never sent again.)
+      const tried = new Set(plan?.phrasingTried ?? []);
+      const missing = items.filter((i) => !i.askAs && !tried.has(i.key)).length;
       return { d, items: items.length, missing };
     })
     .filter((x) => x.missing > 0);
@@ -39,7 +41,7 @@ async function main() {
     for (const x of todo) {
       console.log(`  ${x.d.id}  ${x.d.businessName}  (${x.d.industry ?? "no industry"})  ${x.missing} of ${x.items} items${x.d.archivedAt ? "  [archived]" : ""}${x.d.demoKey ? "  [demo]" : ""}`);
     }
-    console.log(`Estimated cost if every one were phrased: ${todo.length} call(s), ${COST_PER_DEAL} each. Each phrases itself the first time a session together starts there.`);
+    console.log(`Estimated cost if every one were phrased: ${todo.length} call(s), ${COST_PER_DEAL} each. Each phrases itself after its next checklist build or the first time a session together starts there.`);
     process.exit(0);
   }
   if (!dealId) throw new Error("--apply needs --deal <id> (one deal at a time, with the founder's go-ahead)");

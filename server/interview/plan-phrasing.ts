@@ -3,12 +3,15 @@
  * §3.5, D9): one supporting-model call per deal writes, for each industry
  * item, one spoken question ("askAs", ≤ 22 words, no figures) and why buyers
  * care ("whyItMatters", ≤ 18 words). Generic items have hand-written ones
- * (coverage-asks.ts); until this runs, industry items read "Can you tell me
- * about …?".
+ * (coverage-asks.ts); until this runs, industry items read the template ask
+ * (coverage-asks.ts templateAsk).
  *
- * Started ONLY by a session together starting (POST …/together/sittings) —
- * never by a GET, never with the key "disabled", never with schedulers off
- * (local servers). One in flight per deal; a failure retries at most hourly.
+ * Started after a checklist build succeeds and by a session together
+ * starting (POST …/together/sittings) — never by a GET, never with the key
+ * "disabled", never with schedulers off (local servers). One in flight per
+ * deal; a failure retries at most hourly. Once per build: every item sent is
+ * recorded (`phrasingTried`), so an item whose phrasing was refused keeps the
+ * template and is never sent again until the checklist is rebuilt.
  * Input: the business in one line and each item's key | label | section — no
  * facts and no values. Every phrasing is checked (`phrasingIsSafe`): no
  * figures, no legal rule stated as fact, no add-back talk, no name that
@@ -185,7 +188,9 @@ export async function ensurePlanPhrasing(deal: Deal, deps: PhrasingDeps = defaul
   const now = opts.now ?? Date.now();
   const plan = getInterviewPlan(deal);
   if (!plan || plan.status !== "ready") return "skipped";
-  const todo = plan.items.filter((i) => !i.askAs);
+  // (Once per build: an item already sent — even one whose phrasing was refused — is never sent again.)
+  const tried = new Set(plan.phrasingTried ?? []);
+  const todo = plan.items.filter((i) => !i.askAs && !tried.has(i.key));
   if (todo.length === 0) return "skipped";
   if (inFlight.has(deal.id)) return "busy";
   const failedAt = lastFailure.get(deal.id);
@@ -204,7 +209,8 @@ export async function ensurePlanPhrasing(deal: Deal, deps: PhrasingDeps = defaul
       if (!o || !phrasingIsSafe(it, o, allowed)) return it;
       return { ...it, askAs: o.askAs.trim(), whyItMatters: o.whyItMatters.trim() };
     });
-    const ok = await deps.writePlan(deal.id, { ...plan, items, phrasedAt: new Date(now).toISOString() }, plan.computedAt);
+    const phrasingTried = Array.from(new Set([...Array.from(tried), ...todo.map((i) => i.key)]));
+    const ok = await deps.writePlan(deal.id, { ...plan, items, phrasedAt: new Date(now).toISOString(), phrasingTried }, plan.computedAt);
     lastFailure.delete(deal.id);
     return ok ? "done" : "lost_race";
   } catch (err) {

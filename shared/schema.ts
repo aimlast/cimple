@@ -119,6 +119,8 @@ export interface InterviewPlan {
   revision?: { at: string; reason: "rules"; previousItemCount: number; removed: string[]; added: string[] };
   /** When the suggested ways to ask (askAs / whyItMatters) were written. */
   phrasedAt?: string;
+  /** Item keys already sent to the phrasing pass for this build (a refused phrasing keeps the template — never sent again). */
+  phrasingTried?: string[];
 }
 
 /** The notetaker bot on an external call (Recall.ai). */
