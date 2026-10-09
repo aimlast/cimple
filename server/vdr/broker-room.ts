@@ -231,6 +231,7 @@ export function buildBuyers(
       expiresAt: iso(link.expiresAt),
       endsInDays: exp == null ? null : Math.max(0, Math.ceil((exp - i.now.getTime()) / 86_400_000)),
       team: teamRows(i.team ?? [], g.key, myViews),
+      buyerUserId: g.rows.find((r) => r.buyerUserId)?.buyerUserId ?? null,
     });
   }
   const byName = (a: { name: string | null; email: string }, b: { name: string | null; email: string }) => (a.name || a.email).localeCompare(b.name || b.email);

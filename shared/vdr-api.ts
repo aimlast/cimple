@@ -173,6 +173,8 @@ export type RoomBuyerRow = {
   endsInDays: number | null;
   /** Their team in the room (pass 4): active and asked-for people. */
   team?: RoomTeamRow[];
+  /** Their Cimple buyer account, when they have one ("Open their profile"). */
+  buyerUserId?: string | null;
 };
 
 /** One person on a buyer's team (broker view). */

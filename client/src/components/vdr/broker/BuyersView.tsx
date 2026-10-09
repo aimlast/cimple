@@ -80,6 +80,7 @@ export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string
       <DropdownMenuContent align="end">
         <DropdownMenuItem onClick={() => onViewAs(b.accessId)} disabled={!b.hasRoom}>View as this buyer</DropdownMenuItem>
         <DropdownMenuItem onClick={() => { setAddingTo(b); setAddOpen(true); }} disabled={!b.hasRoom || (b.team ?? []).length >= 5} data-testid={`buyer-add-team-${b.accessId}`}>Add someone from their team…</DropdownMenuItem>
+        {b.buyerUserId && <DropdownMenuItem onClick={() => setLocation(`/broker/buyers/${b.buyerUserId}`)}>Open their profile</DropdownMenuItem>}
         <DropdownMenuItem onClick={() => setLocation(`/deal/${dealId}/buyers`)}>Open the Buyers tab</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
