@@ -1,6 +1,7 @@
 import { useRef, useEffect } from "react";
 import { BarChart3, Settings, Building2, Plus, Plug, Users, LayoutDashboard, LifeBuoy, Sun, Moon, LogOut } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
+import { CimpleMark, CimpleWordmark } from "@/components/brand/CimpleLogo";
 import { useToast } from "@/hooks/use-toast";
 import { Link, useLocation } from "wouter";
 import {
@@ -113,21 +114,7 @@ export function AppSidebar() {
       onMouseLeave={onHoverEnd}
     >
       {/* ── Logo ── */}
-      <SidebarHeader className="border-b border-sidebar-border px-3 py-3 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-3">
-        <Link href="/broker" className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
-          <img
-            src="/cimple-icon.png"
-            alt="Cimple"
-            className="h-7 w-auto shrink-0 select-none"
-          />
-          {/* Wordmark — hidden when collapsed */}
-          <img
-            src="/cimple-text.png"
-            alt="cimple"
-            className="h-4 w-auto select-none group-data-[collapsible=icon]:hidden"
-          />
-        </Link>
-      </SidebarHeader>
+      <SidebarBrand />
 
       {/* ── Navigation ── */}
       <SidebarContent className="py-4 px-2">
@@ -193,6 +180,43 @@ export function AppSidebar() {
 }
 
 /**
+ * The sidebar's brand strip: the icon alone on the collapsed rail, the wordmark alone
+ * when the menu is open (hover, Ctrl/⌘+B, the phone sheet) — never both (founder,
+ * 2026-10-09). Both sit absolutely in a fixed 53 px strip so nothing below moves, and
+ * they swap in sequence (icon out 0–100 ms, wordmark in 100–250 ms; reverse on collapse).
+ * The phone sheet is portalled outside the desktop `.group[data-collapsible]` wrapper,
+ * so the base (open) classes apply there: wordmark only.
+ */
+export function SidebarBrand() {
+  return (
+    <SidebarHeader className="relative h-[53px] shrink-0 gap-0 overflow-hidden border-b border-sidebar-border p-0">
+      <Link
+        href="/broker"
+        aria-label="Cimple — dashboard"
+        data-testid="link-brand"
+        className="absolute inset-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sidebar-ring"
+      >
+        {/* 47 px = the 48 px rail minus its 1 px right border: the icon lands at x=12.53,
+            exactly where it was before (pixel-identical; tests/unit/brand-lockup.test.ts). */}
+        <span className="pointer-events-none absolute inset-y-0 left-0 flex w-[47px] items-center justify-center">
+          <CimpleMark
+            decorative
+            className="h-7 opacity-0 transition-opacity duration-100 ease-out group-data-[collapsible=icon]:opacity-100 group-data-[collapsible=icon]:delay-100 group-data-[collapsible=icon]:duration-150 motion-reduce:transition-none"
+          />
+        </span>
+        <span className="pointer-events-none absolute inset-y-0 left-5 flex items-center">
+          <CimpleWordmark
+            tone="cream"
+            decorative
+            className="h-[18px] transition-[opacity,visibility] delay-100 duration-150 ease-out group-data-[collapsible=icon]:invisible group-data-[collapsible=icon]:opacity-0 group-data-[collapsible=icon]:delay-0 group-data-[collapsible=icon]:duration-100 motion-reduce:transition-none"
+          />
+        </span>
+      </Link>
+    </SidebarHeader>
+  );
+}
+
+/**
  * BrokerMobileHeader — top bar shown below the md breakpoint, where the
  * shadcn Sidebar renders as a closed off-canvas sheet. Without this there
  * is no way on a phone to reach navigation, the theme toggle, or Log out.
@@ -209,9 +233,13 @@ export function BrokerMobileHeader() {
         aria-label="Open navigation"
         data-testid="button-mobile-menu"
       />
-      <Link href="/broker" className="flex items-center gap-2">
-        <img src="/cimple-icon.png" alt="Cimple" className="h-6 w-auto shrink-0 select-none" />
-        <img src="/cimple-text.png" alt="cimple" className="h-3.5 w-auto select-none" />
+      <Link
+        href="/broker"
+        aria-label="Cimple — dashboard"
+        data-testid="link-brand-mobile"
+        className="flex h-8 items-center rounded-md px-1 outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+      >
+        <CimpleWordmark tone="cream" decorative className="h-4" />
       </Link>
     </header>
   );

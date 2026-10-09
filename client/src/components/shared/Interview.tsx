@@ -47,6 +47,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { AIConversationInterface } from "@/components/AIConversationInterface";
+import { CimpleWordmark } from "@/components/brand/CimpleLogo";
 import { Button } from "@/components/ui/button";
 import {
   CheckCircle,
@@ -208,20 +209,7 @@ export function Interview({
         {/* Top bar */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border shrink-0 bg-card/50">
           {!isBroker && (
-            <div
-              role="img"
-              aria-label="Cimple"
-              className="h-3.5 w-14 shrink-0"
-              style={{
-                backgroundColor: "hsl(42, 26%, 92%)",
-                WebkitMaskImage: "url('/cimple-text.png')",
-                WebkitMaskSize: "contain",
-                WebkitMaskRepeat: "no-repeat",
-                maskImage: "url('/cimple-text.png')",
-                maskSize: "contain",
-                maskRepeat: "no-repeat",
-              }}
-            />
+            <CimpleWordmark className="h-3.5" />
           )}
           {onBack && (
             <>

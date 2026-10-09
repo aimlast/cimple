@@ -17,6 +17,7 @@ import SellerProgress from "@/pages/seller/SellerProgress";
 import SellerDocuments from "@/pages/seller/SellerDocuments";
 import SellerReview from "@/pages/seller/SellerReview";
 import NotFound from "@/pages/not-found";
+import { CimpleWordmark } from "@/components/brand/CimpleLogo";
 
 interface ProgressStep {
   id: string;
@@ -62,20 +63,7 @@ export default function SellerLayout() {
           {/* Left: branding + deal name */}
           <div className="flex items-center gap-3 min-w-0">
             <Link href={`/seller/${token}/progress`}>
-              <div
-                role="img"
-                aria-label="Cimple"
-                className="h-4 w-16 cursor-pointer hover:opacity-80 transition-opacity"
-                style={{
-                  backgroundColor: "hsl(162, 65%, 38%)",
-                  WebkitMaskImage: "url('/cimple-text.png')",
-                  WebkitMaskSize: "contain",
-                  WebkitMaskRepeat: "no-repeat",
-                  maskImage: "url('/cimple-text.png')",
-                  maskSize: "contain",
-                  maskRepeat: "no-repeat",
-                }}
-              />
+              <CimpleWordmark className="h-4 cursor-pointer transition-opacity hover:opacity-80" />
             </Link>
             {businessName && (
               <>
