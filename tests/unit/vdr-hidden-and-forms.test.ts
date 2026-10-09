@@ -128,6 +128,16 @@ try {
   assert.match(text(3), /Visible line on page three/);
   assert.equal(text(4), "Owner Harjit lives in Surrey", "only the boxed word is dropped");
   assert.deepEqual(r1.forms, { fields: 0, covered: 0 });
+  // spots.json (where a cited figure is outlined): visible pieces only — never the boxed SIN line or white-on-white words.
+  const spots = JSON.parse(fs.readFileSync(path.join(out1, "spots.json"), "utf8"));
+  const spotText = (n: number) => (spots.pages[String(n)] ?? []).map((x: any[]) => x[4]).join(" | ");
+  assert.ok(!/046|454|286|Redacted/.test(spotText(1)), `no hidden words in the spots: ${spotText(1)}`);
+  assert.ok(!/Hidden white text/.test(spotText(3)));
+  const { boxesForNeedle } = await import("../../server/vdr/locate");
+  const boxes = boxesForNeedle(spots.pages["1"], "29,180,000");
+  assert.equal(boxes.length, 1, "the revenue figure is found on page 1");
+  const [bx0, by0, bx1, by1] = boxes[0];
+  assert.ok(bx0 > 0 && bx1 <= 1 && bx1 > bx0 && by1 > by0 && by0 > 0, `a box inside the page: ${boxes[0]}`);
 
   // ── 2. Forms, annotations, metadata ──
   const out2 = path.join(cacheRoot, "2222222222222222");
@@ -163,6 +173,8 @@ try {
   // A later page rendered on demand uses the same covers.
   const masks = JSON.parse(fs.readFileSync(path.join(out2, "masks.json"), "utf8"));
   assert.equal(masks.pages["1"].length, 1);
+  const spots2 = JSON.parse(fs.readFileSync(path.join(out2, "spots.json"), "utf8"));
+  assert.ok(!JSON.stringify(spots2).includes("046 454 286"), "a covered personal number is never a spot");
   fs.unlinkSync(path.join(out2, "p1.webp"));
   const again = await pool.run({ kind: "basePage", outDir: out2, page: 1, source: "served" });
   assert.equal(again.width, 1400);

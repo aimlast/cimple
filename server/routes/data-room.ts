@@ -90,7 +90,7 @@ import { decisionFor, docHtml, docText, kickPrepare, manifestFor, pageImage, Ser
 import { brokerChecks, documentCimLinks, documentFacts, documentQuestions, keyFigureRank, privateMattersByDocument, sectionText } from "../vdr/analysis";
 import { ddCitedDocumentIds, ddCitedSections, ddDocumentChecks } from "../vdr/dd-adapter";
 import { parseDocumentIds, replacementsFor, resolveForBroker } from "../vdr/resolve";
-import { locateInItem } from "../vdr/locate";
+import { focusFor } from "../vdr/locate";
 import { askSeller, brokerRequestRows, declineRequests, markShared, parseNeededBy, type RequestDeps } from "../vdr/requests";
 import { askerLabel } from "../vdr/todo";
 import { activityByBuyer, activityByDocument, activityCsv, activityLog, findTrace, labelForKey, LOG_ACTION_FILTERS, type LogFilter, type ReportContext } from "../vdr/activity-report";
@@ -1279,14 +1279,14 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
         const { gate, decided } = await asBuyer(d, deal, req.query.as);
         const one = itemFor(decided, String(req.params.itemId), { allowNotReady: true });
         if (!one.item.prepared || one.item.prepared.status !== "ready") kickPrepare(one.item.id);
-        const focusPage = req.query.needle != null && one.visibility.visible ? await locateInItem(one.item, req.query.needle, d.store).catch(() => null) : null;
-        return res.json({ ...manifestFor(one.item, one.doc, decisionFor(one.item, one.item.prepared ?? null, !!gate.setting?.allowDownloads), "buyer"), focusPage });
+        const focus = req.query.needle != null && one.visibility.visible ? await focusFor(one.item, req.query.needle, null, d.store, d.root()).catch(() => null) : null;
+        return res.json({ ...manifestFor(one.item, one.doc, decisionFor(one.item, one.item.prepared ?? null, !!gate.setting?.allowDownloads), "buyer"), focusPage: focus?.page ?? null, focusBoxes: focus?.boxes ?? [] });
       }
       const item = await dealItem(d, deal.id, req.params.itemId);
       const doc = item.documentId ? await d.store.getDocument(item.documentId) : null;
       if (!item.prepared || item.prepared.status !== "ready") kickPrepare(item.id);
-      const focusPage = req.query.needle != null ? await locateInItem(item, req.query.needle, d.store).catch(() => null) : null;
-      res.json({ ...manifestFor(item, doc, { allowed: true, as: "pages_pdf" }, "broker"), focusPage });
+      const focus = req.query.needle != null ? await focusFor(item, req.query.needle, null, d.store, d.root()).catch(() => null) : null;
+      res.json({ ...manifestFor(item, doc, { allowed: true, as: "pages_pdf" }, "broker"), focusPage: focus?.page ?? null, focusBoxes: focus?.boxes ?? [] });
     } catch (err) {
       send(res, err, "open the document");
     }

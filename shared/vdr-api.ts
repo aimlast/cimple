@@ -226,8 +226,9 @@ export type NewlyVisible = { accessId: string; label: string };
 // ── Viewer (broker and buyer) ─────────────────────────────────────────────
 
 export type VdrManifest = {
-  /** Broker view with `?needle=`: the page that prints it (PDFs only). */
+  /** Broker view with `?needle=`: the page that prints it (PDFs only) and boxes around it (fractions of the page). */
   focusPage?: number | null;
+  focusBoxes?: Array<[number, number, number, number]>;
   status: "ready" | "pending" | "failed";
   kind: VdrPreparedKind | null;
   pages: Array<{ w: number; h: number }>;
@@ -300,8 +301,9 @@ export type BuyerItemAbout = {
   nextId: string | null;
   /** Buyer-safe figures from this document (pass 3; absent on older payloads). */
   keyFigures?: Array<{ label: string; value: string }>;
-  /** Opened from a citation with `?needle=`: the page that prints it (PDFs only), else null. */
+  /** Opened from a citation with `?needle=`: the page that prints it (PDFs only), else null; boxes around the figure on it. */
   focusPage?: number | null;
+  focusBoxes?: Array<[number, number, number, number]>;
   /** Who reads (the on-screen watermark on sheets, Word and text when opened from the CIM). */
   reader?: { name: string | null; email: string };
   /** Due diligence only: what it was checked against (dd's checks; a counterpart the reader can't open is "another document"). */

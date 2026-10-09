@@ -31,8 +31,11 @@ export type DrawerTarget = {
 };
 
 function aboutUrl(token: string, t: DrawerTarget): string {
-  const q = t.needle && !t.page ? `?needle=${encodeURIComponent(t.needle)}` : "";
-  return `/api/view/${encodeURIComponent(token)}/data-room/items/${encodeURIComponent(t.itemId)}${q}`;
+  const q = new URLSearchParams();
+  if (t.needle) q.set("needle", t.needle);
+  if (t.needle && t.page && !t.replaced) q.set("page", String(t.page));
+  const qs = q.toString();
+  return `/api/view/${encodeURIComponent(token)}/data-room/items/${encodeURIComponent(t.itemId)}${qs ? `?${qs}` : ""}`;
 }
 
 export function VdrViewerDrawer({ token, target, onClose }: { token: string; target: DrawerTarget | null; onClose: () => void }) {
@@ -47,7 +50,9 @@ export function VdrViewerDrawer({ token, target, onClose }: { token: string; tar
   const data = about.data;
   const title = data?.title ?? target?.title ?? "Document";
   const number = data?.number ?? target?.number ?? null;
-  const page = target ? (target.replaced ? data?.focusPage ?? null : target.page ?? data?.focusPage ?? null) : null;
+  // The figure's page wins (a stale page anchor is corrected by where the figure is printed now).
+  const page = target ? (data?.focusPage ?? (target.replaced ? null : target.page) ?? null) : null;
+  const focus = data?.focusPage ? { page: data.focusPage, boxes: data.focusBoxes ?? [] } : null;
   const roomHref = target ? vdrBuyerHref({ token, itemId: target.itemId, page, sheet: target.sheet, rows: target.rows }) : "#";
 
   return (
@@ -89,6 +94,7 @@ export function VdrViewerDrawer({ token, target, onClose }: { token: string; tar
               initialPage={page}
               initialSheet={target.sheet}
               highlightRows={target.rows}
+              focus={focus}
               reader={data.reader ?? null}
               className="min-h-full"
             />

@@ -54,6 +54,8 @@ export type VdrViewerProps = {
   /** A citation's sheet (by name) and Excel rows: opens that sheet with those rows highlighted (§9.10). */
   initialSheet?: string | null;
   highlightRows?: number[] | null;
+  /** A cited figure's place: brass boxes on that page (fractions of the page). */
+  focus?: { page: number; boxes: Array<[number, number, number, number]> } | null;
   /** Broker only: try preparing again. */
   onRetry?: () => void;
   className?: string;
@@ -152,6 +154,7 @@ export function VdrViewer(props: VdrViewerProps) {
           pages={manifest.pages}
           viewId={viewId}
           initialPage={props.initialPage ?? null}
+          focus={props.focus ?? null}
           className={props.className}
           barTop={props.barTop}
           onPage={(n) => { currentPage.current = String(n); props.onPageChange?.(n); }}
@@ -195,6 +198,7 @@ function PagesView(props: {
   pages: VdrManifest["pages"];
   viewId: string | null;
   initialPage: number | null;
+  focus: { page: number; boxes: Array<[number, number, number, number]> } | null;
   className?: string;
   barTop?: string;
   onPage: (n: number) => void;
@@ -255,7 +259,16 @@ function PagesView(props: {
       <div ref={holder} className="overflow-x-auto px-3 py-4" onContextMenu={(e) => e.preventDefault()}>
         <div className="mx-auto flex flex-col items-center gap-4" style={{ width: target }}>
           {pages.map((pg, i) => (
-            <div key={i} data-page={i + 1} className="w-full bg-white shadow-[0_1px_4px_rgba(0,0,0,0.18)]" style={{ aspectRatio: `${pg.w} / ${pg.h}` }}>
+            <div key={i} data-page={i + 1} className="relative w-full bg-white shadow-[0_1px_4px_rgba(0,0,0,0.18)]" style={{ aspectRatio: `${pg.w} / ${pg.h}` }}>
+              {props.focus && props.focus.page === i + 1 && props.focus.boxes.map((b, k) => (
+                <span
+                  key={k}
+                  aria-hidden
+                  className="pointer-events-none absolute rounded-[3px]"
+                  style={{ left: `calc(${b[0] * 100}% - 3px)`, top: `calc(${b[1] * 100}% - 3px)`, width: `calc(${(b[2] - b[0]) * 100}% + 6px)`, height: `calc(${(b[3] - b[1]) * 100}% + 6px)`, border: "2px solid #9E752E", background: "rgba(158,117,46,0.14)" }}
+                  data-vdr-focus=""
+                />
+              ))}
               <img
                 src={props.urls.page(props.itemId, i + 1, w, props.viewId)}
                 alt={`Page ${i + 1}`}

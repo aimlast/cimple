@@ -323,7 +323,7 @@ function PhoneFolders({ data, onPlace }: { data: BuyerRoomPayload; onPlace: (p: 
 }
 
 function DocumentScreen({ source, data, itemId, initialPage, cited, onBack, onOpen, embedded, onAsk, memoHref }: { source: VdrSource; data: BuyerRoomPayload; itemId: string; initialPage: number | null; cited?: { rows: number[] | null; sheet: string | null; needle: string | null }; onBack: () => void; onOpen: (id: string) => void; embedded?: boolean; onAsk: ((p: RequestPrefill) => void) | null; memoHref?: (sectionId: string) => string }) {
-  const about = useItemAbout(source, itemId, cited?.needle && !initialPage ? cited.needle : null);
+  const about = useItemAbout(source, itemId, cited?.needle ?? null, initialPage);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [viewId, setViewId] = useState<string | null>(null);
   const [page, setPage] = useState<number | null>(initialPage);
@@ -360,7 +360,7 @@ function DocumentScreen({ source, data, itemId, initialPage, cited, onBack, onOp
       </div>
       <div className="mx-auto flex w-full max-w-[1400px] flex-1 gap-0 lg:gap-6 lg:px-6 lg:py-4">
         <div className="min-w-0 flex-1">
-          <ViewerWithView source={source} itemId={itemId} about={a ?? null} loading={about.isLoading} reader={{ name: data.reader.name, email: data.reader.email }} initialPage={initialPage ?? a?.focusPage ?? null} cited={cited} onView={setViewId} onPage={setPage} onAsk={onAsk ? () => onAsk({ text: `A copy of '${title}'`, itemId }) : undefined} barTop={embedded ? "top-[94px]" : "top-[49px] lg:top-[106px]"} />
+          <ViewerWithView source={source} itemId={itemId} about={a ?? null} loading={about.isLoading} reader={{ name: data.reader.name, email: data.reader.email }} initialPage={a?.focusPage ?? initialPage ?? null} cited={cited} focus={a?.focusPage ? { page: a.focusPage, boxes: a.focusBoxes ?? [] } : null} onView={setViewId} onPage={setPage} onAsk={onAsk ? () => onAsk({ text: `A copy of '${title}'`, itemId }) : undefined} barTop={embedded ? "top-[94px]" : "top-[49px] lg:top-[106px]"} />
         </div>
         <aside className="hidden w-[320px] shrink-0 lg:block">
           <div className={cn("sticky max-h-[calc(100vh-140px)] overflow-y-auto rounded-lg border border-border bg-card p-4", embedded ? "top-[110px]" : "top-[122px]")}>{a ? <AboutPanel about={a} source={source} page={page} memoHref={memoHref} /> : <Skeleton className="h-32 w-full" />}</div>
@@ -385,9 +385,10 @@ function DocumentScreen({ source, data, itemId, initialPage, cited, onBack, onOp
 }
 
 /** The viewer, plus the download link once the buyer's view exists (its trace goes on the download). */
-function ViewerWithView({ source, itemId, about, loading, reader, initialPage, cited, onView, onPage, onAsk, barTop }: { source: VdrSource; itemId: string; about: BuyerItemAbout | null; loading: boolean; reader: { name: string | null; email: string }; initialPage: number | null; cited?: { rows: number[] | null; sheet: string | null }; onView: (id: string) => void; onPage: (n: number) => void; onAsk?: () => void; barTop: string }) {
+function ViewerWithView({ source, itemId, about, loading, reader, initialPage, cited, focus, onView, onPage, onAsk, barTop }: { source: VdrSource; itemId: string; about: BuyerItemAbout | null; loading: boolean; reader: { name: string | null; email: string }; initialPage: number | null; cited?: { rows: number[] | null; sheet: string | null }; focus?: { page: number; boxes: Array<[number, number, number, number]> } | null; onView: (id: string) => void; onPage: (n: number) => void; onAsk?: () => void; barTop: string }) {
   return (
     <VdrViewer
+      focus={focus ?? null}
       initialSheet={cited?.sheet ?? null}
       highlightRows={cited?.rows ?? null}
       barTop={barTop}

@@ -16,6 +16,9 @@
  *  4. Pages 1–3 are kept as base images (1,400 px WebP); later pages are
  *     rendered on demand (basePage job) with the same covers (masks.json,
  *     stored as fractions of the page).
+ *  5. spots.json: where each VISIBLE, uncovered text piece sits (fractions +
+ *     its text) — so a citation's figure can be outlined on the page image.
+ *     Covered pieces (personal numbers) and hidden words are never in it.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -29,6 +32,10 @@ import type { PageTextRow, PrepareResult } from "../render-jobs";
 /** A cover, as fractions (0..1) of the page image: [x0, y0, x1, y1]. */
 export type MaskBox = [number, number, number, number];
 export type MasksFile = { v: 1; pages: Record<string, MaskBox[]> };
+/** A visible text piece: [x0, y0, x1, y1, text] as fractions of the page (spots.json). */
+export type Spot = [number, number, number, number, string];
+export type SpotsFile = { v: 1; pages: Record<string, Spot[]> };
+const MAX_SPOTS_PER_PAGE = 3000;
 
 const COVER_INK = "#1F1C18";
 const MAX_PAGE_TEXT = 200_000;
@@ -53,6 +60,7 @@ type PageWork = {
   h: number;
   text: string;
   masks: MaskBox[];
+  spots: Spot[];
   personal: PersonalMatch["kind"][];
   hiddenSpans: number;
   formFields: number;
@@ -120,9 +128,10 @@ async function preparePage(doc: PDFDocumentProxy, n: number, width: 700 | 1400, 
   let formCovered = 0;
   const frac = (b: PixelBox): MaskBox => [b.x0 / W, b.y0 / H, b.x1 / W, b.y1 / H];
   const coveredForms = new Set<number>();
+  const coveredPieces = new Set<number>();
   for (const m of matches) {
     if (m.line < lines.length) {
-      for (const p of piecesTouched(lines[m.line], m.start, m.end)) masks.push(frac(pieceBoxes[p]));
+      for (const p of piecesTouched(lines[m.line], m.start, m.end)) { masks.push(frac(pieceBoxes[p])); coveredPieces.add(p); }
     } else {
       const fi = m.line - lines.length;
       if (!coveredForms.has(fi)) {
@@ -134,6 +143,13 @@ async function preparePage(doc: PDFDocumentProxy, n: number, width: 700 | 1400, 
   }
   drawCovers(ctx as any, W, H, masks);
   if (keep) await fs.writeFile(keep, new Uint8Array(await canvas.encode("webp", 82)));
+  const r4 = (v: number) => Math.round(Math.min(1, Math.max(0, v)) * 10_000) / 10_000;
+  const spots: Spot[] = [];
+  for (let i = 0; i < pieces.length && spots.length < MAX_SPOTS_PER_PAGE; i++) {
+    if (coveredPieces.has(i)) continue;
+    const f = frac(pieceBoxes[i]);
+    spots.push([r4(f[0]), r4(f[1]), r4(f[2]), r4(f[3]), pieces[i].str.slice(0, 400)]);
+  }
 
   let text = applyMasks(allLines, matches).join("\n");
   if (text.length > MAX_PAGE_TEXT) text = text.slice(0, MAX_PAGE_TEXT);
@@ -145,6 +161,7 @@ async function preparePage(doc: PDFDocumentProxy, n: number, width: 700 | 1400, 
     h: Math.round(base.height),
     text,
     masks,
+    spots,
     personal: matches.map((m) => m.kind),
     hiddenSpans,
     formFields,
@@ -184,6 +201,7 @@ export async function preparePdf(original: Uint8Array, outDir: string, prerender
   const pages: NonNullable<PrepareResult["pages"]> = [];
   const pageTexts: PageTextRow[] = [];
   const maskFile: MasksFile = { v: 1, pages: {} };
+  const spotFile: SpotsFile = { v: 1, pages: {} };
   const personalPages = new Set<number>();
   const kinds: PersonalMatch["kind"][] = [];
   const hiddenPages: number[] = [];
@@ -197,6 +215,7 @@ export async function preparePdf(original: Uint8Array, outDir: string, prerender
       pages.push({ w: pw.w, h: pw.h, hasText: pw.hasText });
       pageTexts.push({ page: n, label: `Page ${n}`, text: pw.text });
       if (pw.masks.length) maskFile.pages[String(n)] = pw.masks;
+      if (pw.spots.length) spotFile.pages[String(n)] = pw.spots;
       if (pw.personal.length) { personalPages.add(n); kinds.push(...pw.personal); }
       if (pw.hiddenSpans) { hiddenCount += pw.hiddenSpans; hiddenPages.push(n); }
       formFields += pw.formFields;
@@ -206,6 +225,7 @@ export async function preparePdf(original: Uint8Array, outDir: string, prerender
     await doc.destroy().catch(() => {});
   }
   await fs.writeFile(path.join(outDir, "masks.json"), JSON.stringify(maskFile));
+  await fs.writeFile(path.join(outDir, "spots.json"), JSON.stringify(spotFile));
   return {
     kind: "pdf",
     pages,

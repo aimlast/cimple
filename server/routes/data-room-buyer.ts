@@ -32,7 +32,7 @@ import type { ViewStart } from "@shared/vdr-api";
 import { logVdrQuietly } from "../vdr/store";
 import { assertBuyerDocumentAccess, decideForGate, defaultGateDeps, itemFor, listedItems, vdrBuyerGate, VdrHttpError, type GateDeps, type VdrGate } from "../vdr/access";
 import { parseDocumentIds, replacementsFor, resolveForReader } from "../vdr/resolve";
-import { locateInItem } from "../vdr/locate";
+import { focusFor } from "../vdr/locate";
 import { ledgerRowsForBuyer } from "../vdr/gl-adapter";
 import { parseTeamInput, principalCompanyOf, teamAddProblem, TEAM_ROLE_LABEL, type TeamRole } from "../vdr/team";
 import { buyerAboutExtras, buyerItemAbout, buyerItems, buyerRoomPayload } from "../vdr/buyer-room";
@@ -157,8 +157,9 @@ export function registerDataRoomBuyerRoutes(app: Express, overrides?: Partial<Bu
       res.setHeader("Cache-Control", "no-store");
       const extras = await buyerAboutExtras(d, gate, snap, decided, one, { preview: ownerPreview(req, gate) });
       // A citation without a page: the page that prints its figure (served text only).
-      const focusPage = req.query.needle != null && one.visibility.visible ? await locateInItem(one.item, req.query.needle, d.store).catch(() => null) : null;
-      res.json({ ...buyerItemAbout(gate, snap, decided, one), ...extras, focusPage });
+      const cited = Number(req.query.page);
+      const focus = req.query.needle != null && one.visibility.visible ? await focusFor(one.item, req.query.needle, Number.isInteger(cited) && cited > 0 ? cited : null, d.store, d.root).catch(() => null) : null;
+      res.json({ ...buyerItemAbout(gate, snap, decided, one), ...extras, focusPage: focus?.page ?? null, focusBoxes: focus?.boxes ?? [] });
     } catch (err) {
       send(res, err, "item");
     }

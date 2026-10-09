@@ -4,7 +4,7 @@
  *
  *   private-vdr/<dealId>/<random>.<ext>                     the broker's cleaned copies
  *   private-vdr-cache/<dealId>/<itemId>/<forFile>/…         prepared files: served.pdf,
- *       p<n>.webp (base page at 1,400 px, personal numbers covered), masks.json,
+ *       p<n>.webp (base page at 1,400 px, personal numbers covered), masks.json, spots.json,
  *       sheet-<i>-<chunk>.json, doc.html, text.txt
  *
  * Every path is built from server-generated parts and confined with
@@ -91,7 +91,7 @@ export function vdrCacheDir(dealId: string, itemId: string, forFile: string, roo
   return confined(path.join(root, VDR_CACHE_FOLDER), dealId, itemId, forFile);
 }
 
-const CACHE_NAME = /^(served\.pdf|masks\.json|doc\.html|text\.txt|manifest\.json|p[1-9]\d{0,3}\.webp|sheet-\d{1,3}-\d{1,4}\.json)$/;
+const CACHE_NAME = /^(served\.pdf|masks\.json|spots\.json|doc\.html|text\.txt|manifest\.json|p[1-9]\d{0,3}\.webp|sheet-\d{1,3}-\d{1,4}\.json)$/;
 
 /** A file inside a cache folder; only the names the prepare pipeline writes. */
 export function cacheFile(dir: string, name: string): string | null {

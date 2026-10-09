@@ -208,6 +208,23 @@ await test("?needle= → focusPage on the buyer's About and the broker's view", 
   assert.equal(view.json.focusPage, 3);
 });
 
+await test("a cited figure is outlined: focusBoxes from the served spots (the cited page wins when it prints it)", async () => {
+  const it = itemOf("t2");
+  const dir = vdrCacheDir("D", it.id, "0123456789abcdef", root)!;
+  fs.writeFileSync(path.join(dir, "spots.json"), JSON.stringify({ v: 1, pages: { "3": [[0.1, 0.2, 0.9, 0.23, "Schedule 125 — Total revenue 29 180 000"]], "2": [[0.1, 0.5, 0.9, 0.53, "129,180,000 total assets"]] } }));
+  const about = await call("GET", `${T}/items/${it.id}?needle=${encodeURIComponent("29,180,000")}&page=1`);
+  assert.equal(about.json.focusPage, 3, "page 1 doesn't print it → the page that does");
+  assert.equal(about.json.focusBoxes.length, 1);
+  const [x0, , x1] = about.json.focusBoxes[0];
+  assert.ok(x0 > 0.1 + 0.8 * 0.6 && x1 <= 0.9 + 1e-9, `narrowed to the figure: ${about.json.focusBoxes[0]}`);
+  const none = await call("GET", `${T}/items/${it.id}?needle=${encodeURIComponent("Total revenue")}`);
+  assert.equal(none.json.focusPage, 3);
+  fs.unlinkSync(path.join(dir, "spots.json"));
+  const noSpots = await call("GET", `${T}/items/${it.id}?needle=${encodeURIComponent("29,180,000")}`);
+  assert.equal(noSpots.json.focusPage, 3);
+  assert.deepEqual(noSpots.json.focusBoxes, [], "prepared before spots existed: the page alone");
+});
+
 const req = { session: null, ip: "10.0.0.1" };
 const deps = { store: f.store, accessByToken: async (t: string) => access.find((a) => a.accessToken === t), accessRowsForDeal: async (d: string) => access.filter((a) => a.dealId === d), getDeal: async (id: string) => deals.find((d) => d.id === id) as any, now: () => now, root };
 

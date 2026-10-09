@@ -11,13 +11,26 @@
  * Works only for PDFs that are in the room and prepared; anything else is
  * null (dd keeps the needle and the viewer tries again later).
  */
+import fs from "fs";
 import type { VdrItem, VdrPageText } from "@shared/schema";
 import { dbVdrStore, type VdrStore } from "./store";
+import { cacheFile, vdrCacheDir } from "./files";
+import { uploadsRoot } from "../documents/document-path";
 
 const MAX_NEEDLE = 80;
 
 /** Numbers are compared on their digits ("29,180,000" = "29 180 000" = "29180000"); words case- and space-insensitively. */
 export function needleMatcher(needle: unknown): ((text: string) => boolean) | null {
+  const re = needlePattern(needle);
+  return re ? (text) => re.test(text) : null;
+}
+
+/**
+ * The needle as a pattern (the rule above). Group 1 is the boundary before
+ * a figure, so `index + group1.length` is where the figure itself starts.
+ * Null for a needle too short to mean anything.
+ */
+export function needlePattern(needle: unknown): RegExp | null {
   if (typeof needle !== "string") return null;
   const n = needle.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, MAX_NEEDLE);
   if (n.length < 2) return null;
@@ -27,13 +40,38 @@ export function needleMatcher(needle: unknown): ((text: string) => boolean) | nu
     const [int, dec] = fig.replace(/[,\s  ]/g, "").split(".");
     if (int.length < 3 && !dec) return null; // "12" is on every page
     const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, "[,\\s\\u00a0\\u202f]?");
-    const re = new RegExp(`(^|[^\\d.,])${grouped}${dec ? `\\.${dec}` : ""}(?![\\d]|[.,]\\d)`);
-    return (text) => re.test(text);
+    return new RegExp(`(^|[^\\d.,])${grouped}${dec ? `\\.${dec}` : ""}(?![\\d]|[.,]\\d)`);
   }
   const words = n.toLowerCase().split(/\s+/).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   if (words.join("").length < 3) return null;
-  const re = new RegExp(words.join("\\s+"), "i");
-  return (text) => re.test(text);
+  return new RegExp(`()${words.join("\\s+")}`, "i");
+}
+
+/** A visible text piece on a page: [x0, y0, x1, y1, text] as fractions (the prepare step's spots.json). */
+export type Spot = [number, number, number, number, string];
+export type FocusBox = [number, number, number, number];
+
+/**
+ * Where the needle sits on a page: the part of each piece that prints it,
+ * narrowed by character position (close enough to outline a figure). At
+ * most 6 boxes; none when nothing matches.
+ */
+export function boxesForNeedle(spots: ReadonlyArray<Spot>, needle: unknown): FocusBox[] {
+  const re = needlePattern(needle);
+  if (!re) return [];
+  const out: FocusBox[] = [];
+  for (const spot of spots) {
+    const [x0, y0, x1, y1, str] = spot;
+    const m = re.exec(str);
+    if (!m) continue;
+    const len = Math.max(1, str.length);
+    const start = m.index + (m[1]?.length ?? 0);
+    const end = m.index + m[0].length;
+    const w = x1 - x0;
+    out.push([x0 + (w * start) / len, y0, x0 + (w * end) / len, y1]);
+    if (out.length >= 6) break;
+  }
+  return out;
 }
 
 /** The first page (1-based) whose text holds the needle, or null. */
@@ -74,4 +112,38 @@ export async function locateNeedle(documentId: string, needle: string, store: Vd
     console.warn(`[vdr] locate failed for ${documentId}:`, err?.message ?? err);
     return null;
   }
+}
+
+/**
+ * Where to open a cited figure: the cited page when it prints the needle,
+ * else the page that does; with the boxes that outline it (from the prepare
+ * step's spots.json — a document prepared before it existed opens at the
+ * page with no boxes). Null when the needle isn't on any page.
+ */
+export async function focusFor(
+  item: Pick<VdrItem, "id" | "dealId" | "prepared">,
+  needle: unknown,
+  page: number | null,
+  store: VdrStore = dbVdrStore,
+  root?: string,
+): Promise<{ page: number; boxes: FocusBox[] } | null> {
+  const match = needleMatcher(needle);
+  if (!match) return null;
+  const pages = await servedPages(item, store);
+  const onCited = page ? pages.find((p) => p.page === page && match(p.text)) : undefined;
+  const at = onCited ? onCited.page : pageForNeedle(pages, needle);
+  if (!at) return null;
+  let boxes: FocusBox[] = [];
+  try {
+    const forFile = item.prepared?.forFile;
+    const dir = forFile ? vdrCacheDir(item.dealId, item.id, forFile, root ?? uploadsRoot()) : null;
+    const file = dir ? cacheFile(dir, "spots.json") : null;
+    if (file) {
+      const json = JSON.parse(await fs.promises.readFile(file, "utf8")) as { pages?: Record<string, Spot[]> };
+      boxes = boxesForNeedle(json.pages?.[String(at)] ?? [], needle);
+    }
+  } catch {
+    // No spots file: the page alone.
+  }
+  return { page: at, boxes };
 }
