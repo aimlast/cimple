@@ -182,6 +182,19 @@ await test("the DD-cited fallback: figures the DD sections print cite their docu
   assert.deepEqual(ids, ["t2"], "the T2's figures are printed; the lease's aren't; the private file is never cited");
 });
 
+await test("gl's link helper: vdrDocumentHref (rows capped at 500) round-trips through parseRoomLink", async () => {
+  const { vdrDocumentHref, parseRoomLink, vdrAvailable } = await import("../../client/src/components/vdr/links");
+  assert.equal(vdrAvailable, true);
+  const href = vdrDocumentHref({ token: "tok/abc", documentId: "doc-1", ledgerRows: [12, 48, -1, 3.5], fy: "FY2024", page: 2 });
+  assert.equal(href, "/view/tok%2Fabc/data-room?document=doc-1&page=2&rows=12%2C48&fy=FY2024");
+  const back = parseRoomLink(href.split("?")[1]);
+  assert.deepEqual(back, { itemId: null, documentId: "doc-1", page: 2, rows: [12, 48], sheet: null, fy: "FY2024", needle: null });
+  const many = vdrDocumentHref({ token: "t", documentId: "d", ledgerRows: Array.from({ length: 900 }, (_, i) => i + 1) });
+  assert.equal(parseRoomLink(many.split("?")[1]).rows!.length, 500);
+  assert.equal(parseRoomLink("doc=../../x&page=-3&fy=2024; drop").itemId, null);
+  assert.equal(parseRoomLink("doc=../../x&page=-3&fy=2024; drop").fy, null);
+});
+
 app.close();
 fs.rmSync(root, { recursive: true, force: true });
 console.log(`\nvdr-dd-contract: ${passed} passed`);
