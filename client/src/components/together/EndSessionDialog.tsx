@@ -31,6 +31,8 @@ export function EndSessionDialog({
   loadSummary,
   end,
   onDone,
+  onUndo,
+  onRetry,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -39,6 +41,10 @@ export function EndSessionDialog({
   loadSummary: () => Promise<SittingSummary>;
   end: (body: { completeInterview: boolean; followUps: Array<{ itemId: string; ask: string }>; documents: string[]; addToNextSession: boolean }) => Promise<{ summary: SittingSummary; followUpsAdded: number }>;
   onDone: () => void;
+  /** Undo a filing (while the session is live). */
+  onUndo?: (chunkId: string, key: string) => Promise<void>;
+  /** "Try now" for parts waiting to be filed. */
+  onRetry?: () => Promise<void>;
 }) {
   const isPhone = useIsMobile();
   const { toast } = useToast();
@@ -168,6 +174,25 @@ export function EndSessionDialog({
                       {f.value && <p className="text-xs text-muted-foreground line-clamp-2">{f.value}</p>}
                       <p className="text-[11px] text-muted-foreground/80">{f.yourNote ? "Your note" : f.quote ? `“${f.quote}”` : null}</p>
                     </div>
+                    {!ended && onUndo && f.chunkId && f.key && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground shrink-0"
+                        onClick={async () => {
+                          try {
+                            await onUndo(f.chunkId!, f.key!);
+                            setSummary((cur) => (cur ? { ...cur, filed: cur.filed.filter((x) => x !== f) } : cur));
+                            toast({ title: "Undone", description: f.label });
+                          } catch (e) {
+                            toast({ title: "Couldn't undo that", description: (e as Error).message, variant: "destructive" });
+                          }
+                        }}
+                        data-testid={`summary-undo-${f.itemId}`}
+                      >
+                        Undo
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -274,7 +299,21 @@ export function EndSessionDialog({
           </section>
 
           {summary.waiting > 0 && (
-            <p className="text-xs tg-warn-text">{summary.waiting} {summary.waiting === 1 ? "part" : "parts"} of the conversation are waiting to be filed. They'll be filed automatically when Cimple's AI is back — nothing is lost.</p>
+            <div className="flex flex-wrap items-center gap-2" data-testid="summary-waiting">
+              <p className="text-xs tg-warn-text flex-1 min-w-0">{summary.waiting} {summary.waiting === 1 ? "part" : "parts"} of the conversation are waiting to be filed. They'll be filed automatically when Cimple's AI is back — nothing is lost.</p>
+              {onRetry && (
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={async () => {
+                  try {
+                    await onRetry();
+                    toast({ title: "Trying again" });
+                  } catch (e) {
+                    toast({ title: "Couldn't try again", description: (e as Error).message, variant: "destructive" });
+                  }
+                }}>
+                  Try now
+                </Button>
+              )}
+            </div>
           )}
         </>
       )}

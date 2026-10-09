@@ -36,7 +36,7 @@ import { TogetherSetupDialog, type Via } from "@/components/deal/TogetherSetupDi
 import { CallSheetDialog } from "./CallSheet";
 import { ConsentDialog } from "./ConsentDialog";
 import { EndSessionDialog } from "./EndSessionDialog";
-import { LivePanel, filedThisSession } from "./LivePanel";
+import { LivePanel, filedThisSession, suggestContext } from "./LivePanel";
 import { ListeningPill } from "./ModeCards";
 import { SuggestNext } from "./SuggestNext";
 import { TogetherPip } from "./TogetherPip";
@@ -460,6 +460,15 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
     }
   };
 
+  const retryFiling = async () => {
+    try {
+      await sit.retry();
+      toast({ title: "Trying again", description: "Parts waiting to be filed are being filed now." });
+    } catch (e) {
+      toast({ title: "Couldn't try again", description: (e as Error).message, variant: "destructive" });
+    }
+  };
+
   // The transcript was deleted: this session ends (nothing handed to the seller) and a new one starts.
   const startNewSession = async () => {
     try {
@@ -538,6 +547,18 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
           <Button size="sm" variant="outline" className="h-7 text-xs ml-auto" onClick={() => void startNewSession()} data-testid="button-new-session-deleted">Start a new session</Button>
         </div>
       )}
+      {sitting.aiDown && !ended && !sitting.sourceDeleted && (
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2 text-xs tg-warn-bg border-b border-border" role="status" data-testid="banner-ai-down">
+          <AlertTriangle className="h-3.5 w-3.5 tg-warn-text shrink-0" />
+          <span className="min-w-0">Cimple can't file answers right now. Everything said is being kept and will be filed as soon as it's back — keep talking.</span>
+          <Button size="sm" variant="outline" className="h-7 text-xs ml-auto" onClick={() => void retryFiling()} data-testid="button-try-now">Try now</Button>
+        </div>
+      )}
+      {sitting.longSession && !ended && !sitting.aiDown && (
+        <p className="px-4 py-1.5 text-xs text-muted-foreground bg-muted/30 border-b border-border" role="status" data-testid="banner-long-session">
+          This is a long session — Cimple now files answers every couple of minutes instead of after each answer.
+        </p>
+      )}
       {ended && (
         <div className="flex flex-wrap items-center gap-2 px-4 py-2 text-xs bg-muted/40 border-b border-border" role="status" data-testid="banner-ended">
           This session ended{sitting.endedAt ? ` at ${new Date(sitting.endedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}. Start a new session to keep going.
@@ -561,8 +582,16 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
       onShowItem={showItem}
       ended={ended}
       hideSuggest={isPhone}
+      filing={sit.filing}
+      brokerUnconfirmed={sit.brokerUnconfirmed}
+      hints={sit.hints}
+      onFileNow={sit.fileNow}
+      onUndo={sit.undo}
+      onRefile={sit.refile}
+      onDismissUnconfirmed={sit.dismissUnconfirmed}
     />
   );
+  const suggestCtx = board ? suggestContext(board, sit.hints, now) : undefined;
 
   let body: JSX.Element;
   if (sit.startError) {
@@ -594,7 +623,14 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
     );
   } else if (isPhone) {
     const counts = viewCounts(board, sitting.id);
-    const filingText = listenIsProblem(listening.state) ? listenCopy(listening.state) : filedCount > 0 ? `${filedCount} filed this session` : "Cimple files answers as the seller talks";
+    const active = sit.filing.active && Date.now() - sit.filing.active.at < 30_000;
+    const filingText = listenIsProblem(listening.state)
+      ? listenCopy(listening.state)
+      : sitting.aiDown
+        ? "Keeping everything said — filing resumes when Cimple is back"
+        : active
+          ? `Filing${sit.filing.active?.sectionTitle ? ` · ${sit.filing.active.sectionTitle}` : ""}…`
+          : filedCount > 0 ? `${filedCount} filed this session` : "Cimple files answers as the seller talks";
     body = (
       <div className="flex-1 min-h-0 flex flex-col">
         {banners}
@@ -628,7 +664,7 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
         </div>
         <div className="fixed bottom-0 inset-x-0 z-20 border-t border-border bg-card/95 backdrop-blur px-4 py-2.5 flex items-center gap-2" data-testid="board-bottom-bar">
           <span className={`text-xs flex-1 min-w-0 truncate ${listenIsProblem(listening.state) ? "tg-warn-text" : "text-muted-foreground"}`}>{filingText}</span>
-          <SuggestNext board={board} onShow={showItem} size="sm" label="Suggest next" />
+          <SuggestNext board={board} ctx={suggestCtx} onShow={showItem} size="sm" label="Suggest next" />
           {!ended && <Button size="sm" className="h-8 bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => setEndOpen(true)} data-testid="button-bottom-end">End</Button>}
         </div>
       </div>
@@ -689,12 +725,14 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
           sitting={sitting}
           loadSummary={sit.loadSummary}
           end={sit.end}
+          onUndo={sit.undo}
+          onRetry={sit.retry}
           onDone={() => { setEndOpen(false); pip.close(); setLocation(`/deal/${dealId}/overview`); }}
         />
       )}
       {board && <CallSheetDialog board={board} businessName={deal?.businessName} open={sheetOpen} onOpenChange={setSheetOpen} />}
       {pip.container && board && sitting && createPortal(
-        <TogetherPip dealId={dealId} board={board} sitting={sitting} listenState={listening.state} startedAt={listening.startedAt} onShowItem={(id, sec) => { window.focus(); showItem(id, sec); }} />,
+        <TogetherPip dealId={dealId} board={board} sitting={sitting} listenState={listening.state} startedAt={listening.startedAt} suggestCtx={suggestCtx} onShowItem={(id, sec) => { window.focus(); showItem(id, sec); }} />,
         pip.container,
       )}
     </div>

@@ -163,12 +163,17 @@ export function CallNoteEditor({
   dealId,
   item,
   sittingId,
+  intro,
+  initialValue,
   onDone,
   onCancel,
 }: {
   dealId: string;
   item: CoverageItem;
   sittingId: string;
+  /** Why the editor opened ("Cimple couldn't find the answer in what was said — type it?"). */
+  intro?: string | null;
+  initialValue?: string;
   onDone?: () => void;
   onCancel: () => void;
 }) {
@@ -176,7 +181,7 @@ export function CallNoteEditor({
   const writable = item.members.filter((m) => m.writable);
   const startKey = item.valueKey && writable.some((m) => m.key === item.valueKey) ? item.valueKey : writable[0]?.key ?? "";
   const [memberKey, setMemberKey] = useState(startKey);
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initialValue ?? "");
   const [saving, setSaving] = useState(false);
   if (writable.length === 0) {
     return (
@@ -209,7 +214,7 @@ export function CallNoteEditor({
   };
   return (
     <div className="mt-2 rounded-md border border-teal/30 bg-teal/5 p-3 space-y-2" data-testid={`call-note-editor-${item.id}`} onPointerDown={(e) => e.stopPropagation()}>
-      <p className="text-xs font-medium">What did the seller say?</p>
+      <p className="text-xs font-medium">{intro || "What did the seller say?"}</p>
       {writable.length > 1 && (
         <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Which of these is it?">
           {writable.map((m) => (

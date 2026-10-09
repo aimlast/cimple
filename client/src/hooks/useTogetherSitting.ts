@@ -12,10 +12,12 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { queryClient } from "@/lib/queryClient";
-import { coverageBoardKey, invalidateCoverage } from "@/hooks/useCoverageBoard";
+import { applyBoardDiff, coverageBoardKey, invalidateCoverage } from "@/hooks/useCoverageBoard";
 import { LineBuffer } from "@/components/together/line-buffer";
 import type { CoverageBoard } from "@shared/coverage-board";
 import type {
+  BrokerUnconfirmedView,
+  CaptureHints,
   LineSource,
   ListenState,
   SeqEvent,
@@ -60,9 +62,27 @@ function mergeLines(prev: TogetherLineView[], add: TogetherLineView[]): Together
   return out.length > LINES_KEPT ? out.slice(out.length - LINES_KEPT) : out;
 }
 
+/** The filing line (§4.1): "Filing what the seller said about Seasonality…", then "Filed 2 answers · 4 s ago" / "Nothing to file from that part". */
+export interface FilingState {
+  /** A part is being read now. */
+  active: { sectionTitle: string | null; chunkId: string | null; at: number } | null;
+  last: { filed: number; nothing: boolean; at: number; chunkId: string | null } | null;
+}
+
 export interface TogetherSittingApi {
   sitting: TogetherSittingView | null;
   lines: TogetherLineView[];
+  filing: FilingState;
+  /** What the broker said aloud that the seller didn't confirm. */
+  brokerUnconfirmed: BrokerUnconfirmedView[];
+  /** The last filing's ideas for Suggest next. */
+  hints: CaptureHints;
+  /** "Save this answer now". */
+  fileNow: () => Promise<void>;
+  undo: (chunkId: string, key: string) => Promise<void>;
+  retry: () => Promise<void>;
+  refile: (minutes?: number) => Promise<void>;
+  dismissUnconfirmed: (chunkId: string, key: string) => void;
   starting: boolean;
   startError: string | null;
   connection: Connection;
@@ -91,6 +111,10 @@ export function useTogetherSitting(dealId: string, via: TogetherVia, opts: { ena
   const [connection, setConnection] = useState<Connection>("connecting");
   const [unsent, setUnsent] = useState(0);
   const [notetaker, setNotetaker] = useState<ListenState | null>(null);
+  const [filing, setFiling] = useState<FilingState>({ active: null, last: null });
+  const [brokerUnconfirmed, setBrokerUnconfirmed] = useState<BrokerUnconfirmedView[]>([]);
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
+  const [hints, setHints] = useState<CaptureHints>({});
   const clientId = useRef(newClientId());
   const buffer = useRef(new LineBuffer());
   const eventSeq = useRef(0);
@@ -111,12 +135,11 @@ export function useTogetherSitting(dealId: string, via: TogetherVia, opts: { ena
     if (typeof ev.eventSeq === "number" && ev.eventSeq > eventSeq.current) eventSeq.current = ev.eventSeq;
     switch (ev.type) {
       case "hello":
-        setSitting(ev.sitting);
-        if (ev.sitting.notetaker) setNotetaker(ev.sitting.notetaker);
-        break;
       case "sitting":
         setSitting(ev.sitting);
         if (ev.sitting.notetaker) setNotetaker(ev.sitting.notetaker);
+        if (ev.sitting.brokerUnconfirmed) setBrokerUnconfirmed(ev.sitting.brokerUnconfirmed);
+        if (ev.sitting.hints) setHints(ev.sitting.hints);
         break;
       case "lines":
         setLines((prev) => mergeLines(prev, ev.lines));
@@ -124,10 +147,23 @@ export function useTogetherSitting(dealId: string, via: TogetherVia, opts: { ena
       case "board":
         applyBoard(ev.board as CoverageBoard);
         break;
-      case "filed":
-        // (Live filing — the next board read carries the change.)
-        invalidateCoverage(dealId);
+      case "filing":
+        setFiling((f) => ({ ...f, active: { sectionTitle: ev.sectionTitle ?? null, chunkId: ev.chunkId ?? null, at: Date.now() } }));
         break;
+      case "filed": {
+        // The board's change (applied when this page has the version it was made from; else re-read).
+        const audience = sittingRef.current?.sellerSeesScreen ? "screen" : "broker";
+        if (ev.diff) applyBoardDiff(dealId, audience, ev.diff);
+        if (ev.filedCount > 0) {
+          // (Numbers elsewhere — the Overview card, readiness — read again.)
+          queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-readiness"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "interview-outline"] });
+        }
+        setFiling((f) => ({ active: f.active && f.active.chunkId !== (ev.chunkId ?? null) ? f.active : null, last: { filed: ev.filedCount, nothing: !!ev.nothing, at: Date.now(), chunkId: ev.chunkId ?? null } }));
+        if (ev.brokerUnconfirmed && ev.brokerUnconfirmed.length > 0) setBrokerUnconfirmed((prev) => [...prev, ...ev.brokerUnconfirmed!].slice(-20));
+        if (ev.hints) setHints(ev.hints);
+        break;
+      }
       case "listen":
         setNotetaker(ev.state);
         break;
@@ -155,6 +191,8 @@ export function useTogetherSitting(dealId: string, via: TogetherVia, opts: { ena
         setSitting(data.sitting);
         setLines(data.lines);
         if (data.sitting.notetaker) setNotetaker(data.sitting.notetaker);
+        setBrokerUnconfirmed(data.sitting.brokerUnconfirmed ?? []);
+        setHints(data.sitting.hints ?? {});
         applyBoard(data.board);
       } catch (e) {
         if (!cancelled) setStartError((e as Error).message);
@@ -334,6 +372,29 @@ export function useTogetherSitting(dealId: string, via: TogetherVia, opts: { ena
 
   const loadSummary = useCallback(() => call<SittingSummary>("/summary", "GET", undefined, "Couldn't build the summary"), [call]);
 
+  const fileNow = useCallback(async () => {
+    await flush();
+    await call<{ chunkId: string | null }>("/file-now", "POST", {}, "Couldn't file that now");
+  }, [call, flush]);
+
+  const undo = useCallback(async (chunkId: string, key: string) => {
+    await call(`/captures/${encodeURIComponent(chunkId)}/undo`, "POST", { key }, "Couldn't undo that");
+    invalidateCoverage(dealId);
+  }, [call, dealId]);
+
+  const retry = useCallback(async () => {
+    await call("/retry", "POST", {}, "Couldn't try again");
+  }, [call]);
+
+  const refile = useCallback(async (minutes = 10) => {
+    await call("/refile", "POST", { minutes }, "Couldn't read that part again");
+  }, [call]);
+
+  const dismissUnconfirmed = useCallback((chunkId: string, key: string) => {
+    setDismissed((prev) => new Set(prev).add(`${chunkId}:${key}`));
+  }, []);
+  const unconfirmedShown = useMemo(() => brokerUnconfirmed.filter((b) => !dismissed.has(`${b.chunkId}:${b.key}`)), [brokerUnconfirmed, dismissed]);
+
   const end = useCallback(async (body: Parameters<TogetherSittingApi["end"]>[0]) => {
     // (What's still waiting goes first.)
     await flush();
@@ -348,6 +409,14 @@ export function useTogetherSitting(dealId: string, via: TogetherVia, opts: { ena
   return useMemo(() => ({
     sitting,
     lines,
+    filing,
+    brokerUnconfirmed: unconfirmedShown,
+    hints,
+    fileNow,
+    undo,
+    retry,
+    refile,
+    dismissUnconfirmed,
     starting,
     startError,
     connection,
@@ -363,5 +432,5 @@ export function useTogetherSitting(dealId: string, via: TogetherVia, opts: { ena
     loadSummary,
     end,
     base,
-  }), [sitting, lines, starting, startError, connection, unsent, notetaker, postLine, consent, setSpeaker, setScreen, pause, resume, loadSummary, end, base]);
+  }), [sitting, lines, filing, unconfirmedShown, hints, fileNow, undo, retry, refile, dismissUnconfirmed, starting, startError, connection, unsent, notetaker, postLine, consent, setSpeaker, setScreen, pause, resume, loadSummary, end, base]);
 }

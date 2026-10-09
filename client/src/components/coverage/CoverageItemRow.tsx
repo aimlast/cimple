@@ -47,12 +47,14 @@ const CONFIRMABLE = new Set(["estimate", "guard", "lead", "broker_notes", "marke
 
 export type RowMode = "checklist" | "live" | "panel";
 
-export type PrimaryAction = "add" | "answered" | "confirm" | "resolve" | null;
+export type PrimaryAction = "add" | "answered" | "file_it" | "confirm" | "resolve" | null;
 
 /** The one primary button a row gets (pure — tested). */
 export function primaryActionFor(item: CoverageItem, mode: RowMode): PrimaryAction {
   if (mode === "panel") return null;
   if (item.status === "on_file") return null;
+  // A possible answer Cimple heard from a voice it can't place yet: the broker says it's the seller's.
+  if (mode === "live" && item.suggestion && item.members.some((m) => m.writable)) return "file_it";
   if (item.status === "verify") {
     const code = item.reason?.code;
     // (A conflict keeps its id on every audience, even when its reason is hidden.)
@@ -68,6 +70,7 @@ export function primaryActionFor(item: CoverageItem, mode: RowMode): PrimaryActi
 export const PRIMARY_LABEL: Record<Exclude<PrimaryAction, null>, string> = {
   add: "Add answer",
   answered: "✓ Answered",
+  file_it: "✓ File it",
   confirm: "✓ Confirmed",
   resolve: "Resolve…",
 };
@@ -96,9 +99,15 @@ function SecondLine({ item, audience }: { item: CoverageItem; audience: BrokerAu
   if (item.moneyTalk) {
     return <p className="text-xs text-muted-foreground">{item.status === "on_file" ? STATUS_LABEL.on_file : item.status === "verify" ? "To verify." : `Ask: “${item.ask}”`}</p>;
   }
+  if (item.suggestion && item.status !== "on_file") {
+    return (
+      <p className="text-xs italic text-muted-foreground line-clamp-2" data-testid={`possible-answer-${item.id}`}>
+        Possible answer: ‘{item.suggestion.quote}’ <span className="not-italic text-muted-foreground/70">— Cimple couldn't tell who said it</span>
+      </p>
+    );
+  }
   switch (item.status) {
     case "missing":
-      if (item.suggestion) return <p className="text-xs italic text-muted-foreground">Possible answer: ‘{item.suggestion.quote}’</p>;
       return <p className="text-xs text-muted-foreground">Ask: <span className="text-foreground/80">“{item.ask}”</span></p>;
     case "partial":
       return (
@@ -230,8 +239,10 @@ export function CoverageItemRow({
 }) {
   const { toast } = useToast();
   const [editor, setEditor] = useState<null | "add" | "edit" | "note" | "answered">(null);
+  const [editorIntro, setEditorIntro] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [filing, setFiling] = useState(false);
   const action = primaryActionFor(item, mode);
   const verifyLater = item.marks.some((m) => m.kind === "verify_later");
   const note = item.marks.find((m) => m.kind === "note")?.note ?? null;
@@ -271,15 +282,40 @@ export function CoverageItemRow({
   const answered = async () => {
     if (!sittingId) { openEditor("add"); return; }
     setBusy(true);
+    setFiling(true);
     try {
-      await boardRequest("POST", `/api/deals/${dealId}/coverage-board/items/${encodeURIComponent(item.id)}/answer`, { sittingId, mode: "auto" }, "Couldn't file it");
-      invalidateCoverage(dealId);
+      const r = await fetch(`/api/deals/${dealId}/coverage-board/items/${encodeURIComponent(item.id)}/answer`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sittingId, mode: "auto" }),
+      });
+      const body = await r.json().catch(() => null);
+      if (r.ok) {
+        invalidateCoverage(dealId);
+        return;
+      }
+      // Nothing to file from, live filing off, the AI down, or no answer in the words: the broker types it.
+      setEditorIntro(body?.code === "no_answer" ? "Cimple couldn't find the answer in what was said — type it?" : null);
+      openEditor("answered");
     } catch {
+      setEditorIntro(null);
       openEditor("answered");
     } finally {
       setBusy(false);
+      setFiling(false);
     }
   };
+  // ✓ File it: the possible answer is the seller's (no AI call).
+  const fileIt = () =>
+    run(() => boardRequest("POST", `/api/deals/${dealId}/coverage-board/items/${encodeURIComponent(item.id)}/file-suggestion`, { sittingId, chunkId: item.suggestion?.chunkId }, "Couldn't file it"));
+  // Undo (inline for a minute after a filing).
+  const undo = () =>
+    run(
+      () => boardRequest("POST", `/api/deals/${dealId}/together/sittings/${sittingId}/captures/${encodeURIComponent(item.filedByChunkId ?? "")}/undo`, { key: item.valueKey }, "Couldn't undo it"),
+      "Undone — back to what it was",
+    );
+  const canUndo = mode === "live" && !!justFiled && !!sittingId && !!item.filedByChunkId && !!item.valueKey && item.filedInSittingId === sittingId;
   const mark = (kind: "verify_later", on: boolean) =>
     run(() =>
       on
@@ -316,12 +352,13 @@ export function CoverageItemRow({
           e.stopPropagation();
           if (action === "add") openEditor(editor === "add" ? null : "add");
           else if (action === "answered") { if (editor === "answered") openEditor(null); else void answered(); }
+          else if (action === "file_it") void fileIt();
           else if (action === "confirm") void confirm();
           else if (action === "resolve" && item.conflictId) onResolve?.(item.conflictId);
         }}
         data-testid={`button-primary-${item.id}`}
       >
-        {busy && (action === "confirm" || action === "answered") ? <Loader2 className="h-3 w-3 animate-spin" /> : touch && (action === "confirm" || action === "answered") ? <Check className="h-3.5 w-3.5" aria-label={action === "answered" ? "Answered" : "Confirmed"} /> : touch && action === "resolve" ? "Resolve" : touch && action === "add" ? "Add" : PRIMARY_LABEL[action]}
+        {busy && (action === "confirm" || action === "answered" || action === "file_it") ? <Loader2 className="h-3 w-3 animate-spin" /> : touch && (action === "confirm" || action === "answered" || action === "file_it") ? <Check className="h-3.5 w-3.5" aria-label={action === "answered" ? "Answered" : action === "file_it" ? "File it" : "Confirmed"} /> : touch && action === "resolve" ? "Resolve" : touch && action === "add" ? "Add" : PRIMARY_LABEL[action]}
       </Button>
     );
 
@@ -424,7 +461,8 @@ export function CoverageItemRow({
         />
       )}
       {editor === "note" && <NoteEditor dealId={dealId} item={item} initial={note} onCancel={() => openEditor(null)} onDone={() => openEditor(null)} />}
-      {editor === "answered" && sittingId && <CallNoteEditor dealId={dealId} item={item} sittingId={sittingId} onCancel={() => openEditor(null)} onDone={() => openEditor(null)} />}
+      {filing && <p className="mt-1 text-[11px] text-teal inline-flex items-center gap-1" data-testid={`filing-${item.id}`}><Loader2 className="h-3 w-3 animate-spin" /> Filing what the seller said…</p>}
+      {editor === "answered" && sittingId && <CallNoteEditor dealId={dealId} item={item} sittingId={sittingId} intro={editorIntro} onCancel={() => openEditor(null)} onDone={() => openEditor(null)} />}
     </div>
   );
 
@@ -440,6 +478,11 @@ export function CoverageItemRow({
       <span className="mt-0.5"><StatusIcon status={item.status} size={mode === "panel" ? 14 : 16} /></span>
       {body}
       <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+        {canUndo && (
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground" disabled={busy} onClick={() => void undo()} data-testid={`button-undo-${item.id}`}>
+            Undo
+          </Button>
+        )}
         {primary}
         {menu}
       </div>
@@ -454,6 +497,8 @@ export function CoverageItemRow({
             <div className="mt-4 flex flex-wrap gap-2">
               {action === "add" && <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => { closeSheet(); openEditor("add"); }}>Add answer</Button>}
               {action === "answered" && <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90" disabled={busy} onClick={() => { closeSheet(); void answered(); }}>✓ Answered</Button>}
+              {action === "file_it" && <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90" disabled={busy} onClick={() => { closeSheet(); void fileIt(); }}>✓ File it</Button>}
+              {canUndo && <Button size="sm" variant="outline" disabled={busy} onClick={() => { closeSheet(); void undo(); }}>Undo</Button>}
               {action === "confirm" && <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90" disabled={busy} onClick={() => { void confirm(); closeSheet(); }}>✓ Confirmed</Button>}
               {action === "resolve" && item.conflictId && <Button size="sm" variant="outline" onClick={() => { closeSheet(); onResolve?.(item.conflictId!); }}>Resolve…</Button>}
               {writable && item.status === "on_file" && <Button size="sm" variant="outline" onClick={() => { closeSheet(); openEditor("edit"); }}>Edit</Button>}

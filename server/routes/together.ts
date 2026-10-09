@@ -608,12 +608,20 @@ export function registerTogetherRoutes(app: Express): void {
 
 /**
  * A sitting starting builds what the board's asks come from (the industry
- * checklist, section importance — and, from pass 3, the one-off phrasing
- * pass) in the background. Never with the key off or on a local server
+ * checklist, section importance and the one-off phrasing pass) in the
+ * background. Never with the key off or on a local server
  * with schedulers off; a GET never does this (§7.2).
  */
 export function kickSittingBackground(deal: Deal): void {
   if (process.env.ANTHROPIC_API_KEY === "disabled" || process.env.DISABLE_SCHEDULERS === "1") return;
-  void import("../interview/interview-plan").then(({ ensureInterviewPlan }) => ensureInterviewPlan(deal as never)).catch(() => undefined);
   void import("../interview/section-importance").then(({ ensureSectionImportance }) => ensureSectionImportance(deal as never)).catch(() => undefined);
+  // The industry checklist, then its suggested ways to ask (one call per deal, once).
+  void import("../interview/interview-plan")
+    .then(({ ensureInterviewPlan }) => ensureInterviewPlan(deal as never))
+    .then(async () => {
+      const fresh = (await storage.getDeal(deal.id)) ?? deal;
+      const { ensurePlanPhrasing } = await import("../interview/plan-phrasing");
+      return ensurePlanPhrasing(fresh);
+    })
+    .catch(() => undefined);
 }

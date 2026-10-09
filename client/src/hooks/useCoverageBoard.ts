@@ -9,7 +9,8 @@
 import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
-import type { CoverageBoard, CoverageItemDetail } from "@shared/coverage-board";
+import type { CoverageBoard, CoverageItem, CoverageItemDetail } from "@shared/coverage-board";
+import type { BoardDiff } from "@shared/together";
 
 export type BrokerAudience = "broker" | "screen";
 
@@ -94,4 +95,34 @@ export async function boardRequest<T = unknown>(method: string, url: string, bod
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   return readJson<T>(r, fallback);
+}
+
+/**
+ * A filing's board diff (specs/together.md §5.7): applied when the page's
+ * board is the version the diff was made from; otherwise the board is read
+ * again. Returns whether it was applied.
+ */
+export function applyBoardDiff(dealId: string, audience: BrokerAudience, diff: BoardDiff): boolean {
+  const key = coverageBoardKey(dealId, audience);
+  const cur = queryClient.getQueryData<CoverageBoard>(key);
+  if (!cur || cur.version !== diff.prevVersion) {
+    queryClient.invalidateQueries({ queryKey: key });
+    return false;
+  }
+  const changed = new Map((diff.items as CoverageItem[]).map((i) => [i.id, i] as const));
+  const counts = diff.sectionCounts as Record<string, { counts: CoverageBoard["sections"][number]["counts"]; figureQuestions: number }>;
+  const next: CoverageBoard = {
+    ...cur,
+    version: diff.version,
+    totals: diff.totals as CoverageBoard["totals"],
+    percentCollected: diff.percentCollected,
+    quality: diff.quality as CoverageBoard["quality"],
+    sections: cur.sections.map((s) => ({
+      ...s,
+      ...(counts[s.key] ? { counts: counts[s.key].counts, figureQuestions: counts[s.key].figureQuestions } : {}),
+      items: s.items.map((i) => changed.get(i.id) ?? i),
+    })),
+  };
+  queryClient.setQueryData(key, next);
+  return true;
 }

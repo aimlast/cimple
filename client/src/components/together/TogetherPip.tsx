@@ -13,7 +13,7 @@ import { primaryActionFor, PRIMARY_LABEL } from "@/components/coverage/CoverageI
 import { CallNoteEditor } from "@/components/coverage/ItemEditors";
 import { StatusIcon } from "@/components/coverage/StatusIcon";
 import { boardRequest, invalidateCoverage } from "@/hooks/useCoverageBoard";
-import { MASKED_VALUE, rankOpenItems, reasonText, type CoverageBoard, type CoverageItem } from "@shared/coverage-board";
+import { MASKED_VALUE, rankOpenItems, reasonText, type CoverageBoard, type CoverageItem, type NextToAskContext } from "@shared/coverage-board";
 import { listenCopy, listenIsProblem, type ListenState, type TogetherSittingView } from "@shared/together";
 import { ListeningPill } from "./ModeCards";
 import { SuggestNext } from "./SuggestNext";
@@ -25,6 +25,7 @@ export function TogetherPip({
   sitting,
   listenState,
   startedAt,
+  suggestCtx,
   onShowItem,
 }: {
   dealId: string;
@@ -32,6 +33,7 @@ export function TogetherPip({
   sitting: TogetherSittingView;
   listenState: ListenState;
   startedAt: number | null;
+  suggestCtx?: NextToAskContext;
   onShowItem: (itemId: string, sectionKey?: string) => void;
 }) {
   const audience = board.audience === "screen" ? "screen" : "broker";
@@ -49,6 +51,7 @@ export function TogetherPip({
         <span className="ml-auto"><ListeningPill state={listenState} startedAt={startedAt} compact /></span>
       </div>
       {listenIsProblem(listenState) && <p className="px-3 py-2 text-[11px] tg-warn-text tg-warn-bg border-b border-border">{listenCopy(listenState)}</p>}
+      {sitting.aiDown && <p className="px-3 py-2 text-[11px] tg-warn-text tg-warn-bg border-b border-border">Cimple can't file answers right now — everything said is kept. Keep talking.</p>}
       {filed.length > 0 && (
         <ul className="px-3 py-2 border-b border-border space-y-0.5" aria-label="Just filed">
           {filed.map((i) => (
@@ -69,7 +72,7 @@ export function TogetherPip({
         )}
       </div>
       <div className="p-3 border-t border-border">
-        <SuggestNext board={board} onShow={onShowItem} size="sm" label="Suggest next" inline />
+        <SuggestNext board={board} ctx={suggestCtx} onShow={onShowItem} size="sm" label="Suggest next" inline />
       </div>
     </div>
   );
@@ -98,12 +101,15 @@ function PipRow({ dealId, item, audience, sittingId, onShowItem }: { dealId: str
         } catch {
           setEditing(true);
         }
+      } else if (action === "file_it") {
+        await boardRequest("POST", `/api/deals/${dealId}/coverage-board/items/${encodeURIComponent(item.id)}/file-suggestion`, { sittingId, chunkId: item.suggestion?.chunkId }, "Couldn't file it");
+        invalidateCoverage(dealId);
       }
     } finally {
       setBusy(false);
     }
   };
-  const second = item.privateValue ? MASKED_VALUE : item.status === "missing" ? `“${item.ask}”` : reasonText(item.reason, audience) || item.ask;
+  const second = item.privateValue ? MASKED_VALUE : item.suggestion ? `Possible answer: ‘${item.suggestion.quote}’` : item.status === "missing" ? `“${item.ask}”` : reasonText(item.reason, audience) || item.ask;
   return (
     <div className="px-3 py-2 border-b border-border/60" data-testid={`pip-item-${item.id}`}>
       <div className="flex items-start gap-2">
