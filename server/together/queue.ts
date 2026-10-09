@@ -13,6 +13,17 @@ export function withSittingQueue<T>(sittingId: string, fn: () => Promise<T>): Pr
   return next;
 }
 
+/**
+ * The sitting's filing lock: a part's filing (the facts merge, the transcript
+ * row and the Undo list) and an Undo run one at a time, so an Undo that lands
+ * while another part is being filed is never overwritten by that part's row
+ * write. A separate key from the line queue (a slow merge never holds up the
+ * transcript); nothing holding the line queue ever waits on this lock.
+ */
+export function withFilingLock<T>(sittingId: string, fn: () => Promise<T>): Promise<T> {
+  return withSittingQueue(`${sittingId}#filing`, fn);
+}
+
 export function _resetSittingQueuesForTests(): void {
   queues.clear();
 }

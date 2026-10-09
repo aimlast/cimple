@@ -36,7 +36,7 @@ import { clearMark, setMark } from "./marks";
 import { BoardActionError } from "./errors";
 import { storage } from "../storage";
 import { togetherStore } from "./store";
-import { withSittingQueue } from "./queue";
+import { withFilingLock, withSittingQueue } from "./queue";
 import type { GuardedCapture } from "./capture-guards";
 
 const LEAD_KINDS = new Set(["crm", "website", "social"]);
@@ -352,6 +352,11 @@ export interface ApplyArgs {
  * reply, the follow-up idea are passed through for the board).
  */
 export async function applyCapture(args: ApplyArgs): Promise<ChunkResult> {
+  // (One filing or Undo at a time per sitting: the row and the Undo list are read and written together.)
+  return withFilingLock(args.sitting.id, () => applyCaptureNow(args));
+}
+
+async function applyCaptureNow(args: ApplyArgs): Promise<ChunkResult> {
   const { sitting, chunk, guarded } = args;
   const result: ChunkResult = {
     filed: [],
@@ -472,6 +477,15 @@ export async function applyCapture(args: ApplyArgs): Promise<ChunkResult> {
  * Edit." otherwise). Recorded on the sitting so no later replay re-files it.
  */
 export async function undoCapture(args: { sitting: TogetherSitting; chunk: TogetherChunk; key: string; at?: Date }): Promise<{ key: string }> {
+  // Under the sitting's filing lock: a part being filed meanwhile writes the row after this
+  // Undo (and re-reads the Undo list), never over it.
+  return withFilingLock(args.sitting.id, async () => {
+    const chunk = (await togetherStore().getChunk(args.chunk.id)) ?? args.chunk;
+    return undoCaptureNow({ ...args, chunk });
+  });
+}
+
+async function undoCaptureNow(args: { sitting: TogetherSitting; chunk: TogetherChunk; key: string; at?: Date }): Promise<{ key: string }> {
   const { sitting, chunk, key } = args;
   const res = (chunk.result ?? null) as ChunkResult | null;
   const row = res?.filed?.find((f) => f.key === key && !f.undoneAt);

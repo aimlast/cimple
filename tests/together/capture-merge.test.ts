@@ -16,7 +16,7 @@
  *    authority; ✓ Confirmed on a CRM lead copies no text anywhere.
  * Run: DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=disabled npx tsx tests/together/capture-merge.test.ts
  */
-import { counters, install, lakeshoreDeal, newWorld, statementDoc } from "./harness";
+import { counters, install, lakeshoreDeal, newWorld, statementDoc, waitFor } from "./harness";
 import assert from "node:assert/strict";
 
 let passed = 0;
@@ -236,6 +236,87 @@ async function main() {
     await assert.rejects(() => appendLines(sitting.id, "tab-1", [{ clientSeq: 9, speaker: "dg:1", text: "More words", source: "deepgram" }], { deal: w.deals.D1 }), /deleted/);
     const { ensureTranscriptDocument } = await import("../../server/together/transcript");
     assert.equal(await ensureTranscriptDocument({ ...after, transcriptDocumentId: null } as any, w.deals.D1), null);
+  });
+
+  await test("an Undo that lands while another part is being filed stays undone (row, Undo list, deal-wide re-read)", async () => {
+    // (Checker r2 R2-3: the part's row write used to overwrite the Undo's. Real routes, the real
+    // pipeline, a stubbed model; the second part's row write is paused while the Undo is clicked.)
+    w.deals.D2 = { ...lakeshoreDeal("D2"), extractedInfo: { ...lakeshoreDeal("D2").extractedInfo, _fieldSources: { ...lakeshoreDeal("D2").extractedInfo._fieldSources, annualRevenue: { source: "document", documentId: "STMT2" } } } };
+    w.documents.push({ ...statementDoc("D2"), id: "STMT2" });
+    const express = (await import("express")).default;
+    const { registerTogetherRoutes } = await import("../../server/routes/together");
+    const { _setCaptureModelForTests } = await import("../../server/together/capture");
+    const { stubModel } = await import("../../server/together/capture-stub");
+    const { _setPipelineDepsForTests } = await import("../../server/together/pipeline");
+    _setCaptureEnabledForTests(true);
+    _setPipelineDepsForTests({ sleep: async () => undefined });
+    _setCaptureModelForTests(stubModel({ entries: [
+      { match: "Busy in July and August", output: { answers: [{ key: "seasonality", value: "Busy in July and August", quote: "Busy in July and August", speaker: "seller", confidence: "confirmed", basis: "verbatim" }] } },
+      { match: "Denise runs dispatch", output: { answers: [{ key: "employeeStructure", value: "Denise runs dispatch", quote: "Denise runs dispatch", speaker: "seller", confidence: "confirmed", basis: "verbatim" }] } },
+    ] }) as any);
+    const S = (await import("../../server/storage")).storage as any;
+    const origUpdate = S.updateDocument;
+    let armed = false;
+    let paused = false;
+    let release: () => void = () => undefined;
+    S.updateDocument = async (id: string, patch: any) => {
+      if (armed && patch?.extractedData && "employeeStructure" in patch.extractedData) {
+        armed = false;
+        paused = true;
+        await new Promise<void>((r) => { release = r; });
+      }
+      return origUpdate(id, patch);
+    };
+    const app = express();
+    app.use(express.json());
+    app.use((req: any, _r: any, next: any) => { req.session = { brokerId: "B1" }; next(); });
+    registerTogetherRoutes(app);
+    const server = app.listen(0, "127.0.0.1");
+    await new Promise<void>((r) => server.once("listening", () => r()));
+    const url = `http://127.0.0.1:${(server.address() as any).port}`;
+    const call = async (m: string, p: string, b?: unknown) => {
+      const r = await fetch(url + p, { method: m, headers: { "content-type": "application/json" }, body: b === undefined ? undefined : JSON.stringify(b) });
+      return { status: r.status, json: (await r.json().catch(() => null)) as any };
+    };
+    try {
+      const PAGE = "44444444-dddd-4ddd-8ddd-000000000004";
+      const sid = (await call("POST", "/api/deals/D2/together/sittings", { via: "person" })).json.sitting.id;
+      await call("POST", `/api/deals/D2/together/sittings/${sid}/consent`, {});
+      await call("POST", `/api/deals/D2/together/sittings/${sid}/lines`, { clientId: PAGE, lines: [
+        { clientSeq: 1, speaker: "dg:0", text: "Tell me about the year.", source: "deepgram" },
+        { clientSeq: 2, speaker: "dg:1", text: "We are Busy in July and August.", source: "deepgram" },
+      ] });
+      await call("POST", `/api/deals/D2/together/sittings/${sid}/speakers`, { speaker: "dg:0", role: "broker" });
+      await call("POST", `/api/deals/D2/together/sittings/${sid}/file-now`, {});
+      await waitFor(() => w.deals.D2.extractedInfo.seasonality !== undefined, 4000, "seasonality filed");
+      const part1 = (await store.listChunks(sid)).find((c: any) => (c.result?.filed ?? []).some((f: any) => f.key === "seasonality"))!;
+      assert.ok(part1, "the first part filed seasonality");
+      armed = true;
+      await call("POST", `/api/deals/D2/together/sittings/${sid}/lines`, { clientId: PAGE, lines: [{ clientSeq: 3, speaker: "dg:1", text: "Denise runs dispatch on our software.", source: "deepgram" }] });
+      await call("POST", `/api/deals/D2/together/sittings/${sid}/file-now`, {});
+      await waitFor(() => paused, 4000, "the second part's row write is paused");
+      // The broker clicks Undo now — it waits for the part in flight, then wins.
+      const undo = call("POST", `/api/deals/D2/together/sittings/${sid}/captures/${part1.id}/undo`, { key: "seasonality" });
+      await new Promise((r) => setTimeout(r, 50));
+      release();
+      const u = await undo;
+      assert.equal(u.status, 200);
+      await waitFor(() => w.deals.D2.extractedInfo.employeeStructure !== undefined, 4000, "the second part filed");
+      assert.equal(w.deals.D2.extractedInfo.seasonality, undefined, "the undone value is gone from the facts");
+      const row = w.documents.find((d) => d.dealId === "D2" && d.sourceMeta?.recordType === "together_sitting")!;
+      assert.equal(row.extractedData.seasonality, undefined, "the transcript row no longer asserts it");
+      assert.equal(row.extractedData.employeeStructure, "Denise runs dispatch", "the other part's answer is in the row");
+      assert.deepEqual(((await store.getSitting(sid))!.captureState as any).undone.map((x: any) => x.key), ["seasonality"]);
+      const { reprocessDealDocuments } = await import("../../server/documents/reprocess");
+      await reprocessDealDocuments("D2");
+      assert.equal(w.deals.D2.extractedInfo.seasonality, undefined, "a deal-wide re-read never brings it back");
+      assert.equal(w.deals.D2.extractedInfo.employeeStructure, "Denise runs dispatch");
+    } finally {
+      S.updateDocument = origUpdate;
+      release();
+      server.close();
+      _setCaptureEnabledForTests(false);
+    }
   });
 
   assert.equal(counters.modelCalls, 0, "no model was called");
