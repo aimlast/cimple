@@ -146,7 +146,9 @@ function SavedRow({ t, isDefault }: { t: SavedTemplateItem; isDefault: boolean }
             {isDefault ? (
               <span className="ml-2 inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground sm:ml-0"><Star className="h-3 w-3" /> Default</span>
             ) : (
-              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => patch.mutate({ makeDefault: true })} disabled={patch.isPending}>Set as my default</Button>
+              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => patch.mutate({ makeDefault: true })} disabled={patch.isPending}>
+                <span className="sm:hidden">Make default</span><span className="hidden sm:inline">Set as my default</span>
+              </Button>
             )}
             <Button size="sm" variant="ghost" className="h-8 gap-1 px-2 text-xs sm:w-8 sm:px-0" onClick={() => setEditing(true)} aria-label={`Rename ${t.name}`}>
               <Pencil className="h-3.5 w-3.5" /><span className="sm:sr-only">Rename</span>

@@ -76,6 +76,8 @@ export function sectionsForPaper(sections: BuyerSection[], contact: TeaserContac
     const ask = `Ask ${who} for the CIM${line ? `: ${line}` : ""}`;
     const out: Array<{ title?: string; description?: string }> = [];
     let paperStepUsed = false;
+    // With no firm name the buyer's page says "the broker" ({firm}); on paper the steps name the broker, as step 1 does.
+    const named = (t: string | undefined) => (!firm && name && t ? t.replace(/\b(the broker)\b/gi, (m) => (m[0] === "T" ? capFirst(name) : name)) : t);
     items.forEach((it, j) => {
       if (j === i) { out.push({ ...it, title: ask }); return; }
       if (ONLINE_STEP.test(`${it?.title ?? ""} ${it?.description ?? ""}`)) {
@@ -86,7 +88,7 @@ export function sectionsForPaper(sections: BuyerSection[], contact: TeaserContac
         out.push({ ...keep, title: paperStep });
         return;
       }
-      out.push(it);
+      out.push(it?.title ? { ...it, title: named(it.title) } : it);
     });
     const { note, ...restData } = d;
     return { ...s, layoutData: { ...restData, items: out, ...(!withContact && note ? { note } : {}) } };

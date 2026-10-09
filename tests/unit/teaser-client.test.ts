@@ -186,6 +186,11 @@ test("on paper the 'ask from this page' step names the firm and its contact; the
   // No firm name: ask the broker by name.
   const [r] = sectionsForPaper([sec], { firm: null, name: "Morgan Ellis", email: "morgan@brassline.invalid", phone: null });
   assert.deepEqual(titles(r).slice(0, 2), ["Ask Morgan Ellis for the CIM: morgan@brassline.invalid", "Morgan Ellis sends you a short NDA to sign"]);
+  // …and "the broker" ({firm} with no firm name) in the later steps names them too, so the three steps agree.
+  const noFirm = { ...(sec as object), layoutData: { ordered: true, items: [{ title: "Ask for the CIM from this page" }, { title: "Confirm your email, tell us about you and sign the NDA online" }, { title: "The broker reviews your request and opens the CIM for you" }] } } as never;
+  assert.deepEqual(titles(sectionsForPaper([noFirm], { firm: null, name: "QA CIM Generation", email: null, phone: null })[0]), [
+    "Ask QA CIM Generation for the CIM", "QA CIM Generation sends you a short NDA to sign", "QA CIM Generation reviews your request and opens the CIM for you",
+  ]);
   // The broker's own wording with two online lines → one paper step (never two NDA lines).
   const own = { ...(sec as object), layoutData: { ordered: true, items: [{ title: "Ask for the CIM from this page" }, { title: "Confirm your email online" }, { title: "Sign the NDA online" }, { title: "We call you within a day" }] } } as never;
   assert.deepEqual(titles(sectionsForPaper([own], { firm: "Brassline", name: null, email: "d@b.invalid", phone: null })[0]), ["Ask Brassline for the CIM: d@b.invalid", "Brassline sends you a short NDA to sign", "We call you within a day"]);

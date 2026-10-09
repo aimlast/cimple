@@ -250,15 +250,18 @@ function TeaserWritten({ dealId, api, state }: { dealId: string; api: TeaserApi;
           {summary.codename && (
             <div className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs" role="alert" data-testid="teaser-codename-problem">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-              <span className="min-w-0 flex-1">{summary.codename.text}</span>
+              {/* Phones: the action goes under the sentence, so the sentence keeps the width. */}
+              <div className="min-w-0 flex-1 sm:flex sm:items-start sm:gap-3">
+              <span className="block sm:flex-1">{summary.codename.text}</span>
               <button
                 type="button"
-                className="shrink-0 text-teal hover:underline"
+                className="mt-1.5 shrink-0 text-teal hover:underline sm:mt-0"
                 onClick={() => navigate(summary.codename!.fixAt === "overview" ? `/deal/${dealId}/overview` : `/deal/${dealId}/cim?view=versions`)}
                 data-testid="button-teaser-codename-fix"
               >
                 {summary.codename.fixAt === "overview" ? "Go to the Overview" : "Change it"}
               </button>
+              </div>
             </div>
           )}
           {/* The check line: the green tick only when nothing is held, the header is clean and the codename is fine (never "Anonymous ✓"). */}
