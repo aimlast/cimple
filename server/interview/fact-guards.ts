@@ -552,7 +552,7 @@ const WITHDRAWAL_VOCAB = new Set(
 
 /** Who the seller says holds the real answer: "Rob keeps the tooling list" → "Rob". */
 export function whoHoldsTheAnswer(sellerMessage: string): string {
-  const m = sellerMessage.match(/\b([A-Z][a-z]+(?: [A-Z][a-z]+)?)\s+(?:keeps|has|holds|tracks|knows|maintains|can send|will send|could send|can pull|would know|manages|owns)\b/);
+  const m = sellerMessage.match(/\b([A-Z][a-z]+(?: [A-Z][a-z]+)?)\s+(?:keeps|has|holds|tracks|knows|maintains|can send|will send|could send|can pull|would know|would have|manages|owns)\b/);
   if (m && !/^(?:I|We|It|That|This|He|She|They|Let|The)$/.test(m[1])) return m[1];
   const role = sellerMessage.match(/\bmy (accountant|bookkeeper|controller|office manager|lawyer|ops manager|operations manager|plant manager|tool ?room (?:lead|manager))\b/i);
   return role ? `the seller's ${role[1]}` : "";

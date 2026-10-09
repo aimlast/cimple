@@ -5,6 +5,7 @@ import pg from "pg";
 import path from "path";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import { applyTogetherRateLimits } from "./together/limits";
 import { createHash } from "crypto";
 import * as Sentry from "@sentry/node";
 import { registerRoutes } from "./routes";
@@ -188,6 +189,8 @@ app.use("/api/deals/:dealId/buyer-fit/:accessId/ai", aiLimiter);
 // view room's reading tracker (a flush every ~15 s per tab) gets its own
 // roomy per-link ceiling, keyed by a hash of the link — never the AI limiter.
 app.use("/api/deals/:dealId/engagement/buyers/:accessId/brief", aiLimiter);
+// ── together limiters ── (Interview together + the coverage board: server/together/limits.ts)
+applyTogetherRateLimits(app, aiLimiter);
 app.use("/api/view/:token/reading", rateLimit({
   windowMs: 60 * 1000,
   limit: 120,

@@ -20,8 +20,9 @@ import { agentConfig } from "./config/load-config";
 import { getSectionImportance, criticalSectionKeys } from "./section-importance";
 import { coverageAdjustmentsForDeal, fieldLabel } from "./interview-plan";
 import { SECTION_FIELD_MAP } from "./knowledge-base";
+import { withDealFactsLock } from "../documents/facts-lock";
 import { CIM_SECTIONS } from "@shared/schema";
-import type { Deal, InterviewOutline, OutlineCustomTopic, OutlineEmphasis, SectionImportanceLevel } from "@shared/schema";
+import type { Deal, InterviewOutline, OutlineCustomTopic, OutlineEmphasis, OutlineFollowUpItem, SectionImportanceLevel } from "@shared/schema";
 
 const LEVELS: SectionImportanceLevel[] = ["critical", "important", "helpful"];
 const HISTORY_CAP = 20;
@@ -49,13 +50,19 @@ export function getInterviewOutline(deal: Pick<Deal, "interviewOutline">): Inter
     emphasis: Array.isArray(stored.emphasis) ? stored.emphasis : [],
     addedItems: Array.isArray(stored.addedItems) ? stored.addedItems : [],
     removedItems: Array.isArray(stored.removedItems) ? stored.removedItems : [],
+    ...(Array.isArray(stored.followUpItems) && stored.followUpItems.length > 0 ? { followUpItems: stored.followUpItems } : {}),
     history: Array.isArray(stored.history) ? stored.history : [],
   };
 }
 
+/** Follow-up data points still to raise (not yet asked in a session). */
+export function openFollowUpItems(o: InterviewOutline): OutlineFollowUpItem[] {
+  return (o.followUpItems ?? []).filter((f) => f && typeof f.label === "string" && !f.askedAt);
+}
+
 /** True when the broker changed anything — the prompt block is only rendered then. */
 export function outlineHasContent(o: InterviewOutline): boolean {
-  return o.customTopics.length > 0 || o.excludedSections.length > 0 || o.emphasis.length > 0 || (o.removedItems?.length ?? 0) > 0;
+  return o.customTopics.length > 0 || o.excludedSections.length > 0 || o.emphasis.length > 0 || (o.removedItems?.length ?? 0) > 0 || openFollowUpItems(o).length > 0;
 }
 
 /** What the agent proposes in response to one instruction. Applied verbatim on Apply. */
@@ -267,8 +274,23 @@ function normaliseProposal(raw: Partial<OutlineProposal>, outline: InterviewOutl
   };
 }
 
-/** Apply a (re-validated) proposal to the deal's outline and persist it. */
+/**
+ * Apply a (re-validated) proposal to the deal's outline and persist it. The
+ * deal is re-read and written under the deal's facts lock, so a concurrent
+ * writer of the outline ("also noted" items from Interview together) is
+ * never lost.
+ */
 export async function applyOutlineProposal(deal: Deal, proposal: OutlineProposal, instruction: string): Promise<InterviewOutline> {
+  return withDealFactsLock(deal.id, async () => {
+    const fresh = (await storage.getDeal(deal.id)) ?? deal;
+    const next = outlineAfterProposal(fresh, proposal, instruction);
+    await storage.updateDeal(deal.id, { interviewOutline: next } as any);
+    return next;
+  });
+}
+
+/** The outline a proposal produces (pure — applyOutlineProposal saves it). */
+export function outlineAfterProposal(deal: Deal, proposal: OutlineProposal, instruction: string): InterviewOutline {
   const current = getInterviewOutline(deal);
   const critical = criticalSectionKeys(getSectionImportance(deal));
   const p = normaliseProposal(proposal, current, critical);
@@ -293,49 +315,71 @@ export async function applyOutlineProposal(deal: Deal, proposal: OutlineProposal
     .concat(
       p.addItems
         .filter((a) => !!a.key && !(current.addedItems ?? []).some((i) => i.key === a.key))
-        .map((a) => ({ sectionKey: a.sectionKey, label: a.label, key: a.key as string })),
+        .map((a) => ({ sectionKey: a.sectionKey, label: a.label, key: a.key as string, origin: "broker" as const })),
     );
   const removedItems = new Set(current.removedItems ?? []);
   for (const k of p.removeItems) if (!brokerAdded.has(k)) removedItems.add(k);
   for (const k of p.restoreItems) removedItems.delete(k);
   for (const a of p.addItems) if (a.key) removedItems.delete(a.key);
 
+  const removedList = Array.from(removedItems);
   const next: InterviewOutline = {
     updatedAt: new Date().toISOString(),
     customTopics,
     excludedSections: Array.from(excluded),
     emphasis: Array.from(emphasis, ([key, note]) => ({ key, note })),
     addedItems,
-    removedItems: Array.from(removedItems),
+    removedItems: removedList,
+    // (A follow-up for a data point taken off the checklist goes with it.)
+    ...(current.followUpItems?.length
+      ? { followUpItems: current.followUpItems.filter((f) => !removedList.includes(f.key) && !p.removeItems.includes(f.key)) }
+      : {}),
     history: [{ at: new Date().toISOString(), instruction: instruction.trim().slice(0, 500), summary: p.summary }, ...current.history].slice(0, HISTORY_CAP),
   };
-  await storage.updateDeal(deal.id, { interviewOutline: next } as any);
   return next;
 }
 
-/** Direct edits (no AI): toggle a section, drop a topic, clear a note. */
+/**
+ * Direct edits (no AI): toggle a section, drop a topic, clear a note, take
+ * data points off the checklist or bring them back (a board item removes
+ * every member in one write: removeItems), add a data point to a section.
+ */
 export async function patchOutline(
   deal: Deal,
-  patch: { excludeSection?: string; restoreSection?: string; removeTopic?: string; clearEmphasis?: string; removeItem?: string; restoreItem?: string },
+  patch: {
+    excludeSection?: string; restoreSection?: string; removeTopic?: string; clearEmphasis?: string; removeItem?: string; restoreItem?: string;
+    removeItems?: string[]; restoreItems?: string[]; addItem?: { sectionKey: string; label: string };
+  },
 ): Promise<{ outline: InterviewOutline; refused?: string }> {
   const critical = criticalSectionKeys(getSectionImportance(deal));
   if (patch.excludeSection && critical.has(patch.excludeSection)) {
     const title = CIM_SECTIONS.find((s) => s.key === patch.excludeSection)?.title ?? patch.excludeSection;
     return { outline: getInterviewOutline(deal), refused: `"${title}" is critical for buyers of this business and stays in every interview.` };
   }
-  if (patch.removeItem && UNREMOVABLE_ITEMS.has(patch.removeItem)) {
-    return { outline: getInterviewOutline(deal), refused: `"${fieldLabel(patch.removeItem)}" is needed in every CIM and stays on the checklist.` };
+  const removeItems = [...(patch.removeItem ? [patch.removeItem] : []), ...(Array.isArray(patch.removeItems) ? patch.removeItems : [])]
+    .filter((k): k is string => typeof k === "string" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(k));
+  const restoreItems = [...(patch.restoreItem ? [patch.restoreItem] : []), ...(Array.isArray(patch.restoreItems) ? patch.restoreItems : [])]
+    .filter((k): k is string => typeof k === "string" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(k));
+  const unremovable = removeItems.find((k) => UNREMOVABLE_ITEMS.has(k));
+  if (unremovable) {
+    return { outline: getInterviewOutline(deal), refused: `"${fieldLabel(unremovable)}" is needed in every CIM and stays on the checklist.` };
   }
+  const addItem = patch.addItem && typeof patch.addItem.label === "string" && patch.addItem.label.trim()
+    && CIM_SECTIONS.some((s) => s.key === patch.addItem!.sectionKey)
+    ? { sectionKey: patch.addItem.sectionKey, label: patch.addItem.label.trim().slice(0, 90), key: camelKey(patch.addItem.label) }
+    : null;
+  if (patch.addItem && (!addItem || !addItem.key)) return { outline: getInterviewOutline(deal), refused: "Give the data point a short name." };
   const proposal: OutlineProposal = {
     summary: patch.excludeSection ? "Section removed from the interview."
       : patch.restoreSection ? "Section restored."
       : patch.removeTopic ? "Custom topic removed."
-      : patch.removeItem ? "Data point removed from the checklist."
-      : patch.restoreItem ? "Data point restored."
+      : removeItems.length > 0 ? "Data point removed from the checklist."
+      : restoreItems.length > 0 ? "Data point restored."
+      : addItem ? `Data point added: ${addItem.label}.`
       : "Note cleared.",
-    addItems: [],
-    removeItems: patch.removeItem ? [patch.removeItem] : [],
-    restoreItems: patch.restoreItem ? [patch.restoreItem] : [],
+    addItems: addItem ? [addItem] : [],
+    removeItems,
+    restoreItems,
     addTopics: [],
     removeTopics: patch.removeTopic ? [patch.removeTopic] : [],
     excludeSections: patch.excludeSection ? [patch.excludeSection] : [],
@@ -365,6 +409,11 @@ export function renderOutlineForPrompt(outline: InterviewOutline): string {
       const title = CIM_SECTIONS.find((s) => s.key === e.key)?.title ?? e.key;
       parts.push(`- ${title}: ${e.note}`);
     }
+  }
+  const followUps = openFollowUpItems(outline);
+  if (followUps.length) {
+    // (Label and the screened ask only — a follow-up never carries a note.)
+    parts.push(`Data points the broker wants the seller to answer next — raise these first, one at a time, in this order: ${followUps.map((f) => `${f.label} — ${f.ask}`).join("; ")}.`);
   }
   if ((outline.removedItems ?? []).length) {
     parts.push(`Data points the broker removed from the checklist — do NOT ask for them: ${(outline.removedItems ?? []).map((k) => fieldLabel(k)).join("; ")}.`);

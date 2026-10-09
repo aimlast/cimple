@@ -205,6 +205,8 @@ import {
 } from "./turn-release";
 import { withRewrittenHead, type StreamHead } from "./stream-head";
 import { notifyInterviewComplete, shouldAnnounceInterviewComplete } from "../notifications/interview-complete";
+import { activeMarksForDeal, confirmedKeys, sellerSummaryFromTurn } from "./coverage-board";
+import type { CoverageSummary } from "@shared/coverage-board";
 
 // =====================
 // Types
@@ -270,6 +272,12 @@ export interface TurnResult {
     updatedFields: string[];
     changes: FieldChange[];
   };
+  /**
+   * The coverage board's numbers for the seller (shared/coverage-board.ts):
+   * the seller's interview header shows "{p}% collected · {quality}" — the
+   * same numbers as their progress page and "What we've covered".
+   */
+  coverageSummary?: CoverageSummary;
   /** Current section coverage snapshot */
   sectionCoverage: Array<{
     key: string;
@@ -1228,7 +1236,15 @@ async function processTurnLocked(
   const sessionsInView = conductedBy === "broker" ? dealSessions : contextSessions(dealSessions, sessionId);
   // (Nor the to-dos the broker's own session wrote, unless the broker is here.)
   const tasks = conductedBy === "broker" ? dealTasks : sellerSideTasks(dealTasks);
-  const kbExtras = { sessions: sessionsInView, currentSessionId: sessionId, openDiscrepancies };
+  // The broker's confirmations on the coverage board (read-side overlay —
+  // knowledge-base.ts confirmedByBroker). Fails soft to none.
+  const coverageMarksNow = await activeMarksForDeal(dealId);
+  const kbExtras = {
+    sessions: sessionsInView,
+    currentSessionId: sessionId,
+    openDiscrepancies,
+    confirmedByBroker: confirmedKeys(coverageMarksNow, ((deal.extractedInfo as Record<string, unknown> | null) || {})),
+  };
   // A source added mid-interview gets its conflicts reviewed for later turns.
   ensureSourceReview(deal, documents);
 
@@ -3622,6 +3638,19 @@ async function processTurnLocked(
       changes,
     },
     sectionCoverage: (updatedKb.recordedCoverage ?? updatedKb.sectionCoverage).map(coverageForClient),
+    ...(conductedBy !== "broker"
+      ? {
+          coverageSummary: coverageSummaryOf({
+            deal: updatedDeal!,
+            kb: updatedKb,
+            documents,
+            discrepancies: allDiscrepancies,
+            ledger,
+            marks: coverageMarksNow,
+            sessionIds: sessionsInView.map((x) => x.id),
+          }),
+        }
+      : {}),
     industryContext: extractIndustryContextForFrontend(updatedIndustryContext),
     // Derived from the durable ledger — stable and append-only until
     // resolved, so the broker-facing panel no longer flickers or loses items.
@@ -4691,6 +4720,37 @@ export function exchangesOf(messages: Array<Pick<ConversationMessage, "role" | "
 }
 
 /** Section coverage as the client reads it (status, importance and item counts). */
+/**
+ * The seller's coverage-board numbers for a turn's result (the seller's
+ * header), built from what the turn already loaded. Never throws — a missing
+ * summary only means the header waits for the next one.
+ */
+function coverageSummaryOf(args: {
+  deal: Deal;
+  kb: KnowledgeBase;
+  documents: DealDocument[];
+  discrepancies: Discrepancy[];
+  ledger: unknown;
+  marks: Awaited<ReturnType<typeof activeMarksForDeal>>;
+  sessionIds?: string[];
+}): CoverageSummary | undefined {
+  try {
+    return sellerSummaryFromTurn({
+      deal: args.deal,
+      documents: args.documents,
+      coverageView: withHeldFacts(args.kb.extractedInfo as Record<string, unknown>),
+      confidence: args.kb.fieldConfidence,
+      ledger: args.ledger,
+      openDiscrepancies: args.discrepancies,
+      marks: args.marks,
+      ...(args.sessionIds ? { sessionIds: args.sessionIds } : {}),
+    });
+  } catch (err) {
+    console.warn(`[session-manager] coverage summary skipped: ${(err as Error).message}`);
+    return undefined;
+  }
+}
+
 function coverageForClient(s: SectionCoverage) {
   return {
     key: s.key,

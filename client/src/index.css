@@ -463,3 +463,48 @@
 /* ─────────────────────────────────────────────
    SIDEBAR — hover-to-expand, content pushes over
 ───────────────────────────────────────────── */
+
+/* ─────────────────────────────────────────────
+   COVERAGE BOARD (Interview together, the AI interview's panel, the
+   Overview outline card, the seller's "What we've covered").
+   Four statuses: on file · partial · to verify · missing. Partial and To
+   verify are ~37° apart in hue and To verify is also hatched, so they stay
+   distinct on a projector; status is never colour alone (icon + label).
+───────────────────────────────────────────── */
+:root, .dark {
+  --coverage-on: var(--success);
+  --coverage-partial: 45 75% 55%;
+  --coverage-verify: 8 70% 60%;
+  --coverage-missing: 240 4% 30%;
+}
+.light {
+  --coverage-on: var(--success);
+  --coverage-partial: 40 80% 36%;
+  --coverage-verify: 6 65% 42%;
+  --coverage-missing: 40 8% 72%;
+}
+.cov-bg-on_file { background-color: hsl(var(--coverage-on)); }
+.cov-bg-partial { background-color: hsl(var(--coverage-partial)); }
+.cov-bg-missing { background-color: hsl(var(--coverage-missing)); }
+.cov-bg-verify,
+.cov-hatch {
+  background-color: hsl(var(--coverage-verify) / 0.45);
+  background-image: repeating-linear-gradient(135deg, hsl(var(--coverage-verify)) 0 3px, transparent 3px 6px);
+}
+.cov-text-on_file { color: hsl(var(--coverage-on)); }
+.cov-text-partial { color: hsl(var(--coverage-partial)); }
+.cov-text-verify { color: hsl(var(--coverage-verify)); }
+.cov-text-missing { color: hsl(var(--coverage-missing)); }
+.light .cov-text-missing { color: hsl(40 8% 52%); }
+.cov-row-flash { box-shadow: inset 2px 0 0 hsl(var(--teal)); }
+.cov-just-filed {
+  box-shadow: inset 3px 0 0 hsl(var(--teal));
+  background-image: linear-gradient(90deg, hsl(var(--teal) / 0.10), transparent 60%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cov-animate { transition: none !important; animation: none !important; }
+}
+@media print {
+  .cov-no-print { display: none !important; }
+  .cov-print-sheet { display: block !important; color: #000 !important; background: #fff !important; font-size: 11pt; }
+}

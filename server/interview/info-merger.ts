@@ -734,6 +734,16 @@ export interface FieldSource {
    * value replaces it.
    */
   valueInferred?: boolean;
+  /**
+   * How sure the speaker was of the value (Interview together's live capture,
+   * the broker's call notes, the board's confirm): a capture's "approximate"
+   * makes an estimate show as one. Other writers leave it unset.
+   */
+  confidence?: "confirmed" | "approximate" | "inferred";
+  /** A live-capture guard's downgrade: the number / year wasn't exactly said, or a legal point to check. */
+  verify?: "number" | "date" | "legal";
+  /** The "Interview together" session that wrote it (sessionId stays reserved for interview sessions). */
+  sittingId?: string;
 }
 export const FIELD_SOURCES_KEY = "_fieldSources";
 export const FIELD_ALTERNATES_KEY = "_fieldAlternates";
@@ -806,9 +816,24 @@ export const BROKER_SESSION_RANK = SOURCE_RANK.questionnaire;
 /** How the broker sees such a source: their notes, not "Broker edit". */
 export const BROKER_SESSION_LABEL = "Your notes · your AI interview session";
 
-/** A value the broker typed in their own AI interview session (not a broker edit). */
+/**
+ * What the broker typed during "Interview together" (the editor behind
+ * "✓ Answered", "Add what they said"): the broker's own call notes — not the
+ * seller's words and not a broker edit. Ranked like the broker's AI-session
+ * notes (never final); the board counts it on file (the seller was in the
+ * conversation), the interview doesn't re-ask it.
+ */
+export const BROKER_CALL_SOURCE_NOTE = "noted by you during Interview together";
+export const BROKER_CALL_LABEL = "Your note · during Interview together";
+
+/** A value the broker typed in their own AI interview session, or noted during Interview together (not a broker edit). */
 export function isBrokerSessionSource(src: Partial<FieldSource> | null | undefined): boolean {
-  return !!src && src.source === "broker" && src.note === BROKER_SESSION_SOURCE_NOTE;
+  return !!src && src.source === "broker" && (src.note === BROKER_SESSION_SOURCE_NOTE || src.note === BROKER_CALL_SOURCE_NOTE);
+}
+
+/** The broker's note typed during Interview together (a kind of isBrokerSessionSource). */
+export function isBrokerCallNote(src: Partial<FieldSource> | null | undefined): boolean {
+  return !!src && src.source === "broker" && src.note === BROKER_CALL_SOURCE_NOTE;
 }
 
 /** A value the broker set deliberately (an edit, a resolution) — final against every other source. */
@@ -899,6 +924,7 @@ export function describeSource(
     case "broker": {
       // The broker's notes from their own AI interview session are not an
       // edit (see isBrokerSessionSource): typed from memory, unconfirmed.
+      if (isBrokerCallNote(src)) return BROKER_CALL_LABEL;
       if (isBrokerSessionSource(src)) {
         return typeof src.turn === "number" ? `${BROKER_SESSION_LABEL} · turn ${src.turn}` : BROKER_SESSION_LABEL;
       }

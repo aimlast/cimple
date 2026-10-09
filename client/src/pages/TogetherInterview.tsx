@@ -9,11 +9,16 @@
  * Meet, Teams, Cimple) and drives the floating question window.
  *
  * Route: /deal/:id/interview/together?via=person|zoom|meet|teams|cimple&link=…
+ *
+ * Checklist mode (?listen=0): the coverage board with no session and no
+ * listening — where "Open the checklist" lands from the Overview and the AI
+ * interview's panel (components/together/TogetherBoard.tsx).
  */
 import { useParams, useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { Interview, type TogetherVia } from "@/components/shared/Interview";
+import { TogetherBoard } from "@/components/together/TogetherBoard";
 import type { Deal } from "@shared/schema";
 
 const VIAS: TogetherVia[] = ["person", "zoom", "meet", "teams", "cimple"];
@@ -34,6 +39,7 @@ export default function TogetherInterview() {
   });
 
   if (!dealId) return null;
+  if (qs.get("listen") === "0") return <TogetherBoard dealId={dealId} />;
 
   return (
     <Interview

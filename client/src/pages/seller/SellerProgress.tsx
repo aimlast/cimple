@@ -36,10 +36,12 @@ interface ProgressStep {
   pct?: number;
 }
 
+/** A CIM section of the seller's checklist: how many of its data points are on file (never a value). */
 interface Section {
   key: string;
   title: string;
-  status: "well_covered" | "partial" | "missing";
+  onFile: number;
+  items: number;
 }
 
 interface SellerProgressData {
@@ -265,7 +267,7 @@ export default function SellerProgress() {
       {currentStep === "interview" && (
         <CTACard
           title={interview.hasActiveSession ? "Continue your Business Overview" : "Start your Business Overview"}
-          description={`Our AI advisor will chat with you about your business to build a complete profile. ${interview.percentage}% of sections covered so far${interview.readiness ? ` — CIM information quality: ${interview.readiness.label}. ${interview.readiness.summary}` : "."}`}
+          description={`Our AI advisor will chat with you about your business to build a complete profile. ${interview.percentage}% of the information collected so far${interview.readiness ? ` — quality: ${interview.readiness.label}.` : "."}`}
           icon={MessageSquare}
           buttonLabel={interview.hasActiveSession ? "Continue Overview" : "Start Overview"}
           href={`/seller/${token}/interview`}
@@ -392,21 +394,28 @@ export default function SellerProgress() {
               )}
             </div>
 
-            {/* Conversation section detail */}
+            {/* Conversation section detail: "x of y on file" per CIM section (no values) */}
             {step.id === "interview" && step.status === "current" && interview.sections.length > 0 && (
-              <div className="mt-3 pl-9 grid grid-cols-2 gap-1.5">
-                {interview.sections.map((s) => (
-                  <div key={s.key} className="flex items-center gap-1.5">
-                    {s.status === "well_covered" ? (
-                      <Check className="h-3 w-3 text-teal shrink-0" />
-                    ) : s.status === "partial" ? (
-                      <div className="h-3 w-3 rounded-full border border-amber-400 shrink-0" />
-                    ) : (
-                      <div className="h-3 w-3 rounded-full border border-border shrink-0" />
-                    )}
-                    <span className="text-xs text-muted-foreground truncate">{s.title}</span>
-                  </div>
-                ))}
+              <div className="mt-3 pl-9 space-y-2" data-testid="seller-progress-sections">
+                <p className="text-xs text-muted-foreground"><span className="text-foreground font-medium">{interview.percentage}% collected</span>{interview.readiness ? ` · quality: ${interview.readiness.label}` : ""}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+                  {interview.sections.map((s) => {
+                    const done = s.items > 0 && s.onFile >= s.items;
+                    return (
+                      <div key={s.key} className="flex items-center gap-1.5 min-w-0">
+                        {done ? (
+                          <Check className="h-3 w-3 text-teal shrink-0" />
+                        ) : s.onFile > 0 ? (
+                          <div className="h-3 w-3 rounded-full border border-teal/60 shrink-0" style={{ background: `conic-gradient(hsl(var(--teal)) 0 ${Math.round((s.onFile / Math.max(1, s.items)) * 100)}%, transparent 0)` }} />
+                        ) : (
+                          <div className="h-3 w-3 rounded-full border border-border shrink-0" />
+                        )}
+                        <span className="text-xs text-muted-foreground truncate flex-1 min-w-0">{s.title}</span>
+                        <span className="text-[11px] text-muted-foreground/80 tabular-nums shrink-0">{s.onFile} of {s.items}</span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>

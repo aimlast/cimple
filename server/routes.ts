@@ -57,6 +57,7 @@ import { loadMediaAssets } from "./cim/media-store.js";
 import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
 import { registerEngagementRoutes } from "./routes/engagement.js";
 import { registerEngagementInsightRoutes } from "./routes/engagement-insights.js";
+import { registerTogetherRoutes } from "./routes/together.js";
 import { registerDataRoomRoutes } from "./routes/data-room.js";
 import { registerReadingRoutes } from "./routes/reading.js";
 import { recordRendition, variantForAccessLevel } from "./analytics/renditions.js";
@@ -4561,11 +4562,25 @@ Return JSON only.`,
       );
       const sectionCoverage = progressKb.recordedCoverage ?? progressKb.sectionCoverage;
       const readiness = computeCimReadiness(sectionCoverage);
-      const wellCovered = sectionCoverage.filter((s) => s.status === "well_covered").length;
-      const partial = sectionCoverage.filter((s) => s.status === "partial").length;
-      const interviewPct = sectionCoverage.length > 0
-        ? Math.round(((wellCovered + partial * 0.4) / sectionCoverage.length) * 100)
-        : 0;
+      // The coverage board's seller numbers (shared/coverage-board.ts): the
+      // same items, statuses and "% collected" as the seller's interview
+      // header and "What we've covered", and the broker's board. Statuses
+      // and counts only — never a value. (Replaces the old section formula.)
+      const allDiscrepanciesForProgress = await storage.getDiscrepanciesByDeal(deal.id);
+      const { boardFromCoverage, coverageInputsFrom, activeMarksForDeal } = await import("./interview/coverage-board");
+      const sellerBoard = boardFromCoverage(
+        coverageInputsFrom({
+          deal,
+          documents: kbDocuments,
+          sessions,
+          openDiscrepancies: allDiscrepanciesForProgress,
+          resolvedDiscrepancies: await storage.getResolvedDiscrepancies(deal.id),
+          marks: await activeMarksForDeal(deal.id),
+          brokerFacts: {},
+        }),
+        "seller",
+      );
+      const interviewPct = sellerBoard.percentCollected;
       const hasActiveSession = sessions.some((s) => s.status === "active");
       // A session the broker reopened no longer counts as the interview being done.
       // (Not one the broker reopened, nor one closed because "Interview
@@ -4603,8 +4618,13 @@ Return JSON only.`,
 
       // Questions the broker routed back to the seller after the interview
       // (a conflict to clear up). Only the count — the rows are the broker's.
+      // (Plus the data points the broker asked to raise next at the end of an
+      // "Interview together" session, while they aren't on file.)
+      const { getInterviewOutline: outlineOf, openFollowUpItems } = await import("./interview/outline");
+      const boardItemStatus = new Map(sellerBoard.sections.flatMap((s) => s.items.map((i) => [i.id, i.status] as const)));
+      const followUpItemsOpen = openFollowUpItems(outlineOf(deal)).filter((f) => boardItemStatus.get(f.itemId) !== "on_file").length;
       const followUpQuestions = interviewCompleted
-        ? (await storage.getDiscrepanciesByDeal(deal.id)).filter((d) => d.status === "ask_seller" && !!routedToSellerAt(d)).length
+        ? allDiscrepanciesForProgress.filter((d) => d.status === "ask_seller" && !!routedToSellerAt(d)).length + followUpItemsOpen
         : 0;
 
       // Step status. Intake is complete when the last intake page (Key
@@ -4627,11 +4647,12 @@ Return JSON only.`,
           hasActiveSession,
           percentage: interviewPct,
           readiness,
-          sections: sectionCoverage.map((s) => ({
-            key: s.key,
-            title: s.title,
-            status: s.status,
-          })),
+          // Per CIM section: how many of its data points are on file (no values).
+          sections: sellerBoard.sections.map((s) => {
+            const counted = s.items.filter((i) => i.origin !== "figures");
+            return { key: s.key, title: s.title, onFile: counted.filter((i) => i.status === "on_file").length, items: counted.length };
+          }),
+          totals: sellerBoard.totals,
         },
         intake,
         documents: {
@@ -7132,8 +7153,15 @@ Return JSON only.`,
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
-      const { excludeSection, restoreSection, removeTopic, clearEmphasis, removeItem, restoreItem } = req.body ?? {};
-      const result = await patchOutline(deal, { excludeSection, restoreSection, removeTopic, clearEmphasis, removeItem, restoreItem });
+      const { excludeSection, restoreSection, removeTopic, clearEmphasis, removeItem, restoreItem, removeItems, restoreItems, addItem } = req.body ?? {};
+      // (The coverage board takes an item off with all its members at once —
+      // removeItems — and adds a data point to a section — addItem.)
+      const result = await patchOutline(deal, {
+        excludeSection, restoreSection, removeTopic, clearEmphasis, removeItem, restoreItem,
+        removeItems: Array.isArray(removeItems) ? removeItems.slice(0, 12) : undefined,
+        restoreItems: Array.isArray(restoreItems) ? restoreItems.slice(0, 12) : undefined,
+        addItem: addItem && typeof addItem === "object" ? { sectionKey: String(addItem.sectionKey ?? ""), label: String(addItem.label ?? "") } : undefined,
+      });
       if (result.refused) return res.status(409).json({ error: result.refused });
       res.json(outlineView(await storage.getDeal(deal.id)));
     } catch (error: any) {
@@ -7931,6 +7959,7 @@ Return JSON only.`,
   registerReadingRoutes(app);
   registerEngagementRoutes(app);
   registerEngagementInsightRoutes(app);
+  registerTogetherRoutes(app);
   // Data room (vdr). Wave 0: only the renderer canary, GET /api/vdr/health.
   registerDataRoomRoutes(app);
 
