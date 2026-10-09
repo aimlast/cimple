@@ -171,12 +171,13 @@ export function useBuyerRoom(source: VdrSource) {
   });
 }
 
-/** One document's About card + manifest; polls while it's being prepared. */
-export function useItemAbout(source: VdrSource, itemId: string | null) {
+/** One document's About card + manifest; polls while it's being prepared. `needle` (a citation's figure) → `focusPage`. */
+export function useItemAbout(source: VdrSource, itemId: string | null, needle: string | null = null) {
   return useQuery<BuyerItemAbout | (VdrManifest & { broker: true }), VdrRequestError>({
-    queryKey: [...sourceKey(source), "item", itemId],
+    queryKey: [...sourceKey(source), "item", itemId, needle],
     queryFn: async () => {
-      const r = await vdrFetch<any>("GET", vdrUrls(source).about(itemId!));
+      const base = vdrUrls(source).about(itemId!);
+      const r = await vdrFetch<any>("GET", needle && source.kind === "buyer" ? `${base}?needle=${encodeURIComponent(needle)}` : base);
       return r && r.manifest ? r : { ...r, broker: true };
     },
     enabled: !!itemId,

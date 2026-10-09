@@ -29,9 +29,11 @@ import { RequestDialog, type RequestPrefill } from "@/components/vdr/buyer/Reque
 import { YourTeam } from "@/components/vdr/buyer/YourTeam";
 import { TeamAcknowledge } from "@/components/vdr/buyer/TeamAcknowledge";
 import { DownloadControl, PrevNext, VdrViewer } from "@/components/vdr/VdrViewer";
+import { parseRoomLink } from "@/components/vdr/links";
+import type { ResolvePayload } from "@shared/vdr-api";
 import { BuyerChatbot } from "@/components/buyer/BuyerChatbot";
 
-type Nav = { place: RoomPlace; doc: string | null; q: string; page: number | null };
+type Nav = { place: RoomPlace; doc: string | null; q: string; page: number | null; rows?: number[] | null; sheet?: string | null; needle?: string | null };
 
 function parseNav(search: string): Nav {
   const p = new URLSearchParams(search);
@@ -39,7 +41,8 @@ function parseNav(search: string): Nav {
   const place: RoomPlace = folder === "new" ? { kind: "new" } : folder && /^[A-Za-z0-9_-]{1,64}$/.test(folder) ? { kind: "folder", id: folder } : { kind: "all" };
   const doc = p.get("doc");
   const page = Number(p.get("page"));
-  return { place, doc: doc && /^[A-Za-z0-9_-]{1,64}$/.test(doc) ? doc : null, q: (p.get("q") ?? "").slice(0, 100), page: Number.isInteger(page) && page > 0 ? page : null };
+  const link = parseRoomLink(search);
+  return { place, doc: doc && /^[A-Za-z0-9_-]{1,64}$/.test(doc) ? doc : null, q: (p.get("q") ?? "").slice(0, 100), page: Number.isInteger(page) && page > 0 ? page : null, rows: link.rows, sheet: link.sheet, needle: link.needle };
 }
 
 function navSearch(n: Nav): string {
@@ -49,6 +52,9 @@ function navSearch(n: Nav): string {
   if (n.doc) p.set("doc", n.doc);
   if (n.q) p.set("q", n.q);
   if (n.page && n.doc) p.set("page", String(n.page));
+  if (n.doc && n.sheet) p.set("sheet", n.sheet);
+  if (n.doc && n.rows && n.rows.length) p.set("rows", n.rows.join(","));
+  if (n.doc && n.needle) p.set("needle", n.needle);
   const s = p.toString();
   return s ? `?${s}` : "";
 }
@@ -74,6 +80,25 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
   }, [nav, source.kind, setLocation, location]);
 
   const room = useBuyerRoom(source);
+  // A link by document id (gl's "Open the general ledger in the data room →", a citation opened in a new tab):
+  // find its room item for this reader, then open it like any other. Not visible → "isn't available to you".
+  const byDocument = source.kind === "buyer" ? parseRoomLink(search).documentId : null;
+  const [docMissing, setDocMissing] = useState(false);
+  useEffect(() => {
+    if (!byDocument || nav.doc || source.kind !== "buyer") return;
+    let alive = true;
+    vdrFetch<ResolvePayload>("GET", `/api/view/${encodeURIComponent(source.token)}/data-room/resolve?documentIds=${encodeURIComponent(byDocument)}`)
+      .then((r) => {
+        if (!alive) return;
+        const hit = r.documents[byDocument];
+        if (hit && hit.available) {
+          const link = parseRoomLink(search);
+          setLocation(`${location.split("?")[0]}${navSearch({ place: { kind: "all" }, doc: hit.itemId, q: "", page: hit.replaced ? null : link.page, rows: link.rows, sheet: link.sheet, needle: link.needle })}`, { replace: true });
+        } else setDocMissing(true);
+      })
+      .catch(() => { if (alive) setDocMissing(true); });
+    return () => { alive = false; };
+  }, [byDocument, nav.doc]); // eslint-disable-line react-hooks/exhaustive-deps
   const [asking, setAsking] = useState<RequestPrefill | false>(false);
   const [qInput, setQInput] = useState(nav.q);
   useEffect(() => setQInput(nav.q), [nav.q]);
@@ -102,6 +127,24 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
     <RoomHeader data={data} token={token} isTeam={isTeam} embedded={embedded} onIndex={canSearch ? vdrUrls(source).index : null} />
   );
 
+  if (byDocument && !nav.doc) {
+    if (!docMissing) return <RoomSkeleton embedded={embedded} />;
+    return (
+      <div className={cn("min-h-screen bg-background", embedded && "min-h-0")}>
+        {!embedded && header}
+        <div className="mx-auto max-w-md px-6 py-20 text-center" data-testid="vdr-doc-missing">
+          <AlertCircle className="mx-auto h-7 w-7 text-muted-foreground/60" />
+          <p className="mt-3 text-sm font-medium">This document isn't in your data room yet.</p>
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
+            {openAsk && <Button size="sm" onClick={() => openAsk({ text: "The document the memorandum points to", documentId: byDocument })}>Ask your broker for it</Button>}
+            <Button variant="outline" size="sm" onClick={() => setLocation(location.split("?")[0], { replace: true })}><ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Back to the data room</Button>
+          </div>
+        </div>
+        {askDialog}
+      </div>
+    );
+  }
+
   if (nav.doc) {
     return (
       <div className={cn("min-h-screen bg-background", embedded && "min-h-0")}>
@@ -114,6 +157,7 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
           data={data}
           itemId={nav.doc}
           initialPage={nav.page}
+          cited={{ rows: nav.rows ?? null, sheet: nav.sheet ?? null, needle: nav.needle ?? null }}
           onBack={() => go({ doc: null, page: null })}
           onOpen={(id) => go({ doc: id, page: null })}
           onAsk={openAsk}
@@ -278,8 +322,8 @@ function PhoneFolders({ data, onPlace }: { data: BuyerRoomPayload; onPlace: (p: 
   );
 }
 
-function DocumentScreen({ source, data, itemId, initialPage, onBack, onOpen, embedded, onAsk, memoHref }: { source: VdrSource; data: BuyerRoomPayload; itemId: string; initialPage: number | null; onBack: () => void; onOpen: (id: string) => void; embedded?: boolean; onAsk: ((p: RequestPrefill) => void) | null; memoHref?: (sectionId: string) => string }) {
-  const about = useItemAbout(source, itemId);
+function DocumentScreen({ source, data, itemId, initialPage, cited, onBack, onOpen, embedded, onAsk, memoHref }: { source: VdrSource; data: BuyerRoomPayload; itemId: string; initialPage: number | null; cited?: { rows: number[] | null; sheet: string | null; needle: string | null }; onBack: () => void; onOpen: (id: string) => void; embedded?: boolean; onAsk: ((p: RequestPrefill) => void) | null; memoHref?: (sectionId: string) => string }) {
+  const about = useItemAbout(source, itemId, cited?.needle && !initialPage ? cited.needle : null);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [viewId, setViewId] = useState<string | null>(null);
   const [page, setPage] = useState<number | null>(initialPage);
@@ -316,7 +360,7 @@ function DocumentScreen({ source, data, itemId, initialPage, onBack, onOpen, emb
       </div>
       <div className="mx-auto flex w-full max-w-[1400px] flex-1 gap-0 lg:gap-6 lg:px-6 lg:py-4">
         <div className="min-w-0 flex-1">
-          <ViewerWithView source={source} itemId={itemId} about={a ?? null} loading={about.isLoading} reader={{ name: data.reader.name, email: data.reader.email }} initialPage={initialPage} onView={setViewId} onPage={setPage} onAsk={onAsk ? () => onAsk({ text: `A copy of '${title}'`, itemId }) : undefined} barTop={embedded ? "top-[94px]" : "top-[49px] lg:top-[106px]"} />
+          <ViewerWithView source={source} itemId={itemId} about={a ?? null} loading={about.isLoading} reader={{ name: data.reader.name, email: data.reader.email }} initialPage={initialPage ?? a?.focusPage ?? null} cited={cited} onView={setViewId} onPage={setPage} onAsk={onAsk ? () => onAsk({ text: `A copy of '${title}'`, itemId }) : undefined} barTop={embedded ? "top-[94px]" : "top-[49px] lg:top-[106px]"} />
         </div>
         <aside className="hidden w-[320px] shrink-0 lg:block">
           <div className={cn("sticky max-h-[calc(100vh-140px)] overflow-y-auto rounded-lg border border-border bg-card p-4", embedded ? "top-[110px]" : "top-[122px]")}>{a ? <AboutPanel about={a} source={source} page={page} memoHref={memoHref} /> : <Skeleton className="h-32 w-full" />}</div>
@@ -341,9 +385,11 @@ function DocumentScreen({ source, data, itemId, initialPage, onBack, onOpen, emb
 }
 
 /** The viewer, plus the download link once the buyer's view exists (its trace goes on the download). */
-function ViewerWithView({ source, itemId, about, loading, reader, initialPage, onView, onPage, onAsk, barTop }: { source: VdrSource; itemId: string; about: BuyerItemAbout | null; loading: boolean; reader: { name: string | null; email: string }; initialPage: number | null; onView: (id: string) => void; onPage: (n: number) => void; onAsk?: () => void; barTop: string }) {
+function ViewerWithView({ source, itemId, about, loading, reader, initialPage, cited, onView, onPage, onAsk, barTop }: { source: VdrSource; itemId: string; about: BuyerItemAbout | null; loading: boolean; reader: { name: string | null; email: string }; initialPage: number | null; cited?: { rows: number[] | null; sheet: string | null }; onView: (id: string) => void; onPage: (n: number) => void; onAsk?: () => void; barTop: string }) {
   return (
     <VdrViewer
+      initialSheet={cited?.sheet ?? null}
+      highlightRows={cited?.rows ?? null}
       barTop={barTop}
       onView={onView}
       onPageChange={onPage}
