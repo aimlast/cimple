@@ -193,7 +193,7 @@ function LineBlock({ line, attrs, asking, onDone }: { line: GlEvidenceLine; attr
         <div className="mt-3">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-[hsl(var(--cim-ink-muted))]">Where the cost is in the books</p>
           <div className="mt-2 space-y-4">
-            {years.map((y) => <YearBlock key={y.year} line={line} year={y} />)}
+            {years.map((y, i) => <YearBlock key={y.year} line={line} year={y} defaultOpen={i === years.length - 1} />)}
           </div>
         </div>
       )}
@@ -222,9 +222,11 @@ function LineBlock({ line, attrs, asking, onDone }: { line: GlEvidenceLine; attr
   );
 }
 
-function YearBlock({ line, year: y }: { line: GlEvidenceLine; year: GlEvidenceYear }) {
+/** One year: the latest is open; earlier years show their subtotal and open on a tap (the page stays digestible). */
+function YearBlock({ line, year: y, defaultOpen }: { line: GlEvidenceLine; year: GlEvidenceYear; defaultOpen: boolean }) {
   const links = useGlLinks();
   const [all, setAll] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const shown = all ? y.entries : y.entries.slice(0, GL_EVIDENCE_FIRST_ENTRIES);
   const hasShare = !!line.share && y.target !== y.claimed;
   const diffPct = y.target ? Math.abs(y.difference) / Math.abs(y.target) : 0;
@@ -243,6 +245,10 @@ function YearBlock({ line, year: y }: { line: GlEvidenceLine; year: GlEvidenceYe
         <p className="mt-1.5 text-xs text-[hsl(var(--cim-ink-muted))]">{y.entryCount} entr{y.entryCount === 1 ? "y" : "ies"} — the entries are available on request. Ask your broker.</p>
       ) : noSupport ? (
         <p className="mt-1.5 text-xs text-[hsl(var(--cim-ink-muted))]">No entries were found in the books for this year.</p>
+      ) : y.entries.length > 0 && !open ? (
+        <button type="button" className="mt-1 text-xs font-medium text-[hsl(var(--cim-brass))] hover:underline" onClick={() => setOpen(true)} aria-expanded={false} data-testid={`gl-year-open-${y.year}`}>
+          Show the {y.entries.length} entr{y.entries.length === 1 ? "y" : "ies"}
+        </button>
       ) : y.entries.length > 0 ? (
         <>
           <EntriesTable entries={shown} lineId={line.lineId} />
