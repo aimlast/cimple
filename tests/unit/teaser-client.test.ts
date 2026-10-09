@@ -22,6 +22,11 @@ import { publishButtonState } from "../../client/src/components/teaser/TeaserPub
 import { sampleTeaser } from "../../client/src/components/teaser/samples";
 import { paperContact, paperContactNote, printFooterText, sectionsForPaper } from "../../client/src/pages/TeaserPrintPreview";
 import { EDITOR_CHIP_POSITION, EDITOR_RING_INSET_Y, TEASER_BLOCK_GAP } from "../../client/src/components/teaser/TeaserPages";
+import { columnLabel, columnView, columnWith } from "../../client/src/components/teaser/two-column-edit";
+import { TeaserColumnsEditor } from "../../client/src/components/teaser/TeaserColumnsEditor";
+import { editableData } from "../../client/src/components/teaser/TeaserInspector";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { chipsBesideTagline, fillTeaserTokens, teaserFill } from "../../shared/teaser-view";
 import { tileLinesFor, CIM_TAB_VIEWS, EXTRA_CIM_TAB_VIEWS, useViewBadge } from "../../client/src/pages/broker/deal/cim-tab-slots";
 import { blindTileDesc } from "../../client/src/pages/broker/deal/CimTab";
@@ -187,6 +192,60 @@ test("on paper the 'ask from this page' step names the firm and its contact; the
   // Other lists are untouched.
   const other = { ...(sec as object), layoutData: { items: [{ title: "Add a second terminal" }] } } as never;
   assert.equal(sectionsForPaper([other], { firm: "X", name: null, email: null, phone: null })[0], other);
+});
+
+test("two-column blocks are edited in plain words: heading + points / text / figures / highlights, never the raw keys or a layout-type box (checker r2)", () => {
+  // The opportunity block: "Who it suits" (a list) beside "Deal at a glance" (drawn from the deal's lines).
+  const opp = {
+    layoutType: "two_column",
+    layoutData: {
+      left: { title: "Who it suits", layoutType: "list", content: "An owner-operator with trade experience\nA regional HVAC group adding a territory" },
+      right: { title: "Deal at a glance", layoutType: "metric", content: "Sale type: Share sale" },
+      cells: [{ key: "saleType", label: "Sale type", value: "Share sale" }],
+    },
+  } as never;
+  const data = editableData(opp);
+  assert.deepEqual(Object.keys(data), ["left"], "only the column the broker writes; the lines column is edited above it");
+  const v = columnView(data.left);
+  assert.equal(v.kind, "points");
+  assert.equal(v.heading, "Who it suits");
+  assert.deepEqual(v.points, ["An owner-operator with trade experience", "A regional HVAC group adding a territory"]);
+  // Edit: rename, change a point, add one, leave a blank row — the column keeps its kind; the blank row is dropped.
+  const left = columnWith(data.left, { ...v, heading: "Who it suits best", points: [v.points[0], "A regional group adding a territory", "A family office", "  "] });
+  assert.deepEqual(left, { title: "Who it suits best", layoutType: "list", content: "An owner-operator with trade experience\nA regional group adding a territory\nA family office" });
+  const merged = { layoutType: "two_column", layoutData: { ...(opp as { layoutData: object }).layoutData, left } };
+  assert.equal(validateTeaserLayout(merged as never), null, "what the editor writes is always a valid teaser column");
+  // The rendered editor: plain labels, no raw keys, no layout type.
+  const html = renderToStaticMarkup(createElement(TeaserColumnsEditor, { value: data, sides: ["left"], onChange: () => undefined }));
+  assert.match(html, /Who it suits/);
+  assert.match(html, /Heading/);
+  assert.match(html, /Add a point/);
+  assert.ok(!/layout ?type|LAYOUT|>left<|>LEFT<|>content<|CONTENT/i.test(html), "no raw keys or layout-type box");
+
+  // The deal-structure block's "Transition": a paragraph.
+  const tr = columnView({ title: "Transition", layoutType: "prose", content: "Owner stays six months." });
+  assert.deepEqual([tr.kind, tr.text], ["text", "Owner stays six months."]);
+  assert.deepEqual(columnWith({ title: "Transition", layoutType: "prose", content: "x" }, { ...tr, text: "Owner stays a year." }), { title: "Transition", layoutType: "prose", content: "Owner stays a year." });
+  // A blank two-column block the broker added: both columns, each by what it holds.
+  const blank = { layoutType: "two_column", layoutData: { left: { title: "", content: "", layoutType: "prose" }, right: { title: "", content: "", layoutType: "list" } } } as never;
+  const bd = editableData(blank);
+  assert.deepEqual(Object.keys(bd), ["left", "right"]);
+  assert.deepEqual([columnView(bd.left).kind, columnView(bd.right).kind, columnView(bd.right).points], ["text", "points", []]);
+  assert.equal(columnLabel(bd.left, "left", 2), "Left column");
+  assert.equal(columnLabel({ title: "Who it suits" }, "left", 1), "Who it suits");
+  const bhtml = renderToStaticMarkup(createElement(TeaserColumnsEditor, { value: bd, sides: ["left", "right"], onChange: () => undefined }));
+  assert.match(bhtml, /Left column/);
+  assert.match(bhtml, /Right column/);
+  assert.ok(!/layout ?type/i.test(bhtml));
+  // Figures ("Label: value" lines) and highlights (cards) keep their shape and every other key.
+  const fig = columnView({ title: "The deal", layoutType: "metric", content: "Sale type: Share sale\nReal estate: Leased" });
+  assert.deepEqual(fig.figures, [{ label: "Sale type", value: "Share sale" }, { label: "Real estate", value: "Leased" }]);
+  assert.equal(columnWith({ title: "The deal", layoutType: "metric", content: "" }, { ...fig, figures: [...fig.figures, { label: "Training", value: "" }] }).content, "Sale type: Share sale\nReal estate: Leased\nTraining");
+  const cards = { title: "Why buy", layoutType: "callout_list", content: { items: [{ title: "Recurring", description: "Service plans", icon: "repeat" }], style: "list" } };
+  const cv = columnView(cards);
+  assert.deepEqual([cv.kind, cv.highlights], ["highlights", [{ title: "Recurring", detail: "Service plans" }]]);
+  const cw = columnWith(cards, { ...cv, highlights: [{ title: "Recurring revenue", detail: "Service plans" }] });
+  assert.deepEqual(cw, { title: "Why buy", layoutType: "callout_list", content: { items: [{ title: "Recurring revenue", description: "Service plans", icon: "repeat" }], style: "list" } });
 });
 
 test("the editor's warning chip sits inside its own block's outline, never on the block above (checker r2)", () => {

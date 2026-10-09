@@ -7,7 +7,9 @@
  *    check line "✓ No names, places or contacts found"); the content —
  *    key-number cells typed over inline ("Edited by you · Reset from the
  *    facts"), "Deal at a glance" lines the broker can add and take off,
- *    prose, or the structured editor; "Rewrite with AI" for the
+ *    prose, a two-column block's columns in plain words (heading + text,
+ *    points, figures or highlights — TeaserColumnsEditor), or the
+ *    structured editor; "Rewrite with AI" for the
  *    blocks the AI writes (a proposal the broker applies or discards);
  *    hide / duplicate / delete.
  *
@@ -32,6 +34,7 @@ import { cn } from "@/lib/utils";
 import type { TeaserState } from "./api";
 import type { BlockProposal, TeaserApi } from "./useTeaser";
 import { CHECK_HELP, CHECK_LINE, blockName, checkFor, heldSentence, isFixedBlock, pinpointSentence } from "./draft-view";
+import { TeaserColumnsEditor } from "./TeaserColumnsEditor";
 
 const LENGTHS = [
   { key: "shorter", label: "Shorter" },
@@ -192,8 +195,18 @@ type Json = Record<string, any>;
 /** Layout settings the editor keeps but doesn't show (how a list is drawn, the index flag…). */
 const KEPT_KEYS = ["style", "columns", "ordered", "indexed", "expandable", "series"];
 
-/** The part of layoutData the structured editor shows (cells and the data drawn from them stay out). */
-function editableData(b: TeaserBlock): Json {
+/** The part of layoutData the editor shows (cells and the data drawn from them stay out). */
+export function editableData(b: Pick<TeaserBlock, "layoutType" | "layoutData">): Json {
+  if (b.layoutType === "two_column") {
+    // Two columns: only the columns the broker writes (TeaserColumnsEditor) —
+    // never the block's own keys or a column's layout type. A right-hand
+    // column drawn from the deal's lines ("Deal at a glance") stays out.
+    const src: Json = b.layoutData ?? {};
+    const out: Json = {};
+    if (src.left !== undefined && src.left !== null) out.left = src.left;
+    if (!Array.isArray(src.cells) && src.right !== undefined && src.right !== null) out.right = src.right;
+    return out;
+  }
   const d: Json = { ...(b.layoutData ?? {}) };
   const hasCells = Array.isArray(d.cells);
   delete d.cells;
@@ -291,12 +304,14 @@ function BlockEditor({
           <Textarea value={body} onChange={(e) => setBody(e.target.value)} rows={7} className="resize-y text-xs leading-relaxed" data-testid="input-teaser-block-body" disabled={writing} />
         </div>
       )}
-      {showData && (
+      {showData && (block.layoutType === "two_column" ? (
+        <TeaserColumnsEditor value={data} sides={dealLines ? ["left"] : ["left", "right"]} disabled={writing} onChange={setData} />
+      ) : (
         <div className="space-y-1.5">
-          <Label className="text-xs">{cells.length > 0 || dealLines ? "The rest of the block" : "Content"}</Label>
+          <Label className="text-xs">{cells.length > 0 ? "The rest of the block" : "Content"}</Label>
           <StructuredDataEditor value={data} onChange={(next) => setData(next as Json)} compact />
         </div>
-      )}
+      ))}
 
       {(dirty || prose || showData) && (
         <div className="flex gap-2">
