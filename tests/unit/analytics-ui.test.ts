@@ -41,7 +41,8 @@ const { AnalyticsEmpty, ANALYTICS_EMPTY_COPY, analyticsEmptyKind } = await impor
 const { ActivityList, ReadingNowLine, dayHeading } = await import("../../client/src/components/analytics/ActivityFeed");
 const { DashboardTabBar } = await import("../../client/src/components/analytics/DashboardTabBar");
 const { AttentionPanels, ATTENTION_COPY } = await import("../../client/src/components/analytics/AttentionTab");
-const { HeadsUp } = await import("../../client/src/components/analytics/HeadsUp");
+const HeadsUpMod = await import("../../client/src/components/analytics/HeadsUp");
+const { HeadsUp } = HeadsUpMod;
 const { BuyerList, defaultSelection } = await import("../../client/src/components/engagement/buyers/BuyerList");
 const { BuyerListHead, OLDER_VISITS_CHIP } = await import("../../client/src/components/engagement/buyers/BuyersView");
 const { PulseTop, pulseStats } = await import("../../client/src/components/engagement/BuyerPulseCard");
@@ -285,6 +286,44 @@ await test("heads-up lines link to exactly those buyers", () => {
   // A registered source's line (no ids) links where it says.
   const src = render(h(HeadsUp, { lines: [{ id: "vdr", count: 1, text: "Gurdeep Randhawa is in the data room now", names: [], link: "/deal/d1/engagement?view=data-room" }], linkFor: () => "/nope" }));
   assert.match(src, /href="\/deal\/d1\/engagement\?view=data-room"/);
+});
+
+await test("heads-up words with a count of one (checker AN2-2)", () => {
+  const { headsUpShort } = HeadsUpMod;
+  const one = (id: string) => ({ id, count: 1, text: "x", names: [], link: "/x", ids: ["a1"] });
+  const two = (id: string) => ({ id, count: 2, text: "x", names: [], link: "/x", ids: ["a1", "a2"] });
+  assert.equal(headsUpShort(one("not_opened")), "1 buyer hasn't opened after 3 days");
+  assert.equal(headsUpShort(two("not_opened")), "2 buyers haven't opened after 3 days");
+  assert.equal(headsUpShort(one("expiring")), "1 link runs out this week");
+  assert.equal(headsUpShort(two("expiring")), "2 links run out this week");
+});
+
+await test("on a phone the heads-up is ONE row whose every part is a 44 px link (checker AN2-5)", () => {
+  const exp = { id: "expiring", count: 1, text: "1 buyer link runs out in the next 7 days: Marcus Albrecht.", names: [], link: "/broker/analytics?tab=buyers&notice=expiring", ids: ["a1"] };
+  const no = { id: "not_opened", count: 1, text: "1 buyer hasn't opened their link 3 days after you gave it.", names: [], link: "/broker/analytics?tab=buyers&notice=not_opened", ids: ["a2"] };
+  const linkFor = (x: { id: string }) => `/broker/analytics?tab=buyers&notice=${x.id}`;
+  // One line: the whole phone row is the link.
+  const single = render(h(HeadsUp, { lines: [exp], linkFor }));
+  const phone1 = /<div[^>]*data-testid="heads-up-phone"[^>]*>([\s\S]*?)<\/div><div class="hidden/.exec(single)![1];
+  const links1 = phone1.match(/<a [^>]*>/g) ?? [];
+  assert.equal(links1.length, 1, "one link across the row");
+  assert.match(links1[0], /flex-1/, "the link fills the row");
+  assert.match(links1[0], /min-h-11/, "at least 44 px tall");
+  assert.match(text(phone1), /1 link runs out this week/);
+  // Two lines: one row, two halves, each a 44 px link to its own exact set.
+  const both = render(h(HeadsUp, { lines: [exp, no], linkFor }));
+  assert.equal((both.match(/data-testid="heads-up-phone"/g) ?? []).length, 1, "a single phone row, never two");
+  const phone2 = /<div[^>]*data-testid="heads-up-phone"[^>]*>([\s\S]*?)<\/div><div class="hidden/.exec(both)![1];
+  const links2 = phone2.match(/<a [^>]*>/g) ?? [];
+  assert.equal(links2.length, 2);
+  for (const a of links2) assert.match(a, /min-h-11/);
+  assert.match(links2[0], /notice=expiring/);
+  assert.match(links2[1], /notice=not_opened/);
+  assert.match(text(phone2), /1 link runs out .*1 not opened/);
+  assert.match(phone2, /aria-label="1 buyer hasn&#x27;t opened their link 3 days after you gave it."/, "the full sentence for a screen reader");
+  // The computer keeps the full sentences with "See them".
+  assert.match(text(both), /1 buyer link runs out in the next 7 days: Marcus Albrecht\..*See them/);
+  assert.equal((both.match(/See them/g) ?? []).length, 2);
 });
 
 await test("a heads-up's \"See them\" shows exactly the buyers the line counted", () => {

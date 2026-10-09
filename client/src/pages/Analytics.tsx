@@ -42,7 +42,7 @@ import { ActivityFeed, LiveDot } from "@/components/analytics/ActivityFeed";
 import { AttentionTab, ATTENTION_COPY } from "@/components/analytics/AttentionTab";
 import { AnalyticsEmpty, analyticsEmptyKind } from "@/components/analytics/EmptyStates";
 import { InfoDot } from "@/components/analytics/Explain";
-import { EXAMPLE_TIP, TabDescription } from "@/components/analytics/parts";
+import { EXAMPLE_SWITCH_TIP, EXAMPLE_TIP, TabDescription } from "@/components/analytics/parts";
 import { analyticsSearch, parseAnalyticsSearch, parseKpiChip, resolveAnalyticsTab, switchTab, type AnalyticsUrlState } from "@/components/analytics/url";
 
 export const ANALYTICS_TAB_LABELS: Record<AnalyticsTab, { label: string; short: string }> = {
@@ -105,12 +105,16 @@ export default function Analytics() {
           className="origin-left scale-[0.8]"
           data-testid="examples-toggle"
         />
-        Include example deals
-        <InfoDot text={EXAMPLE_TIP} />
+        {/* A phone keeps it beside the title ("Examples"), so the tabs stay high; the (i) says the rest. */}
+        <span className="sm:hidden">Examples</span>
+        <span className="hidden sm:inline">Include example deals</span>
+        <InfoDot text={EXAMPLE_SWITCH_TIP} />
       </label>
     ) : o.examples.included ? (
       <span className="flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="examples-caption">
-        Includes example deals <InfoDot text={EXAMPLE_TIP} />
+        <span className="sm:hidden">With examples</span>
+        <span className="hidden sm:inline">Includes example deals</span>
+        <InfoDot text={EXAMPLE_TIP} />
       </span>
     ) : null
   ) : null;

@@ -5,6 +5,8 @@ import { cn } from "@/lib/utils";
 import { InfoDot } from "./Explain";
 
 export const EXAMPLE_TIP = "Example deals are the made-up showcase deals. Their numbers are in these totals and marked 'Example' wherever they appear.";
+/** The switch's (i): true whether it is on or off. */
+export const EXAMPLE_SWITCH_TIP = "Example deals are the made-up showcase deals. Switch this on to count them in these totals; they're marked 'Example' wherever they appear.";
 export const NOT_LIVE_TIP = "Buyers can't open it right now";
 
 export function Chip({ children, tone = "muted", title, className, testId }: { children: ReactNode; tone?: "muted" | "live" | "example" | "brass" | "warning"; title?: string; className?: string; testId?: string }) {

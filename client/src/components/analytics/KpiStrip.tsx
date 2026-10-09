@@ -153,14 +153,15 @@ function KpiBlock({
   return (
     <section className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-card" data-testid={testId} aria-label={title}>
       {/* One row: the title, then the period control at the right (short words on a phone); the
-          example-deals note follows it, on its own line on a phone. */}
+          example-deals note follows it (on a phone it sits between the title and the control, in
+          short words, so the block header stays one line). */}
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border/70 px-3 py-1.5 sm:px-4 sm:py-2">
         <h2 className="flex min-w-0 items-center gap-1.5 font-mono text-2xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
           <span className="truncate">{title}</span>
           {info && <InfoDot text={info} />}
         </h2>
-        {control && <div className="ml-auto flex items-center">{control}</div>}
-        {aside && <div className={cn("flex items-center", control ? "w-full sm:w-auto" : "ml-auto")}>{aside}</div>}
+        {control && <div className="order-2 ml-auto flex items-center sm:order-none">{control}</div>}
+        {aside && <div className={cn("flex items-center", control ? "order-1 sm:order-none" : "ml-auto")}>{aside}</div>}
       </header>
       <div className={cn("grid grid-cols-2 gap-px bg-border/70", n === 3 ? "sm:grid-cols-3" : n >= 4 ? "sm:grid-cols-4" : "")}>
         {loading

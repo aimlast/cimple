@@ -308,7 +308,7 @@ export function computeKpis(inputs: BrokerInputs, opts: KpiOptions): { kpis: Kpi
         display: `${openers.length} of ${granted}`,
         previous: null,
         lastAt: null,
-        sub: granted === 0 ? null : notYet.length === 0 ? "everyone has opened it" : `${notYet.length} haven't yet`,
+        sub: granted === 0 ? null : notYet.length === 0 ? "everyone has opened it" : `${notYet.length} ${notYet.length === 1 ? "hasn't" : "haven't"} yet`,
         ...who(notYet
           .sort((x, y) => t(x.b.grantedAt) - t(y.b.grantedAt))
           .map(({ item, b }) => ({

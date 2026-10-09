@@ -188,7 +188,9 @@ assert.equal(kpi(d30, "interested").who.find((w) => w.accessId === "g1")?.note, 
   const dk = computeKpis(dealInputsOf(D1), { range: "all", now: NOW, scope: "deal" }).kpis;
   const opened = kpi(dk, "opened");
   assert.equal(opened.display, "7 of 8", "the teaser link isn't in the denominator (8 CIM links, Natalie never opened)");
-  assert.equal(opened.sub, "1 haven't yet");
+  assert.equal(opened.sub, "1 hasn't yet", "one buyer: 'hasn't' (checker AN2-2)");
+  const two = computeKpis(dealInputsOf({ ...D1, links: [...D1.links, { id: "n9", name: "Second Unopened", createdDaysAgo: 4 }] }), { range: "all", now: NOW, scope: "deal" }).kpis;
+  assert.equal(kpi(two, "opened").sub, "2 haven't yet", "two buyers: 'haven't'");
   assert.deepEqual(opened.who.map((w) => w.accessId), ["n1"], "all time: who hasn't opened");
   for (const k of [kpi(dk, "reading"), kpi(dk, "to_call"), kpi(dk, "interested")]) assert.ok(!(k.ids ?? []).includes("tz"), `${k.id}: never the teaser link`);
   const hu = headsUp(inputsOf([{ ...D1, links: [...D1.links, { id: "tz2", name: "Teaser Two", level: "teaser_only", createdDaysAgo: 9 }] }]), NOW);
