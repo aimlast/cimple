@@ -89,6 +89,24 @@ test("blind wording names generic categories, never 'mostly from two lines' (che
   assert.equal(blindCostCategory("Facility rent — 19220 Campbell Ridge Drive", { expense: true, category: "Operating Expenses" }), "occupancy costs");
 });
 
+test("checker r2: Blind categories never misfile a line (interest ≠ bank charges, tolls & fuel tax ≠ fuel, dues ≠ technology)", () => {
+  const cat = (label: string) => blindCostCategory(label, { expense: true, category: "Operating Expenses" });
+  assert.equal(cat("Interest on long-term debt and bank indebtedness"), "interest");
+  assert.equal(cat("Licences, permits, tolls & fuel tax"), "licences and fees");
+  assert.equal(cat("Dues, memberships & subscriptions"), "licences and fees");
+  // The rules round 1 meant to have (word boundaries, which had been written as control characters):
+  assert.equal(cat("Rent — warehouse"), "occupancy costs");
+  assert.equal(cat("Warehouse lease"), "occupancy costs");
+  assert.equal(cat("Tractor leases & equipment rentals"), "equipment leases");
+  assert.equal(cat("Auto expenses"), "vehicle and travel costs");
+  assert.equal(cat("Automation software"), "technology and communications");
+  assert.equal(cat("Bank charges & merchant fees"), "bank charges");
+  assert.equal(cat("Fuel"), "fuel");
+  assert.equal(cat("Software licences"), "technology and communications");
+  assert.equal(cat("Telephone & internet"), "technology and communications");
+  assert.equal(cat("Interest and bank charges"), "interest");
+});
+
 test("changes under 8% (or $2,500) get no suggested note", () => {
   assert.equal(movedEnough(1000000, 1070000), false);
   assert.equal(movedEnough(1000000, 1090000), true);

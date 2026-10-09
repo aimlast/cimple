@@ -108,8 +108,9 @@ export function computedNotes(input: ComputedNotesInput): MachineNote[] {
       blindText,
       sources: [{ kind: "computed" }],
       valuesSnapshot: { year: fig.year, value: fig.value, fromYear: prev.year, fromValue: prev.value, components },
-      // "blind-v2": the blind wording names generic categories (no more "mostly from two lines").
-      inputFingerprint: fingerprintOf(["movement", "blind-v2", fig.key, fig.value, prev.value, breakdown.parts.map((p) => [p.id, p.from, p.to, p.label])]),
+      // "blind-v3": the blind wording names generic categories (no more "mostly from two lines"); v3 fixed
+      // their order (interest before bank charges, licences before fuel, dues before subscriptions).
+      inputFingerprint: fingerprintOf(["movement", "blind-v3", fig.key, fig.value, prev.value, breakdown.parts.map((p) => [p.id, p.from, p.to, p.label])]),
     });
   }
   for (const c of input.checks) {

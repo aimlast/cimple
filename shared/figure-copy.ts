@@ -188,26 +188,34 @@ export function blindCostCategory(label: string, opts: { expense?: boolean; cate
   for (const [re, word] of BLIND_COST_WORDS) if (re.test(l)) return word;
   return null;
 }
+// Order matters: the first rule that matches wins, so a more specific word comes before a broader
+// one (checker r2 R2-5): "Interest on long-term debt and bank indebtedness" is interest, not bank
+// charges; "Licences, permits, tolls & fuel tax" is licences and fees, not fuel; "Dues, memberships
+// & subscriptions" is licences and fees, not technology; "Tractor leases & equipment rentals" is
+// equipment leases, not occupancy.
 const BLIND_COST_WORDS: Array<[RegExp, string]> = [
   [/wage|salar|payroll|labou?r|benefit|staff|crew|technician|driver/, "wages and benefits"],
   [/subcontract|contractor|purchased transport|carrier|owner[- ]operator/, "subcontractors"],
-  [/rent|lease|occupancy|premises|facilit/, "occupancy costs"],
+  [/(?:equipment|tractor|truck|trailer|vehicle|forklift|machinery|fleet)s?\b.*\b(?:leases?|leasing|rentals?)\b|\b(?:leases?|leasing|rentals?)\b.*\b(?:equipment|tractor|truck|trailer|vehicle|forklift|machinery|fleet)/, "equipment leases"],
+  [/\brent(?:s|al|als)?\b|\bleases?\b|occupancy|premises|facilit/, "occupancy costs"],
+  [/software/, "technology and communications"],
+  [/fuel tax|\btolls?\b|permit|licen[cs]/, "licences and fees"],
   [/fuel|diesel|gasoline/, "fuel"],
   [/professional|legal|accounting|audit|consult/, "professional fees"],
   [/insurance/, "insurance"],
   [/repair|maintenance/, "repairs and maintenance"],
   [/advertis|marketing|promotion/, "marketing"],
+  [/interest/, "interest"],
   [/bank|merchant|card (?:fees|processing)|service charge/, "bank charges"],
   [/bad debt|write.?off|doubtful/, "bad debts"],
   [/depreciat|amorti/, "depreciation"],
-  [/interest/, "interest"],
   [/utilit|hydro|electricity/, "utilities"],
+  [/\bdues\b|membership/, "licences and fees"],
   [/telephone|internet|software|subscription|computer/, "technology and communications"],
-  [/travel|vehicle|auto|mileage/, "vehicle and travel costs"],
+  [/travel|vehicle|\bauto\b|mileage/, "vehicle and travel costs"],
   [/office|postage|stationery/, "office costs"],
   [/material|parts|inventory|supplies/, "materials and supplies"],
   [/freight|shipping|courier/, "freight"],
-  [/licen[cs]|permit|dues|membership/, "licences and fees"],
   [/property tax|realty tax/, "property taxes"],
 ];
 
