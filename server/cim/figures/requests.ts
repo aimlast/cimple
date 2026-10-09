@@ -206,19 +206,19 @@ export function planQuestions(input: PlanInput): PlanResult {
 /** The deal's state the planner needs (sessions, interview, auto-ask). */
 async function dealPlanContext(dealId: string): Promise<{ createdAt: Date | null; interviewCompleted: boolean; sellerSession: boolean; discrepancies: DiscrepancyLike[]; sections: Array<{ id: string; layoutType: string; layoutData: unknown }> }> {
   const { db } = await import("../../db");
-  const { deals, interviewSessions, discrepancies, cimSections } = await import("@shared/schema");
-  const { eq } = await import("drizzle-orm");
-  const { sessionModeOf } = await import("../../interview/session-mode");
+  const { deals, discrepancies, cimSections } = await import("@shared/schema");
+  const { eq, sql } = await import("drizzle-orm");
   const [dealRows, sessionRows, discRows, sections] = await Promise.all([
     db.select({ createdAt: deals.createdAt, interviewCompleted: deals.interviewCompleted }).from(deals).where(eq(deals.id, dealId)),
-    db.select({ extractedInfo: interviewSessions.extractedInfo }).from(interviewSessions).where(eq(interviewSessions.dealId, dealId)),
+    // Only who ran each session (never the transcripts): a broker-alone session isn't the seller's line.
+    db.execute(sql`SELECT extracted_info->>'_conductedBy' AS mode FROM interview_sessions WHERE deal_id = ${dealId}`),
     db.select({ field: discrepancies.field, factKey: discrepancies.factKey, factYear: discrepancies.factYear, status: discrepancies.status }).from(discrepancies).where(eq(discrepancies.dealId, dealId)),
     db.select({ id: cimSections.id, layoutType: cimSections.layoutType, layoutData: cimSections.layoutData }).from(cimSections).where(eq(cimSections.dealId, dealId)),
   ]);
   return {
     createdAt: dealRows[0]?.createdAt ?? null,
     interviewCompleted: !!dealRows[0]?.interviewCompleted,
-    sellerSession: sessionRows.some((s: any) => sessionModeOf(s) !== "broker"),
+    sellerSession: (Array.isArray(sessionRows) ? sessionRows : (sessionRows as any)?.rows ?? []).some((s: any) => s.mode !== "broker"),
     discrepancies: discRows as DiscrepancyLike[],
     sections,
   };
