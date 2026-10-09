@@ -526,15 +526,14 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
       <span className="text-sm font-semibold truncate min-w-0">{deal?.businessName ?? " "}</span>
       {!isPhone && <span className="text-xs text-muted-foreground shrink-0 hidden md:inline">· Interview together · {VIA_LABEL[sitting?.via ?? via]}</span>}
       <div className="ml-auto flex items-center gap-2 shrink-0">
-        {sitting && !ended && pill}
-        {sitting && !ended && (isPhone ? (
-          <SellerViewChip on={screenOn} onToggle={() => void toggleScreen()} />
-        ) : (
+        {/* (On a phone the listening state and "Seller view on/off" sit, in words, at the top of the KPI block — the bar keeps the deal's name.) */}
+        {sitting && !ended && !isPhone && pill}
+        {sitting && !ended && !isPhone && (
           <label className="hidden lg:inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none" title="Shows only what the seller could see anyway — anything private to you reads 'On file — private to you'.">
             <Switch checked={screenOn} onCheckedChange={() => void toggleScreen()} aria-label="Seller can see this screen" data-testid="switch-seller-sees-screen" />
             Seller can see this screen
           </label>
-        ))}
+        )}
         {menu}
         {!isPhone && sitting && !ended && (
           <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => void popOut()} data-testid="button-pop-out">
@@ -652,6 +651,12 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
       <div className="flex-1 min-h-0 flex flex-col">
         {banners}
         <div className="px-4 py-3 border-b border-border" data-testid="board-kpi">
+          {!ended && (
+            <div className="flex flex-wrap items-center gap-2 mb-2.5" data-testid="phone-session-state">
+              {pill}
+              <SellerViewChip on={screenOn} onToggle={() => void toggleScreen()} />
+            </div>
+          )}
           <CoverageHeadline board={board} variant="phone" onFilter={(f) => setState({ view: "ask", filter: f, tab: "ask" })} activeFilter={state.filter} />
         </div>
         <div className="sticky top-0 z-10 bg-background border-b border-border grid grid-cols-3 text-sm" role="tablist">
