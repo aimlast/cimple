@@ -28,7 +28,7 @@ export async function sellerOwner(dealId: string): Promise<{ name: string | null
   const { storage } = await import("../storage");
   const [invites, members] = await Promise.all([storage.getSellerInvitesByDealId(dealId), storage.getDealMembers(dealId)]);
   for (const inv of invites) {
-    if ((inv as { revokedAt?: Date | null }).revokedAt) continue;
+    if ((inv as { status?: string | null }).status === "revoked" || !inv.token) continue;
     if (sellerLinkRights(inv, members as never).canApproveCim) return { name: inv.sellerName ?? null, email: inv.sellerEmail ?? null };
   }
   return null;
