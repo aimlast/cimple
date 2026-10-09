@@ -1,0 +1,37 @@
+{
+  "about": "Recorded AI outputs for the QA OCT copies of Pacific Coast Logistics (fictional demo data). Hand-written to mimic the figure_reasons tool output: every quote is word for word from the copy's own shared documents. Seeded by scripts/seed-figure-notes-fixtures.ts (qa_cimgen 'QA OCT —' deals only) so screenshots and checkers see the full UI at $0.",
+  "notes": [
+    {
+      "figureKey": "line:3pl-warehousing-cross-dock-and-handling|2023",
+      "kind": "movement",
+      "compareKey": "2022",
+      "text": "The company moved into its new 110,000 sq ft warehouse and cross-dock facility on October 1, 2022, so FY2023 was the first full year of the added space.",
+      "blindText": "The company moved into a larger warehouse and cross-dock facility late in FY2022, so FY2023 was the first full year of the added space.",
+      "sources": [
+        { "kind": "document", "document": "^Warehouse lease", "quote": "15-year net lease commencing October 1, 2022" },
+        { "kind": "document", "document": "^Financial statements FY2023", "quote": "leases its 110,000 square foot warehouse and cross-dock facility" }
+      ]
+    },
+    {
+      "figureKey": "line:professional-fees|2023",
+      "kind": "movement",
+      "compareKey": "2022",
+      "text": "FY2023 included one-time legal costs for a union certification vote that summer; the vote did not pass.",
+      "blindText": "FY2023 included one-time legal costs for a union certification vote that summer; the vote did not pass.",
+      "sources": [
+        { "kind": "transcript", "document": "^Zoom working session", "quote": "We spent about fifty-eight thousand on labour lawyers that year, which I'd call one-time." },
+        { "kind": "transcript", "document": "^Zoom working session", "quote": "The Labour Board ordered a vote in August. It was 38 for, 51 against. So it failed." }
+      ]
+    },
+    {
+      "figureKey": "line:facility-rent-warehouse|2023",
+      "kind": "movement",
+      "compareKey": "2022",
+      "text": "The warehouse lease began on October 1, 2022, so FY2023 carried a full year of its rent.",
+      "blindText": "A larger leased facility started late in FY2022, so FY2023 carried a full year of its rent.",
+      "sources": [
+        { "kind": "document", "document": "^Warehouse lease", "quote": "15-year net lease commencing October 1, 2022" }
+      ]
+    }
+  ]
+}

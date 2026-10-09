@@ -505,21 +505,27 @@ export async function readerCim(deal: QaDeal, reader: QaReader): Promise<ReaderC
   ]);
   const changedAt = latestChange(rows.sections);
   if (rows.missing) return { text: "", changedAt, held: true };
+  const readerDeal = codename ? { ...deal, blindCodename: codename } : deal;
+  // dd (P2): the buyer's approved figure notes join the answer context (INTEGRATION §2.2: buyerCimExtras).
+  const { buyerCimExtras } = await import("../cim/buyer-extras");
+  const extras = await buyerCimExtras(readerDeal as any, reader.accessLevel, null).catch(() => null);
   const cim = buildBuyerCim({
-    deal: codename ? { ...deal, blindCodename: codename } : deal,
+    deal: readerDeal,
     accessLevel: reader.accessLevel,
     sections: rows.sections,
     overrides: rows.overrides,
     media,
     askingPrice: listedAskingPrice(deal as Parameters<typeof listedAskingPrice>[0]),
     published: rows.published,
+    ...(extras ? { figures: extras.figures } : {}),
   });
-  const text = stripDdMarkers(buildAnswerContext(cim.sections.filter((s) => !s.locked).map((s) => ({
+  const { figureNotesContext } = await import("../cim/figures/qa-context");
+  const text = stripDdMarkers(buildAnswerContext(cim.sections.filter((s) => !s.locked && s.layoutType !== "dd_source_check").map((s) => ({
     title: s.sectionTitle,
     body: s.brokerEditedContent || s.aiDraftContent || "",
     layoutType: s.layoutType,
     layoutData: s.layoutData,
-  }))));
+  })))) + figureNotesContext(cim.figureLayer, cim.sections);
   return { text, changedAt, held: false };
 }
 

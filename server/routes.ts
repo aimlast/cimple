@@ -7525,7 +7525,9 @@ Return JSON only.`,
         } else {
           chatBaseSections = chatRows.sections;
           const chatDeal = chatCodename ? { ...deal, blindCodename: chatCodename } : deal;
-          const figExtras = figureId ? await buyerCimExtras(chatDeal, access.accessLevel, access.id) : null;
+          // dd: the buyer's own figure layer — a question about a figure resolves against it, and its
+          // approved notes join the answer context (so answers agree with the notes; P2).
+          const figExtras = await buyerCimExtras(chatDeal, access.accessLevel, access.id).catch(() => null);
           const chatCim = buildBuyerCim({ deal: chatDeal, accessLevel: access.accessLevel, sections: chatRows.sections, overrides: chatRows.overrides, media: chatMedia, askingPrice: listedAskingPrice(deal), published: chatRows.published, ...(figExtras ? { figures: figExtras.figures } : {}) });
           chatSections = chatCim.sections.filter((s) => s.layoutType !== "dd_source_check");
           chatLayer = chatCim.figureLayer;
@@ -7560,7 +7562,8 @@ Return JSON only.`,
           layoutData: s.layoutData,
         }));
       // DD overrides carry [[dd]] highlight sentinels for the renderer — plain text for the model.
-      const cimText = stripDdMarkers(buildAnswerContext(answerSections));
+      const { figureNotesContext } = await import("./cim/figures/qa-context");
+      const cimText = stripDdMarkers(buildAnswerContext(answerSections)) + figureNotesContext(chatLayer, chatSections);
       const changedAt = chatBaseSections.reduce<Date | null>((m, s) => (s.updatedAt && (!m || new Date(s.updatedAt) > m) ? new Date(s.updatedAt) : m), null);
 
       // 1. a published answer this buyer may read (scope + identity check —
