@@ -610,7 +610,7 @@ export function layoutSpecsForPrompt(layouts: readonly CimLayoutDef[] = plannerL
  * their version. `cim_sections.access_tier` is kept as history only — nothing
  * writes it and buildBuyerCim never reads it. Kept exported for old imports.
  */
-export const CIM_ACCESS_TIERS = ["teaser", "full"] as const;
+export const CIM_ACCESS_TIERS = ["teaser", "full"] as const; // access-level-literal-ok: retired section tiers (history), not buyer access levels
 /** @deprecated See CIM_ACCESS_TIERS. */
 export type CimAccessTier = (typeof CIM_ACCESS_TIERS)[number];
 

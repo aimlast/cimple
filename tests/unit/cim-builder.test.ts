@@ -83,13 +83,18 @@ test("presentation keys include logo/media keys the chatbot must skip", () => {
   for (const k of ["preparedByLogo", "businessLogo", "url", "accentColor"]) assert.ok(CIM_PRESENTATION_KEYS.has(k), k);
 });
 
-test("access levels map to CIM versions", () => {
+test("access levels map to CIM versions (new keys, and the legacy values they alias)", () => {
   assert.equal(cimModeForAccessLevel("teaser"), "blind");
   assert.equal(cimModeForAccessLevel("full"), "blind");
+  assert.equal(cimModeForAccessLevel("blind"), "blind");
   assert.equal(cimModeForAccessLevel("loi"), "normal");
+  assert.equal(cimModeForAccessLevel("named"), "normal");
   assert.equal(cimModeForAccessLevel("due_diligence"), "dd");
+  assert.equal(cimModeForAccessLevel("teaser_only"), "blind", "fail-closed second lock");
   assert.equal(cimModeForAccessLevel(null), "blind");
-  assert.ok(isBuyerAccessLevel("loi"));
+  // The compatibility re-export accepts new keys only (inputs use parseAccessLevelInput).
+  assert.ok(isBuyerAccessLevel("named"));
+  assert.ok(!isBuyerAccessLevel("loi"));
   assert.ok(!isBuyerAccessLevel("admin"));
 });
 
@@ -193,12 +198,12 @@ test("hidden and still-being-written sections never reach any buyer", () => {
   assert.deepEqual(blind.sections.map((s) => s.id), [a.id, rewriting.id]);
 });
 
-test("normal (LOI) buyers get base content and nothing internal", () => {
+test("Full CIM buyers get base content and nothing internal", () => {
   const a = section({ accessTier: "full" });
-  const out = buildBuyerCim({ deal, accessLevel: "loi", sections: [a], overrides: [] });
+  const out = buildBuyerCim({ deal, accessLevel: "named", sections: [a], overrides: [] });
   assert.equal(out.mode, "normal");
   const s = out.sections[0] as unknown as Record<string, unknown>;
-  assert.equal(s.locked, undefined, "LOI buyers are above the full tier");
+  assert.equal(s.locked, undefined, "no locked stubs (per-section locks are retired)");
   for (const k of ["aiLayoutReasoning", "aiTask", "blindTitle", "contentHistory", "accessTier", "brokerApproved"]) {
     assert.ok(!(k in s), `${k} must not reach buyers`);
   }
@@ -227,22 +232,20 @@ test("blind holds back stale sections and sections without an override", () => {
   assert.ok(!JSON.stringify(out).includes("Harbourline"), "no business name");
 });
 
-test("teaser buyers see full-tier sections as locked stubs; full buyers see them", () => {
+test("no locked stubs: every Blind CIM link (blind, legacy teaser/full) gets a section an old CIM marked full", () => {
   const open = section({ sectionTitle: "Overview" });
   const gated = section({ sectionTitle: "Financial detail", accessTier: "full", blindTitle: "Financial detail" });
   const sections = [open, gated];
   const overrides = sections.map((s) => override(s));
-  const teaser = buildBuyerCim({ deal, accessLevel: "teaser", sections, overrides });
-  const stub = teaser.sections.find((s) => s.id === gated.id)!;
-  assert.equal(stub.locked, true);
-  assert.equal(stub.layoutType, "locked");
-  assert.deepEqual(stub.layoutData, {});
-  assert.equal(stub.aiDraftContent, null);
-  assert.equal(stub.brokerEditedContent, null);
-  assert.equal(stub.sectionTitle, "Financial detail");
-  const full = buildBuyerCim({ deal, accessLevel: "full", sections, overrides });
-  assert.equal(full.sections.find((s) => s.id === gated.id)!.locked, undefined);
-  assert.equal(full.sections.find((s) => s.id === gated.id)!.aiDraftContent, `redacted ${gated.id}`);
+  for (const level of ["teaser", "full", "blind"]) {
+    const out = buildBuyerCim({ deal, accessLevel: level, sections, overrides });
+    const s = out.sections.find((x) => x.id === gated.id)!;
+    assert.equal(s.locked, undefined, level);
+    assert.notEqual(s.layoutType, "locked", level);
+    assert.equal(s.aiDraftContent, `redacted ${gated.id}`, level);
+  }
+  // A Teaser link gets nothing — not even the sections every buyer used to get.
+  assert.deepEqual(buildBuyerCim({ deal, accessLevel: "teaser_only", sections, overrides }).sections, []);
 });
 
 test("blind titles use the AI-redacted title, then the name redactor", () => {

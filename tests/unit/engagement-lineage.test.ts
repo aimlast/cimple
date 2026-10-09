@@ -123,8 +123,12 @@ test("the version shown: asked for, else the latest with reading, else the lates
   assert.equal(chooseRendition(r, [{ renditionId: "r-old" } as any], null)!.id, "r-old");
   assert.equal(chooseRendition(r, [], null)!.id, "r-new");
   assert.equal(chooseRendition([], [], null), null);
-  assert.equal(renditionLabel({ mode: "blind", variant: "full", createdAt: new Date("2026-09-12T10:00:00Z") }), "Blind · published 12 Sep");
-  assert.equal(renditionLabel({ mode: "blind", variant: "teaser", createdAt: new Date("2026-09-12T10:00:00Z") }), "Blind teaser · published 12 Sep");
+  // The registry's words (shared/access-levels.ts); a legacy {blind, teaser} rendition was the Blind CIM too — no suffix.
+  assert.equal(renditionLabel({ mode: "blind", variant: "full", createdAt: new Date("2026-09-12T10:00:00Z") }), "Blind CIM · published 12 Sep");
+  assert.equal(renditionLabel({ mode: "blind", variant: "teaser", createdAt: new Date("2026-09-12T10:00:00Z") }), "Blind CIM · published 12 Sep");
+  assert.equal(renditionLabel({ mode: "normal", variant: "full", createdAt: new Date("2026-09-12T10:00:00Z") }), "Full CIM · published 12 Sep");
+  assert.equal(renditionLabel({ mode: "dd", variant: "full", createdAt: new Date("2026-09-12T10:00:00Z") }), "Due diligence · published 12 Sep");
+  assert.equal(renditionLabel({ mode: "teaser", variant: "teaser", createdAt: new Date("2026-09-12T10:00:00Z") }), "Teaser · published 12 Sep");
 });
 test("real titles on blind pages: the buyer's words are kept as servedTitle", () => {
   const blindIdx = buildPageIndex([S("new-fin", 0, "financial_table", "Financial Performance", fin(4))], design, [{ id: "new-fin", analyticsLineage: "L-fin" }]);
@@ -201,8 +205,12 @@ test("old-tracker reading is shown on the fly (read-only): page totals on the CI
   assert.equal(finPage.changedSince, null, "old-tracker reading is not a changed version");
   assert.equal(finPage.pageLevelOnly, true);
   assert.equal(doc.openedBy, 2);
-  assert.equal(mainAccessLevel(["full", "full", "loi", "teaser", "teaser", "teaser"]), "teaser");
-  assert.equal(mainAccessLevel(["full", "teaser"]), "full", "a tie prefers the full version");
+  // Normalised (shared/access-levels.ts): legacy teaser and full are both the Blind CIM.
+  assert.equal(mainAccessLevel(["full", "full", "loi", "teaser", "teaser", "teaser"]), "blind");
+  assert.equal(mainAccessLevel(["loi", "loi", "named", "teaser"]), "named");
+  assert.equal(mainAccessLevel(["named", "blind"]), "blind", "a tie prefers the less-revealing version");
+  assert.equal(mainAccessLevel(["teaser_only", "teaser_only", "loi"]), "named", "Teaser links read no CIM and don't count");
+  assert.equal(mainAccessLevel([]), "blind");
 });
 
 console.log(`\n${passed} passed`);
