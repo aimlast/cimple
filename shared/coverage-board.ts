@@ -318,7 +318,7 @@ export const VIEW_TITLE: Record<CoverageView, string> = {
 export function viewHeader(view: CoverageView, n: number): string {
   switch (view) {
     case "ask":
-      return `${n === 1 ? "1 data point" : `${n} data points`} not on file yet — critical first. Go in any order; Cimple files answers as the seller talks.`;
+      return `${n === 1 ? "1 data point" : `${n} data points`} still to get or check — critical first. Go in any order; Cimple files answers as the seller talks.`;
     case "all":
       return "Every data point the CIM needs, section by section.";
     case "filed":
@@ -336,7 +336,7 @@ export function viewHeader(view: CoverageView, n: number): string {
 
 /** Checklist mode (no listening): the "To ask" header doesn't promise live filing. */
 export function checklistViewHeader(view: CoverageView, n: number): string {
-  if (view === "ask") return `${n === 1 ? "1 data point" : `${n} data points`} not on file yet — critical first. Add an answer, confirm what's on file, or start an interview together.`;
+  if (view === "ask") return `${n === 1 ? "1 data point" : `${n} data points`} still to get or check — critical first. Add an answer, confirm what's on file, or start an interview together.`;
   if (view === "questions") return "Questions about the numbers, and conflicts you sent to the seller.";
   return viewHeader(view, n);
 }

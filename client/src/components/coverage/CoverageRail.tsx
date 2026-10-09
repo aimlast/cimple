@@ -57,11 +57,11 @@ export function CoverageRail({
                   onClick={() => onSelect("section", s.key)}
                   data-testid={`rail-section-${s.key}`}
                   aria-current={active ? "page" : undefined}
-                  title={s.importanceReason || undefined}
+                  title={s.importanceReason ? `${s.title} — ${s.importanceReason}` : s.title}
                 >
                   <SectionRing counts={s.counts} />
                   {s.importance === "critical" ? <span className="h-1.5 w-1.5 rounded-full bg-teal shrink-0" aria-label="Critical section" /> : <span className="w-1.5 shrink-0" aria-hidden />}
-                  <span className="flex-1 min-w-0 truncate">{s.title}</span>
+                  <span className="flex-1 min-w-0 line-clamp-2 break-words leading-snug text-left">{s.title}</span>
                   <span className="tabular-nums text-xs">{onFile}/{items}</span>
                 </button>
               </li>

@@ -12,6 +12,12 @@
  * qa_cimgen's own and its name starts with "QA OCT —"; the session says live
  * filing is on. Credentials come from a file (never printed).
  *
+ * The name checked is the deal ROW's (the deal list), as clone-deal.mjs sets it. A
+ * fact edit on the copy (an Information edit, a call note) mirrors the business-name
+ * FACT back onto the row and can drop the prefix; rename it again through the app
+ * (PATCH /api/deals/:id {"businessName": "QA OCT — <full business name>"} sets both)
+ * before the next replay or a clone-deal.mjs --delete.
+ *
  *   ANTHROPIC_API_KEY=disabled npx tsx scripts/together-replay.ts --port 5906 --deal <id> \
  *     [--fixture tests/together/fixtures/lakeshore-sitting.json] [--speed 1] [--from 0] [--until 200] [--screen on|off] [--end] [--dry-run] \
  *     [--creds ~/.claude/cimple-qa-broker.txt]
@@ -84,7 +90,12 @@ async function main() {
   if (me.json?.user?.username !== "qa_cimgen") throw new Error("refusing: the signed-in broker isn't qa_cimgen");
   const deal = await call("GET", `/api/deals/${dealId}`);
   if (deal.status !== 200) throw new Error("refusing: that deal isn't qa_cimgen's");
-  if (!String(deal.json?.businessName ?? "").startsWith("QA OCT —")) throw new Error("refusing: only a 'QA OCT —' copy");
+  // The deal ROW's name (the deal list reads the column): a clone-deal.mjs copy is named "QA OCT — …"
+  // there, while GET /api/deals/:id shows the business name from the facts ("Lakeshore Home Comfort Ltd.").
+  const list = await call("GET", "/api/deals/list?includeArchived=1");
+  const row = Array.isArray(list.json) ? (list.json as Array<{ id: string; businessName?: string }>).find((d) => d.id === dealId) : undefined;
+  if (!row) throw new Error("refusing: that deal isn't in qa_cimgen's deal list");
+  if (!String(row.businessName ?? "").startsWith("QA OCT —")) throw new Error("refusing: only a 'QA OCT —' copy (the deal's own name must start with it)");
 
   // ── The session ──
   const start = await call("POST", `/api/deals/${dealId}/together/sittings`, { via });

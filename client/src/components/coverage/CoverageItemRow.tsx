@@ -366,7 +366,7 @@ export function CoverageItemRow({
         }}
         data-testid={`button-primary-${item.id}`}
       >
-        {busy && (action === "confirm" || action === "answered" || action === "file_it") ? <Loader2 className="h-3 w-3 animate-spin" /> : touch && action === "file_it" ? "File it" : touch && (action === "confirm" || action === "answered") ? <Check className="h-3.5 w-3.5" aria-label={action === "answered" ? "Answered" : "Confirmed"} /> : touch && action === "resolve" ? "Resolve" : touch && action === "add" ? "Add" : PRIMARY_LABEL[action]}
+        {busy && (action === "confirm" || action === "answered" || action === "file_it") ? <Loader2 className="h-3 w-3 animate-spin" /> : touch && action === "file_it" ? "File it" : touch && (action === "confirm" || action === "answered") ? <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5" aria-hidden />{action === "answered" ? "Answered" : "Confirm"}</span> : touch && action === "resolve" ? "Resolve" : touch && action === "add" ? "Add" : PRIMARY_LABEL[action]}
       </Button>
     );
 

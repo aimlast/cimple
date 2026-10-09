@@ -207,17 +207,26 @@ export function Interview({
             <>
               <button
                 onClick={onBack}
-                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Back"
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors shrink-0"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
-                Back
+                <span className="hidden sm:inline">Back</span>
               </button>
-              <span className="text-muted-foreground/30">·</span>
+              <span className="hidden sm:inline text-muted-foreground/30">·</span>
             </>
           )}
-          <span className="text-sm font-semibold truncate min-w-0">
-            {businessName ?? "Business Overview"}
-          </span>
+          {/* (On a phone the seller's "% collected" sits under the name, so the name keeps its room.) */}
+          <div className="min-w-0 flex flex-col">
+            <span className="text-sm font-semibold truncate min-w-0">
+              {businessName ?? "Business Overview"}
+            </span>
+            {!isBroker && sellerSummary && (
+              <span className="sm:hidden text-2xs text-muted-foreground tabular-nums leading-tight" data-testid="seller-interview-progress-phone">
+                {sellerSummary.percentCollected}% collected · {sellerSummary.quality.label}
+              </span>
+            )}
+          </div>
           {industryContext.identified && (
             <>
               <span className="hidden sm:inline text-muted-foreground/30">·</span>
@@ -251,7 +260,7 @@ export function Interview({
             )}
             {/* Seller: "{p}% collected · {quality}" and "What we've covered" */}
             {!isBroker && sellerSummary && (
-              <div className="flex items-center gap-2 min-w-0 shrink-0" data-testid="seller-interview-progress">
+              <div className="hidden sm:flex items-center gap-2 min-w-0 shrink-0" data-testid="seller-interview-progress">
                 <span className="text-2xs text-muted-foreground tabular-nums">
                   <span className="text-foreground">{sellerSummary.percentCollected}% collected</span>
                   <span className="hidden sm:inline text-muted-foreground/80"> · {sellerSummary.quality.label}</span>
@@ -390,7 +399,12 @@ export function Interview({
       {/* ── The seller's "What we've covered" (statuses only — never a value) ── */}
       {!isBroker && sellerToken && (
         <Sheet open={coveredOpen} onOpenChange={setCoveredOpen}>
-          <SheetContent side={isPhone ? "bottom" : "right"} className={isPhone ? "max-h-[85vh] overflow-y-auto rounded-t-xl" : "w-[26rem] sm:max-w-[26rem] overflow-y-auto"}>
+          <SheetContent
+            side={isPhone ? "bottom" : "right"}
+            className={isPhone ? "max-h-[85vh] overflow-y-auto rounded-t-xl" : "w-[26rem] sm:max-w-[26rem] overflow-y-auto"}
+            // Focus the sheet itself, not its first button (the Quality ⓘ — its tooltip would open over the title).
+            onOpenAutoFocus={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement | null)?.focus?.(); }}
+          >
             <SheetHeader className="text-left">
               <SheetTitle>What we've covered</SheetTitle>
               <SheetDescription>Your business overview, section by section.</SheetDescription>

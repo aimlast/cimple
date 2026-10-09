@@ -334,7 +334,7 @@ export function CoveragePanel({ dealId, board }: { dealId: string; board: Covera
               >
                 {isOpen ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />}
                 <SectionRing counts={s.counts} size={12} />
-                <span className="flex-1 min-w-0 truncate text-left">{s.title}</span>
+                <span className="flex-1 min-w-0 line-clamp-2 break-words leading-snug text-left">{s.title}</span>
                 {s.importance === "critical" && <span className="text-[9px] uppercase tracking-wider text-teal">Critical</span>}
                 <span className="tabular-nums text-muted-foreground">{onFile}/{items}</span>
               </button>
@@ -366,9 +366,9 @@ export function CoverageOutline({ board, actions }: { board: CoverageBoard; acti
         {orderedSections(board).map((s) => {
           const { onFile, items } = sectionOnFile(s);
           return (
-            <li key={s.key} className="flex items-center gap-2 min-w-0 text-xs" title={s.importanceReason || undefined}>
+            <li key={s.key} className="flex items-center gap-2 min-w-0 text-xs" title={s.importanceReason ? `${s.title} — ${s.importanceReason}` : s.title}>
               <SectionRing counts={s.counts} size={14} />
-              <span className="truncate flex-1 min-w-0 text-muted-foreground">{s.title}</span>
+              <span className="line-clamp-2 break-words leading-snug flex-1 min-w-0 text-muted-foreground">{s.title}</span>
               <span className="tabular-nums shrink-0">{onFile}/{items}</span>
             </li>
           );
@@ -423,8 +423,8 @@ export function CoverageSeller({ board }: { board: CoverageBoard }) {
               >
                 {isOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
                 <SectionRing counts={s.counts} />
-                <span className="flex-1 min-w-0 truncate text-left">{s.title}</span>
-                <span className="text-xs text-muted-foreground tabular-nums">{onFile} of {items} on file</span>
+                <span className="flex-1 min-w-0 line-clamp-2 break-words leading-snug text-left">{s.title}</span>
+                <span className="text-xs text-muted-foreground tabular-nums shrink-0">{onFile} of {items} on file</span>
               </button>
               {isOpen && (
                 <ul className="px-3 pb-3 pl-10 space-y-1.5">
