@@ -91,7 +91,8 @@ export interface BrokerGlView {
   payDoc: { slips: string; short: string; box: string | null };
   demo: boolean;
   /** What buyers see now (the broker's published snapshot) and what changed since. */
-  buyers: { publishedAt: string | null; versions: { dd: boolean; normal: boolean; blind: boolean } | null; changes: string[] };
+  /** changes: what "Update what buyers see" would change; notices: what buyers see now that updating wouldn't (the CIM's bridge disagrees). */
+  buyers: { publishedAt: string | null; versions: { dd: boolean; normal: boolean; blind: boolean } | null; changes: string[]; notices: string[] };
 }
 
 const iso = (d: unknown) => (d ? new Date(d as string).toISOString() : null);
@@ -199,11 +200,11 @@ export async function buildBrokerView(c: GlDealContext): Promise<BrokerGlView> {
   const covered = new Set(links.filter((k) => k.state === "confirmed" || k.state === "proposed").map((k) => k.account ?? "").filter(Boolean));
   const totals = c.ready.length ? await store.dealAccountTotals(c.dealId, Array.from(c.readyIds)) : [];
   const pub = tr.published as { v?: number; versions?: { dd: boolean; normal: boolean; blind: boolean } } | null;
-  let buyers: BrokerGlView["buyers"] = { publishedAt: null, versions: null, changes: [] };
+  let buyers: BrokerGlView["buyers"] = { publishedAt: null, versions: null, changes: [], notices: [] };
   if (pub && pub.v === 1) {
     const { evidenceChangeCount } = await import("./evidence");
-    const ch = await evidenceChangeCount(c.dealId).catch(() => ({ publishedAt: iso(tr.publishedAt), changes: [] as string[] }));
-    buyers = { publishedAt: ch.publishedAt, versions: pub.versions ?? null, changes: ch.changes };
+    const ch = await evidenceChangeCount(c.dealId).catch(() => ({ publishedAt: iso(tr.publishedAt), changes: [] as string[], notices: [] as string[] }));
+    buyers = { publishedAt: ch.publishedAt, versions: pub.versions ?? null, changes: ch.changes, notices: ch.notices };
   }
   return {
     analysis: { present: analyses.some((a) => a.status === "completed" || a.status === "reviewed") },

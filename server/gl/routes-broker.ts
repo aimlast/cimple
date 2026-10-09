@@ -651,7 +651,7 @@ export function registerGlBrokerRoutes(app: Express): void {
       const changes = await evidenceChangeCount(dealId);
       const from = source === "preview" ? (changes.publishedAt ? "published" : "live") : (source as "live" | "published");
       const payload = await buildEvidence(dealId, mode as "dd" | "normal" | "blind", from);
-      res.json({ payload, publishedAt: changes.publishedAt, changes: changes.changes });
+      res.json({ payload, publishedAt: changes.publishedAt, changes: changes.changes, notices: changes.notices });
     } catch (err) {
       fail(res, "load the evidence")(err);
     }

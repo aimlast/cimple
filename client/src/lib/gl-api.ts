@@ -110,7 +110,8 @@ export interface BrokerGlData {
   payDoc?: { slips: string; short: string; box: string | null };
   demo?: boolean;
   /** What buyers see now and what changed since the broker published. */
-  buyers?: { publishedAt: string | null; versions: GlVersions | null; changes: string[] };
+  /** notices: what buyers see now that "Update what buyers see" wouldn't change (the CIM's earnings bridge disagrees). */
+  buyers?: { publishedAt: string | null; versions: GlVersions | null; changes: string[]; notices?: string[] };
 }
 
 export interface GlVersions { dd: boolean; normal: boolean; blind: boolean }

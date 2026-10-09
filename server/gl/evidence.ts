@@ -789,7 +789,8 @@ export async function publishPreview(dealId: string): Promise<PublishPreview> {
     if (stale) warnings.push(`Your CIM's "${stale}" was written before the latest financial analysis — regenerate it so the bridge and the note show the same add-backs.`);
   }
   const pub = s.tracing.published as GlPublishedEvidence | null;
-  const changes = pub && pub.v === 1 ? await changesSincePublished(s, pub) : [];
+  // The bridge situation is already a warning here: only the changes are listed.
+  const changes = pub && pub.v === 1 ? (await changesSincePublished(s, pub)).changes : [];
   const done = gate.state === "done" || gate.state === "waived";
   const blocked = !done
     ? `Finish 'Add-backs in the books' first (${gate.toGo} of ${gate.total} to go), or go ahead without the ledger.`
@@ -865,21 +866,27 @@ export async function bridgeMismatch(dealId: string, snap: GlPublishedEvidence):
   return kept ? { title: kept, keptCopy: true } : null;
 }
 
-/** What changed since the broker published: what tightening took away, and what waits for "Update what buyers see". */
-async function changesSincePublished(s: EvidenceState, pub: GlPublishedEvidence): Promise<string[]> {
+/**
+ * What changed since the broker published — what tightening took away, and
+ * what waits for "Update what buyers see" — and, apart, NOTICES: what buyers
+ * see now that updating wouldn't change (the CIM's own earnings bridge
+ * disagrees: the note held back, the DD page's opening line).
+ */
+async function changesSincePublished(s: EvidenceState, pub: GlPublishedEvidence): Promise<{ changes: string[]; notices: string[] }> {
   const tight = tightenPublished(pub, tightenCurrentFrom(s));
   const out = [...tight.changes];
+  const notices: string[] = [];
   if (pub.versions.normal || pub.versions.blind || pub.versions.dd) {
     const bridge = await bridgeMismatch(s.dealId, tight.snapshot).catch(() => null);
     const where = bridge?.keptCopy ? `the version of your CIM they read ("${bridge.title}")` : bridge ? `your CIM's "${bridge.title}"` : "";
     const fix = bridge?.keptCopy ? "publish the updated CIM" : "regenerate it, then update what buyers see";
     if (bridge && (pub.versions.normal || pub.versions.blind)) {
-      out.push(bridge.keptCopy
+      notices.push(bridge.keptCopy
         ? `The Full and Blind note is held back from buyers: ${where} shows other add-backs or amounts. It appears once you publish the updated CIM.`
         : `The Full and Blind note is held back from buyers: ${where} shows different add-backs or amounts. Regenerate it, then update what buyers see.`);
     }
     if (bridge && pub.versions.dd) {
-      out.push(`Due-diligence buyers read the add-backs page right after ${where}, which shows other add-backs or amounts — the page tells them its amounts are the current ones. To show one set of numbers, ${fix}.`);
+      notices.push(`Due-diligence buyers read the add-backs page right after ${where}, which shows other add-backs or amounts — the page tells them its amounts are the current ones. To show one set of numbers, ${fix}.`);
     }
   }
   const { snapshot: live } = await snapshotFromState(s, { versions: pub.versions, leaveOut: pub.leaveOut, publishedBy: null });
@@ -893,7 +900,7 @@ async function changesSincePublished(s: EvidenceState, pub: GlPublishedEvidence)
       if (n(p) !== n(l)) out.push(`${l.label}: the entries changed — buyers see the earlier list until you update.`);
     }
   }
-  return out;
+  return { changes: out, notices };
 }
 
 const GL_STATUS_WORD: Record<GlBuyerStatus, string> = { found: "Found in the books", partly_found: "Partly found", not_found: "Not found", document: "Shown by a document", statement: "From the statements" };
@@ -940,11 +947,11 @@ export async function unpublishEvidence(dealId: string): Promise<void> {
   });
 }
 
-/** The KPI cell's "{k} changes since you published". */
-export async function evidenceChangeCount(dealId: string): Promise<{ publishedAt: string | null; changes: string[] }> {
+/** The KPI cell's "{k} changes since you published", and the notices shown beside them (never counted as changes). */
+export async function evidenceChangeCount(dealId: string): Promise<{ publishedAt: string | null; changes: string[]; notices: string[] }> {
   const s = await loadEvidenceState(dealId);
   const pub = s.tracing.published as GlPublishedEvidence | null;
-  if (!pub || pub.v !== 1) return { publishedAt: null, changes: [] };
-  return { publishedAt: pub.publishedAt, changes: await changesSincePublished(s, pub) };
+  if (!pub || pub.v !== 1) return { publishedAt: null, changes: [], notices: [] };
+  return { publishedAt: pub.publishedAt, ...(await changesSincePublished(s, pub)) };
 }
 

@@ -211,7 +211,7 @@ async function main() {
       console.log(p.keptBridgeMismatch
         ? "  Publish the updated CIM first (CIM tab → Publish update), then Financials → Add-backs in the books → Show to buyers…"
         : "  Regenerate that section first, then Financials → Add-backs in the books → Show to buyers…");
-      console.log("  (Or re-run the seed with --accept-older-bridge to show the due-diligence page anyway — it opens by saying its amounts are the current ones.)");
+      console.log("  (To show the due-diligence page anyway — it then opens by saying its amounts are the current ones — use Show to buyers…, or re-seed: --remove --apply, then --apply --publish --accept-older-bridge.)");
       console.log(`Done (not published). Undo with: --deal ${deal.id} --remove --apply`);
       return;
     }

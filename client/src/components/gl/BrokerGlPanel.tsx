@@ -262,6 +262,7 @@ function AddbacksView({ dealId, data, onOpen, onSend, onLedger, onPublish }: { d
   const gateDone = data.gate?.state === "done" || data.gate?.state === "waived";
   const shownAt = data.buyers?.publishedAt ?? null;
   const changes = data.buyers?.changes ?? [];
+  const notices = data.buyers?.notices ?? [];
   return (
     <div className="space-y-3" data-testid="gl-addbacks-view">
       {shownAt && (
@@ -274,6 +275,11 @@ function AddbacksView({ dealId, data, onOpen, onSend, onLedger, onPublish }: { d
                 <ul className="mt-1 list-disc pl-4 space-y-0.5">{changes.map((c) => <li key={c}>{c}</li>)}</ul>
               </details>
             )}
+            {notices.map((n) => (
+              <p key={n} className="mt-1.5 flex gap-1.5 text-xs text-amber-600 dark:text-amber-400" data-testid="gl-shown-notice">
+                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> <span>{n}</span>
+              </p>
+            ))}
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" className="h-8 text-xs" onClick={onPublish} data-testid="gl-update-buyers">Update what buyers see…</Button>
@@ -402,7 +408,7 @@ function LedgersView({ dealId, data }: { dealId: string; data: BrokerGlData }) {
         {(data.unread.length > 0) && (
           <div className="px-4 py-3 border-t border-border space-y-2" data-testid="gl-unread">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              {data.unread.every((u) => u.reason === "maybe") ? "Might one of these be the general ledger?" : "Ledgers Cimple hasn't read yet"}
+              {!data.unread.every((u) => u.reason === "maybe") ? "Ledgers Cimple hasn't read yet" : data.unread.length === 1 ? "Might this be the general ledger?" : "Might one of these be the general ledger?"}
             </p>
             {data.unread.map((u) => (
               <div key={u.documentId} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between" data-testid={`gl-unread-${u.reason}`}>

@@ -273,8 +273,12 @@ await test("GL-R1-05: buyers still reading a kept copy whose bridge shows other 
   await publishEvidence(dealId, { versions: { dd: true, normal: true, blind: false }, leaveOut: [] }, "b");
   const { evidenceChangeCount } = await import("../../server/gl/evidence");
   const ch = await evidenceChangeCount(dealId);
-  assert.ok(ch.changes.some((c) => /Full and Blind note is held back.*the version of your CIM they read/.test(c)), ch.changes.join(" | "));
-  assert.ok(ch.changes.some((c) => /Due-diligence buyers read the add-backs page right after the version of your CIM they read.*publish the updated CIM/.test(c)), ch.changes.join(" | "));
+  // Notices, not changes: "Update what buyers see" wouldn't change them (the KPI never counts them as changes).
+  assert.ok(ch.notices.some((c) => /Full and Blind note is held back.*the version of your CIM they read/.test(c)), ch.notices.join(" | "));
+  assert.ok(ch.notices.some((c) => /Due-diligence buyers read the add-backs page right after the version of your CIM they read.*publish the updated CIM/.test(c)), ch.notices.join(" | "));
+  assert.ok(!ch.changes.some((c) => /held back|Due-diligence buyers read/.test(c)), ch.changes.join(" | "));
+  const again = await publishPreview(dealId);
+  assert.ok(!again.changes.some((c) => /held back|Due-diligence buyers read/.test(c)), "the dialog says it once (in its warnings)");
   await store.updateTracing(dealId, { published: pubBefore } as any);
   const m = await bridgeMismatch(dealId, (await snapshotFromState(await loadEvidenceState(dealId), { versions: { dd: true, normal: true, blind: true }, leaveOut: [], publishedBy: null })).snapshot);
   assert.deepEqual(m, { title: "EBITDA Normalization & Adjustments", keptCopy: true });

@@ -60,6 +60,7 @@ export function GlKpiStrip({ data, onOpen, onBuyers }: { data: BrokerGlData; onO
 
   const shownAt = data.buyers?.publishedAt ?? data.tracing?.publishedAt ?? null;
   const changes = data.buyers?.changes.length ?? 0;
+  const notices = data.buyers?.notices?.length ?? 0;
   const v = data.buyers?.versions;
   const versionsWords = v ? [v.dd ? "Due diligence" : "", v.normal ? "Full" : "", v.blind ? "Blind" : ""].filter(Boolean).join(" · ") : undefined;
 
@@ -77,7 +78,7 @@ export function GlKpiStrip({ data, onOpen, onBuyers }: { data: BrokerGlData; onO
         label="Buyers"
         className="col-span-2 lg:col-span-1"
         tone={shownAt ? "good" : "muted"}
-        sub={shownAt ? (changes ? `${changes} change${changes === 1 ? "" : "s"} since — update what they see` : versionsWords) : "You choose what buyers see once the review is done"}
+        sub={shownAt ? (changes ? `${changes} change${changes === 1 ? "" : "s"} since — update what they see` : notices ? "One thing to check — see Add-backs" : versionsWords) : "You choose what buyers see once the review is done"}
         onClick={onBuyers}
         testId="gl-kpi-buyers"
       >
