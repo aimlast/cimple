@@ -177,7 +177,7 @@ function CallRow({ entry: e, rank, flags, ranOutAt, selected, onClick, onHover }
         <span className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 text-sm font-medium leading-5 text-foreground">{e.name}</span>
           {e.company && <span className="min-w-0 truncate text-xs text-muted-foreground">{e.company}</span>}
-          <span className="ml-auto shrink-0"><StatusChip status={e.status} label={e.statusLabel} /></span>
+          <span className="ml-auto flex shrink-0"><StatusChip status={e.status} label={e.statusLabel} className="py-px" /></span>
         </span>
         <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs leading-4 text-muted-foreground">
           <span className="min-w-0 truncate">{e.dealName}</span>

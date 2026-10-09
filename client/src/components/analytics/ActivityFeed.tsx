@@ -266,7 +266,8 @@ export function ActivityFeed(props: ActivityFeedProps) {
       </div>
       <div className="flex items-center gap-2 md:hidden">
         <Button size="sm" variant="outline" className={cn("h-8 gap-1.5 text-xs", (kind !== "all" || props.deal) && "border-teal/40 text-teal")} onClick={() => setSheet(true)} data-testid="activity-filters-open">
-          <SlidersHorizontal className="h-3.5 w-3.5" /> Filters{(kind !== "all" ? 1 : 0) + (props.deal ? 1 : 0) ? ` · ${(kind !== "all" ? 1 : 0) + (props.deal ? 1 : 0)}` : ""}
+          {/* On a deal the shell already has a "Filters" button (Buyers, When): this one is only the kind. */}
+          <SlidersHorizontal className="h-3.5 w-3.5" /> {scope === "deal" ? "What happened" : "Filters"}{(kind !== "all" ? 1 : 0) + (props.deal ? 1 : 0) ? ` · ${(kind !== "all" ? 1 : 0) + (props.deal ? 1 : 0)}` : ""}
         </Button>
         <span className="truncate text-xs text-muted-foreground">
           {[props.deal ? dealOptions.find((d) => d.id === props.deal)?.name : null, kind !== "all" ? kinds.find((k) => k.key === kind)?.label : null].filter(Boolean).join(" · ")}

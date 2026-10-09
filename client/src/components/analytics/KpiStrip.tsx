@@ -210,8 +210,10 @@ function KpiCell({ kpi, size, strip, wide }: { kpi: Kpi; size: "md" | "sm"; stri
       </span>
       <span
         className={cn(
-          "mt-1 font-mono font-medium leading-none tabular-nums sm:mt-1.5",
+          "mt-1 font-mono font-medium tabular-nums sm:mt-1.5",
           size === "sm" ? "text-[20px] sm:text-[22px]" : "text-[20px] sm:text-[28px]",
+          // After the size: tailwind-merge drops a line-height that comes before a font size.
+          "leading-none",
           alert ? "text-teal" : "text-foreground",
         )}
         data-testid={`kpi-${kpi.id}-value`}
