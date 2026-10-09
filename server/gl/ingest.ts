@@ -261,7 +261,12 @@ export async function startLedgerRead(
     } as Partial<GlLedger>);
   }
   if (!ledger) throw new Error("couldn't create the ledger row");
-  await d.updateDocument(doc.id, { status: "parsing", subcategory: "general_ledger" } as Partial<Document>);
+  // Filed as a ledger (and as financials when it came in uncategorised).
+  await d.updateDocument(doc.id, {
+    status: "parsing",
+    subcategory: "general_ledger",
+    ...(!doc.category || doc.category === "other" ? { category: "financials" } : {}),
+  } as Partial<Document>);
   emitGlLedgerStatusChanged(doc.id);
   void enqueueLedgerRead(ledger.id).catch((err) => console.error(`[gl] ledger read ${ledger!.id} failed:`, err));
   return ledger;

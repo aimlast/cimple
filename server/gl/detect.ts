@@ -199,11 +199,16 @@ export function basisFromTitleRows(texts: string[]): GlBasis | null {
  */
 export function detectLayout(rows: GlRawRow[]): DetectResult | null {
   let best: { sheet: string | null; rows: GlRawRow[]; header: HeaderCandidate } | null = null;
+  const found: Array<{ sheet: string | null; fingerprint: string }> = [];
   for (const g of groupBySheet(rows)) {
     const header = findHeader(g.rows);
+    if (header) found.push({ sheet: g.sheet, fingerprint: rowFingerprint(g.rows[header.index].cells) });
     if (header && (!best || header.score > best.header.score)) best = { ...g, header };
   }
   if (!best) return null;
+  // A workbook with one sheet per year (same headings on each): read every such sheet.
+  const bestFp = rowFingerprint(best.rows[best.header.index].cells);
+  const sameOnOthers = found.filter((f) => f.fingerprint === bestFp).length > 1;
   const { rows: sheetRows, header } = best;
   const headerRow = sheetRows[header.index];
   const columns = columnsFrom(headerRow, header.roles);
@@ -255,7 +260,7 @@ export function detectLayout(rows: GlRawRow[]): DetectResult | null {
     accountMode,
     dateOrder,
     amountMode,
-    sheet: best.sheet,
+    sheet: sameOnOthers ? null : best.sheet,
   };
 
   // Dry parse of what follows: date + amount on most non-heading rows, and some accounts.

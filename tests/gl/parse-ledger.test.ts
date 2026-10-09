@@ -128,4 +128,32 @@ await test("Excel date cells read the same in every time zone", async () => {
   assert.ok(entries.every((e) => /^2024-\d{2}-\d{2}$/.test(e.txnDate)));
 });
 
+await test("one sheet per year (same headings) — every sheet is read; a cover sheet is not", async () => {
+  const XLSX = await import("xlsx");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const header = ["Date", "Account", "Name", "Description", "Debit", "Credit"];
+  const sheet = (y: number) => [["Brightwater Plumbing & Heating Ltd."], [`General Ledger ${y}`], [], header,
+    [`${y}-01-03`, "Vehicle - Owner", "Lexus Financial", "Lease", 1150, null],
+    [`${y}-02-03`, "Rent", "Holdings", "Rent", 4500, null],
+    [`${y}-03-03`, "Sales", "Customer", "Invoice", null, 900]];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Read me first"], ["Exported from accounting software"]]), "Cover");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheet(2023)), "2023");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheet(2024)), "2024");
+  const p = path.join(os.tmpdir(), `gl-two-sheets-${process.pid}.xlsx`);
+  fs.writeFileSync(p, XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
+  const peek = await peekRows(p, "xlsx");
+  const det = detectLayout(peek)!;
+  assert.equal(det.layout.sheet, null, "every sheet with these headings");
+  const parser = new LedgerParser(det.layout);
+  const entries: GlParsedEntry[] = [];
+  await readLedgerRows(p, "xlsx", (rows) => { for (const r of rows) parser.push(r); entries.push(...parser.take()); });
+  entries.push(...parser.take(true));
+  assert.equal(entries.length, 6);
+  assert.deepEqual(Array.from(new Set(entries.map((e) => e.sheet))).sort(), ["2023", "2024"]);
+  assert.ok(new Set(entries.map((e) => e.rowNo)).size === 6, "row numbers stay unique across sheets");
+  fs.rmSync(p, { force: true });
+});
+
 done("parse-ledger");
