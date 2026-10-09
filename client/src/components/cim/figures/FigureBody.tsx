@@ -68,7 +68,7 @@ function CheckBlock({ fig, check, broker }: { fig: FigureView; check: FigureChec
           <span style={{ color: SOFT }}>{COL_THIS_CIM}</span>
           <span className="text-right tabular-nums font-medium" style={{ color: INK }}>{fig.display}</span>
           {ownCitation && <span className="col-span-2"><FigureCitation docRef={ownCitation} /></span>}
-          <span style={{ color: SOFT }}>{check.kindLabel}</span>
+          <span style={{ color: SOFT }}>{check.kindLabel}{broker && check.corrected && <span className="ml-1 text-[10px]" style={{ color: MUTED }}>· your figure</span>}</span>
           <span className="text-right tabular-nums font-medium" style={{ color: INK }}>{check.value}</span>
           {check.citation && <span className="col-span-2"><FigureCitation docRef={check.citation} /></span>}
           {check.sourceLabel && (

@@ -45,7 +45,7 @@ export function CheckDialogs({ dealId, state, onClose }: { dealId: string; state
         const n = Number(value.replace(/[$,\s]/g, ""));
         if (!Number.isFinite(n)) { setError("Enter the figure as the document shows it, e.g. 86000."); return; }
         await putCheck.mutateAsync({ checkKey: c.checkKey, state: "corrected", correctedValue: n });
-        toast({ title: "Corrected", description: "Cimple worked the check out again with your figure." });
+        toast({ title: "Corrected", description: "Cimple is checking it again with your figure. A difference stays hidden from buyers until you show it." });
       }
       onClose();
     } catch (err) {
@@ -62,7 +62,7 @@ export function CheckDialogs({ dealId, state, onClose }: { dealId: string; state
             <DialogTitle>{isLeave ? "Leave this comparison out?" : `What does the ${record} say?`}</DialogTitle>
             <DialogDescription>
               {c.label}, FY{c.year}: this CIM {money(c.thisCim)}, {c.otherLabel.toLowerCase()} {money(c.other)}.
-              {isLeave ? " Due-diligence buyers won't see it. The reason stays with you." : " Cimple compares the figure you enter instead and checks the difference again."}
+              {isLeave ? " Due-diligence buyers won't see it. The reason stays with you." : " Cimple compares the figure you enter instead, looks for it in the document and checks the difference again. Buyers don't see a difference until you show it."}
             </DialogDescription>
           </DialogHeader>
           {isLeave ? (

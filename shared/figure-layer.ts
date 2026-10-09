@@ -146,7 +146,10 @@ export interface FigureCheckInput {
   located: boolean;
   /** "Grouped differently on the tax return": no comparable figure (D4); never a check. */
   blank?: "grouped";
+  /** "corrected" = the broker corrected the figure read and hasn't shown the check (a correction never shows it). */
   decision: "shown" | "left_out" | "corrected" | null;
+  /** `other` is the broker's figure ("Cimple read it wrong"), located in the document like any other. */
+  corrected?: true;
   /** When the CIM figure differs from the statements as issued and D6 explains it. */
   asIssuedText?: string | null;
   baseCitation: FigureDocRef | null;
@@ -212,6 +215,8 @@ export interface FigureCheckView {
   baseCitation?: FigureDocRef | null;
   /** Broker preview only. */
   preview?: "not_shown" | "needs_checking" | "cim_mismatch";
+  /** Broker preview only: the other record's figure is the one the broker entered ("Your figure"). */
+  corrected?: true;
 }
 
 export interface FigurePart {
@@ -380,8 +385,10 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
     if (c.kind === "cim_statements" && !c.regrouped && !broker) return null; // a mismatch is broker-only
     const state = checkState({ size: c.size, regrouped: c.regrouped, approvedReason: approvedDifference(c) });
     const cimMis = mismatch.has(c.figureKey);
+    // D9: matches and worked-out groupings show once the checks are on; any other difference only
+    // once the broker shows it — a correction ("Cimple read it wrong") is not a decision to show.
     const buyerSees = ddOn && !cimMis && c.located && c.decision !== "left_out" &&
-      (state === "match" || state === "regrouped" || c.decision === "shown" || c.decision === "corrected");
+      (state === "match" || state === "regrouped" || c.decision === "shown");
     if (!broker && !buyerSees) return null;
     const diff = Math.abs(c.other) - Math.abs(c.base);
     const differs = !agrees(c.size);
@@ -406,6 +413,7 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
       citation: c.otherCitation,
       baseCitation: c.baseCitation,
       ...(preview ? { preview } : {}),
+      ...(broker && c.corrected ? { corrected: true as const } : {}),
     };
   };
 

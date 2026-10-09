@@ -373,10 +373,13 @@ export function registerFigureRoutes(app: Express): void {
         const refusal = showRefusal(raw, body.checkKey);
         if (refusal) return res.status(422).json({ field: "state", message: refusal });
       }
+      // "Show" keeps a correction the broker made ("Cimple read it wrong"); a new correction
+      // resets any earlier "Show" — the corrected difference waits for its own Show (D9).
+      const correctedValue = body.state === "corrected" ? body.correctedValue! : body.state === "shown" && check.corrected ? check.other : null;
       await withFigureLock(deal.id, () => putDecision(deal.id, {
         checkKey: body.checkKey, state: body.state, reason: body.state === "left_out" ? body.reason!.trim() : null,
-        correctedValue: body.state === "corrected" ? body.correctedValue! : null,
-        valuesSnapshot: { base: check.base, other: check.other }, by: brokerOf(req),
+        correctedValue,
+        valuesSnapshot: { base: check.base, other: body.state === "corrected" ? body.correctedValue! : check.other }, by: brokerOf(req),
       }));
       invalidateFigureRaw(deal.id);
       scheduleFigureRefresh(deal.id, "check decision");
@@ -401,7 +404,7 @@ export function registerFigureRoutes(app: Express): void {
           const refusal = showRefusal(raw, key);
           if (refusal) { refused.push({ key, reason: refusal }); continue; }
           const c = raw.checks.checks.find((x) => x.key === key)!;
-          await putDecision(deal.id, { checkKey: key, state: "shown", reason: null, correctedValue: null, valuesSnapshot: { base: c.base, other: c.other }, by: brokerOf(req) });
+          await putDecision(deal.id, { checkKey: key, state: "shown", reason: null, correctedValue: c.corrected ? c.other : null, valuesSnapshot: { base: c.base, other: c.other }, by: brokerOf(req) });
           shown++;
         }
       });
@@ -436,7 +439,7 @@ export function registerFigureRoutes(app: Express): void {
           const refusal = showRefusal(raw, key);
           if (refusal) { refused.push({ key, reason: refusal }); continue; }
           const c = raw.checks.checks.find((x) => x.key === key)!;
-          await putDecision(deal.id, { checkKey: key, state: "shown", reason: null, correctedValue: null, valuesSnapshot: { base: c.base, other: c.other }, by }, tx);
+          await putDecision(deal.id, { checkKey: key, state: "shown", reason: null, correctedValue: c.corrected ? c.other : null, valuesSnapshot: { base: c.base, other: c.other }, by }, tx);
           shown++;
         }
         let leftOut = 0;

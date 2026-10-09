@@ -200,7 +200,7 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
     const refusal = mismatch ? "Your CIM differs from the statements on this figure. Fix it first."
       : !c.located && !agrees(c.size) ? "Cimple couldn't find it in the document."
       : null;
-    const shownToBuyers = ddOn && !mismatch && c.located && c.decision !== "left_out" && (state === "match" || state === "regrouped" || c.decision === "shown" || c.decision === "corrected");
+    const shownToBuyers = ddOn && !mismatch && c.located && c.decision !== "left_out" && (state === "match" || state === "regrouped" || c.decision === "shown");
     const missing = raw.checks.notLocated.find((n) => n.checkKey === c.key);
     wsChecks.push({
       checkKey: c.key,
@@ -219,6 +219,7 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
       size: c.size,
       located: c.located,
       decision: c.decision,
+      corrected: !!c.corrected,
       leftOutReason: input.leftOutReasons?.[c.key] ?? null,
       regroupedText: c.regroupedText,
       note: note ? workspaceNote(note, raw) : null,

@@ -200,11 +200,15 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
       const compareKey = `${kind}:${other.documentId}`;
       const key = `${fig.key}~${compareKey}`;
       const decision = decisions.get(key) ?? null;
-      const corrected = decision?.state === "corrected" && decision.correctedValue !== null && near(decision.valuesSnapshot.base, base) ? decision.correctedValue : null;
+      // "Cimple read it wrong": the broker's figure replaces the one read — kept through a later
+      // "Show" (the same row) while the statements' figure it was entered against still stands.
+      const corrected = decision && decision.state !== "left_out" && decision.correctedValue !== null && near(decision.valuesSnapshot.base, base) ? decision.correctedValue : null;
       const value = corrected ?? raw;
       const size = sizeOf(base, value, revenue);
-      const oLoc = find(other, raw);
-      const located = corrected !== null ? true : !!oLoc && (!baseIsStatements || !!baseLoc);
+      // The broker's figure is located like any other: never "found in the tax return" unless the
+      // tax return's text has it (else it needs checking and can't be shown — D11).
+      const oLoc = find(other, value);
+      const located = !!oLoc && (!baseIsStatements || !!baseLoc);
       let regrouped = false;
       let regroupedText: string | null = null;
       if (!agrees(size)) {
@@ -219,11 +223,13 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
           checks.push({
             key, figureKey: fig.key, compareKey, kind, otherLabel: otherRecordLabel(kind, other.taxForm),
             base, other: value, sourceLabel: null, size, regrouped: false, regroupedText: null, cimMismatch, located, blank: "grouped",
-            decision: null, baseCitation, otherCitation: sourceRef(other, { page: oLoc?.page ?? null, value: raw }),
+            decision: null, ...(corrected !== null ? { corrected: true } : {}), baseCitation, otherCitation: sourceRef(other, { page: oLoc?.page ?? null, value }),
           });
           continue;
         }
       }
+      // A correction is not a decision to show: a corrected figure that still differs needs its own
+      // "Show to buyers" (D9) — only matches and worked-out groupings show once the checks are on.
       const decided = !decision ? null
         : decision.state === "left_out" ? "left_out"
         : decision.state === "corrected" ? (corrected !== null ? "corrected" : null)
@@ -231,10 +237,10 @@ export function buildChecks(input: BuildChecksInput): ChecksResult {
       checks.push({
         key, figureKey: fig.key, compareKey, kind, otherLabel: otherRecordLabel(kind, other.taxForm),
         base, other: value, sourceLabel: oLoc?.sourceLabel ?? null, size, regrouped, regroupedText, cimMismatch, located,
-        decision: decided, baseCitation, otherCitation: sourceRef(other, { page: oLoc?.page ?? null, value: raw }),
+        decision: decided, ...(corrected !== null ? { corrected: true } : {}), baseCitation, otherCitation: sourceRef(other, { page: oLoc?.page ?? null, value }),
       });
       if (!agrees(size) && !located && !cimMismatch) {
-        notLocated.push({ checkKey: key, figureKey: fig.key, documentId: !oLoc ? other.documentId : st!.documentId, value: !oLoc ? raw : base, docWord: !oLoc ? (kind === "tax_return" ? "tax return" : "management accounts") : "financial statements" });
+        notLocated.push({ checkKey: key, figureKey: fig.key, documentId: !oLoc ? other.documentId : st!.documentId, value: !oLoc ? value : base, docWord: !oLoc ? (kind === "tax_return" ? "tax return" : "management accounts") : "financial statements" });
       }
     }
 

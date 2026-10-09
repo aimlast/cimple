@@ -63,6 +63,11 @@ function DocLink({ doc }: { doc: WorkspaceCheck["otherDocument"] }) {
   ) : <span className="block truncate text-[11px] text-muted-foreground" title={doc.name}>{doc.name}</span>;
 }
 
+/** The other record's figure is the one the broker entered ("Cimple read it wrong"), not one Cimple read. */
+function YourFigure() {
+  return <span className="ml-1.5 rounded border border-border px-1 py-px align-middle text-[10px] font-normal text-muted-foreground" title="The figure you entered. Buyers see it only if Cimple finds it in the document and you show it.">Your figure</span>;
+}
+
 function DifferenceRow({ c, a }: { c: WorkspaceCheck; a: ChecksActions }) {
   const why = c.state === "regrouped" ? c.regroupedText : c.note?.text ?? null;
   return (
@@ -79,7 +84,7 @@ function DifferenceRow({ c, a }: { c: WorkspaceCheck; a: ChecksActions }) {
       </div>
       <div className="min-w-0 text-xs tabular-nums">
         <p className="text-muted-foreground">{c.otherLabel}</p>
-        <p className="text-sm">{money(c.other)}</p>
+        <p className="text-sm">{money(c.other)}{c.corrected && <YourFigure />}</p>
         {c.sourceLabel && <p className="truncate text-[11px] text-muted-foreground" title={c.sourceLabel}>“{c.sourceLabel}”</p>}
         <DocLink doc={c.otherDocument} />
       </div>
@@ -116,7 +121,7 @@ function DifferenceRow({ c, a }: { c: WorkspaceCheck; a: ChecksActions }) {
 function NeedsCheckingRow({ c, a }: { c: WorkspaceCheck; a: ChecksActions }) {
   return (
     <div className="space-y-2 rounded-lg border border-[#9B4A3A]/50 bg-card p-3" data-testid={`check-needs-${c.checkKey}`}>
-      <p className="text-sm font-medium">{c.label} · FY{c.year} <span className="font-normal text-muted-foreground">· {money(c.thisCim)} vs {money(c.other)}</span></p>
+      <p className="text-sm font-medium">{c.label} · FY{c.year} <span className="font-normal text-muted-foreground">· {money(c.thisCim)} vs {money(c.other)}</span>{c.corrected && <YourFigure />}</p>
       <p className="text-xs text-foreground">{c.notLocatedMessage ?? "Cimple couldn't find this figure in the document's text. Check the document before showing this."}</p>
       <div className="flex flex-wrap gap-1.5">
         {c.otherDocument?.href && (
