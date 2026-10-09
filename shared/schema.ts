@@ -2723,6 +2723,8 @@ export const cimRenditions = pgTable("cim_renditions", {
   design: jsonb("design"),                // the view room's `design` payload
   pageIndex: jsonb("page_index").notNull().$type<import("./analytics-v2").RenditionPage[]>(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  // @anchor:cim-renditions-cols:heatmap
+  demoSeed: text("demo_seed"),            // inserted by the sample-reading seed (scripts/seed-demo-reading.ts); null = recorded by the view room
 }, (t) => [
   index("cim_renditions_deal_created_idx").on(t.dealId, t.createdAt),
 ]);
@@ -2767,6 +2769,9 @@ export const buyerVisits = pgTable("buyer_visits", {
   clamped: boolean("clamped").notNull().default(false),      // scaled to the server's elapsed time
   legacy: boolean("legacy").notNull().default(false),        // backfilled from section_exit events
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  // @anchor:buyer-visits-cols:heatmap
+  demoSeed: text("demo_seed"),          // sample reading (scripts/seed-demo-reading.ts); null = real. Every reader of visits must also filter superseded_by.
+  supersededBy: text("superseded_by"),  // hidden while sample reading with this tag replaces it; null = shown
 }, (t) => [
   index("buyer_visits_deal_seen_idx").on(t.dealId, t.lastSeenAt),
   index("buyer_visits_access_idx").on(t.buyerAccessId),
