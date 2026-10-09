@@ -369,7 +369,8 @@ function LedgersView({ dealId, data }: { dealId: string; data: BrokerGlData }) {
           </h4>
           <span className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1">
             {ledgers.length === 0 ? "Not uploaded yet" : `${ledgers.length} file${ledgers.length === 1 ? "" : "s"}`}
-            <span className="flex items-center gap-1">· Fiscal year ends
+            {/* The dot only where both sit on one line (phones wrap them onto two). */}
+            <span className="flex items-center gap-1"><span aria-hidden="true" className="hidden sm:inline">·</span> Fiscal year ends
               <select className="h-7 rounded-md border border-input bg-background px-1.5 text-xs" value={data.fiscalYearEnd ?? "12-31"} aria-label="Fiscal year end"
                 onChange={(e) => setFyeTo(e.target.value)} data-testid="gl-fye">
                 {FYE_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}

@@ -132,7 +132,8 @@ export default function SellerBooks() {
   const uploadCost = uploadFor ? costs.find((c) => c.id === uploadFor) ?? null : null;
   const pageUrl = typeof window !== "undefined" ? `${window.location.origin}/seller/${token}/books` : "";
   const years = Array.from(new Set(costs.flatMap((c) => c.years.map((y) => y.year)))).sort();
-  const step = !coversAll && ready.length === 0 ? 1 : finished ? 3 : 2;
+  // Sent (or reviewed): every step is ticked.
+  const step = finished ? 4 : !coversAll && ready.length === 0 ? 1 : 2;
 
   const header = (
     <div className="space-y-3">
@@ -272,8 +273,14 @@ export default function SellerBooks() {
           <OtherCostsBox token={token!} years={years} preview={preview} onSent={invalidate} />
           {finished ? (
             <div className="rounded-lg border border-success/30 bg-success/5 p-4 space-y-1" data-testid="books-sent">
-              <p className="text-sm font-medium flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-success" /> All done — thank you.</p>
-              <p className="text-sm text-muted-foreground">Your broker will review these. You can still change anything until they finish.</p>
+              {data.state === "done" ? (
+                <p className="text-sm font-medium flex items-center gap-2" data-testid="books-reviewed"><CheckCircle2 className="h-4 w-4 text-success" /> Your broker has reviewed these — thank you.</p>
+              ) : (
+                <>
+                  <p className="text-sm font-medium flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-success" /> All done — thank you.</p>
+                  <p className="text-sm text-muted-foreground">Your broker will review these. You can still change anything until they finish.</p>
+                </>
+              )}
               <Link href={`/seller/${token}/progress`} className="text-sm text-teal hover:underline inline-block mt-1">Back to your progress</Link>
             </div>
           ) : (

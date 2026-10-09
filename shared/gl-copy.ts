@@ -205,6 +205,15 @@ export const VERDICT_WORDS: Record<"found" | "partly_found" | "not_found", strin
   not_found: "Not found",
 };
 
+/**
+ * The verdict as the broker reads it — the same words buyers get
+ * (server/gl/evidence.ts buyerStatusFor): "found" for an add-back proved by
+ * a document (a T4, an invoice) reads "Shown by a document".
+ */
+export function verdictWords(verdict: "found" | "partly_found" | "not_found", overall?: string | null): string {
+  return verdict === "found" && overall === "document" ? "Shown by a document" : VERDICT_WORDS[verdict];
+}
+
 /** The key an add-back is traced by (its normalised label; the owner-pay pair is one): analyzer.ts normalizeLabel on the base label. */
 export function addbackKeyFor(label: string): string {
   return String(label ?? "").replace(/\s+—\s+market salary$/i, "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();

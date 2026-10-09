@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { BrokerTrace } from "@/lib/gl-api";
 import { Pill, dollars, statusTone } from "./gl-ui";
-import { VERDICT_WORDS, yearsWords } from "@shared/gl-copy";
+import { verdictWords, yearsWords } from "@shared/gl-copy";
 import { traceHasActivity } from "@shared/gl-reconcile";
 
 const verdictTone = (v: string | null) => (v === "found" ? "good" : v === "partly_found" ? "close" : "warn") as "good" | "close" | "warn";
@@ -118,7 +118,7 @@ function ReviewCell({ t, onReview, busy }: { t: BrokerTrace; onReview: (t: Broke
     return (
       <span className="inline-flex items-center gap-1 text-xs" data-testid="gl-verdict">
         <CheckCircle2 className={cn("h-3.5 w-3.5", t.brokerVerdict === "found" ? "text-success" : "text-teal")} />
-        <Pill tone={verdictTone(t.brokerVerdict)}>{VERDICT_WORDS[t.brokerVerdict]}</Pill>
+        <Pill tone={verdictTone(t.brokerVerdict)}>{verdictWords(t.brokerVerdict, t.computed?.overall)}</Pill>
       </span>
     );
   }
@@ -128,7 +128,7 @@ function ReviewCell({ t, onReview, busy }: { t: BrokerTrace; onReview: (t: Broke
   }
   const suggestion = t.computed?.suggestedVerdict ?? "not_found";
   return (
-    <Button size="sm" variant="outline" className="h-8 text-xs" disabled={busy} onClick={() => onReview(t)} data-testid="gl-mark-reviewed" title={`Cimple suggests: ${VERDICT_WORDS[suggestion]}`}>
+    <Button size="sm" variant="outline" className="h-8 text-xs" disabled={busy} onClick={() => onReview(t)} data-testid="gl-mark-reviewed" title={`Cimple suggests: ${verdictWords(suggestion, t.computed?.overall)}`}>
       Mark reviewed
     </Button>
   );

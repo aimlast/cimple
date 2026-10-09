@@ -19,7 +19,7 @@ import { loadGlContext } from "../../server/gl/context";
 import { confirmSummary, writeLinks } from "../../server/gl/links";
 import { recomputeTraces } from "../../server/gl/match-run";
 import {
-  buildEvidence, glEvidenceForBuyer, glLineId, glLineIdsForDeal, glPageId, glTeaserLine, glWriterLines, GL_TEASER_LINE,
+  buildEvidence, buyerStatusFor, glEvidenceForBuyer, glLineId, glLineIdsForDeal, glPageId, glTeaserLine, glWriterLines, GL_TEASER_LINE,
   loadEvidenceState, projectEvidence, publishEvidence, publishPreview, snapshotFromState, GlPublishError,
 } from "../../server/gl/evidence";
 import { cimModeForAccessLevel, isTeaserOnly } from "../../server/gl/levels";
@@ -280,6 +280,19 @@ await test("GL-R1-05: buyers still reading a kept copy whose bridge shows other 
   assert.deepEqual(m, { title: "EBITDA Normalization & Adjustments", keptCopy: true });
   st.getDeal = realDeal;
   _setSnapshotStoreForTests(null);
+});
+
+await test("GL-R2-08: the broker's verdict words match what buyers read (a T4-proved add-back is 'Shown by a document' on both sides)", async () => {
+  const { verdictWords, VERDICT_WORDS } = await import("../../shared/gl-copy");
+  const { GL_BUYER_STATUS_WORDS } = await import("../../shared/gl-evidence");
+  for (const overall of ["found", "document", "close", "short", "not_started"] as const) {
+    for (const v of ["found", "partly_found", "not_found"] as const) {
+      const buyer = buyerStatusFor({ proof: "payroll", brokerVerdict: v } as any, { overall, suggestedVerdict: v } as any);
+      assert.equal(verdictWords(v, overall), GL_BUYER_STATUS_WORDS[buyer], `${v} / ${overall}`);
+    }
+  }
+  assert.equal(verdictWords("found", "document"), "Shown by a document");
+  assert.equal(verdictWords("found", "found"), VERDICT_WORDS.found);
 });
 
 cleanup(B.w);

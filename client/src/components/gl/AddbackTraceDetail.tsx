@@ -25,7 +25,7 @@ import { invalidateGl } from "@/hooks/useGlStatus";
 import { Pill, dollars, ledgerDate, money, statusTone } from "./gl-ui";
 import { ApplyLedgerAmountDialog } from "./ApplyLedgerAmountDialog";
 import { SupportDocUpload } from "./SupportDocUpload";
-import { accountPath, PROOF_LABEL, VERDICT_WORDS, YEAR_STATUS_WORDS } from "@shared/gl-copy";
+import { accountPath, PROOF_LABEL, verdictWords, YEAR_STATUS_WORDS } from "@shared/gl-copy";
 import { traceHasActivity } from "@shared/gl-reconcile";
 import type { GlYearStatus } from "@shared/gl-types";
 
@@ -230,14 +230,14 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, payDo
         <section className="rounded-lg border border-border p-3 space-y-2" data-testid="gl-drawer-review">
           {trace.reviewedAt && trace.brokerVerdict ? (
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm flex items-center gap-1.5"><Check className="h-4 w-4 text-success" /> Reviewed: <strong>{VERDICT_WORDS[trace.brokerVerdict]}</strong></p>
+              <p className="text-sm flex items-center gap-1.5"><Check className="h-4 w-4 text-success" /> Reviewed: <strong>{verdictWords(trace.brokerVerdict, trace.computed?.overall)}</strong></p>
               <Button size="sm" variant="ghost" className="h-8 text-xs" disabled={act.isPending} onClick={() => act.mutate({ method: "POST", url: `/api/deals/${dealId}/gl/traces/${trace.id}/review`, body: { undo: true } })}>Undo</Button>
             </div>
           ) : (
             <>
               <p className="text-sm font-medium">Mark reviewed</p>
               {activity ? (
-                <p className="text-xs text-muted-foreground">Cimple suggests: {VERDICT_WORDS[trace.computed?.suggestedVerdict ?? "not_found"]}.</p>
+                <p className="text-xs text-muted-foreground">Cimple suggests: {verdictWords(trace.computed?.suggestedVerdict ?? "not_found", trace.computed?.overall)}.</p>
               ) : (
                 <p className="text-xs text-muted-foreground" data-testid="gl-review-needs-reason">Nothing has been asked or found yet. Send it to the seller or tick the entries yourself — or write why you're marking it reviewed.</p>
               )}
@@ -245,7 +245,7 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, payDo
                 <Select value={verdict} onValueChange={setVerdict}>
                   <SelectTrigger className="h-9 sm:w-56" aria-label="Verdict"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {(["found", "partly_found", "not_found"] as const).map((v) => <SelectItem key={v} value={v}>{VERDICT_WORDS[v]}</SelectItem>)}
+                    {(["found", "partly_found", "not_found"] as const).map((v) => <SelectItem key={v} value={v}>{verdictWords(v, trace.computed?.overall)}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder={activity ? "Your note (optional)" : "Why (needed — nothing was found yet)"} aria-label={activity ? "Your note" : "Why you're marking it reviewed"} className="h-9" maxLength={2000} />
