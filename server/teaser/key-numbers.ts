@@ -107,8 +107,9 @@ const INVENTORY_KEYS = ["inventory", "inventoryValue", "inventoryIncluded"];
 
 /** "Share sale" / "Asset sale" from the sale-type wording (null when unclear or both). */
 export function saleTypeOf(t: string): TeaserFigures["saleType"] {
-  const share = /\b(?:share|stock|equity)\s+(?:sale|purchase|deal|transaction)\b|\bsale of (?:the )?shares\b/i.test(t);
-  const asset = /\basset\s+(?:sale|purchase|deal|transaction)\b|\bsale of (?:the )?assets\b/i.test(t);
+  const deal = /\b(?:sale|purchase|deal|transaction|sell)\b/i.test(t);
+  const share = deal && /\b(?:shares?|stock)\b/i.test(t);
+  const asset = deal && /\bassets?\b/i.test(t);
   if (share && !asset) return "Share sale";
   if (asset && !share) return "Asset sale";
   return null;

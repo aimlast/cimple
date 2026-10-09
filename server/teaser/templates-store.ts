@@ -141,7 +141,7 @@ export function skeletonOf(data: unknown, depth = 0): unknown {
 
 /** The blocks to save: no deal text — only the broker's own fixed wording travels. */
 export function blocksForTemplate(doc: TeaserDoc): SavedTeaserBlock[] {
-  return doc.blocks.filter((b) => !b.placeholder).map((b) => {
+  return doc.blocks.map((b) => {
     const own = b.origin === "broker" && b.layoutType === "prose_highlight" && (b.slot === "confidentiality" || b.slot === "custom")
       ? (b.body ?? "")
       : b.origin === "broker" && b.slot === "next_step"

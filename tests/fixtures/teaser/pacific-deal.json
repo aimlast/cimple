@@ -1,0 +1,31 @@
+{
+  "id": "D-PAC",
+  "brokerId": "B1",
+  "businessName": "Pacific Coast Logistics Ltd.",
+  "industry": "Transportation & Logistics",
+  "blindCodename": "Project Coastline",
+  "isLive": true,
+  "ndaRequired": true,
+  "demoKey": null,
+  "askingPrice": "$18,000,000",
+  "extractedInfo": {
+    "companyName": "Pacific Coast Logistics Ltd.",
+    "businessLocation": "Surrey, British Columbia",
+    "address": "8800 128 Street, Surrey, BC V3W 4A1",
+    "ownerName": "Harjit Sandhu",
+    "keyEmployees": "Manpreet Grewal (General Manager); Dale Hutchins (Dispatch Lead)",
+    "contactEmail": "harjit@pacificcoastlogistics.invalid",
+    "usdotNumber": "USDOT 2847193",
+    "annualRevenue": "$31,020,000",
+    "ebitda": "$3,900,000 adjusted EBITDA (FY2024)",
+    "employees": "148 (96 drivers + 52 staff, Dec 31, 2024)",
+    "yearsOperating": "34 years in trucking (since 1991)",
+    "customerConcentration": "Largest customer (Alderbrook Foods) 22.0% of FY2024 revenue; top 5 = 47%",
+    "saleType": "Share sale (recommended by broker); cash-free, debt-free",
+    "leaseDetails": "15-year net lease on the Surrey terminal, expiring 2037",
+    "reasonForSale": "Owner retiring after 34 years",
+    "transitionPlan": "General manager stays 2-3 years; owner available for a 6-month handover",
+    "competitiveAdvantage": "Cross-border reefer authority with C-TPAT; 112 trucks; the only cross-border reefer carrier in the Fraser Valley",
+    "growthOpportunities": "Add a second terminal in Alberta; grow drayage for the Port of Vancouver"
+  }
+}
