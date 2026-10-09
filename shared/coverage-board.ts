@@ -87,12 +87,65 @@ export interface CoverageItem {
   estimate?: boolean;
   yourNote?: boolean;
   confirmedByYou?: boolean;
+  /** The newest filing by a session together on this item (any of its members or aliases). */
   filedAt?: string;
   filedInSittingId?: string;
   filedByChunkId?: string;
+  /**
+   * What sessions together filed on this item, newest first — one entry per
+   * data point written (the item's OTHER members included: "slow months" on
+   * Seasonality). Drives "Filed this session", the row's filed lines with
+   * Undo per key, the session counts and the end summary. Broker and screen
+   * audiences only.
+   */
+  sessionFiled?: SessionFiledEntry[];
   suggestion?: { value: string; quote: string; chunkId: string; memberKey: string };
   marks: CoverageItemMark[];
   conflictId?: string;
+}
+
+/** One data point a session together filed on an item. */
+export interface SessionFiledEntry {
+  key: string;
+  /** The member's own label ("slow months"). */
+  label: string;
+  /** Display text ≤ 160 chars; null when it can't be shown here (privateValue). */
+  value: string | null;
+  /** The seller can see this screen and the value is private to the broker. */
+  privateValue?: boolean;
+  at: string;
+  sittingId: string;
+  /** The part that filed it (Undo names it with the key); absent for a typed answer with no part. */
+  chunkId?: string;
+  /** The seller's words it was filed from. */
+  quote?: string | null;
+  /** Filed as the broker's own note. */
+  yourNote?: boolean;
+}
+
+/** What this sitting filed on an item, newest first. Pure. */
+export function filedInSitting(item: Pick<CoverageItem, "sessionFiled">, sittingId: string | null | undefined): SessionFiledEntry[] {
+  if (!sittingId) return [];
+  return (item.sessionFiled ?? []).filter((e) => e.sittingId === sittingId);
+}
+
+/**
+ * Did this sitting file anything on the item? The ONE count of a session's
+ * filings — the header's "N filed", the "Filed this session" view, the feed
+ * and the end summary all count items this way ("answers filed" = data
+ * points answered). Pure.
+ */
+export function filedThisSitting(item: Pick<CoverageItem, "sessionFiled">, sittingId: string | null | undefined): boolean {
+  return filedInSitting(item, sittingId).length > 0;
+}
+
+/** "Slow months: April and October" — the member's label leads unless it's the item's only filing of its shown value. Pure. */
+export function filedEntryText(item: Pick<CoverageItem, "valueKey" | "label">, entry: SessionFiledEntry, entries: SessionFiledEntry[], masked = MASKED_VALUE): string {
+  const value = entry.privateValue || entry.value === null ? masked : entry.value;
+  const plain = entries.length === 1 && entry.key === item.valueKey;
+  if (plain) return value;
+  const label = entry.label ? entry.label.charAt(0).toUpperCase() + entry.label.slice(1) : item.label;
+  return `${label}: ${value}`;
 }
 
 /** A row shown, never counted: the item lives in another section. */
@@ -423,7 +476,7 @@ export function inView(item: CoverageItem, view: CoverageView, opts: { sectionKe
   switch (view) {
     case "ask": return item.status !== "on_file" && item.origin !== "figures";
     case "all": return true;
-    case "filed": return !!opts.sittingId && item.filedInSittingId === opts.sittingId;
+    case "filed": return filedThisSitting(item, opts.sittingId);
     case "verify": return item.status === "verify";
     case "questions": return item.origin === "figures" && item.status !== "on_file";
     case "section": return item.sectionKey === opts.sectionKey;
@@ -471,7 +524,7 @@ export function viewCounts(board: CoverageBoard, sittingId?: string): Record<Exc
   return {
     ask: all.filter((i) => inView(i, "ask")).length,
     all: countedItems(all).length,
-    filed: sittingId ? all.filter((i) => i.filedInSittingId === sittingId).length : 0,
+    filed: sittingId ? all.filter((i) => filedThisSitting(i, sittingId)).length : 0,
     verify: all.filter((i) => i.status === "verify").length,
     questions: all.filter((i) => inView(i, "questions")).length + board.routed.length,
     docs: board.documents.length,

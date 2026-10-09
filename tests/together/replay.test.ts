@@ -32,13 +32,13 @@ function check(name: string, fn: () => void) {
   console.log(`  ✓ ${name}`);
 }
 
-function worldFor(): World {
+function worldFor(keep: string[] = []): World {
   const w = newWorld();
   const deal = structuredClone(dealFx.deal);
   deal.brokerId = "B1";
   deal.demoKey = "lakeshore-qa";
   deal.location = "Hamilton, Ontario";
-  for (const k of sittingFx.resetKeys as string[]) {
+  for (const k of (sittingFx.resetKeys as string[]).filter((x) => !keep.includes(x))) {
     delete deal.extractedInfo[k];
     if (deal.extractedInfo._fieldSources) delete deal.extractedInfo._fieldSources[k];
   }
@@ -71,8 +71,8 @@ async function advanceTo(target: number) {
   await drain();
 }
 
-async function runReplay(opts: { downFrom?: number; downTo?: number; restartAt?: number } = {}) {
-  const w = worldFor();
+async function runReplay(opts: { downFrom?: number; downTo?: number; restartAt?: number; keep?: string[] } = {}) {
+  const w = worldFor(opts.keep);
   const dealId = Object.keys(w.deals)[0];
   const store = await install(w);
   const { _setPipelineDepsForTests, _resetPipelineForTests, retryNow } = await import("../../server/together/pipeline");
@@ -289,6 +289,31 @@ async function main() {
     assert.ok((st3.brokerUnconfirmed ?? []).some((b: any) => b.key === "leaseExpiry"), "the broker's unanswered lease line is still read");
     assert.equal(board3.sections.flatMap((s) => s.items).map((i) => `${i.id}=${i.status}|${i.value ?? ""}`).join("\n"), finalStatuses);
   });
+
+  console.log("replay with Seasonality already on file (the seller's busy and slow months filed under its other members)");
+  const r4 = await runReplay({ keep: ["seasonality"] });
+  {
+    const { endSitting, _setSittingEndHooksForTests } = await import("../../server/together/summary");
+    const { filedInSitting, viewCounts, filterItems } = await import("../../shared/coverage-board");
+    const board4 = await buildCoverageBoard(r4.w.deals[r4.dealId], { audience: "broker" });
+    const season = board4.sections.flatMap((s) => s.items).find((i) => i.id === "seasonality:seasonality")!;
+    _setSittingEndHooksForTests({ handBackRouted: async () => undefined, completeInterview: async () => undefined, refreshEvidence: () => undefined, endWaitMs: 50 });
+    const out4 = await endSitting((await r4.store.getSitting(r4.sitting.id))!, r4.w.deals[r4.dealId], { completeInterview: false, followUps: [], documents: [], addToNextSession: false });
+    _setSittingEndHooksForTests(null);
+    check("an item already on file, answered again through its other members: on the row, in 'Filed this session' and in the summary, each with its Undo", () => {
+      assert.equal(season.valueKey, "seasonality", "the row still shows what was on file");
+      assert.match(String(season.value), /^Busy season requires 4 days/);
+      const mine = filedInSitting(season, r4.sitting.id);
+      assert.deepEqual(mine.map((e) => e.key).sort(), ["peakPeriods", "slowPeriods"], JSON.stringify(mine));
+      assert.ok(mine.every((e) => e.chunkId), "each filing names its part (Undo)");
+      assert.ok(filterItems(board4, { view: "filed", sittingId: r4.sitting.id }).some((g) => g.items.some((i) => i.id === season.id)), "in 'Filed this session'");
+      const row = out4.summary.filed.find((f) => f.itemId === "seasonality:seasonality");
+      assert.ok(row, `in the summary: ${out4.summary.filed.map((f) => f.itemId).join(", ")}`);
+      assert.deepEqual(row!.entries!.map((e) => e.text).sort(), ["Busiest months: June through August, and December to February", "Quietest months: April and October (maintenance and paperwork)"]);
+      assert.ok(row!.entries!.every((e) => e.chunkId && e.key));
+      assert.equal(viewCounts(board4, r4.sitting.id).filed, out4.summary.filed.length, "the header's 'N filed' === the summary's count");
+    });
+  }
 
   console.log(`\n${passed} replay checks passed (${r.calls} recorded calls, ${chunks.length} parts)`);
   process.exit(0);

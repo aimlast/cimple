@@ -25,7 +25,7 @@ import { SuggestNext } from "./SuggestNext";
 import { StatusIcon } from "@/components/coverage/StatusIcon";
 import { listenCopy, isNotetakerVia, type BrokerUnconfirmedView, type CaptureHints, type SpeakerMap, type SpeakerRole, type TogetherLineView, type TogetherSittingView } from "@shared/together";
 import { lineRole, speakerDisplay, speakerKind } from "@shared/together-speakers";
-import type { CoverageBoard, CoverageItem, NextToAskContext } from "@shared/coverage-board";
+import { filedEntryText, filedInSitting, type CoverageBoard, type CoverageItem, type NextToAskContext, type SessionFiledEntry } from "@shared/coverage-board";
 import { presentSpeakers } from "./SpeakerChips";
 
 function ago(iso: string | undefined, now: number): string {
@@ -36,11 +36,21 @@ function ago(iso: string | undefined, now: number): string {
   return m < 60 ? `${m} min` : `${Math.round(m / 60)} h`;
 }
 
-export function filedThisSession(board: CoverageBoard | undefined, sittingId: string | undefined): Array<CoverageItem & { sectionTitle: string }> {
+export type FiledThisSessionRow = CoverageItem & { sectionTitle: string; entries: SessionFiledEntry[]; lastAt: string };
+
+/**
+ * The items this sitting filed anything on (any member — "slow months" on
+ * Seasonality counts), newest first, with this sitting's filings on each.
+ * Its length is THE session count (header, rail, feed, summary).
+ */
+export function filedThisSession(board: CoverageBoard | undefined, sittingId: string | undefined): FiledThisSessionRow[] {
   if (!board || !sittingId) return [];
-  const out: Array<CoverageItem & { sectionTitle: string }> = [];
-  for (const s of board.sections) for (const i of s.items) if (i.filedInSittingId === sittingId) out.push({ ...i, sectionTitle: s.title });
-  return out.sort((a, b) => new Date(b.filedAt ?? 0).getTime() - new Date(a.filedAt ?? 0).getTime());
+  const out: FiledThisSessionRow[] = [];
+  for (const s of board.sections) for (const i of s.items) {
+    const entries = filedInSitting(i, sittingId);
+    if (entries.length > 0) out.push({ ...i, sectionTitle: s.title, entries, lastAt: entries[0].at });
+  }
+  return out.sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime());
 }
 
 export function TranscriptView({ lines, speakers, interim, maxLines = 8, emptyText }: { lines: TogetherLineView[]; speakers: SpeakerMap; interim?: string; maxLines?: number; emptyText: string }) {
@@ -237,26 +247,44 @@ export function LivePanel({
           <p className="text-xs text-muted-foreground">Nothing filed yet.</p>
         ) : (
           <ul className="space-y-1.5" data-testid="filed-feed">
-            {filed.slice(0, 12).map((i) => (
-              <li key={i.id} className="flex items-start gap-2 text-xs group">
-                <StatusIcon status={i.status} size={13} className="mt-px" />
-                <button type="button" className="min-w-0 flex-1 text-left hover:underline underline-offset-2" onClick={() => onShowItem(i.id, i.sectionKey)}>
-                  <span className="font-medium">{i.label}</span>
-                  <span className="text-muted-foreground"> · {i.sectionTitle} · {ago(i.filedAt, now)}</span>
-                  {i.yourNote && <span className="text-muted-foreground"> · your note</span>}
-                </button>
-                {!ended && onUndo && i.filedByChunkId && i.valueKey && (
+            {filed.slice(0, 12).map((i) => {
+              const undoBtn = (e: SessionFiledEntry, testId: string) =>
+                !ended && onUndo && e.chunkId ? (
                   <button
                     type="button"
                     className="shrink-0 text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2"
-                    onClick={() => void act(() => onUndo(i.filedByChunkId!, i.valueKey!), "Couldn't undo that", `Undone — ${i.label}`)}
-                    data-testid={`feed-undo-${i.id}`}
+                    onClick={() => void act(() => onUndo(e.chunkId!, e.key), "Couldn't undo that", `Undone — ${i.label}`)}
+                    data-testid={testId}
                   >
                     Undo
                   </button>
-                )}
-              </li>
-            ))}
+                ) : null;
+              // One filing of the item's shown value: the row as before. Otherwise one line per data point filed.
+              const single = i.entries.length === 1 && i.entries[0].key === i.valueKey;
+              return (
+                <li key={i.id} className="text-xs group" data-testid={`feed-item-${i.id}`}>
+                  <div className="flex items-start gap-2">
+                    <StatusIcon status={i.status} size={13} className="mt-px" />
+                    <button type="button" className="min-w-0 flex-1 text-left hover:underline underline-offset-2" onClick={() => onShowItem(i.id, i.sectionKey)}>
+                      <span className="font-medium">{i.label}</span>
+                      <span className="text-muted-foreground"> · {i.sectionTitle} · {ago(i.lastAt, now)}</span>
+                      {single && i.entries[0].yourNote && <span className="text-muted-foreground"> · your note</span>}
+                    </button>
+                    {single && undoBtn(i.entries[0], `feed-undo-${i.id}`)}
+                  </div>
+                  {!single && (
+                    <ul className="mt-0.5 ml-[21px] space-y-0.5">
+                      {i.entries.map((e) => (
+                        <li key={`${e.key}@${e.chunkId ?? e.at}`} className="flex items-start gap-2 text-[11px] text-muted-foreground" data-testid={`feed-entry-${i.id}-${e.key}`}>
+                          <span className="min-w-0 flex-1 line-clamp-2">{filedEntryText(i, e, i.entries)}{e.yourNote ? " · your note" : ""}</span>
+                          {undoBtn(e, `feed-undo-${i.id}-${e.key}`)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
@@ -296,7 +324,7 @@ export function suggestContext(board: CoverageBoard, hints: CaptureHints | undef
  * → "Filed 2 answers · 4 s ago" / "Nothing to file from that part", and a
  * quiet "Save this answer now" that files the open part at once.
  */
-function FilingLine({ sitting, filing, filed, now, ended, held = 0, onFileNow }: { sitting: TogetherSittingView; filing?: FilingState; filed: Array<CoverageItem & { sectionTitle: string }>; now: number; ended?: boolean; held?: number; onFileNow?: () => void }) {
+function FilingLine({ sitting, filing, filed, now, ended, held = 0, onFileNow }: { sitting: TogetherSittingView; filing?: FilingState; filed: FiledThisSessionRow[]; now: number; ended?: boolean; held?: number; onFileNow?: () => void }) {
   const [, tick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => tick((n) => n + 1), 2_000);
@@ -319,7 +347,7 @@ function FilingLine({ sitting, filing, filed, now, ended, held = 0, onFileNow }:
   } else if (filing?.last && t - filing.last.at < 5 * 60_000) {
     body = filing.last.filed > 0 ? <>Filed {filing.last.filed} {filing.last.filed === 1 ? "answer" : "answers"} · {ago2(filing.last.at)}</> : <>Nothing to file from that part · {ago2(filing.last.at)}</>;
   } else if (filed[0]) {
-    body = <>Filed {filed[0].label.toLowerCase()} · {ago(filed[0].filedAt, now)}</>;
+    body = <>Filed {filed[0].label.toLowerCase()} · {ago(filed[0].lastAt, now)}</>;
   } else {
     body = <>Cimple files the seller's answers here as they talk.</>;
   }

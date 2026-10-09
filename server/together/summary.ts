@@ -15,7 +15,7 @@
  * broker-led session; no learning loop.
  */
 import type { Deal, TogetherLine, TogetherSitting } from "@shared/schema";
-import type { CoverageBoard, CoverageItem } from "@shared/coverage-board";
+import { filedEntryText, filedInSitting, type CoverageBoard, type CoverageItem } from "@shared/coverage-board";
 import {
   PRIVATE_ASK_MESSAGE,
   sittingDurationMin,
@@ -105,19 +105,30 @@ export function buildSittingSummary(args: {
   let alsoNoted = 0;
   for (const { item, sectionTitle } of allItems(board)) {
     if (item.origin === "figures" && item.status !== "on_file") continue;
-    if (item.filedInSittingId === sitting.id) {
+    // (Anything this sitting filed on the item — its other members too: "slow months" on Seasonality.)
+    const mine = filedInSitting(item, sitting.id);
+    if (mine.length > 0) {
       if (item.origin === "noted") alsoNoted++;
+      const entries = mine.map((e) => ({
+        key: e.key,
+        text: filedEntryText(item, e, mine),
+        quote: e.yourNote ? null : e.quote ?? null,
+        yourNote: !!e.yourNote,
+        ...(e.chunkId ? { chunkId: e.chunkId } : {}),
+      }));
+      const first = mine[0];
       filed.push({
         itemId: item.id,
         label: item.label,
         sectionKey: item.sectionKey,
         sectionTitle,
-        value: item.privateValue ? null : item.value,
-        quote: item.yourNote ? null : item.source?.excerpt ?? null,
-        yourNote: !!item.yourNote,
+        value: entries.map((e) => e.text).join(" · "),
+        quote: entries[0].quote,
+        yourNote: entries.every((e) => e.yourNote),
         status: item.status,
-        ...(item.filedByChunkId ? { chunkId: item.filedByChunkId } : {}),
-        ...(item.valueKey ? { key: item.valueKey } : {}),
+        ...(first.chunkId ? { chunkId: first.chunkId } : {}),
+        key: first.key,
+        entries,
       });
       continue;
     }

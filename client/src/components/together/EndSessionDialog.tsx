@@ -17,7 +17,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { StatusIcon } from "@/components/coverage/StatusIcon";
-import { summaryLine, type SittingSummary, type TogetherSittingView } from "@shared/together";
+import { summaryLine, type SittingSummary, type SummaryFiledEntry, type TogetherSittingView } from "@shared/together";
 import { quoted } from "@shared/coverage-board";
 
 const DOCS_SHOWN = 6;
@@ -167,35 +167,54 @@ export function EndSessionDialog({
               <p className="text-xs text-muted-foreground">Nothing was filed in this session.</p>
             ) : (
               <ul className="divide-y divide-border rounded-md border border-border">
-                {summary.filed.map((f) => (
-                  <li key={f.itemId} className="px-3 py-2 flex items-start gap-2.5">
-                    <StatusIcon status={f.status} size={14} className="mt-0.5" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm"><span className="font-medium">{f.label}</span> <span className="text-xs text-muted-foreground">· {f.sectionTitle}</span></p>
-                      {f.value && <p className="text-xs text-muted-foreground line-clamp-2">{f.value}</p>}
-                      <p className="text-[11px] text-muted-foreground/80">{f.yourNote ? "Your note" : f.quote ? quoted(f.quote) : null}</p>
-                    </div>
-                    {!ended && onUndo && f.chunkId && f.key && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground shrink-0"
-                        onClick={async () => {
-                          try {
-                            await onUndo(f.chunkId!, f.key!);
-                            setSummary((cur) => (cur ? { ...cur, filed: cur.filed.filter((x) => x !== f) } : cur));
-                            toast({ title: "Undone", description: f.label });
-                          } catch (e) {
-                            toast({ title: "Couldn't undo that", description: (e as Error).message, variant: "destructive" });
-                          }
-                        }}
-                        data-testid={`summary-undo-${f.itemId}`}
-                      >
-                        Undo
-                      </Button>
-                    )}
-                  </li>
-                ))}
+                {summary.filed.map((f) => {
+                  // Every data point filed on the item, each with its own Undo (summaries stored before
+                  // entries existed read the row's own value).
+                  const entries: SummaryFiledEntry[] = f.entries && f.entries.length > 0 ? f.entries : [{ key: f.key ?? "", text: f.value ?? "", quote: f.quote, yourNote: f.yourNote, ...(f.chunkId ? { chunkId: f.chunkId } : {}) }];
+                  const undoEntry = async (e: SummaryFiledEntry) => {
+                    try {
+                      await onUndo!(e.chunkId!, e.key);
+                      setSummary((cur) => {
+                        if (!cur) return cur;
+                        const left = entries.filter((x) => x !== e);
+                        return { ...cur, filed: left.length === 0 ? cur.filed.filter((x) => x !== f) : cur.filed.map((x) => (x === f ? { ...x, entries: left } : x)) };
+                      });
+                      toast({ title: "Undone", description: f.label });
+                    } catch (err) {
+                      toast({ title: "Couldn't undo that", description: (err as Error).message, variant: "destructive" });
+                    }
+                  };
+                  const canUndo = (e: SummaryFiledEntry) => !ended && !!onUndo && !!e.chunkId && !!e.key;
+                  return (
+                    <li key={f.itemId} className="px-3 py-2 flex items-start gap-2.5" data-testid={`summary-filed-${f.itemId}`}>
+                      <StatusIcon status={f.status} size={14} className="mt-0.5" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm"><span className="font-medium">{f.label}</span> <span className="text-xs text-muted-foreground">· {f.sectionTitle}</span></p>
+                        <ul className="space-y-1 mt-0.5">
+                          {entries.map((e) => (
+                            <li key={`${e.key}@${e.chunkId ?? ""}`} className="flex items-start gap-2">
+                              <div className="min-w-0 flex-1">
+                                {e.text && <p className="text-xs text-muted-foreground line-clamp-2">{e.text}</p>}
+                                {(e.yourNote || e.quote) && <p className="text-[11px] text-muted-foreground/80">{e.yourNote ? "Your note" : quoted(e.quote!)}</p>}
+                              </div>
+                              {canUndo(e) && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground shrink-0 -mt-1"
+                                  onClick={() => void undoEntry(e)}
+                                  data-testid={entries.length === 1 ? `summary-undo-${f.itemId}` : `summary-undo-${f.itemId}-${e.key}`}
+                                >
+                                  Undo
+                                </Button>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
             {(summary.alsoNoted > 0 || summary.privateNotes > 0) && (

@@ -388,6 +388,23 @@ export interface SummaryFiledRow {
   chunkId?: string;
   /** The key the filing wrote (Undo names it). */
   key?: string;
+  /**
+   * Every data point this sitting filed on the item, newest first (an item's
+   * other members included — "Slow months: April and October"), each with
+   * its own Undo. Summaries stored before this field read the row's own
+   * value / chunkId / key.
+   */
+  entries?: SummaryFiledEntry[];
+}
+
+export interface SummaryFiledEntry {
+  key: string;
+  /** "Slow months: April and October" — or just the value when it is the item's one shown value. */
+  text: string;
+  /** The seller's words, or null for the broker's own note. */
+  quote: string | null;
+  yourNote: boolean;
+  chunkId?: string;
 }
 
 export interface SummaryOpenRow {

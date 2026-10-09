@@ -26,6 +26,8 @@ import {
   filterCounts,
   viewCounts,
   boardVersion,
+  filedEntryText,
+  filedThisSitting,
   type CoverageBoard,
   type CoverageItem,
 } from "../../shared/coverage-board";
@@ -446,6 +448,55 @@ const mark = (itemId: string, kind: string, extra: Partial<CoverageMarkLike> = {
   assert.match(sheet.text, /Ask: Can you tell me about WSIB experience rating \(EMR\)\?/);
   assert.match(sheet.text, /Documents still needed\n {2}\[ \] General ledger/);
   ok("'what to ask next' (follow-up, same topic, critical; recently asked drops) and the call sheet");
+}
+
+// ── A session's filings on an item's OTHER members (checker r2 R2-4) ──────
+{
+  const at1 = "2026-10-09T15:00:00.000Z";
+  const at2 = "2026-10-09T15:02:00.000Z";
+  const deal = mkDeal(factsOf({
+    seasonality: ["Busy season requires 4 days/week in office", "interview"],
+    peakPeriods: ["June through August, and December to February", { source: "call", documentId: "T1", excerpt: "June through August, and December to February", sittingId: "S1", chunkId: "C8", at: at1 }],
+    slowPeriods: ["April and October", { source: "call", documentId: "T1", excerpt: "April and October are slow", sittingId: "S1", chunkId: "C9", at: at2 }],
+    ownerInvolvement: ["Three days a week", { source: "interview" }],
+  }));
+  const docs = [{ id: "T1", name: "Interview together — 9 Oct 2026 (In person)", visibility: "shared", sourceKind: "call", sourceMeta: { recordType: "together_sitting" } }];
+  const b = build(deal, { documents: docs });
+  const season = item(b, "seasonality:seasonality");
+  assert.equal(season.valueKey, "seasonality", "the row keeps showing the value already on file");
+  assert.deepEqual(season.sessionFiled?.map((e) => e.key), ["slowPeriods", "peakPeriods"], "both members filed this session, newest first");
+  assert.equal(season.filedInSittingId, "S1");
+  assert.equal(season.filedByChunkId, "C9");
+  assert.equal(season.sessionFiled?.[0].quote, "April and October are slow");
+  assert.equal(filedEntryText(season, season.sessionFiled![0], season.sessionFiled!), "Quietest months: April and October");
+  assert.ok(filedThisSitting(season, "S1") && !filedThisSitting(season, "S2"));
+  assert.equal(viewCounts(b, "S1").filed, 1, "one data point answered this session (the header's 'N filed')");
+  assert.deepEqual(filterItems(b, { view: "filed", sittingId: "S1" }).flatMap((g) => g.items.map((i) => i.id)), ["seasonality:seasonality"], "'Filed this session' shows it");
+  assert.equal(item(b, "employees:ownerInvolvement").sessionFiled, undefined, "an untouched item has no session filings");
+  // Screen: the seller's own words said aloud are shown; the seller audience carries none of it.
+  const screen = build(deal, { documents: docs }, "screen");
+  const sSeason = item(screen, "seasonality:seasonality");
+  assert.deepEqual(sSeason.sessionFiled?.map((e) => [e.key, e.value, !!e.privateValue]), [["slowPeriods", "April and October", false], ["peakPeriods", "June through August, and December to February", false]]);
+  const seller = build(deal, { documents: docs }, "seller");
+  assert.equal(item(seller, "seasonality:seasonality").sessionFiled, undefined, "seller: no session filings");
+  assert.ok(!JSON.stringify(seller).includes("April and October"));
+  ok("a session's answer filed under an item's other member shows on that item (row, Filed this session, count), screen-safe, never to the seller");
+}
+
+// ── Screen: a fact the broker settled reads 'On file — private to you' (checker r2 R2-5) ──
+{
+  const deal = mkDeal(factsOf({
+    workingCapital: ["Normalized net working capital $301,000 at Dec 31, 2024 (cash-free, debt-free)", { source: "broker", at: "2026-10-01T00:00:00Z" }],
+  }));
+  const broker = build(deal);
+  assert.match(String(item(broker, "financials:workingCapital").value), /\$301,000/);
+  const screen = build(deal, {}, "screen");
+  const wc = item(screen, "financials:workingCapital");
+  assert.equal(wc.value, null, "never the seller-safe view's stand-in '(on file — settled by the broker)'");
+  assert.equal(wc.privateValue, true);
+  assert.ok(!JSON.stringify(screen).includes("settled by the broker"));
+  assert.ok(!JSON.stringify(screen).includes("301,000"));
+  ok("screen: a fact the broker settled reads 'On file — private to you', never the stand-in text");
 }
 
 console.log(`\n${n} checks passed`);

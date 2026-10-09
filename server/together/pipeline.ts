@@ -805,9 +805,18 @@ async function recordOnSitting(s: TogetherSitting, chunk: TogetherChunk, result:
     hints,
     longSession: budget.throttleMs > 0 || budget.held,
     liveHeld: budget.held,
-    ...(result.filed.length > 0 ? { lastFiled: { at, count: result.filed.filter((f) => !f.undoneAt).length, chunkId: chunk.id } } : {}),
+    ...(result.filed.length > 0 ? { lastFiled: { at, count: filedItemCount(result), chunkId: chunk.id } } : {}),
     timing: [...(st.timing ?? []), { ms: latency, waited, reason: chunk.reason }].slice(-200),
   });
+}
+
+/**
+ * How many data points a part answered — the same count as the board's
+ * "N filed this session" and the end summary (items, not keys: busy and slow
+ * months filed on Seasonality are one answer). Pure.
+ */
+export function filedItemCount(result: Pick<ChunkResult, "filed">): number {
+  return new Set(result.filed.filter((f) => !f.undoneAt).map((f) => f.itemId || `key:${f.key}`)).size;
 }
 
 /** After a filing: a diff of the board (or the whole board) to every open tab. */
@@ -825,7 +834,7 @@ async function publishFiled(s: TogetherSitting, r: Runner, chunk: TogetherChunk,
   hub.publish(s.id, {
     type: "filed",
     chunkId: chunk.id,
-    filedCount: result.filed.length,
+    filedCount: filedItemCount(result),
     nothing: result.nothing,
     brokerUnconfirmed: (st.brokerUnconfirmed ?? []).filter((b) => b.chunkId === chunk.id),
     hints: st.hints,

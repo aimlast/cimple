@@ -43,7 +43,7 @@ import { TogetherPip } from "./TogetherPip";
 import { useTogetherSitting } from "@/hooks/useTogetherSitting";
 import { useLiveListening } from "@/hooks/useLiveListening";
 import { usePictureInPicture } from "@/lib/pip";
-import { viewCounts, type CoverageBoard, type CoverageFilter, type CoverageView } from "@shared/coverage-board";
+import { filedInSitting, viewCounts, type CoverageBoard, type CoverageFilter, type CoverageView } from "@shared/coverage-board";
 import { VIA_LABEL, listenCopy, listenIsActive, listenIsProblem, type TogetherVia } from "@shared/together";
 import type { Deal } from "@shared/schema";
 
@@ -423,10 +423,12 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
     const seen = (seenFiled.current ??= new Map());
     const t = Date.now();
     for (const s of board.sections) for (const i of s.items) {
-      if (i.filedInSittingId !== sitting.id || !i.filedAt) continue;
-      const mark = `${i.id}@${i.filedByChunkId ?? i.filedAt}`;
-      if (!seen.has(mark)) seen.set(mark, firstLoad ? new Date(i.filedAt).getTime() : t);
-      if (t - (seen.get(mark) ?? 0) < JUST_FILED_MS) out.add(i.id);
+      // (Any data point this sitting filed on the item — its other members too.)
+      for (const e of filedInSitting(i, sitting.id)) {
+        const mark = `${i.id}@${e.key}@${e.chunkId ?? e.at}`;
+        if (!seen.has(mark)) seen.set(mark, firstLoad ? new Date(e.at).getTime() : t);
+        if (t - (seen.get(mark) ?? 0) < JUST_FILED_MS) out.add(i.id);
+      }
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps

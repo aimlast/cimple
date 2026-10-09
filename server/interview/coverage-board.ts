@@ -59,6 +59,7 @@ import {
   type CoverageSummary,
   type DocumentNeeded,
   type RoutedQuestion,
+  type SessionFiledEntry,
 } from "@shared/coverage-board";
 import { computeCimReadiness } from "@shared/cim-readiness";
 import {
@@ -89,6 +90,7 @@ import {
 import { onFileItems, type EvidenceTarget, type OnFileItem } from "./on-file-evidence";
 import { parseLedger, type DeferralEntry } from "./deferral-ledger";
 import { BROKER_WORK_KEY_RE } from "./source-privacy";
+import { HELD_BY_BROKER_VALUE } from "./seller-view";
 import { isDocumentAuthoritativeField } from "../documents/merge-policy";
 import { whoHoldsTheAnswer } from "./fact-guards";
 import { contextSessions } from "./session-mode";
@@ -597,6 +599,14 @@ export function boardFromCoverage(inputs: CoverageInputs, audience: CoverageAudi
 
   const sections: CoverageSection[] = [];
   const readKeyOwner = new Map<string, string>();
+  // Keys a session together filed → the ONE item that shows them (where the key is a member first,
+  // else the first item reading it as an alias) — so "slow months" filed on Seasonality shows there.
+  const filedOwner = new Map<string, string>();
+  if (!sellerAud && inputs.sittingFilings) {
+    const filedKeys = new Set(Object.keys(inputs.sittingFilings));
+    for (const s of shape.sections) for (const it of s.items) for (const m of it.members) if (filedKeys.has(m.key) && !filedOwner.has(m.key)) filedOwner.set(m.key, it.id);
+    for (const s of shape.sections) for (const it of s.items) for (const k of it.aliases) if (filedKeys.has(k) && !filedOwner.has(k)) filedOwner.set(k, it.id);
+  }
   for (const s of shape.sections) {
     const items: CoverageItem[] = [];
     for (const it of s.items) {
@@ -613,9 +623,15 @@ export function boardFromCoverage(inputs: CoverageInputs, audience: CoverageAudi
       });
       for (const k of it.readKeys) if (!readKeyOwner.has(k)) readKeyOwner.set(k, it.id);
       let item = d.item;
-      const filing = inputs.sittingFilings?.[d.item.valueKey ?? ""];
-      if (filing) item = { ...item, filedAt: filing.at, filedInSittingId: filing.sittingId, ...(filing.chunkId ? { filedByChunkId: filing.chunkId } : {}) };
       if (audience === "screen") item = screenItem(item, it, d, inputs.sellerFacts, sellerConfidence, docName);
+      if (!sellerAud && inputs.sittingFilings) {
+        const owned = it.readKeys.filter((k) => filedOwner.get(k) === it.id);
+        const entries = sessionFiledEntries(it, owned, inputs.sittingFilings, audience === "screen" ? inputs.sellerFacts : statusFacts, audience);
+        if (entries.length > 0) {
+          const newest = entries[0];
+          item = { ...item, sessionFiled: entries, filedAt: newest.at, filedInSittingId: newest.sittingId, ...(newest.chunkId ? { filedByChunkId: newest.chunkId } : {}) };
+        }
+      }
       if (audience === "seller") item = sellerItem(item);
       items.push(item);
     }
@@ -741,7 +757,11 @@ function screenItem(
   // Money talk: the add-backs item, or a value under the broker's own
   // computations (SDE, adjusted earnings, a peg) — never shown or explained.
   const moneyTalk = shape.members.some((m) => ADDBACK_KEY_RE.test(m.key)) || (!!item.valueKey && BROKER_WORK_KEY_RE.test(item.valueKey));
-  const sellerBest = bestValue(shape, sellerFacts, sellerConfidence);
+  // (A fact the broker settled reads "(on file — settled by the broker)" in the seller-safe view — a
+  // stand-in, never a value to show: the item reads "On file — private to you".)
+  const held = shape.readKeys.filter((k) => isHeldPlaceholder(coverageValueText(sellerFacts[k])));
+  const shownFacts = held.length > 0 ? Object.fromEntries(Object.entries(sellerFacts).filter(([k]) => !held.includes(k))) : sellerFacts;
+  const sellerBest = bestValue(shape, shownFacts, sellerConfidence);
   const sellerSrc = sellerBest ? getFieldSources(sellerFacts)[sellerBest.key] : undefined;
   const marks = item.marks.filter((m) => m.kind !== "note").map(({ note: _n, ...m }) => m as CoverageItemMark);
   const out: CoverageItem = { ...item, marks, source: null, value: null };
@@ -766,6 +786,63 @@ function screenItem(
   // any other source's wording is not.)
   if (out.source && !sellerSrc?.sittingId) delete out.source.excerpt;
   return out;
+}
+
+const FILED_VALUE_MAX = 160;
+
+/**
+ * What sessions together filed on an item, newest first: one entry per key
+ * the item owns whose source carries a sitting (sittingFilingsFrom). The
+ * screen audience shows the seller-safe value — anything private to the
+ * broker (a held or broker-settled value, money talk, a lead) reads as
+ * private; the seller's own words said aloud in the session are shown.
+ */
+function sessionFiledEntries(
+  shape: ItemShape,
+  keys: string[],
+  filings: Record<string, SittingFiling>,
+  facts: Record<string, unknown>,
+  audience: CoverageAudience,
+): SessionFiledEntry[] {
+  const sources = getFieldSources(facts);
+  const out: SessionFiledEntry[] = [];
+  for (const key of keys) {
+    const f = filings[key];
+    if (!f) continue;
+    const label = shape.members.find((m) => m.key === key)?.label ?? lowerFirst(fieldLabel(key));
+    const src = sources[key];
+    const raw = coverageValueText(facts[key]);
+    let value: string | null = raw === null ? null : clip(raw, FILED_VALUE_MAX);
+    let privateValue = false;
+    let quote: string | null = src?.excerpt ? clip(src.excerpt, 200) : null;
+    if (audience === "screen") {
+      const moneyTalk = BROKER_WORK_KEY_RE.test(key) || ADDBACK_KEY_RE.test(key);
+      const lead = !!src && LEAD_KINDS.has(String(src.source)) && !src.acceptedByBroker;
+      if (moneyTalk || lead || raw === null || isHeldPlaceholder(raw)) {
+        value = null;
+        privateValue = true;
+      }
+      // (Only the seller's own words said aloud in a session are shown.)
+      if (!src?.sittingId || privateValue) quote = null;
+    }
+    out.push({
+      key,
+      label,
+      value,
+      ...(privateValue ? { privateValue: true } : {}),
+      at: f.at,
+      sittingId: f.sittingId,
+      ...(f.chunkId ? { chunkId: f.chunkId } : {}),
+      quote,
+      ...(isBrokerCallNote(src) ? { yourNote: true } : {}),
+    });
+  }
+  return out.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+}
+
+/** The seller-safe view's stand-in for a fact the broker settled ("(on file — settled by the broker)"). */
+function isHeldPlaceholder(text: string | null | undefined): boolean {
+  return typeof text === "string" && text.trim() === HELD_BY_BROKER_VALUE;
 }
 
 function screenReason(reason: CoverageReason | null, sellerValue: string | null): CoverageReason | null {

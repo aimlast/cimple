@@ -37,9 +37,12 @@ import {
   CHIP,
   MASKED_VALUE,
   STATUS_LABEL,
+  filedEntryText,
+  filedInSitting,
   quoted,
   reasonText,
   type CoverageItem,
+  type SessionFiledEntry,
 } from "@shared/coverage-board";
 
 /** Never removable from the checklist (the server refuses too). */
@@ -317,13 +320,20 @@ export function CoverageItemRow({
   // ✓ File it: the possible answer is the seller's (no AI call).
   const fileIt = () =>
     run(() => boardRequest("POST", `/api/deals/${dealId}/coverage-board/items/${encodeURIComponent(item.id)}/file-suggestion`, { sittingId, chunkId: item.suggestion?.chunkId }, "Couldn't file it"));
-  // Undo (inline for a minute after a filing).
-  const undo = () =>
+  // What this session filed on the item — its shown value, or another of its data points
+  // ("slow months" on Seasonality), each with its own Undo (inline for a minute after a
+  // filing; always in the "Filed this session" view and the live feed).
+  const mine = mode === "live" ? filedInSitting(item, sittingId) : [];
+  const mainEntry = mine.find((e) => e.key === item.valueKey) ?? null;
+  const otherFiled = mine.filter((e) => e !== mainEntry);
+  const undoWindow = mode === "live" && (!!justFiled || !!allowUndo) && !!sittingId;
+  const undoEntry = (e: SessionFiledEntry) =>
     run(
-      () => boardRequest("POST", `/api/deals/${dealId}/together/sittings/${sittingId}/captures/${encodeURIComponent(item.filedByChunkId ?? "")}/undo`, { key: item.valueKey }, "Couldn't undo it"),
+      () => boardRequest("POST", `/api/deals/${dealId}/together/sittings/${sittingId}/captures/${encodeURIComponent(e.chunkId ?? "")}/undo`, { key: e.key }, "Couldn't undo it"),
       "Undone — back to what it was",
     );
-  const canUndo = mode === "live" && (!!justFiled || !!allowUndo) && !!sittingId && !!item.filedByChunkId && !!item.valueKey && item.filedInSittingId === sittingId;
+  const undo = () => (mainEntry ? undoEntry(mainEntry) : Promise.resolve());
+  const canUndo = undoWindow && !!mainEntry?.chunkId;
   const mark = (kind: "verify_later", on: boolean) =>
     run(() =>
       on
@@ -455,6 +465,30 @@ export function CoverageItemRow({
         {mode !== "panel" && tags}
       </div>
       {mode !== "panel" && <div className="mt-0.5"><SecondLine item={item} audience={audience} /></div>}
+      {otherFiled.length > 0 && (
+        <ul className="mt-1 space-y-0.5" data-testid={`filed-lines-${item.id}`}>
+          {otherFiled.map((e) => (
+            <li key={`${e.key}@${e.chunkId ?? e.at}`} className="flex items-start gap-1.5 text-xs" data-testid={`filed-line-${item.id}-${e.key}`}>
+              <Check className="h-3 w-3 mt-0.5 shrink-0 text-teal" aria-hidden />
+              <span className="min-w-0 flex-1 text-foreground/85 line-clamp-2" title={filedEntryText(item, e, mine)}>
+                {filedEntryText(item, e, mine)}
+                <span className="text-muted-foreground"> · {e.yourNote ? "your note, " : ""}this session</span>
+              </span>
+              {undoWindow && e.chunkId && !touch && (
+                <button
+                  type="button"
+                  className="shrink-0 text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2"
+                  disabled={busy}
+                  onClick={(ev) => { ev.stopPropagation(); void undoEntry(e); }}
+                  data-testid={`button-undo-${item.id}-${e.key}`}
+                >
+                  Undo
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
       {mode === "panel" && item.status !== "on_file" && item.reason && (
         <p className="text-[11px] text-muted-foreground line-clamp-1">{reasonText(item.reason, audience)}</p>
       )}
@@ -507,6 +541,11 @@ export function CoverageItemRow({
               {action === "answered" && <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90" disabled={busy} onClick={() => { closeSheet(); void answered(); }}>✓ Answered</Button>}
               {action === "file_it" && <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90" disabled={busy} onClick={() => { closeSheet(); void fileIt(); }}>✓ File it</Button>}
               {canUndo && <Button size="sm" variant="outline" disabled={busy} onClick={() => { closeSheet(); void undo(); }}>Undo</Button>}
+              {undoWindow && otherFiled.filter((e) => e.chunkId).map((e) => (
+                <Button key={`undo-${e.key}`} size="sm" variant="outline" disabled={busy} onClick={() => { closeSheet(); void undoEntry(e); }}>
+                  Undo {e.label}
+                </Button>
+              ))}
               {action === "confirm" && <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90" disabled={busy} onClick={() => { void confirm(); closeSheet(); }}>✓ Confirmed</Button>}
               {action === "resolve" && item.conflictId && <Button size="sm" variant="outline" onClick={() => { closeSheet(); onResolve?.(item.conflictId!); }}>Resolve…</Button>}
               {writable && item.status === "on_file" && <Button size="sm" variant="outline" onClick={() => { closeSheet(); openEditor("edit"); }}>Edit</Button>}

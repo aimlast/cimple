@@ -14,7 +14,9 @@
 import assert from "node:assert/strict";
 import { screenAsk, buildSittingSummary, followUpEmail } from "../../server/together/summary";
 import { followUpItemsRaised, getInterviewOutline, openFollowUpItems, outlineWithFollowUps, renderOutlineForPrompt } from "../../server/interview/outline";
-import type { CoverageBoard, CoverageItem } from "../../shared/coverage-board";
+import { viewCounts, type CoverageBoard, type CoverageItem } from "../../shared/coverage-board";
+import { summaryLine } from "../../shared/together";
+import { filedItemCount } from "../../server/together/pipeline";
 
 let n = 0;
 const ok = (name: string) => { n++; console.log("✓", name); };
@@ -90,7 +92,19 @@ async function main() {
         key: "seasonality", title: "Seasonality", order: 1, importance: "important", importanceReason: "", references: [], figureQuestions: 0,
         counts: { on_file: 1, partial: 1, verify: 0, missing: 2 },
         items: [
-          item({ id: "seasonality:seasonality", sectionKey: "seasonality", label: "Busy and slow months", status: "on_file", value: "Summer", yourNote: true, filedInSittingId: "S1", filedAt: new Date().toISOString() }),
+          item({ id: "seasonality:seasonality", sectionKey: "seasonality", label: "Busy and slow months", status: "on_file", value: "Summer", valueKey: "y", yourNote: true, filedInSittingId: "S1", filedAt: new Date().toISOString(), sessionFiled: [{ key: "y", label: "y", value: "Summer", at: new Date().toISOString(), sittingId: "S1", yourNote: true, quote: null }] }),
+          // Filed through the item's OTHER members (the shown value was already on file) — checker r2 R2-4.
+          item({
+            id: "seasonality:z", sectionKey: "seasonality", label: "Seasonality", status: "on_file", value: "Busy season requires 4 days a week", valueKey: "seasonality",
+            members: [{ key: "seasonality", label: "seasonality", writable: true }, { key: "peakPeriods", label: "busiest months", writable: true }, { key: "slowPeriods", label: "quietest months", writable: true }],
+            filedInSittingId: "S1", filedByChunkId: "C9",
+            sessionFiled: [
+              { key: "slowPeriods", label: "quietest months", value: "April and October", at: "2026-10-09T15:02:00Z", sittingId: "S1", chunkId: "C9", quote: "April and October are slow" },
+              { key: "peakPeriods", label: "busiest months", value: "June through August", at: "2026-10-09T15:00:00Z", sittingId: "S1", chunkId: "C8", quote: "June through August" },
+            ],
+          }),
+          // Filed in another session — not this one's.
+          item({ id: "seasonality:w", sectionKey: "seasonality", label: "Other session", status: "on_file", value: "x", valueKey: "y", filedInSittingId: "S0", sessionFiled: [{ key: "y", label: "y", value: "x", at: "2026-10-01T00:00:00Z", sittingId: "S0", chunkId: "C1" }] }),
           item({ id: "seasonality:a", sectionKey: "seasonality", label: "Critical one", critical: true }),
           item({ id: "seasonality:b", sectionKey: "seasonality", label: "Later one", marks: [{ kind: "verify_later", at: new Date().toISOString() }] }),
           item({ id: "seasonality:c", sectionKey: "seasonality", label: "Plain one" }),
@@ -116,9 +130,16 @@ async function main() {
     facts: { _brokerPrivateNotes: [{ note: "a", documentId: "DOC9" }, { note: "b", documentId: "OTHER", alsoFrom: [{ documentId: "DOC9" }] }, { note: "c", documentId: "OTHER" }] },
   });
   assert.equal(s.durationMin, 24);
-  assert.equal(s.filed.length, 1);
+  assert.equal(s.filed.length, 2, "two data points answered this session (never another session's)");
   assert.equal(s.filed[0].yourNote, true);
   assert.equal(s.filed[0].quote, null, "your note has no seller quote");
+  const other = s.filed.find((f) => f.itemId === "seasonality:z")!;
+  assert.deepEqual(other.entries?.map((e) => [e.key, e.text, e.chunkId, e.quote]), [
+    ["slowPeriods", "Quietest months: April and October", "C9", "April and October are slow"],
+    ["peakPeriods", "Busiest months: June through August", "C8", "June through August"],
+  ], "each data point filed, with its own Undo (part + key) and the seller's words");
+  assert.equal(summaryLine({ ...s, toVerify: 0 }), "24 min · 2 answers filed", "the summary counts what the board's header counts");
+  assert.equal(viewCounts(board, "S1").filed, s.filed.length, "header count === summary count");
   const ticked = Object.fromEntries(s.stillToGet.map((r) => [r.label, r.ticked]));
   assert.deepEqual(ticked, { "Critical one": true, "Later one": true, "Plain one": false, "Denise has it": true });
   assert.deepEqual(s.documents.map((d) => d.ticked), [true, true, false], "required or promised documents start ticked");
@@ -128,6 +149,8 @@ async function main() {
   assert.equal(s.screen, false);
   const screenS = buildSittingSummary({ sitting: { id: "S1", via: "person", startedAt: started, endedAt: null, lastLineAt: null, pausedAt: null, transcriptDocumentId: null, captureState: {} } as any, board: { ...board, audience: "screen" }, facts: {} });
   assert.equal(screenS.screen, true);
+  // The filing line's "Filed N answers" counts data points too (busy + slow months = one answer).
+  assert.equal(filedItemCount({ filed: [{ key: "peakPeriods", itemId: "seasonality:seasonality" }, { key: "slowPeriods", itemId: "seasonality:seasonality" }, { key: "dispatchSoftware", itemId: "operations:dispatchSoftware" }, { key: "x", itemId: "a:x", undoneAt: "now" }] as any }), 2);
   ok("summary: defaults ticked (critical, come back later, someone else has it; required/promised documents), filed rows, notes count");
 
   // ── The email body ──
