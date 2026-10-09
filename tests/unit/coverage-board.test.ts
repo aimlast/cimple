@@ -452,10 +452,46 @@ console.log(`\n${n} checks passed`);
 
 // ── Template asks keep proper names ────────────────────────────────────
 import("../../server/interview/coverage-asks").then(({ templateAsk }) => {
-  assert.equal(templateAsk("Retention plan for licensed technicians"), "Can you tell me about retention plan for licensed technicians?");
-  assert.equal(templateAsk("Comfort Club membership trend (last 3 years)"), "Can you tell me about Comfort Club membership trend (last 3 years)?");
   assert.equal(templateAsk("WSIB experience rating (EMR)"), "Can you tell me about WSIB experience rating (EMR)?");
+  assert.equal(templateAsk("A/R aging"), "Can you tell me about A/R aging?", "two capitals in the first word: kept");
+  assert.equal(templateAsk("Associate PT agreement terms"), "Can you tell me about associate PT agreement terms?", "an acronym second word isn't a proper name");
   console.log("✓ template asks keep acronyms and proper names");
+  // Until the phrasing pass has run, the labels the founder saw read as spoken questions (F4).
+  const cases: Array<[string, string]> = [
+    ["Revenue split: installations vs service/repair", "How does revenue break down between installations and service/repair?"],
+    ["Gross margin: installs vs service vs plumbing", "How does gross margin break down between installs, service and plumbing?"],
+    ["Commercial vs residential revenue split", "How does revenue break down between commercial and residential?"],
+    ["Recurring vs project vs T&M revenue split", "How does revenue break down between recurring, project and T&M?"],
+    ["In-store vs online sales percentage split", "How do sales break down between in-store and online?"],
+    ["Comfort Club membership trend (last 3 years)", "How has Comfort Club membership trended over the last three years?"],
+    ["Foot traffic level and trend (last 3 years)", "Foot traffic level and trend over the last three years — what does that look like?"],
+    ["PT and RMT turnover last 3 years", "PT and RMT turnover over the last three years — what does that look like?"],
+    ["Fleet replacement capital required (next 24 months)", "Fleet replacement capital required over the next 24 months — what do you expect?"],
+    ["Revenue breakdown (dry van, reefer, drayage, 3PL)", "How does revenue break down across dry van, reefer, drayage and 3PL?"],
+    ["Product mix breakdown (vape vs tobacco vs accessories %)", "How does product mix break down across vape, tobacco and accessories?"],
+    ["Compounding revenue as percentage of total", "Compounding revenue — what percentage of the total is that?"],
+    ["ODB (Ontario Drug Benefit) percentage of Rx revenue", "ODB (Ontario Drug Benefit) — what percentage of Rx revenue is that?"],
+    ["Current cleanroom capacity utilization percentage", "What's the current cleanroom capacity utilization as a percentage?"],
+    ["Number of licensed pharmacists on staff", "How many licensed pharmacists on staff?"],
+    ["Average driver tenure (years)", "What's the average driver tenure, in years?"],
+    ["Current equipment utilization rate (%)", "What's the current equipment utilization rate?"],
+    ["Any lanes or accounts currently out for rebid", "Any lanes or accounts currently out for rebid?"],
+    ["Lease assignment requires landlord consent", "Does lease assignment require landlord consent?"],
+    ["Landlord consent required for share sale", "Is landlord consent required for share sale?"],
+    ["Vehicle leases/loans assignable to buyer", "Can vehicle leases/loans be assigned to a buyer?"],
+    ["Names of all master license holders", "Can you list all master license holders?"],
+    ["Retention plan for licensed technicians", "What's the retention plan for licensed technicians?"],
+    ["CTPAT certification status", "Where do things stand with CTPAT certification?"],
+    ["Last RCDSO inspection date and outcome", "When was the last RCDSO inspection, and how did it go?"],
+    ["Who handles estimating for installations", "Who handles estimating for installations?"],
+    // No pattern fits (or a pattern would garble it): the plain template.
+    ["Subcontractor usage and key dependencies", "Can you tell me about subcontractor usage and key dependencies?"],
+    ["Number of setup technicians and average tenure", "Can you tell me about number of setup technicians and average tenure?"],
+    ["Owner's personal share of total dispensing/clinical production", "Can you tell me about owner's personal share of total dispensing/clinical production?"],
+  ];
+  for (const [label, ask] of cases) assert.equal(templateAsk(label), ask, label);
+  assert.equal(templateAsk("Revenue split: installations vs service/repair."), templateAsk("Revenue split: installations vs service/repair"), "a trailing full stop is ignored");
+  console.log("✓ template asks read as spoken questions for the common label shapes ('A vs B', '(last 3 years)', '% of total', status…)");
 });
 
 // ── One primary button per row ─────────────────────────────────────────

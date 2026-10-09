@@ -216,6 +216,20 @@ export async function ensurePlanPhrasing(deal: Deal, deps: PhrasingDeps = defaul
   }
 }
 
+/**
+ * Right after a checklist build succeeds (background): its suggested ways to
+ * ask, once per deal (new items only after a rebuild — phrased items keep
+ * theirs). So the Overview card, the checklist and the call sheet read as
+ * questions on every deal, not only once a session together has started.
+ * Never with the key off or schedulers off; never from a GET of its own.
+ */
+export async function phraseAfterPlanBuild(dealId: string, deps: PhrasingDeps = defaultDeps): Promise<PhrasingResult> {
+  if (process.env.ANTHROPIC_API_KEY === "disabled" || process.env.DISABLE_SCHEDULERS === "1") return "skipped";
+  const deal = await deps.readDeal(dealId);
+  if (!deal) return "skipped";
+  return ensurePlanPhrasing(deal, deps);
+}
+
 export function _resetPhrasingForTests(): void {
   inFlight.clear();
   lastFailure.clear();

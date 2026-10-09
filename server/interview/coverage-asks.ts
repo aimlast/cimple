@@ -138,17 +138,147 @@ export function lowerFirst(s: string): string {
   if (!s) return s;
   // Keep acronyms ("WSIB rating", "EMR") and proper names ("Comfort Club
   // membership trend" — the next word is capitalised too) as they are.
-  if (/^[A-Z]{2}/.test(s)) return s;
   const words = s.split(/\s+/);
-  if (words.length > 1 && /^[A-Z][a-z]/.test(words[0]) && /^[A-Z]/.test(words[1])) return s;
+  // (Two capitals in the first word: "WSIB", "A/R", "T&M", "3PL", "CyberSecure".)
+  if (/^[^\s]*[A-Z][^\s]*[A-Z]/.test(words[0])) return s;
+  if (words.length > 1 && /^[A-Z][a-z]/.test(words[0]) && /^[A-Z][a-z]/.test(words[1])) return s;
   return s.charAt(0).toLowerCase() + s.slice(1);
 }
 
 export const FALLBACK_WHY = "Buyers in this industry check this.";
 
+const NUMBER_WORDS: Record<string, string> = { "2": "two", "3": "three", "4": "four", "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine", "10": "ten", "12": "twelve" };
+const numberWord = (n: string) => NUMBER_WORDS[n] ?? n;
+const capitalise = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+/** "a, b and c" */
+const listWords = (parts: string[]) => (parts.length <= 1 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`);
+/** "How do sales …" / "How does revenue …": a plural last word takes "do". */
+const doOrDoes = (phrase: string) => (/(?:[^su]s|sales)$/i.test(phrase.trim().split(/\s+/).pop() ?? "") ? "do" : "does");
+/** Unit hints in brackets at the end: "(%)", "(years)" — read as words or dropped. */
+const UNIT_TAIL: Array<[RegExp, string]> = [
+  [/\s*\((?:%|percent)\)$/i, ""],
+  [/\s*\(annual %\)$/i, " per year"],
+  [/\s*\((?:in )?years\)$/i, ", in years"],
+  [/\s*\((?:in )?months\)$/i, ", in months"],
+  [/\s*\((?:if any|if held|if applicable)\)$/i, ""],
+];
+function dropUnitTail(s: string): string {
+  for (const [re, words] of UNIT_TAIL) if (re.test(s)) return s.replace(re, words);
+  return s;
+}
+/** Splits "A vs B vs C" into its parts (null unless there are 2–4 short ones). */
+function versusParts(s: string): string[] | null {
+  const parts = s.split(/\s+vs\.?\s+|\s+versus\s+/i).map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2 || parts.length > 4 || parts.some((p) => p.split(/\s+/).length > 5)) return null;
+  return parts.map(lowerFirst);
+}
+
+/**
+ * A spoken question from a checklist label, by a few safe patterns (the
+ * phrasing pass replaces these once it has run — this is what every deal
+ * shows until then). Only the label's own words are used; nothing is
+ * invented. Null when no pattern fits. Pure.
+ */
+function patternAsk(raw: string): string | null {
+  // Already a question.
+  if (/^(who|what|how|is|are|does|do|did|when|where|which|why|can|could|will|has|have)\b/i.test(raw)) return `${capitalise(raw)}?`;
+  // "Comfort Club membership trend (last 3 years)", "PT and RMT turnover last 3 years", "… (next 24 months)".
+  const period = raw.match(/^(.+?)\s*\(?\s*\b(?:over the |in the )?(last|past|next) (\d+|two|three|five|ten|twelve) (years?|months?)\s*\)?$/i);
+  if (period && period[1].trim().length > 2) {
+    const subject = period[1].trim().replace(/[,:;–—-]+$/, "").trim();
+    const span = `${period[2].toLowerCase() === "next" ? "the next" : "the last"} ${numberWord(period[3])} ${period[4].toLowerCase()}`;
+    const trendOf = subject.replace(/\s*\btrend$/i, "");
+    if (trendOf !== subject && !/\b(and|or)$/i.test(trendOf)) return `How has ${lowerFirst(trendOf)} trended over ${span}?`;
+    if (period[2].toLowerCase() === "next") return `${capitalise(subject)} over ${span} — what do you expect?`;
+    return `${capitalise(subject)} over ${span} — what does that look like?`;
+  }
+  // "Revenue split: installations vs service/repair", "Gross margin: installs vs service vs plumbing".
+  const colon = raw.match(/^([^:]{2,60}):\s*(.+)$/);
+  if (colon) {
+    const parts = versusParts(dropUnitTail(colon[2]));
+    const head = colon[1].trim().replace(/\s+(split|mix|breakdown)$/i, "");
+    if (parts && head) return `How ${doOrDoes(head)} ${lowerFirst(head)} break down between ${listWords(parts)}?`;
+  }
+  // "Commercial vs residential revenue split", "Custom/job shop vs production work mix (%)".
+  const mix = dropUnitTail(raw).match(/^(.+?)\s+(split|mix)$/i);
+  if (mix) {
+    const words = mix[1].trim().split(/\s+/);
+    if (/^(percentage|percent|%)$/i.test(words[words.length - 1] ?? "")) words.pop();
+    const nounRe = /^(revenue|sales|work|business|customers?|clients?|products?|services?|jobs?|patients?)$/i;
+    const noun = words.length > 2 && nounRe.test(words[words.length - 1]) ? words.pop()!.toLowerCase() : null;
+    const parts = versusParts(words.join(" "));
+    if (parts) return noun ? `How ${doOrDoes(noun)} ${noun} break down between ${listWords(parts)}?` : `How does it split between ${listWords(parts)}?`;
+  }
+  // "Revenue breakdown (dry van, reefer, drayage, 3PL)", "Revenue breakdown by industry segment (%)".
+  const breakdown = dropUnitTail(raw).match(/^(.+?)\s+breakdown(?:\s+(by .+?))?(?:\s*\((.+)\))?$/i);
+  if (breakdown) {
+    const inParens = (breakdown[3] ?? "").replace(/\s*%\s*/g, " ").trim();
+    const across = inParens ? (versusParts(inParens) ?? inParens.split(/\s*[,/]\s*/).filter(Boolean)) : [];
+    const tail = breakdown[2]
+      ? ` ${breakdown[2]}${inParens ? ` (${inParens})` : ""}`
+      : across.length >= 2 && across.length <= 6 ? ` across ${listWords(across)}` : "";
+    const head = breakdown[1].trim();
+    return `How ${doOrDoes(head)} ${lowerFirst(head)} break down${tail}?`;
+  }
+  // "Compounding revenue as percentage of total", "ODB percentage of Rx revenue", "Private-pay revenue percentage".
+  const pct = raw.match(/^(.+?)\s+(?:as (?:a )?)?(percentage|percent|share|%)(?:\s+of\s+(.+))?$/i);
+  if (pct && pct[1].trim().length > 2 && !(pct[2].toLowerCase() === "share" && pct[3])) {
+    const subject = pct[1].trim();
+    // A rate on its own ("utilization percentage") is not a share of a total.
+    if (!pct[3] && /\b(utili[sz]ation|rate|margin|growth|occupancy|turnover|retention)$/i.test(subject)) return `What's the ${lowerFirst(subject)} as a percentage?`;
+    if (pct[3] || !/\s(and|or)\s/i.test(subject)) {
+      const of = pct[3] ? (/^total$/i.test(pct[3].trim()) ? "the total" : pct[3].trim()) : "the total";
+      const word = pct[2].toLowerCase() === "share" ? "share" : "percentage";
+      return `${capitalise(subject)} — what ${word} of ${of} is that?`;
+    }
+  }
+  // "Number of licensed pharmacists on staff" → "How many …?"
+  const num = raw.match(/^number of (.+)$/i);
+  if (num && !/\s(and|or)\s/i.test(num[1])) return `How many ${dropUnitTail(num[1])}?`;
+  // "Average fuel cost per mile/km", "Current backlog value".
+  const what = raw.match(/^(average|current|typical)\s+(.+)$/i);
+  if (what) return `What's the ${what[1].toLowerCase()} ${lowerFirst(dropUnitTail(what[2]))}?`;
+  // "Any lanes or accounts currently out for rebid"
+  if (/^any\s+\S/i.test(raw)) return `${capitalise(dropUnitTail(raw))}?`;
+  // "Lease assignment requires landlord consent", "Landlord consent required for ownership change".
+  const requires = raw.match(/^(.+?)\s+requires\s+(.+)$/i);
+  if (requires) return `Does ${lowerFirst(requires[1])} require ${requires[2]}?`;
+  const required = raw.match(/^(.+?)\s+required\s+(for|to|on)\s+(.+)$/i);
+  if (required) return `Is ${lowerFirst(required[1])} required ${required[2].toLowerCase()} ${required[3]}?`;
+  if (/\brequiring\b/i.test(raw)) return `Are there any ${lowerFirst(raw)}?`;
+  // "Direct billing credentials transferable to buyer", "Vehicle leases/loans assignable to buyer".
+  const transfer = raw.match(/^(.+?)\s+(transferable|assignable)\s+to\s+(?:a |the )?buyer$/i);
+  if (transfer) return transfer[2].toLowerCase() === "transferable" ? `Can ${lowerFirst(transfer[1])} transfer to a buyer?` : `Can ${lowerFirst(transfer[1])} be assigned to a buyer?`;
+  // "Names of all master license holders", "List of technician certifications by employee".
+  const list = raw.match(/^(?:names|list) of (.+)$/i);
+  if (list) return `Can you list ${list[1]}?`;
+  // "Retention plan for licensed technicians", "Plan to transition owner's personal patient base".
+  const plan = raw.match(/^(.*\bplan)\s+(for|to|post-sale)\b(.*)$/i);
+  if (plan) return `What's the ${lowerFirst(plan[1])} ${plan[2]}${plan[3]}?`;
+  // "Status of upcoming season orders", "Percentage of annual revenue in peak season/Q4".
+  const statusOf = raw.match(/^status of (.+)$/i);
+  if (statusOf) return `Where do things stand with ${statusOf[1]}?`;
+  const pctOf = raw.match(/^(?:percentage|share) of (.+?)\s+(in|from|during)\s+(.+)$/i);
+  if (pctOf) return `What percentage of ${pctOf[1]} comes ${pctOf[2].toLowerCase()} ${pctOf[3]}?`;
+  // "Last RCDSO inspection date and outcome" → "When was the last RCDSO inspection, and how did it go?"
+  const lastDate = raw.match(/^last (.+?) dates?( and (?:outcome|result|findings))?$/i);
+  if (lastDate) return `When was the last ${lastDate[1]}${lastDate[2] ? ", and how did it go" : ""}?`;
+  // "Buyer must be licensed PT (Alberta restriction)", "Dental Professional Corporation structure confirmed".
+  const must = raw.match(/^(.+?)\s+must\s+(.+)$/i);
+  if (must) return `Does ${lowerFirst(must[1])} have to ${must[2]}?`;
+  const confirmed = raw.match(/^(.+?)\s+confirmed$/i);
+  if (confirmed) return `Is the ${lowerFirst(confirmed[1])} confirmed?`;
+  // "CTPAT certification status" → "Where do things stand with CTPAT certification?"
+  const status = dropUnitTail(raw).match(/^(.+?)\s+status(\s*\(.+\))?$/i);
+  if (status && status[1].trim().length > 2) return `Where do things stand with ${lowerFirst(status[1].trim().replace(/\s+current$/i, ""))}${status[2] ?? ""}?`;
+  return null;
+}
+
 /** The template ask for an item with no hand-written or phrased one. */
 export function templateAsk(label: string): string {
-  return `Can you tell me about ${lowerFirst(label.trim().replace(/[.?!]+$/, ""))}?`;
+  const raw = label.trim().replace(/[.?!]+$/, "").replace(/\s+/g, " ");
+  if (!raw) return "What can you tell me about this?";
+  return patternAsk(raw) ?? `Can you tell me about ${lowerFirst(raw)}?`;
 }
 
 /** The ask + why for an industry checklist item: the phrasing pass's, else the template. */
