@@ -36,7 +36,9 @@ export function DdBanner() {
       </p>
       <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]" aria-label="Colour key">
         <li className="inline-flex items-center gap-1"><StateIcon state="match" /> Matches</li>
-        <li className="inline-flex items-center gap-1"><StateIcon state="regrouped" /> Same amounts, grouped differently</li>
+        <li className="inline-flex items-center gap-1">
+          <span aria-hidden className="inline-flex h-3.5 items-center rounded-sm px-0.5" style={{ backgroundColor: STATE_PAINT.regrouped.tint, boxShadow: `inset 1px 0 0 ${STATE_PAINT.regrouped.rule}` }}><StateIcon state="regrouped" /></span> Same amounts, grouped differently
+        </li>
         <li className="inline-flex items-center gap-1">
           <span aria-hidden className="inline-block h-3 w-4 rounded-sm" style={{ backgroundColor: STATE_PAINT.explained.tint, boxShadow: `inset 1px 0 0 ${STATE_PAINT.explained.rule}` }} /> Differs, reason given
         </li>

@@ -229,7 +229,10 @@ export function FigureBody({ fig, mode, audience, broker, buyer, onClose }: Figu
 
       {isBroker && fig.noReason && !fig.why && (
         <div className="space-y-1.5 rounded-md border border-dashed px-2 py-1.5" style={{ borderColor: "#8A8170" }}>
-          <p className="text-[12px] font-medium" style={{ color: SOFT }}>{BROKER_NO_REASON}</p>
+          <p className="text-[12px] font-medium" style={{ color: SOFT }}>
+            {fig.noReasonFor?.kind === "change" ? `${BROKER_NO_REASON} for the change from FY${fig.noReasonFor.fromYear}`
+              : fig.noReasonFor?.kind === "difference" ? `${BROKER_NO_REASON} for this difference` : BROKER_NO_REASON}
+          </p>
           {fig.hint && (
             <p className="text-[12px] leading-snug" style={{ color: SOFT }}>
               {BROKER_HINT_PREFIX} “{fig.hint}” <span style={{ color: MUTED }}>{BROKER_HINT_SUFFIX}</span>

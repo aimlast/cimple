@@ -30,7 +30,7 @@ function Cell({ fig }: { fig: FigureView | null }) {
     <FigureTrigger fig={fig} showState={false}>
       <span className="inline-flex items-center gap-1 tabular-nums" title={STATE_WORDS[check.state]}>
         <StateIcon state={check.state} />
-        {differs && check.difference && <span className="text-[11px]" style={{ color: STATE_PAINT[check.state].ink }}>{check.difference}</span>}
+        {differs && check.difference && <span className="text-[11px]" style={{ color: check.state === "regrouped" ? "#56687A" : STATE_PAINT[check.state].ink }}>{check.difference}</span>}
       </span>
     </FigureTrigger>
   );

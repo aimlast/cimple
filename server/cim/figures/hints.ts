@@ -77,8 +77,19 @@ function mentions(sentence: string, label: string, synonyms: string[]): boolean 
 }
 
 /**
+ * A recital of figures, not a reason: a formula ("Reported EBITDA (net
+ * income + income taxes + interest + amortization): FY2022 $489,325; …") or a
+ * list of three or more amounts. Offering it as "Cimple's analysis suggests"
+ * for why income taxes moved would read as nonsense to a broker.
+ */
+export function isRecital(sentence: string): boolean {
+  if (/\+|=/.test(sentence)) return true;
+  return (sentence.match(/\$\s?\d/g) ?? []).length >= 3;
+}
+
+/**
  * The hint for each figure key (a movement from the year before, or a
- * difference in its year). First matching sentence wins.
+ * difference in its year). First matching sentence wins; recitals never do.
  */
 export function hintsFor(figureKeys: Iterable<string>, registry: FigureRegistry, sentences: string[], opts: { movement?: (key: string) => boolean } = {}): Record<string, string> {
   const out: Record<string, string> = {};
@@ -90,7 +101,7 @@ export function hintsFor(figureKeys: Iterable<string>, registry: FigureRegistry,
     if (words.length === 0) continue;
     const prev = String(Number(parsed.year) - 1);
     const isMovement = opts.movement ? opts.movement(key) : true;
-    const about = (s: string) => mentions(s, fig.lineLabel, words);
+    const about = (s: string) => !isRecital(s) && mentions(s, fig.lineLabel, words);
     const hit = sentences.find((s) => about(s) && s.includes(parsed.year) && (!isMovement || s.includes(prev)))
       ?? (isMovement ? undefined : sentences.find((s) => about(s) && s.includes(parsed.year)));
     if (hit) out[key] = hit.length > 400 ? `${hit.slice(0, 397)}…` : hit;

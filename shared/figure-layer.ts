@@ -242,6 +242,8 @@ export interface FigureView {
   /** Broker preview only. */
   hint?: string;
   noReason?: true;
+  /** Broker preview: what has no reason on file — the change from the year before, or a difference. */
+  noReasonFor?: { kind: "change"; fromYear: string } | { kind: "difference" };
   cimMismatch?: true;
   figureKey?: string;
 }
@@ -465,6 +467,7 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
       const unexplained = (view.checks ?? []).some((c) => c.state === "ask");
       if (!hasApproved && (moved || unexplained)) {
         view.noReason = true;
+        view.noReasonFor = unexplained ? { kind: "difference" } : { kind: "change", fromYear: prev!.year };
         const hint = inputs.hints?.[key];
         if (hint) view.hint = hint;
       }

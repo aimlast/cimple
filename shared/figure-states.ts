@@ -1,7 +1,10 @@
 /**
  * figure-states — what a due-diligence check looks like to a buyer (spec D5).
  * Colour says whether a difference is EXPLAINED, never how big it is; the
- * size is given in words. Every state has an icon and words as well as a
+ * size is given in words. Every figure that differs between the records is
+ * tinted (founder's decision 3: "differences highlighted in colour"): pale
+ * blue-grey when the arithmetic explains it, blue-grey with a reason on file,
+ * amber with none. Every state has an icon and words as well as a
  * colour, so meaning never rests on colour alone.
  *
  * The CIM paper is theme-locked (.cim-doc), so the paint is literal hex.
@@ -48,7 +51,10 @@ export interface StatePaint {
 
 export const STATE_PAINT: Record<CheckState, StatePaint> = {
   match: { tint: "", rule: "", ruleWidth: 0, ink: "#2F6B4F", icon: "check", words: "Matches" },
-  regrouped: { tint: "", rule: "", ruleWidth: 0, ink: "#2F6B4F", icon: "check_info", words: "Same amounts, grouped differently" },
+  // The founder's decision 3: a figure that differs between the records is highlighted in colour — even
+  // when the arithmetic explains it. A pale blue-grey (calmer than "reason given"), the green tick still
+  // saying the amounts agree once grouped the same way.
+  regrouped: { tint: "#EDF0F3", rule: "#8796A5", ruleWidth: 1, ink: "#2F6B4F", icon: "check_info", words: "Same amounts, grouped differently" },
   explained: { tint: "#E4E8EC", rule: "#56687A", ruleWidth: 1, ink: "#56687A", icon: "info", words: "Differs, reason given" },
   ask: { tint: "#F3E3C3", rule: "#B7791F", ruleWidth: 2, ink: "#8A5A12", icon: "question", words: "Differs, ask the broker" },
 };

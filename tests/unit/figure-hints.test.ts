@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { fixtureRaw, run, test } from "./helpers/figure-test";
-import { analysisNoteSentences, hintsFor } from "../../server/cim/figures/hints";
+import { analysisNoteSentences, hintsFor, isRecital } from "../../server/cim/figures/hints";
 import { screenCtxFor, holdsText } from "../../server/cim/figures/guards";
 
 test("Pacific facility rent 2023 → the warehouse-lease hint", async () => {
@@ -15,6 +15,17 @@ test("Pacific facility rent 2023 → the warehouse-lease hint", async () => {
   assert.ok(key, "the facility rent line exists");
   const hints = hintsFor([key], raw.registry, sentences);
   assert.match(hints[key], /^Warehouse lease commenced October 1, 2022/);
+});
+
+test("a recital of figures is never a hint (Beacon income taxes ← 'Reported EBITDA (net income + …)')", async () => {
+  const { fx, raw } = await fixtureRaw("beacon", { locate: false });
+  const sentences = analysisNoteSentences(fx.analyses[0]);
+  const keys = Object.keys(raw.registry).filter((k) => /income-taxes/.test(k));
+  assert.ok(keys.length > 0);
+  const hints = hintsFor(keys, raw.registry, sentences);
+  assert.deepEqual(hints, {});
+  assert.equal(isRecital("Reported EBITDA (net income + income taxes + interest + amortization): FY2022 $489,325; FY2023 $550,000."), true);
+  assert.equal(isRecital("Warehouse lease commenced October 1, 2022, explaining the increase in facility rent from $1,217,000 to $2,337,500."), false);
 });
 
 test("internal check lines are never offered", async () => {

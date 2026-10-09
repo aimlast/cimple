@@ -49,9 +49,13 @@ interface Props {
 }
 
 /** A row "differs" when any of its checks is explained / ask. */
+/** A row with any figure that differs between the records (grouped differently included: the amounts differ). */
 function rowDiffers(figs: Array<FigureView | null>): boolean {
-  return figs.some((f) => (f?.checks ?? []).some((c) => c.state === "explained" || c.state === "ask"));
+  return figs.some((f) => (f?.checks ?? []).some((c) => c.state !== "match"));
 }
+
+/** The ink of the signed difference under a figure (slate for a worked-out grouping). */
+const diffInk = (check: FigureCheckView) => (check.state === "regrouped" ? "#56687A" : STATE_PAINT[check.state].ink);
 
 /** "T2", "Form 1120", "Mgmt" — the other record's short name (medium layout, under the CIM figure). */
 function shortOther(kindLabel: string): string {
@@ -63,8 +67,7 @@ function shortOther(kindLabel: string): string {
 }
 
 function OtherCell({ fig, check, compact, prefix }: { fig: FigureView; check: FigureCheckView; compact?: boolean; prefix?: boolean }) {
-  const paint = STATE_PAINT[check.state];
-  const differs = check.state === "explained" || check.state === "ask";
+  const differs = check.state !== "match";
   return (
     <FigureTrigger fig={fig} showState={false}>
       <span className={cn("inline-flex flex-col items-end", compact && "items-end")}>
@@ -74,7 +77,7 @@ function OtherCell({ fig, check, compact, prefix }: { fig: FigureView; check: Fi
           <StateIcon state={check.state} />
         </span>
         {differs && check.difference && (
-          <span className="text-[10px] tabular-nums" style={{ color: paint.ink }}>{check.difference}</span>
+          <span className="text-[10px] tabular-nums" style={{ color: diffInk(check) }}>{check.difference}</span>
         )}
       </span>
     </FigureTrigger>
