@@ -1,0 +1,686 @@
+Brightwater Plumbing & Heating Ltd.
+General Ledger
+"January 1 - December 31, 2024"
+
+,Date,Transaction Type,Num,Name,Memo/Description,Split,Amount,Balance
+Chequing
+,,,,,Beginning Balance,,,0.00
+,01/28/2024,Deposit,1579,,Deposits - month,-Split-,95979.92,95979.92
+,01/28/2024,Payment,1580,,Payments - month,-Split-,-43816.07,52163.85
+,02/28/2024,Deposit,1581,,Deposits - month,-Split-,95979.92,148143.77
+,02/28/2024,Payment,1582,,Payments - month,-Split-,-43816.07,104327.70
+,03/28/2024,Deposit,1583,,Deposits - month,-Split-,95979.92,200307.62
+,03/28/2024,Payment,1584,,Payments - month,-Split-,-43816.07,156491.55
+,04/28/2024,Deposit,1586,,Deposits - month,-Split-,95979.92,252471.47
+,04/28/2024,Payment,1587,,Payments - month,-Split-,-43816.07,208655.40
+,05/28/2024,Deposit,1588,,Deposits - month,-Split-,95979.92,304635.32
+,05/28/2024,Payment,1589,,Payments - month,-Split-,-43816.07,260819.25
+,06/28/2024,Deposit,1590,,Deposits - month,-Split-,95979.92,356799.17
+,06/28/2024,Payment,1591,,Payments - month,-Split-,-43816.07,312983.10
+,07/28/2024,Deposit,1593,,Deposits - month,-Split-,95979.92,408963.02
+,07/28/2024,Payment,1594,,Payments - month,-Split-,-43816.07,365146.95
+,08/28/2024,Deposit,1595,,Deposits - month,-Split-,95979.92,461126.87
+,08/28/2024,Payment,1596,,Payments - month,-Split-,-43816.07,417310.80
+,09/28/2024,Deposit,1597,,Deposits - month,-Split-,95979.92,513290.72
+,09/28/2024,Payment,1598,,Payments - month,-Split-,-43816.07,469474.65
+,10/28/2024,Deposit,1600,,Deposits - month,-Split-,95979.92,565454.57
+,10/28/2024,Payment,1601,,Payments - month,-Split-,-43816.07,521638.50
+,11/28/2024,Deposit,1602,,Deposits - month,-Split-,95979.92,617618.42
+,11/28/2024,Payment,1603,,Payments - month,-Split-,-43816.07,573802.35
+,12/28/2024,Deposit,1604,,Deposits - month,-Split-,95979.92,669782.27
+,12/28/2024,Payment,1605,,Payments - month,-Split-,-43816.07,625966.20
+Total for Chequing,,,,,,,625966.20,
+Accumulated Amortization
+,,,,,Beginning Balance,,,0.00
+,12/31/2024,Journal Entry,1577,,Year-end amortization,Chequing,-31000.00,-31000.00
+Total for Accumulated Amortization,,,,,,,-31000.00,
+HST Payable
+,,,,,Beginning Balance,,,0.00
+,03/30/2024,Payment,1585,Receiver General,HST remittance,Chequing,10278.99,10278.99
+,06/30/2024,Payment,1592,Receiver General,HST remittance,Chequing,10564.80,20843.79
+,09/30/2024,Payment,1599,Receiver General,HST remittance,Chequing,9954.89,30798.68
+,12/30/2024,Payment,1606,Receiver General,HST remittance,Chequing,10330.02,41128.70
+Total for HST Payable,,,,,,,41128.70,
+Shareholder Loan
+,,,,,Beginning Balance,,,0.00
+,06/01/2024,Journal Entry,1607,Dan Brightwater,Shareholder advance,Chequing,-10000.00,-10000.00
+Total for Shareholder Loan,,,,,,,-10000.00,
+Sales - Service
+,01/02/2024,Invoice,1001,Maple Ridge Condos,Service call 2024-01-1,Chequing,-7315.00,-7315.00
+,01/05/2024,Invoice,1002,J. Alvarez,Service call 2024-01-2,Chequing,-3073.00,-10388.00
+,01/08/2024,Invoice,1003,Lakeview Dental Centre,Service call 2024-01-3,Chequing,-7936.00,-18324.00
+,01/11/2024,Invoice,1004,Northgate Schools,Service call 2024-01-4,Chequing,-6842.00,-25166.00
+,01/14/2024,Invoice,1005,P. Nguyen,Service call 2024-01-5,Chequing,-2459.00,-27625.00
+,01/17/2024,Invoice,1006,Oakville Medical Arts,Service call 2024-01-6,Chequing,-2873.00,-30498.00
+,01/20/2024,Invoice,1007,Riverstone Homes,Service call 2024-01-7,Chequing,-8640.00,-39138.00
+,01/23/2024,Invoice,1008,S. Kowalski,Service call 2024-01-8,Chequing,-1909.00,-41047.00
+,02/02/2024,Invoice,1039,J. Alvarez,Service call 2024-02-1,Chequing,-7603.00,-48650.00
+,02/05/2024,Invoice,1040,Lakeview Dental Centre,Service call 2024-02-2,Chequing,-6447.00,-55097.00
+,02/08/2024,Invoice,1041,Northgate Schools,Service call 2024-02-3,Chequing,-5582.00,-60679.00
+,02/11/2024,Invoice,1042,P. Nguyen,Service call 2024-02-4,Chequing,-8670.00,-69349.00
+,02/14/2024,Invoice,1043,Oakville Medical Arts,Service call 2024-02-5,Chequing,-4585.00,-73934.00
+,02/17/2024,Invoice,1044,Riverstone Homes,Service call 2024-02-6,Chequing,-8862.00,-82796.00
+,02/20/2024,Invoice,1045,S. Kowalski,Service call 2024-02-7,Chequing,-8264.00,-91060.00
+,02/23/2024,Invoice,1046,Bayfront Hotel,Service call 2024-02-8,Chequing,-3117.00,-94177.00
+,03/02/2024,Invoice,1077,Lakeview Dental Centre,Service call 2024-03-1,Chequing,-2744.00,-96921.00
+,03/05/2024,Invoice,1078,Northgate Schools,Service call 2024-03-2,Chequing,-4277.00,-101198.00
+,03/08/2024,Invoice,1079,P. Nguyen,Service call 2024-03-3,Chequing,-1551.00,-102749.00
+,03/11/2024,Invoice,1080,Oakville Medical Arts,Service call 2024-03-4,Chequing,-2857.00,-105606.00
+,03/14/2024,Invoice,1081,Riverstone Homes,Service call 2024-03-5,Chequing,-8712.00,-114318.00
+,03/17/2024,Invoice,1082,S. Kowalski,Service call 2024-03-6,Chequing,-4379.00,-118697.00
+,03/20/2024,Invoice,1083,Bayfront Hotel,Service call 2024-03-7,Chequing,-4701.00,-123398.00
+,03/23/2024,Invoice,1084,Halton Property Group,Service call 2024-03-8,Chequing,-6966.00,-130364.00
+,04/02/2024,Invoice,1118,Northgate Schools,Service call 2024-04-1,Chequing,-5377.00,-135741.00
+,04/05/2024,Invoice,1119,P. Nguyen,Service call 2024-04-2,Chequing,-6583.00,-142324.00
+,04/08/2024,Invoice,1120,Oakville Medical Arts,Service call 2024-04-3,Chequing,-6184.00,-148508.00
+,04/11/2024,Invoice,1121,Riverstone Homes,Service call 2024-04-4,Chequing,-5456.00,-153964.00
+,04/14/2024,Invoice,1122,S. Kowalski,Service call 2024-04-5,Chequing,-2439.00,-156403.00
+,04/17/2024,Invoice,1123,Bayfront Hotel,Service call 2024-04-6,Chequing,-5655.00,-162058.00
+,04/20/2024,Invoice,1124,Halton Property Group,Service call 2024-04-7,Chequing,-8736.00,-170794.00
+,04/23/2024,Invoice,1125,Maple Ridge Condos,Service call 2024-04-8,Chequing,-6356.00,-177150.00
+,05/02/2024,Invoice,1156,P. Nguyen,Service call 2024-05-1,Chequing,-8274.00,-185424.00
+,05/05/2024,Invoice,1157,Oakville Medical Arts,Service call 2024-05-2,Chequing,-5292.00,-190716.00
+,05/08/2024,Invoice,1158,Riverstone Homes,Service call 2024-05-3,Chequing,-4064.00,-194780.00
+,05/11/2024,Invoice,1159,S. Kowalski,Service call 2024-05-4,Chequing,-4841.00,-199621.00
+,05/14/2024,Invoice,1160,Bayfront Hotel,Service call 2024-05-5,Chequing,-5057.00,-204678.00
+,05/17/2024,Invoice,1161,Halton Property Group,Service call 2024-05-6,Chequing,-3819.00,-208497.00
+,05/20/2024,Invoice,1162,Maple Ridge Condos,Service call 2024-05-7,Chequing,-2982.00,-211479.00
+,05/23/2024,Invoice,1163,J. Alvarez,Service call 2024-05-8,Chequing,-8609.00,-220088.00
+,06/02/2024,Invoice,1194,Oakville Medical Arts,Service call 2024-06-1,Chequing,-2446.00,-222534.00
+,06/05/2024,Invoice,1195,Riverstone Homes,Service call 2024-06-2,Chequing,-5771.00,-228305.00
+,06/08/2024,Invoice,1196,S. Kowalski,Service call 2024-06-3,Chequing,-5336.00,-233641.00
+,06/11/2024,Invoice,1197,Bayfront Hotel,Service call 2024-06-4,Chequing,-2466.00,-236107.00
+,06/14/2024,Invoice,1198,Halton Property Group,Service call 2024-06-5,Chequing,-7201.00,-243308.00
+,06/17/2024,Invoice,1199,Maple Ridge Condos,Service call 2024-06-6,Chequing,-8053.00,-251361.00
+,06/20/2024,Invoice,1200,J. Alvarez,Service call 2024-06-7,Chequing,-2294.00,-253655.00
+,06/23/2024,Invoice,1201,Lakeview Dental Centre,Service call 2024-06-8,Chequing,-1598.00,-255253.00
+,07/02/2024,Invoice,1236,Riverstone Homes,Service call 2024-07-1,Chequing,-3000.00,-258253.00
+,07/05/2024,Invoice,1237,S. Kowalski,Service call 2024-07-2,Chequing,-1267.00,-259520.00
+,07/08/2024,Invoice,1238,Bayfront Hotel,Service call 2024-07-3,Chequing,-2819.00,-262339.00
+,07/11/2024,Invoice,1239,Halton Property Group,Service call 2024-07-4,Chequing,-3339.00,-265678.00
+,07/14/2024,Invoice,1240,Maple Ridge Condos,Service call 2024-07-5,Chequing,-8465.00,-274143.00
+,07/17/2024,Invoice,1241,J. Alvarez,Service call 2024-07-6,Chequing,-1496.00,-275639.00
+,07/20/2024,Invoice,1242,Lakeview Dental Centre,Service call 2024-07-7,Chequing,-1556.00,-277195.00
+,07/23/2024,Invoice,1243,Northgate Schools,Service call 2024-07-8,Chequing,-3229.00,-280424.00
+,08/02/2024,Invoice,1274,S. Kowalski,Service call 2024-08-1,Chequing,-4686.00,-285110.00
+,08/05/2024,Invoice,1275,Bayfront Hotel,Service call 2024-08-2,Chequing,-1742.00,-286852.00
+,08/08/2024,Invoice,1276,Halton Property Group,Service call 2024-08-3,Chequing,-6978.00,-293830.00
+,08/11/2024,Invoice,1277,Maple Ridge Condos,Service call 2024-08-4,Chequing,-2033.00,-295863.00
+,08/14/2024,Invoice,1278,J. Alvarez,Service call 2024-08-5,Chequing,-7963.00,-303826.00
+,08/17/2024,Invoice,1279,Lakeview Dental Centre,Service call 2024-08-6,Chequing,-4993.00,-308819.00
+,08/20/2024,Invoice,1280,Northgate Schools,Service call 2024-08-7,Chequing,-6880.00,-315699.00
+,08/23/2024,Invoice,1281,P. Nguyen,Service call 2024-08-8,Chequing,-5724.00,-321423.00
+,09/02/2024,Invoice,1312,Bayfront Hotel,Service call 2024-09-1,Chequing,-4118.00,-325541.00
+,09/05/2024,Invoice,1313,Halton Property Group,Service call 2024-09-2,Chequing,-7960.00,-333501.00
+,09/08/2024,Invoice,1314,Maple Ridge Condos,Service call 2024-09-3,Chequing,-8678.00,-342179.00
+,09/11/2024,Invoice,1315,J. Alvarez,Service call 2024-09-4,Chequing,-6767.00,-348946.00
+,09/14/2024,Invoice,1316,Lakeview Dental Centre,Service call 2024-09-5,Chequing,-5711.00,-354657.00
+,09/17/2024,Invoice,1317,Northgate Schools,Service call 2024-09-6,Chequing,-8625.00,-363282.00
+,09/20/2024,Invoice,1318,P. Nguyen,Service call 2024-09-7,Chequing,-4687.00,-367969.00
+,09/23/2024,Invoice,1319,Oakville Medical Arts,Service call 2024-09-8,Chequing,-4117.00,-372086.00
+,10/02/2024,Invoice,1353,Halton Property Group,Service call 2024-10-1,Chequing,-5819.00,-377905.00
+,10/05/2024,Invoice,1354,Maple Ridge Condos,Service call 2024-10-2,Chequing,-3134.00,-381039.00
+,10/08/2024,Invoice,1355,J. Alvarez,Service call 2024-10-3,Chequing,-2827.00,-383866.00
+,10/11/2024,Invoice,1356,Lakeview Dental Centre,Service call 2024-10-4,Chequing,-3157.00,-387023.00
+,10/14/2024,Invoice,1357,Northgate Schools,Service call 2024-10-5,Chequing,-1282.00,-388305.00
+,10/17/2024,Invoice,1358,P. Nguyen,Service call 2024-10-6,Chequing,-4514.00,-392819.00
+,10/20/2024,Invoice,1359,Oakville Medical Arts,Service call 2024-10-7,Chequing,-2028.00,-394847.00
+,10/23/2024,Invoice,1360,Riverstone Homes,Service call 2024-10-8,Chequing,-3078.00,-397925.00
+,11/02/2024,Invoice,1391,Maple Ridge Condos,Service call 2024-11-1,Chequing,-3238.00,-401163.00
+,11/05/2024,Invoice,1392,J. Alvarez,Service call 2024-11-2,Chequing,-8109.00,-409272.00
+,11/08/2024,Invoice,1393,Lakeview Dental Centre,Service call 2024-11-3,Chequing,-2736.00,-412008.00
+,11/11/2024,Invoice,1394,Northgate Schools,Service call 2024-11-4,Chequing,-4587.00,-416595.00
+,11/14/2024,Invoice,1395,P. Nguyen,Service call 2024-11-5,Chequing,-6505.00,-423100.00
+,11/17/2024,Invoice,1396,Oakville Medical Arts,Service call 2024-11-6,Chequing,-1702.00,-424802.00
+,11/20/2024,Invoice,1397,Riverstone Homes,Service call 2024-11-7,Chequing,-8020.00,-432822.00
+,11/23/2024,Invoice,1398,S. Kowalski,Service call 2024-11-8,Chequing,-8854.00,-441676.00
+,12/02/2024,Invoice,1429,J. Alvarez,Service call 2024-12-1,Chequing,-5209.00,-446885.00
+,12/05/2024,Invoice,1430,Lakeview Dental Centre,Service call 2024-12-2,Chequing,-5200.00,-452085.00
+,12/08/2024,Invoice,1431,Northgate Schools,Service call 2024-12-3,Chequing,-7086.00,-459171.00
+,12/11/2024,Invoice,1432,P. Nguyen,Service call 2024-12-4,Chequing,-6807.00,-465978.00
+,12/14/2024,Invoice,1433,Oakville Medical Arts,Service call 2024-12-5,Chequing,-6672.00,-472650.00
+,12/17/2024,Invoice,1434,Riverstone Homes,Service call 2024-12-6,Chequing,-1425.00,-474075.00
+,12/20/2024,Invoice,1435,S. Kowalski,Service call 2024-12-7,Chequing,-5763.00,-479838.00
+,12/23/2024,Invoice,1436,Bayfront Hotel,Service call 2024-12-8,Chequing,-5623.00,-485461.00
+Total for Sales - Service,,,,,,,-485461.00,
+Sales - Installations
+,01/05/2024,Invoice,1009,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-19540.00,-19540.00
+,01/13/2024,Invoice,1010,Northgate Schools,Furnace / boiler installation,Chequing,-21484.00,-41024.00
+,01/21/2024,Invoice,1011,P. Nguyen,Furnace / boiler installation,Chequing,-22415.00,-63439.00
+,02/05/2024,Invoice,1047,Oakville Medical Arts,Furnace / boiler installation,Chequing,-29133.00,-92572.00
+,02/13/2024,Invoice,1048,Riverstone Homes,Furnace / boiler installation,Chequing,-15788.00,-108360.00
+,02/21/2024,Invoice,1049,S. Kowalski,Furnace / boiler installation,Chequing,-15298.00,-123658.00
+,03/05/2024,Invoice,1085,Bayfront Hotel,Furnace / boiler installation,Chequing,-16043.00,-139701.00
+,03/13/2024,Invoice,1086,Halton Property Group,Furnace / boiler installation,Chequing,-26755.00,-166456.00
+,03/21/2024,Invoice,1087,Maple Ridge Condos,Furnace / boiler installation,Chequing,-15090.00,-181546.00
+,04/05/2024,Invoice,1126,J. Alvarez,Furnace / boiler installation,Chequing,-12387.00,-193933.00
+,04/13/2024,Invoice,1127,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-27098.00,-221031.00
+,04/21/2024,Invoice,1128,Northgate Schools,Furnace / boiler installation,Chequing,-9514.00,-230545.00
+,05/05/2024,Invoice,1164,P. Nguyen,Furnace / boiler installation,Chequing,-27710.00,-258255.00
+,05/13/2024,Invoice,1165,Oakville Medical Arts,Furnace / boiler installation,Chequing,-15967.00,-274222.00
+,05/21/2024,Invoice,1166,Riverstone Homes,Furnace / boiler installation,Chequing,-13978.00,-288200.00
+,06/05/2024,Invoice,1202,S. Kowalski,Furnace / boiler installation,Chequing,-24002.00,-312202.00
+,06/13/2024,Invoice,1203,Bayfront Hotel,Furnace / boiler installation,Chequing,-11478.00,-323680.00
+,06/21/2024,Invoice,1204,Halton Property Group,Furnace / boiler installation,Chequing,-23018.00,-346698.00
+,07/05/2024,Invoice,1244,Maple Ridge Condos,Furnace / boiler installation,Chequing,-17891.00,-364589.00
+,07/13/2024,Invoice,1245,J. Alvarez,Furnace / boiler installation,Chequing,-23080.00,-387669.00
+,07/21/2024,Invoice,1246,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-16844.00,-404513.00
+,08/05/2024,Invoice,1282,Northgate Schools,Furnace / boiler installation,Chequing,-10078.00,-414591.00
+,08/13/2024,Invoice,1283,P. Nguyen,Furnace / boiler installation,Chequing,-11892.00,-426483.00
+,08/21/2024,Invoice,1284,Oakville Medical Arts,Furnace / boiler installation,Chequing,-15295.00,-441778.00
+,09/05/2024,Invoice,1320,Riverstone Homes,Furnace / boiler installation,Chequing,-16346.00,-458124.00
+,09/13/2024,Invoice,1321,S. Kowalski,Furnace / boiler installation,Chequing,-15760.00,-473884.00
+,09/21/2024,Invoice,1322,Bayfront Hotel,Furnace / boiler installation,Chequing,-18526.00,-492410.00
+,10/05/2024,Invoice,1361,Halton Property Group,Furnace / boiler installation,Chequing,-28995.00,-521405.00
+,10/13/2024,Invoice,1362,Maple Ridge Condos,Furnace / boiler installation,Chequing,-8615.00,-530020.00
+,10/21/2024,Invoice,1363,J. Alvarez,Furnace / boiler installation,Chequing,-12032.00,-542052.00
+,11/05/2024,Invoice,1399,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-21217.00,-563269.00
+,11/13/2024,Invoice,1400,Northgate Schools,Furnace / boiler installation,Chequing,-26253.00,-589522.00
+,11/21/2024,Invoice,1401,P. Nguyen,Furnace / boiler installation,Chequing,-8213.00,-597735.00
+,12/05/2024,Invoice,1437,Oakville Medical Arts,Furnace / boiler installation,Chequing,-15111.00,-612846.00
+,12/13/2024,Invoice,1438,Riverstone Homes,Furnace / boiler installation,Chequing,-27774.00,-640620.00
+,12/21/2024,Invoice,1439,S. Kowalski,Furnace / boiler installation,Chequing,-25678.00,-666298.00
+Total for Sales - Installations,,,,,,,-666298.00,
+Materials & Supplies
+,01/03/2024,Bill,1012,Wolseley Canada,"Pipe, fittings and parts",Chequing,1556.00,1556.00
+,01/08/2024,Bill,1013,Emco Supply,"Pipe, fittings and parts",Chequing,2792.00,4348.00
+,01/13/2024,Bill,1014,The Home Depot,"Pipe, fittings and parts",Chequing,2490.00,6838.00
+,01/18/2024,Bill,1015,Wolseley Canada,"Pipe, fittings and parts",Chequing,3440.00,10278.00
+,01/23/2024,Bill,1016,Emco Supply,"Pipe, fittings and parts",Chequing,4771.00,15049.00
+,02/03/2024,Bill,1050,Wolseley Canada,"Pipe, fittings and parts",Chequing,1202.00,16251.00
+,02/08/2024,Bill,1051,Emco Supply,"Pipe, fittings and parts",Chequing,3704.00,19955.00
+,02/13/2024,Bill,1052,The Home Depot,"Pipe, fittings and parts",Chequing,2593.00,22548.00
+,02/18/2024,Bill,1053,Wolseley Canada,"Pipe, fittings and parts",Chequing,4343.00,26891.00
+,02/23/2024,Bill,1054,Emco Supply,"Pipe, fittings and parts",Chequing,4721.00,31612.00
+,03/03/2024,Bill,1088,Wolseley Canada,"Pipe, fittings and parts",Chequing,3901.00,35513.00
+,03/08/2024,Bill,1089,Emco Supply,"Pipe, fittings and parts",Chequing,1939.00,37452.00
+,03/13/2024,Bill,1090,The Home Depot,"Pipe, fittings and parts",Chequing,3499.00,40951.00
+,03/18/2024,Bill,1091,Wolseley Canada,"Pipe, fittings and parts",Chequing,4347.00,45298.00
+,03/23/2024,Bill,1092,Emco Supply,"Pipe, fittings and parts",Chequing,1018.00,46316.00
+,04/03/2024,Bill,1129,Wolseley Canada,"Pipe, fittings and parts",Chequing,1494.00,47810.00
+,04/08/2024,Bill,1130,Emco Supply,"Pipe, fittings and parts",Chequing,3788.00,51598.00
+,04/13/2024,Bill,1131,The Home Depot,"Pipe, fittings and parts",Chequing,3945.00,55543.00
+,04/18/2024,Bill,1132,Wolseley Canada,"Pipe, fittings and parts",Chequing,4180.00,59723.00
+,04/23/2024,Bill,1133,Emco Supply,"Pipe, fittings and parts",Chequing,432.00,60155.00
+,05/03/2024,Bill,1167,Wolseley Canada,"Pipe, fittings and parts",Chequing,1541.00,61696.00
+,05/08/2024,Bill,1168,Emco Supply,"Pipe, fittings and parts",Chequing,2531.00,64227.00
+,05/13/2024,Bill,1169,The Home Depot,"Pipe, fittings and parts",Chequing,1995.00,66222.00
+,05/18/2024,Bill,1170,Wolseley Canada,"Pipe, fittings and parts",Chequing,4975.00,71197.00
+,05/23/2024,Bill,1171,Emco Supply,"Pipe, fittings and parts",Chequing,3527.00,74724.00
+,06/03/2024,Bill,1205,Wolseley Canada,"Pipe, fittings and parts",Chequing,1798.00,76522.00
+,06/08/2024,Bill,1206,Emco Supply,"Pipe, fittings and parts",Chequing,4841.00,81363.00
+,06/13/2024,Bill,1207,The Home Depot,"Pipe, fittings and parts",Chequing,5081.00,86444.00
+,06/18/2024,Bill,1208,Wolseley Canada,"Pipe, fittings and parts",Chequing,4214.00,90658.00
+,06/23/2024,Bill,1209,Emco Supply,"Pipe, fittings and parts",Chequing,3187.00,93845.00
+,07/03/2024,Bill,1247,Wolseley Canada,"Pipe, fittings and parts",Chequing,4071.00,97916.00
+,07/08/2024,Bill,1248,Emco Supply,"Pipe, fittings and parts",Chequing,793.00,98709.00
+,07/13/2024,Bill,1249,The Home Depot,"Pipe, fittings and parts",Chequing,536.00,99245.00
+,07/18/2024,Bill,1250,Wolseley Canada,"Pipe, fittings and parts",Chequing,686.00,99931.00
+,07/23/2024,Bill,1251,Emco Supply,"Pipe, fittings and parts",Chequing,2135.00,102066.00
+,08/03/2024,Bill,1285,Wolseley Canada,"Pipe, fittings and parts",Chequing,3091.00,105157.00
+,08/08/2024,Bill,1286,Emco Supply,"Pipe, fittings and parts",Chequing,3733.00,108890.00
+,08/13/2024,Bill,1287,The Home Depot,"Pipe, fittings and parts",Chequing,2053.00,110943.00
+,08/18/2024,Bill,1288,Wolseley Canada,"Pipe, fittings and parts",Chequing,2741.00,113684.00
+,08/23/2024,Bill,1289,Emco Supply,"Pipe, fittings and parts",Chequing,832.00,114516.00
+,09/03/2024,Bill,1323,Wolseley Canada,"Pipe, fittings and parts",Chequing,1321.00,115837.00
+,09/08/2024,Bill,1324,Emco Supply,"Pipe, fittings and parts",Chequing,2446.00,118283.00
+,09/13/2024,Bill,1325,The Home Depot,"Pipe, fittings and parts",Chequing,2252.00,120535.00
+,09/18/2024,Bill,1326,Wolseley Canada,"Pipe, fittings and parts",Chequing,1473.00,122008.00
+,09/23/2024,Bill,1327,Emco Supply,"Pipe, fittings and parts",Chequing,3183.00,125191.00
+,10/03/2024,Bill,1364,Wolseley Canada,"Pipe, fittings and parts",Chequing,3657.00,128848.00
+,10/08/2024,Bill,1365,Emco Supply,"Pipe, fittings and parts",Chequing,4758.00,133606.00
+,10/13/2024,Bill,1366,The Home Depot,"Pipe, fittings and parts",Chequing,583.00,134189.00
+,10/18/2024,Bill,1367,Wolseley Canada,"Pipe, fittings and parts",Chequing,2648.00,136837.00
+,10/23/2024,Bill,1368,Emco Supply,"Pipe, fittings and parts",Chequing,1899.00,138736.00
+,11/03/2024,Bill,1402,Wolseley Canada,"Pipe, fittings and parts",Chequing,5249.00,143985.00
+,11/08/2024,Bill,1403,Emco Supply,"Pipe, fittings and parts",Chequing,4293.00,148278.00
+,11/13/2024,Bill,1404,The Home Depot,"Pipe, fittings and parts",Chequing,4117.00,152395.00
+,11/18/2024,Bill,1405,Wolseley Canada,"Pipe, fittings and parts",Chequing,5103.00,157498.00
+,11/23/2024,Bill,1406,Emco Supply,"Pipe, fittings and parts",Chequing,2398.00,159896.00
+,12/03/2024,Bill,1440,Wolseley Canada,"Pipe, fittings and parts",Chequing,708.00,160604.00
+,12/08/2024,Bill,1441,Emco Supply,"Pipe, fittings and parts",Chequing,1845.00,162449.00
+,12/13/2024,Bill,1442,The Home Depot,"Pipe, fittings and parts",Chequing,2275.00,164724.00
+,12/18/2024,Bill,1443,Wolseley Canada,"Pipe, fittings and parts",Chequing,3434.00,168158.00
+,12/23/2024,Bill,1444,Emco Supply,"Pipe, fittings and parts",Chequing,4280.00,172438.00
+Total for Materials & Supplies,,,,,,,172438.00,
+Subcontractors
+,01/10/2024,Bill,1017,Delta Electrical,Subcontract work,Chequing,5137.00,5137.00
+,01/19/2024,Bill,1018,Precision Ductwork,Subcontract work,Chequing,4269.00,9406.00
+,02/10/2024,Bill,1055,Delta Electrical,Subcontract work,Chequing,6278.00,15684.00
+,02/19/2024,Bill,1056,Precision Ductwork,Subcontract work,Chequing,6151.00,21835.00
+,03/10/2024,Bill,1093,Delta Electrical,Subcontract work,Chequing,6674.00,28509.00
+,03/19/2024,Bill,1094,Precision Ductwork,Subcontract work,Chequing,3155.00,31664.00
+,04/10/2024,Bill,1134,Delta Electrical,Subcontract work,Chequing,8440.00,40104.00
+,04/19/2024,Bill,1135,Precision Ductwork,Subcontract work,Chequing,6777.00,46881.00
+,05/10/2024,Bill,1172,Delta Electrical,Subcontract work,Chequing,2710.00,49591.00
+,05/19/2024,Bill,1173,Precision Ductwork,Subcontract work,Chequing,3167.00,52758.00
+,06/10/2024,Bill,1210,Delta Electrical,Subcontract work,Chequing,5711.00,58469.00
+,06/19/2024,Bill,1211,Precision Ductwork,Subcontract work,Chequing,8694.00,67163.00
+,07/10/2024,Bill,1252,Delta Electrical,Subcontract work,Chequing,8674.00,75837.00
+,07/19/2024,Bill,1253,Precision Ductwork,Subcontract work,Chequing,6658.00,82495.00
+,08/10/2024,Bill,1290,Delta Electrical,Subcontract work,Chequing,8599.00,91094.00
+,08/19/2024,Bill,1291,Precision Ductwork,Subcontract work,Chequing,6850.00,97944.00
+,09/10/2024,Bill,1328,Delta Electrical,Subcontract work,Chequing,8473.00,106417.00
+,09/19/2024,Bill,1329,Precision Ductwork,Subcontract work,Chequing,2939.00,109356.00
+,10/10/2024,Bill,1369,Delta Electrical,Subcontract work,Chequing,4619.00,113975.00
+,10/19/2024,Bill,1370,Precision Ductwork,Subcontract work,Chequing,6629.00,120604.00
+,11/10/2024,Bill,1407,Delta Electrical,Subcontract work,Chequing,5939.00,126543.00
+,11/19/2024,Bill,1408,Precision Ductwork,Subcontract work,Chequing,8538.00,135081.00
+,12/10/2024,Bill,1445,Delta Electrical,Subcontract work,Chequing,6859.00,141940.00
+,12/19/2024,Bill,1446,Precision Ductwork,Subcontract work,Chequing,4320.00,146260.00
+Total for Subcontractors,,,,,,,146260.00,
+Wages & Salaries
+,01/12/2024,Payroll,1470,Wagepoint,Pay run 2024-01-12,Chequing,19730.77,19730.77
+,01/26/2024,Payroll,1471,Wagepoint,Pay run 2024-01-26,Chequing,19730.77,39461.54
+,02/09/2024,Payroll,1472,Wagepoint,Pay run 2024-02-09,Chequing,19730.77,59192.31
+,02/23/2024,Payroll,1473,Wagepoint,Pay run 2024-02-23,Chequing,19730.77,78923.08
+,03/08/2024,Payroll,1474,Wagepoint,Pay run 2024-03-08,Chequing,19730.77,98653.85
+,03/22/2024,Payroll,1475,Wagepoint,Pay run 2024-03-22,Chequing,19730.77,118384.62
+,04/05/2024,Payroll,1476,Wagepoint,Pay run 2024-04-05,Chequing,19730.77,138115.39
+,04/19/2024,Payroll,1477,Wagepoint,Pay run 2024-04-19,Chequing,19730.77,157846.16
+,05/03/2024,Payroll,1478,Wagepoint,Pay run 2024-05-03,Chequing,19730.77,177576.93
+,05/17/2024,Payroll,1479,Wagepoint,Pay run 2024-05-17,Chequing,19730.77,197307.70
+,05/31/2024,Payroll,1480,Wagepoint,Pay run 2024-05-31,Chequing,19730.77,217038.47
+,06/14/2024,Payroll,1481,Wagepoint,Pay run 2024-06-14,Chequing,19730.77,236769.24
+,06/28/2024,Payroll,1482,Wagepoint,Pay run 2024-06-28,Chequing,19730.77,256500.01
+,07/12/2024,Payroll,1483,Wagepoint,Pay run 2024-07-12,Chequing,19730.77,276230.78
+,07/26/2024,Payroll,1484,Wagepoint,Pay run 2024-07-26,Chequing,19730.77,295961.55
+,08/09/2024,Payroll,1485,Wagepoint,Pay run 2024-08-09,Chequing,19730.77,315692.32
+,08/23/2024,Payroll,1486,Wagepoint,Pay run 2024-08-23,Chequing,19730.77,335423.09
+,09/06/2024,Payroll,1487,Wagepoint,Pay run 2024-09-06,Chequing,19730.77,355153.86
+,09/20/2024,Payroll,1488,Wagepoint,Pay run 2024-09-20,Chequing,19730.77,374884.63
+,10/04/2024,Payroll,1489,Wagepoint,Pay run 2024-10-04,Chequing,19730.77,394615.40
+,10/18/2024,Payroll,1490,Wagepoint,Pay run 2024-10-18,Chequing,19730.77,414346.17
+,11/01/2024,Payroll,1491,Wagepoint,Pay run 2024-11-01,Chequing,19730.77,434076.94
+,11/15/2024,Payroll,1492,Wagepoint,Pay run 2024-11-15,Chequing,19730.77,453807.71
+,11/29/2024,Payroll,1493,Wagepoint,Pay run 2024-11-29,Chequing,19730.77,473538.48
+,12/13/2024,Payroll,1494,Wagepoint,Pay run 2024-12-13,Chequing,19730.77,493269.25
+,12/27/2024,Payroll,1495,Wagepoint,Pay run 2024-12-27,Chequing,19730.79,513000.04
+Total for Wages & Salaries,,,,,,,513000.04,
+Payroll Taxes - CPP/EI
+,01/11/2024,Expense,1030,Receiver General,CPP/EI remittance,Chequing,3275.17,3275.17
+,02/11/2024,Expense,1068,Receiver General,CPP/EI remittance,Chequing,3395.26,6670.43
+,03/11/2024,Expense,1106,Receiver General,CPP/EI remittance,Chequing,3149.79,9820.22
+,04/11/2024,Expense,1147,Receiver General,CPP/EI remittance,Chequing,3237.05,13057.27
+,05/11/2024,Expense,1185,Receiver General,CPP/EI remittance,Chequing,3365.17,16422.44
+,06/11/2024,Expense,1223,Receiver General,CPP/EI remittance,Chequing,3108.34,19530.78
+,07/11/2024,Expense,1265,Receiver General,CPP/EI remittance,Chequing,3211.00,22741.78
+,08/11/2024,Expense,1303,Receiver General,CPP/EI remittance,Chequing,3308.16,26049.94
+,09/11/2024,Expense,1341,Receiver General,CPP/EI remittance,Chequing,3390.84,29440.78
+,10/11/2024,Expense,1382,Receiver General,CPP/EI remittance,Chequing,3106.91,32547.69
+,11/11/2024,Expense,1420,Receiver General,CPP/EI remittance,Chequing,3179.17,35726.86
+,12/11/2024,Expense,1458,Receiver General,CPP/EI remittance,Chequing,3331.90,39058.76
+Total for Payroll Taxes - CPP/EI,,,,,,,39058.76,
+WSIB
+,03/15/2024,Expense,1115,WSIB,Quarterly premium,Chequing,2100.00,2100.00
+,06/15/2024,Expense,1232,WSIB,Quarterly premium,Chequing,2100.00,4200.00
+,09/15/2024,Expense,1350,WSIB,Quarterly premium,Chequing,2100.00,6300.00
+,12/15/2024,Expense,1467,WSIB,Quarterly premium,Chequing,2100.00,8400.00
+Total for WSIB,,,,,,,8400.00,
+Employee Benefits
+,01/13/2024,Expense,1031,Manulife,Group benefits,Chequing,1120.00,1120.00
+,02/13/2024,Expense,1069,Manulife,Group benefits,Chequing,1120.00,2240.00
+,03/13/2024,Expense,1107,Manulife,Group benefits,Chequing,1120.00,3360.00
+,04/13/2024,Expense,1148,Manulife,Group benefits,Chequing,1120.00,4480.00
+,05/13/2024,Expense,1186,Manulife,Group benefits,Chequing,1120.00,5600.00
+,06/13/2024,Expense,1224,Manulife,Group benefits,Chequing,1120.00,6720.00
+,07/13/2024,Expense,1266,Manulife,Group benefits,Chequing,1120.00,7840.00
+,08/13/2024,Expense,1304,Manulife,Group benefits,Chequing,1120.00,8960.00
+,09/13/2024,Expense,1342,Manulife,Group benefits,Chequing,1120.00,10080.00
+,10/13/2024,Expense,1383,Manulife,Group benefits,Chequing,1120.00,11200.00
+,11/13/2024,Expense,1421,Manulife,Group benefits,Chequing,1120.00,12320.00
+,12/13/2024,Expense,1459,Manulife,Group benefits,Chequing,1120.00,13440.00
+Total for Employee Benefits,,,,,,,13440.00,
+Automobile Expense
+   Vehicle - Owner
+,01/03/2024,Expense,1496,Lexus Financial,Lease Jan - Lexus RX,Chequing,1150.00,1150.00
+,01/11/2024,Expense,1508,Petro-Canada,Fuel - Lexus RX,Chequing,462.13,1612.13
+,01/24/2024,Expense,1509,Petro-Canada,Fuel - Lexus RX,Chequing,388.87,2001.00
+,02/03/2024,Expense,1497,Lexus Financial,Lease Feb - Lexus RX,Chequing,1150.00,3151.00
+,02/11/2024,Expense,1510,Petro-Canada,Fuel - Lexus RX,Chequing,366.43,3517.43
+,02/24/2024,Expense,1511,Petro-Canada,Fuel - Lexus RX,Chequing,493.98,4011.41
+,03/03/2024,Expense,1498,Lexus Financial,Lease Mar - Lexus RX,Chequing,1150.00,5161.41
+,03/11/2024,Expense,1512,Petro-Canada,Fuel - Lexus RX,Chequing,662.56,5823.97
+,03/24/2024,Expense,1513,Petro-Canada,Fuel - Lexus RX,Chequing,651.23,6475.20
+,04/02/2024,Expense,1532,Intact Insurance,Auto insurance - Lexus RX,Chequing,1860.00,8335.20
+,04/03/2024,Expense,1499,Lexus Financial,Lease Apr - Lexus RX,Chequing,1150.00,9485.20
+,04/11/2024,Expense,1514,Petro-Canada,Fuel - Lexus RX,Chequing,470.22,9955.42
+,04/24/2024,Expense,1515,Petro-Canada,Fuel - Lexus RX,Chequing,633.96,10589.38
+,05/03/2024,Expense,1500,Lexus Financial,Lease May - Lexus RX,Chequing,1150.00,11739.38
+,05/11/2024,Expense,1516,Petro-Canada,Fuel - Lexus RX,Chequing,480.16,12219.54
+,05/24/2024,Expense,1517,Petro-Canada,Fuel - Lexus RX,Chequing,406.20,12625.74
+,06/03/2024,Expense,1501,Lexus Financial,Lease Jun - Lexus RX,Chequing,1150.00,13775.74
+,06/11/2024,Expense,1518,Petro-Canada,Fuel - Lexus RX,Chequing,458.60,14234.34
+,06/24/2024,Expense,1519,Petro-Canada,Fuel - Lexus RX,Chequing,442.92,14677.26
+,07/03/2024,Expense,1502,Lexus Financial,Lease Jul - Lexus RX,Chequing,1150.00,15827.26
+,07/11/2024,Expense,1520,Petro-Canada,Fuel - Lexus RX,Chequing,553.44,16380.70
+,07/24/2024,Expense,1521,Petro-Canada,Fuel - Lexus RX,Chequing,551.86,16932.56
+,08/03/2024,Expense,1503,Lexus Financial,Lease Aug - Lexus RX,Chequing,1150.00,18082.56
+,08/11/2024,Expense,1522,Petro-Canada,Fuel - Lexus RX,Chequing,453.57,18536.13
+,08/24/2024,Expense,1523,Petro-Canada,Fuel - Lexus RX,Chequing,539.84,19075.97
+,09/03/2024,Expense,1504,Lexus Financial,Lease Sep - Lexus RX,Chequing,1150.00,20225.97
+,09/11/2024,Expense,1524,Petro-Canada,Fuel - Lexus RX,Chequing,548.66,20774.63
+,09/24/2024,Expense,1525,Petro-Canada,Fuel - Lexus RX,Chequing,635.37,21410.00
+,10/03/2024,Expense,1505,Lexus Financial,Lease Oct - Lexus RX,Chequing,1150.00,22560.00
+,10/11/2024,Expense,1526,Petro-Canada,Fuel - Lexus RX,Chequing,601.75,23161.75
+,10/24/2024,Expense,1527,Petro-Canada,Fuel - Lexus RX,Chequing,494.61,23656.36
+,11/03/2024,Expense,1506,Lexus Financial,Lease Nov - Lexus RX,Chequing,1150.00,24806.36
+,11/11/2024,Expense,1528,Petro-Canada,Fuel - Lexus RX,Chequing,417.67,25224.03
+,11/24/2024,Expense,1529,Petro-Canada,Fuel - Lexus RX,Chequing,403.60,25627.63
+,12/03/2024,Expense,1507,Lexus Financial,Lease Dec - Lexus RX,Chequing,1150.00,26777.63
+,12/11/2024,Expense,1530,Petro-Canada,Fuel - Lexus RX,Chequing,545.75,27323.38
+,12/24/2024,Expense,1531,Petro-Canada,Fuel - Lexus RX,Chequing,516.62,27840.00
+   Total for Vehicle - Owner,,,,,,,27840.00,
+   Fuel - Service Vans
+,01/03/2024,Expense,1035,Petro-Canada,Fuel - service vans,Chequing,232.28,232.28
+,01/10/2024,Expense,1036,Esso,Fuel - service vans,Chequing,169.75,402.03
+,01/17/2024,Expense,1037,Petro-Canada,Fuel - service vans,Chequing,169.60,571.63
+,01/24/2024,Expense,1038,Esso,Fuel - service vans,Chequing,238.19,809.82
+,02/03/2024,Expense,1073,Petro-Canada,Fuel - service vans,Chequing,222.42,1032.24
+,02/10/2024,Expense,1074,Esso,Fuel - service vans,Chequing,259.37,1291.61
+,02/17/2024,Expense,1075,Petro-Canada,Fuel - service vans,Chequing,179.82,1471.43
+,02/24/2024,Expense,1076,Esso,Fuel - service vans,Chequing,258.68,1730.11
+,03/03/2024,Expense,1111,Petro-Canada,Fuel - service vans,Chequing,153.10,1883.21
+,03/10/2024,Expense,1112,Esso,Fuel - service vans,Chequing,224.98,2108.19
+,03/17/2024,Expense,1113,Petro-Canada,Fuel - service vans,Chequing,244.58,2352.77
+,03/24/2024,Expense,1114,Esso,Fuel - service vans,Chequing,170.72,2523.49
+,04/03/2024,Expense,1152,Petro-Canada,Fuel - service vans,Chequing,196.98,2720.47
+,04/10/2024,Expense,1153,Esso,Fuel - service vans,Chequing,235.90,2956.37
+,04/17/2024,Expense,1154,Petro-Canada,Fuel - service vans,Chequing,215.96,3172.33
+,04/24/2024,Expense,1155,Esso,Fuel - service vans,Chequing,190.84,3363.17
+,05/03/2024,Expense,1190,Petro-Canada,Fuel - service vans,Chequing,196.03,3559.20
+,05/10/2024,Expense,1191,Esso,Fuel - service vans,Chequing,143.86,3703.06
+,05/17/2024,Expense,1192,Petro-Canada,Fuel - service vans,Chequing,161.23,3864.29
+,05/24/2024,Expense,1193,Esso,Fuel - service vans,Chequing,251.10,4115.39
+,06/03/2024,Expense,1228,Petro-Canada,Fuel - service vans,Chequing,196.06,4311.45
+,06/10/2024,Expense,1229,Esso,Fuel - service vans,Chequing,204.82,4516.27
+,06/17/2024,Expense,1230,Petro-Canada,Fuel - service vans,Chequing,177.77,4694.04
+,06/24/2024,Expense,1231,Esso,Fuel - service vans,Chequing,215.36,4909.40
+,07/03/2024,Expense,1270,Petro-Canada,Fuel - service vans,Chequing,248.17,5157.57
+,07/10/2024,Expense,1271,Esso,Fuel - service vans,Chequing,244.73,5402.30
+,07/17/2024,Expense,1272,Petro-Canada,Fuel - service vans,Chequing,223.56,5625.86
+,07/24/2024,Expense,1273,Esso,Fuel - service vans,Chequing,224.52,5850.38
+,08/03/2024,Expense,1308,Petro-Canada,Fuel - service vans,Chequing,207.68,6058.06
+,08/10/2024,Expense,1309,Esso,Fuel - service vans,Chequing,193.36,6251.42
+,08/17/2024,Expense,1310,Petro-Canada,Fuel - service vans,Chequing,213.14,6464.56
+,08/24/2024,Expense,1311,Esso,Fuel - service vans,Chequing,173.39,6637.95
+,09/03/2024,Expense,1346,Petro-Canada,Fuel - service vans,Chequing,161.53,6799.48
+,09/10/2024,Expense,1347,Esso,Fuel - service vans,Chequing,239.18,7038.66
+,09/17/2024,Expense,1348,Petro-Canada,Fuel - service vans,Chequing,239.68,7278.34
+,09/24/2024,Expense,1349,Esso,Fuel - service vans,Chequing,185.35,7463.69
+,10/03/2024,Expense,1387,Petro-Canada,Fuel - service vans,Chequing,169.77,7633.46
+,10/10/2024,Expense,1388,Esso,Fuel - service vans,Chequing,150.56,7784.02
+,10/17/2024,Expense,1389,Petro-Canada,Fuel - service vans,Chequing,161.02,7945.04
+,10/24/2024,Expense,1390,Esso,Fuel - service vans,Chequing,244.92,8189.96
+,11/03/2024,Expense,1425,Petro-Canada,Fuel - service vans,Chequing,164.48,8354.44
+,11/10/2024,Expense,1426,Esso,Fuel - service vans,Chequing,164.72,8519.16
+,11/17/2024,Expense,1427,Petro-Canada,Fuel - service vans,Chequing,230.94,8750.10
+,11/24/2024,Expense,1428,Esso,Fuel - service vans,Chequing,230.50,8980.60
+,12/03/2024,Expense,1463,Petro-Canada,Fuel - service vans,Chequing,237.62,9218.22
+,12/10/2024,Expense,1464,Esso,Fuel - service vans,Chequing,209.67,9427.89
+,12/17/2024,Expense,1465,Petro-Canada,Fuel - service vans,Chequing,250.67,9678.56
+,12/24/2024,Expense,1466,Esso,Fuel - service vans,Chequing,188.18,9866.74
+   Total for Fuel - Service Vans,,,,,,,9866.74,
+   Van Repairs & Maintenance
+,03/22/2024,Expense,1117,Midas,Van service,Chequing,541.10,541.10
+,06/22/2024,Expense,1234,Midas,Van service,Chequing,307.77,848.87
+,09/22/2024,Expense,1352,Midas,Van service,Chequing,748.70,1597.57
+,12/22/2024,Expense,1469,Midas,Van service,Chequing,721.23,2318.80
+   Total for Van Repairs & Maintenance,,,,,,,2318.80,
+Total for Automobile Expense,,,,,,,,
+Meals and Entertainment
+,01/06/2024,Credit Card,1533,The Keg,Client dinner,Chequing,980.78,980.78
+,01/14/2024,Credit Card,1534,Tim Hortons,Team lunch,Chequing,620.54,1601.32
+,01/22/2024,Credit Card,1535,Earls Kitchen,Team lunch,Chequing,411.80,2013.12
+,02/06/2024,Credit Card,1536,Café Novo,Team lunch,Chequing,453.56,2466.68
+,02/14/2024,Credit Card,1537,Jack Astor's,Client dinner,Chequing,1012.96,3479.64
+,02/22/2024,Credit Card,1538,The Keg,Team lunch,Chequing,498.81,3978.45
+,03/06/2024,Credit Card,1539,Tim Hortons,Team lunch,Chequing,936.61,4915.06
+,03/14/2024,Credit Card,1540,Earls Kitchen,Team lunch,Chequing,578.31,5493.37
+,03/22/2024,Credit Card,1541,Café Novo,Client dinner,Chequing,893.00,6386.37
+,04/06/2024,Credit Card,1542,Jack Astor's,Team lunch,Chequing,565.97,6952.34
+,04/14/2024,Credit Card,1543,The Keg,Team lunch,Chequing,350.12,7302.46
+,04/22/2024,Credit Card,1544,Tim Hortons,Team lunch,Chequing,374.11,7676.57
+,05/06/2024,Credit Card,1545,Earls Kitchen,Client dinner,Chequing,457.66,8134.23
+,05/14/2024,Credit Card,1546,Café Novo,Team lunch,Chequing,511.01,8645.24
+,05/22/2024,Credit Card,1547,Jack Astor's,Team lunch,Chequing,863.34,9508.58
+,06/06/2024,Credit Card,1548,The Keg,Team lunch,Chequing,823.74,10332.32
+,06/14/2024,Credit Card,1549,Tim Hortons,Client dinner,Chequing,873.86,11206.18
+,06/22/2024,Credit Card,1550,Earls Kitchen,Team lunch,Chequing,377.41,11583.59
+,07/06/2024,Credit Card,1551,Café Novo,Team lunch,Chequing,1046.84,12630.43
+,07/14/2024,Credit Card,1552,Jack Astor's,Team lunch,Chequing,369.66,13000.09
+,07/22/2024,Credit Card,1553,The Keg,Client dinner,Chequing,292.07,13292.16
+,08/06/2024,Credit Card,1554,Tim Hortons,Team lunch,Chequing,269.99,13562.15
+,08/14/2024,Credit Card,1555,Earls Kitchen,Team lunch,Chequing,666.21,14228.36
+,08/22/2024,Credit Card,1556,Café Novo,Team lunch,Chequing,407.98,14636.34
+,09/06/2024,Credit Card,1557,Jack Astor's,Client dinner,Chequing,654.42,15290.76
+,09/14/2024,Credit Card,1558,The Keg,Team lunch,Chequing,534.56,15825.32
+,09/22/2024,Credit Card,1559,Tim Hortons,Team lunch,Chequing,311.75,16137.07
+,10/06/2024,Credit Card,1560,Earls Kitchen,Team lunch,Chequing,478.61,16615.68
+,10/14/2024,Credit Card,1561,Café Novo,Client dinner,Chequing,955.54,17571.22
+,10/22/2024,Credit Card,1562,Jack Astor's,Team lunch,Chequing,691.42,18262.64
+,11/06/2024,Credit Card,1563,The Keg,Team lunch,Chequing,556.36,18819.00
+,11/14/2024,Credit Card,1564,Tim Hortons,Team lunch,Chequing,824.25,19643.25
+,11/22/2024,Credit Card,1565,Earls Kitchen,Client dinner,Chequing,602.05,20245.30
+,12/06/2024,Credit Card,1566,Café Novo,Team lunch,Chequing,638.19,20883.49
+,12/14/2024,Credit Card,1567,Jack Astor's,Team lunch,Chequing,444.42,21327.91
+,12/22/2024,Credit Card,1568,The Keg,Team lunch,Chequing,672.09,22000.00
+Total for Meals and Entertainment,,,,,,,22000.00,
+Insurance
+,01/09/2024,Expense,1033,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,750.00
+,02/09/2024,Expense,1071,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,1500.00
+,03/09/2024,Expense,1109,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,2250.00
+,03/20/2024,Expense,1116,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,5250.00
+,04/09/2024,Expense,1150,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,6000.00
+,05/09/2024,Expense,1188,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,6750.00
+,06/09/2024,Expense,1226,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,7500.00
+,06/20/2024,Expense,1233,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,10500.00
+,07/09/2024,Expense,1268,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,11250.00
+,08/09/2024,Expense,1306,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,12000.00
+,09/09/2024,Expense,1344,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,12750.00
+,09/20/2024,Expense,1351,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,15750.00
+,10/09/2024,Expense,1385,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,16500.00
+,11/09/2024,Expense,1423,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,17250.00
+,12/09/2024,Expense,1461,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,18000.00
+,12/20/2024,Expense,1468,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,21000.00
+Total for Insurance,,,,,,,21000.00,
+Legal & Professional Fees
+,01/09/2024,Expense,1032,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,450.00
+,02/09/2024,Expense,1070,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,900.00
+,03/09/2024,Expense,1108,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,1350.00
+,03/30/2024,Bill,1569,Moore & Partners CPA,Year-end financial statements,Chequing,6500.00,7850.00
+,04/09/2024,Expense,1149,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,8300.00
+,05/09/2024,Expense,1187,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,8750.00
+,06/09/2024,Expense,1225,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,9200.00
+,07/09/2024,Expense,1267,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,9650.00
+,07/15/2024,Bill Payment,1572,Holloway LLP,Settlement - wrongful dismissal,Chequing,22000.00,31650.00
+,07/31/2024,General Journal,1573,Holloway LLP,Refund of retainer,Chequing,-500.00,31150.00
+,08/09/2024,Expense,1305,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,31600.00
+,09/09/2024,Expense,1343,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,32050.00
+,10/09/2024,Expense,1384,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,32500.00
+,11/09/2024,Expense,1422,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,32950.00
+,12/09/2024,Expense,1460,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,33400.00
+Total for Legal & Professional Fees,,,,,,,33400.00,
+Rent
+,01/09/2024,Expense,1019,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,4500.00
+,02/09/2024,Expense,1057,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,9000.00
+,03/09/2024,Expense,1095,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,13500.00
+,04/09/2024,Expense,1136,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,18000.00
+,05/09/2024,Expense,1174,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,22500.00
+,06/09/2024,Expense,1212,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,27000.00
+,07/09/2024,Expense,1254,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,31500.00
+,08/09/2024,Expense,1292,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,36000.00
+,09/09/2024,Expense,1330,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,40500.00
+,10/09/2024,Expense,1371,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,45000.00
+,11/09/2024,Expense,1409,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,49500.00
+,12/09/2024,Expense,1447,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,54000.00
+Total for Rent,,,,,,,54000.00,
+Utilities
+,01/10/2024,Expense,1020,Enbridge Gas,Gas,Chequing,337.31,337.31
+,01/10/2024,Expense,1021,Toronto Hydro,Hydro,Chequing,347.89,685.20
+,02/10/2024,Expense,1058,Enbridge Gas,Gas,Chequing,232.44,917.64
+,02/10/2024,Expense,1059,Toronto Hydro,Hydro,Chequing,235.11,1152.75
+,03/10/2024,Expense,1096,Enbridge Gas,Gas,Chequing,328.07,1480.82
+,03/10/2024,Expense,1097,Toronto Hydro,Hydro,Chequing,325.53,1806.35
+,04/10/2024,Expense,1137,Enbridge Gas,Gas,Chequing,323.79,2130.14
+,04/10/2024,Expense,1138,Toronto Hydro,Hydro,Chequing,304.46,2434.60
+,05/10/2024,Expense,1175,Enbridge Gas,Gas,Chequing,254.31,2688.91
+,05/10/2024,Expense,1176,Toronto Hydro,Hydro,Chequing,213.78,2902.69
+,06/10/2024,Expense,1213,Enbridge Gas,Gas,Chequing,187.81,3090.50
+,06/10/2024,Expense,1214,Toronto Hydro,Hydro,Chequing,210.78,3301.28
+,07/10/2024,Expense,1255,Enbridge Gas,Gas,Chequing,222.48,3523.76
+,07/10/2024,Expense,1256,Toronto Hydro,Hydro,Chequing,278.18,3801.94
+,08/10/2024,Expense,1293,Enbridge Gas,Gas,Chequing,320.79,4122.73
+,08/10/2024,Expense,1294,Toronto Hydro,Hydro,Chequing,338.13,4460.86
+,09/10/2024,Expense,1331,Enbridge Gas,Gas,Chequing,381.11,4841.97
+,09/10/2024,Expense,1332,Toronto Hydro,Hydro,Chequing,222.81,5064.78
+,10/10/2024,Expense,1372,Enbridge Gas,Gas,Chequing,315.30,5380.08
+,10/10/2024,Expense,1373,Toronto Hydro,Hydro,Chequing,306.71,5686.79
+,11/10/2024,Expense,1410,Enbridge Gas,Gas,Chequing,252.68,5939.47
+,11/10/2024,Expense,1411,Toronto Hydro,Hydro,Chequing,237.23,6176.70
+,12/10/2024,Expense,1448,Enbridge Gas,Gas,Chequing,181.15,6357.85
+,12/10/2024,Expense,1449,Toronto Hydro,Hydro,Chequing,325.04,6682.89
+Total for Utilities,,,,,,,6682.89,
+Telephone & Internet
+,01/11/2024,Expense,1022,Bell Canada,Phones,Chequing,332.66,332.66
+,01/11/2024,Expense,1023,Rogers,Internet,Chequing,129.95,462.61
+,02/11/2024,Expense,1060,Bell Canada,Phones,Chequing,316.93,779.54
+,02/11/2024,Expense,1061,Rogers,Internet,Chequing,129.95,909.49
+,03/11/2024,Expense,1098,Bell Canada,Phones,Chequing,326.42,1235.91
+,03/11/2024,Expense,1099,Rogers,Internet,Chequing,129.95,1365.86
+,04/11/2024,Expense,1139,Bell Canada,Phones,Chequing,344.64,1710.50
+,04/11/2024,Expense,1140,Rogers,Internet,Chequing,129.95,1840.45
+,05/11/2024,Expense,1177,Bell Canada,Phones,Chequing,338.66,2179.11
+,05/11/2024,Expense,1178,Rogers,Internet,Chequing,129.95,2309.06
+,06/11/2024,Expense,1215,Bell Canada,Phones,Chequing,319.33,2628.39
+,06/11/2024,Expense,1216,Rogers,Internet,Chequing,129.95,2758.34
+,07/11/2024,Expense,1257,Bell Canada,Phones,Chequing,323.08,3081.42
+,07/11/2024,Expense,1258,Rogers,Internet,Chequing,129.95,3211.37
+,08/11/2024,Expense,1295,Bell Canada,Phones,Chequing,322.08,3533.45
+,08/11/2024,Expense,1296,Rogers,Internet,Chequing,129.95,3663.40
+,09/11/2024,Expense,1333,Bell Canada,Phones,Chequing,341.92,4005.32
+,09/11/2024,Expense,1334,Rogers,Internet,Chequing,129.95,4135.27
+,10/11/2024,Expense,1374,Bell Canada,Phones,Chequing,312.28,4447.55
+,10/11/2024,Expense,1375,Rogers,Internet,Chequing,129.95,4577.50
+,11/11/2024,Expense,1412,Bell Canada,Phones,Chequing,316.26,4893.76
+,11/11/2024,Expense,1413,Rogers,Internet,Chequing,129.95,5023.71
+,12/11/2024,Expense,1450,Bell Canada,Phones,Chequing,328.06,5351.77
+,12/11/2024,Expense,1451,Rogers,Internet,Chequing,129.95,5481.72
+Total for Telephone & Internet,,,,,,,5481.72,
+Advertising & Promotion
+,01/09/2024,Expense,1024,Google Ads,Search ads,Chequing,1083.92,1083.92
+,02/09/2024,Expense,1062,Google Ads,Search ads,Chequing,1476.06,2559.98
+,03/09/2024,Expense,1100,Google Ads,Search ads,Chequing,1221.06,3781.04
+,04/09/2024,Expense,1141,Google Ads,Search ads,Chequing,1115.34,4896.38
+,05/09/2024,Expense,1179,Google Ads,Search ads,Chequing,1002.28,5898.66
+,06/09/2024,Expense,1217,Google Ads,Search ads,Chequing,1552.26,7450.92
+,07/09/2024,Expense,1259,Google Ads,Search ads,Chequing,1225.90,8676.82
+,08/09/2024,Expense,1297,Google Ads,Search ads,Chequing,1519.86,10196.68
+,09/09/2024,Expense,1335,Google Ads,Search ads,Chequing,1462.77,11659.45
+,10/09/2024,Expense,1376,Google Ads,Search ads,Chequing,1447.75,13107.20
+,11/09/2024,Expense,1414,Google Ads,Search ads,Chequing,1261.19,14368.39
+,12/09/2024,Expense,1452,Google Ads,Search ads,Chequing,1208.06,15576.45
+Total for Advertising & Promotion,,,,,,,15576.45,
+Office Supplies
+,01/09/2024,Expense,1025,Staples,Office supplies,Chequing,139.07,139.07
+,02/09/2024,Expense,1063,Staples,Office supplies,Chequing,261.14,400.21
+,03/09/2024,Expense,1101,Staples,Office supplies,Chequing,111.43,511.64
+,04/09/2024,Expense,1142,Staples,Office supplies,Chequing,139.84,651.48
+,05/09/2024,Expense,1180,Staples,Office supplies,Chequing,265.90,917.38
+,06/09/2024,Expense,1218,Staples,Office supplies,Chequing,217.62,1135.00
+,07/09/2024,Expense,1260,Staples,Office supplies,Chequing,107.11,1242.11
+,08/09/2024,Expense,1298,Staples,Office supplies,Chequing,183.12,1425.23
+,09/09/2024,Expense,1336,Staples,Office supplies,Chequing,161.94,1587.17
+,10/09/2024,Expense,1377,Staples,Office supplies,Chequing,181.88,1769.05
+,11/09/2024,Expense,1415,Staples,Office supplies,Chequing,129.89,1898.94
+,12/09/2024,Expense,1453,Staples,Office supplies,Chequing,165.96,2064.90
+Total for Office Supplies,,,,,,,2064.90,
+Software & Subscriptions
+,01/10/2024,Expense,1026,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,90.00
+,01/10/2024,Expense,1027,Jobber,Field service software,Chequing,249.00,339.00
+,02/10/2024,Expense,1064,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,429.00
+,02/10/2024,Expense,1065,Jobber,Field service software,Chequing,249.00,678.00
+,03/10/2024,Expense,1102,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,768.00
+,03/10/2024,Expense,1103,Jobber,Field service software,Chequing,249.00,1017.00
+,04/10/2024,Expense,1143,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,1107.00
+,04/10/2024,Expense,1144,Jobber,Field service software,Chequing,249.00,1356.00
+,05/10/2024,Expense,1181,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,1446.00
+,05/10/2024,Expense,1182,Jobber,Field service software,Chequing,249.00,1695.00
+,06/10/2024,Expense,1219,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,1785.00
+,06/10/2024,Expense,1220,Jobber,Field service software,Chequing,249.00,2034.00
+,07/10/2024,Expense,1261,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,2124.00
+,07/10/2024,Expense,1262,Jobber,Field service software,Chequing,249.00,2373.00
+,08/10/2024,Expense,1299,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,2463.00
+,08/10/2024,Expense,1300,Jobber,Field service software,Chequing,249.00,2712.00
+,09/10/2024,Expense,1337,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,2802.00
+,09/10/2024,Expense,1338,Jobber,Field service software,Chequing,249.00,3051.00
+,10/10/2024,Expense,1378,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,3141.00
+,10/10/2024,Expense,1379,Jobber,Field service software,Chequing,249.00,3390.00
+,11/10/2024,Expense,1416,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,3480.00
+,11/10/2024,Expense,1417,Jobber,Field service software,Chequing,249.00,3729.00
+,12/10/2024,Expense,1454,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,3819.00
+,12/10/2024,Expense,1455,Jobber,Field service software,Chequing,249.00,4068.00
+Total for Software & Subscriptions,,,,,,,4068.00,
+Bank Charges
+,01/09/2024,Expense,1028,RBC Royal Bank,Monthly fee,Chequing,29.95,29.95
+,02/09/2024,Expense,1066,RBC Royal Bank,Monthly fee,Chequing,29.95,59.90
+,03/09/2024,Expense,1104,RBC Royal Bank,Monthly fee,Chequing,29.95,89.85
+,04/09/2024,Expense,1145,RBC Royal Bank,Monthly fee,Chequing,29.95,119.80
+,05/09/2024,Expense,1183,RBC Royal Bank,Monthly fee,Chequing,29.95,149.75
+,06/09/2024,Expense,1221,RBC Royal Bank,Monthly fee,Chequing,29.95,179.70
+,07/09/2024,Expense,1263,RBC Royal Bank,Monthly fee,Chequing,29.95,209.65
+,08/09/2024,Expense,1301,RBC Royal Bank,Monthly fee,Chequing,29.95,239.60
+,09/09/2024,Expense,1339,RBC Royal Bank,Monthly fee,Chequing,29.95,269.55
+,10/09/2024,Expense,1380,RBC Royal Bank,Monthly fee,Chequing,29.95,299.50
+,11/09/2024,Expense,1418,RBC Royal Bank,Monthly fee,Chequing,29.95,329.45
+,12/09/2024,Expense,1456,RBC Royal Bank,Monthly fee,Chequing,29.95,359.40
+Total for Bank Charges,,,,,,,359.40,
+Interest Expense
+,01/10/2024,Expense,1029,RBC Royal Bank,Loan interest,Chequing,602.00,602.00
+,02/10/2024,Expense,1067,RBC Royal Bank,Loan interest,Chequing,594.00,1196.00
+,03/10/2024,Expense,1105,RBC Royal Bank,Loan interest,Chequing,586.00,1782.00
+,04/10/2024,Expense,1146,RBC Royal Bank,Loan interest,Chequing,578.00,2360.00
+,05/10/2024,Expense,1184,RBC Royal Bank,Loan interest,Chequing,570.00,2930.00
+,06/10/2024,Expense,1222,RBC Royal Bank,Loan interest,Chequing,562.00,3492.00
+,07/10/2024,Expense,1264,RBC Royal Bank,Loan interest,Chequing,554.00,4046.00
+,08/10/2024,Expense,1302,RBC Royal Bank,Loan interest,Chequing,546.00,4592.00
+,09/10/2024,Expense,1340,RBC Royal Bank,Loan interest,Chequing,538.00,5130.00
+,10/10/2024,Expense,1381,RBC Royal Bank,Loan interest,Chequing,530.00,5660.00
+,11/10/2024,Expense,1419,RBC Royal Bank,Loan interest,Chequing,522.00,6182.00
+,12/10/2024,Expense,1457,RBC Royal Bank,Loan interest,Chequing,514.00,6696.00
+Total for Interest Expense,,,,,,,6696.00,
+Dues & Memberships
+,01/09/2024,Expense,1034,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,1250.00
+,02/01/2024,Expense,1570,HRAI,Association membership,Chequing,650.00,1900.00
+,02/09/2024,Expense,1072,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,3150.00
+,03/09/2024,Expense,1110,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,4400.00
+,04/09/2024,Expense,1151,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,5650.00
+,05/09/2024,Expense,1189,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,6900.00
+,06/09/2024,Expense,1227,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,8150.00
+,07/09/2024,Expense,1269,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,9400.00
+,08/09/2024,Expense,1307,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,10650.00
+,09/09/2024,Expense,1345,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,11900.00
+,10/09/2024,Expense,1386,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,13150.00
+,11/09/2024,Expense,1424,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,14400.00
+,12/09/2024,Expense,1462,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,15650.00
+Total for Dues & Memberships,,,,,,,15650.00,
+Shareholder Expenses
+,05/02/2024,Expense,1574,Shoppers Drug Mart,Prescription,Chequing,64.20,64.20
+,09/05/2024,Expense,1575,Upper Canada College,Tuition - fall term,Chequing,9500.00,9564.20
+Total for Shareholder Expenses,,,,,,,9564.20,
+Donations
+,11/20/2024,Expense,1571,SickKids Foundation,Donation,Chequing,1000.00,1000.00
+Total for Donations,,,,,,,1000.00,
+Repairs & Maintenance
+,06/18/2024,Expense,1235,Rapid Roofing,Shop roof repair,Chequing,2154.94,2154.94
+Total for Repairs & Maintenance,,,,,,,2154.94,
+Amortization Expense
+,12/31/2024,Journal Entry,1576,,Year-end amortization,Chequing,31000.00,31000.00
+Total for Amortization Expense,,,,,,,31000.00,
+Income Tax Expense
+,12/31/2024,Journal Entry,1578,,Current income taxes,Chequing,14200.00,14200.00
+Total for Income Tax Expense,,,,,,,14200.00,
+
+TOTAL,,,,,,,,
+
+"Accrual Basis Thursday, January 9, 2025 10:12 AM GMT-05:00"

@@ -41,6 +41,7 @@ import type { ViewRoomReading } from "@shared/analytics-v2";
 import type { ViewRoomDataRoom } from "@shared/vdr-api";
 import { RoomSwitch } from "@/components/vdr/RoomSwitch";
 import { VdrLinkProvider } from "@/components/vdr/VdrLinkContext";
+import { GlRoomLinkProvider } from "@/components/vdr/GlRoomLinks";
 
 type BuyerDecision = "under_review" | "interested" | "not_interested" | "lapsed";
 
@@ -437,6 +438,8 @@ export default function BuyerViewRoom() {
               if (open && itemId) tracker.record("vdr_open", null, undefined, `doc:${itemId}`);
               setRoomDrawerOpen(open);
             }}>
+          {/* gl's add-back page/note link to the ledger and its documents through the room (INTEGRATION §2.6). */}
+          <GlRoomLinkProvider>
           <main className="flex-1 min-w-0">
             {hasAiSections && !!data.pendingSections && (
               <p className="mb-3 text-xs text-muted-foreground flex items-center gap-2" data-testid="view-pending-sections">
@@ -529,6 +532,7 @@ export default function BuyerViewRoom() {
             )}
 
           </main>
+          </GlRoomLinkProvider>
           </VdrLinkProvider>
         </div>
       </div>

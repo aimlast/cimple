@@ -12,6 +12,7 @@ import { storage } from "../storage";
 import { matchIndustrySection } from "../interview/industry-loader";
 import { withoutSellerUnavailableNote } from "@shared/seller-portal";
 import { isEquipmentLeaseTitle } from "./lease-kind";
+import { GL_REQUIREMENT_NAME } from "@shared/gl-copy";
 
 interface DocRequirement {
   documentName: string;
@@ -418,8 +419,94 @@ export async function populateDocumentRequirements(
     });
     created++;
   }
+  // The general ledger is asked for on every deal, with the other financial
+  // documents (gl spec D23); its status comes only from the ledger reader.
+  if (await ensureGlRequirement(dealId)) created++;
 
   return created;
+}
+
+// ─── The general-ledger row (gl spec D23, server/gl/*) ────────────────
+
+/** The checklist row asking for the general ledger. Its status is set only by the ledger reader (server/gl/requirement.ts). */
+export { GL_REQUIREMENT_NAME };
+export const GL_REQUIREMENT_SOURCE = "gl_tracing";
+/** Sorts with the financial statements and tax returns (rows 0–5). */
+export const GL_REQUIREMENT_SORT = 5;
+
+/** True for the general-ledger row: never keyword-credited, never re-planned, status set by gl only. */
+export function isGlRequirement(row: { source?: string | null } | null | undefined): boolean {
+  return !!row && row.source === GL_REQUIREMENT_SOURCE;
+}
+
+/**
+ * Adds the general-ledger row to a deal once (idempotent). Resolves true when
+ * this call added it. Never throws. It runs on every load of the broker's and
+ * the seller's GL pages, so pages opening together must not each add one:
+ * calls for the same deal take turns in this process (a second caller waits
+ * for the first and adds nothing), and any duplicates — two server processes
+ * at once, or rows left by the earlier check-then-insert — are folded into
+ * one (dedupeGlRequirements), the same row kept whoever does it.
+ */
+const glRequirementRuns = new Map<string, Promise<boolean>>();
+export function ensureGlRequirement(dealId: string): Promise<boolean> {
+  const running = glRequirementRuns.get(dealId);
+  if (running) return running.then(() => false, () => false);
+  const run: Promise<boolean> = ensureGlRequirementOnce(dealId).finally(() => {
+    if (glRequirementRuns.get(dealId) === run) glRequirementRuns.delete(dealId);
+  });
+  glRequirementRuns.set(dealId, run);
+  return run;
+}
+
+async function ensureGlRequirementOnce(dealId: string): Promise<boolean> {
+  try {
+    const existing = await storage.getDocumentRequirementsByDeal(dealId);
+    if (existing.filter((r) => isGlRequirement(r)).length > 1) await dedupeGlRequirements(dealId, existing);
+    if (existing.some((r) => isGlRequirement(r) || r.documentName === GL_REQUIREMENT_NAME)) return false;
+    await storage.createDocumentRequirement({
+      dealId,
+      documentName: GL_REQUIREMENT_NAME,
+      category: "financial",
+      isRequired: true,
+      source: GL_REQUIREMENT_SOURCE,
+      status: "missing",
+      sortOrder: GL_REQUIREMENT_SORT,
+    } as any);
+    // Another server process may have added one at the same moment: keep one.
+    const kept = await dedupeGlRequirements(dealId);
+    // A ledger already read on the deal credits it at once.
+    const { syncGlRequirement } = await import("../gl/requirement");
+    await syncGlRequirement(dealId).catch(() => undefined);
+    return kept.removed === 0;
+  } catch (err) {
+    console.warn(`[requirements] couldn't add the general-ledger request on deal ${dealId}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Folds a deal's general-ledger rows into one. The row kept is the same
+ * whoever runs it: one the ledger credits, else one the seller acted on
+ * ("I don't have this"), else the oldest (then the lowest id). Never throws.
+ */
+export async function dedupeGlRequirements(
+  dealId: string,
+  rows?: ReadonlyArray<{ id: string; source?: string | null; uploadedFileId?: string | null; status?: string | null; createdAt?: Date | string | null }>,
+): Promise<{ keptId: string | null; removed: number }> {
+  try {
+    const all = (rows ?? (await storage.getDocumentRequirementsByDeal(dealId))).filter((r) => isGlRequirement(r));
+    if (all.length <= 1) return { keptId: all[0]?.id ?? null, removed: 0 };
+    const rank = (r: (typeof all)[number]) => (r.uploadedFileId ? 0 : r.status && r.status !== "missing" ? 1 : 2);
+    const at = (r: (typeof all)[number]) => (r.createdAt ? new Date(r.createdAt).getTime() : 0);
+    const sorted = [...all].sort((a, b) => rank(a) - rank(b) || at(a) - at(b) || a.id.localeCompare(b.id));
+    for (const r of sorted.slice(1)) await storage.deleteDocumentRequirement(r.id);
+    console.log(`[requirements] deal ${dealId}: ${sorted.length - 1} duplicate general-ledger request(s) removed`);
+    return { keptId: sorted[0].id, removed: sorted.length - 1 };
+  } catch (err) {
+    console.warn(`[requirements] couldn't tidy the general-ledger requests on deal ${dealId}:`, err);
+    return { keptId: null, removed: 0 };
+  }
 }
 
 /** A deal's source as the request planner sees it. */
@@ -651,7 +738,11 @@ export function findMatchingRequirement<T extends LinkableRequirement>(
   // name ("Financial statements FY2023" → "Financial Statements (3 Years)").
   const uncategorised = docCategory === "other";
   const candidates = requirements.filter(
-    (r) => (r.status === "missing" || r.status === "unavailable") && (uncategorised || docCategoryForRequirement(r.category) === docCategory),
+    (r) =>
+      (r.status === "missing" || r.status === "unavailable") &&
+      // The general-ledger row is credited only by the ledger reader.
+      !isGlRequirement(r as { source?: string | null }) &&
+      (uncategorised || docCategoryForRequirement(r.category) === docCategory),
   );
 
   // An equipment or vehicle lease is not the premises lease, and the premises
@@ -708,6 +799,8 @@ export async function linkUploadToRequirement(opts: {
       ? requirements.find((r) => r.id === opts.requirementId)
       : findMatchingRequirement(requirements, opts.fileName, opts.docCategory);
     if (!target) return null;
+    // The general-ledger row updates itself when the ledger is read (server/gl/requirement.ts).
+    if (isGlRequirement(target)) return null;
     await storage.updateDocumentRequirement(target.id, {
       status: "uploaded",
       uploadedFileId: opts.docId,
@@ -740,7 +833,8 @@ export async function releaseRequirementsFor(
 ): Promise<number> {
   try {
     const requirements = await storage.getDocumentRequirementsByDeal(dealId);
-    const released = requirements.filter((r) => r.uploadedFileId === docId);
+    // (The general-ledger row is re-synced by the ledger reader, never released here.)
+    const released = requirements.filter((r) => r.uploadedFileId === docId && !isGlRequirement(r));
     if (released.length === 0) return 0;
     // Another source on the deal that is this document (the final statements
     // after the draft was deleted): the row is credited to it instead of
@@ -802,6 +896,7 @@ export function replacementDocumentFor<T extends ChecklistSource>(
   remaining: T[],
   credited: ReadonlySet<string> = new Set(),
 ): T | undefined {
+  if (isGlRequirement(row as { source?: string | null })) return undefined;
   const asOpen = { ...row, status: "missing" };
   // (A category the parser doesn't use is read as none — then every word of the row's name must match.)
   const docCategory = (c: string | null | undefined) => (c && KNOWN_DOC_CATEGORIES.has(c) ? c : "other");

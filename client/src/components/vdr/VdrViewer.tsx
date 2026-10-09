@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import type { VdrManifest, VdrSheetRows, ViewStart } from "@shared/vdr-api";
 import { sourceKey, vdrFetch, vdrUrls, type VdrSource } from "@/hooks/useDataRoom";
 import { useVdrTracking } from "@/lib/vdr-tracking";
+import { GlLedgerViewer } from "@/components/gl/GlLedgerViewer";
 
 const COLS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 /** Excel's column letters for an absolute 0-based column (A = 0). */
@@ -168,11 +169,30 @@ export function VdrViewer(props: VdrViewerProps) {
       return <TextView source={source} urls={urls} itemId={itemId} reader={props.reader} className={props.className} onReady={() => { currentPage.current = "1"; }} />;
     case "ledger":
     case "ledger_pending":
+      // A due-diligence buyer reads a READY ledger in gl's viewer (masked rows, the entries
+      // behind an add-back highlighted — INTEGRATION §2.6); everything else says where it is.
+      if (buyer && manifest.kind === "ledger" && manifest.ledgerDocumentId) {
+        const rows = props.highlightRows?.length ? props.highlightRows : undefined;
+        return (
+          <div className={cn("relative bg-background p-3 sm:p-4", props.className)} data-testid="vdr-ledger-viewer">
+            <GlLedgerViewer
+              buyerRowsUrl={`/api/view/${encodeURIComponent((source as { token: string }).token)}/data-room/ledger/${encodeURIComponent(manifest.ledgerDocumentId)}/rows`}
+              highlightRows={rows}
+              initialRow={rows ? Math.min(...rows) : null}
+            />
+            <Overlay reader={props.reader} />
+          </div>
+        );
+      }
       return (
         <ViewerFrame className={props.className}>
           <Centered>
-            <p className="max-w-sm text-sm text-foreground">The general ledger opens in its own viewer.</p>
-            {!buyer && <p className="mt-1 text-xs text-muted-foreground">Open it on Financials → Add-backs in the books.</p>}
+            <p className="max-w-sm text-sm text-foreground">{manifest.kind === "ledger_pending" ? "The general ledger isn't ready to show yet." : "The general ledger opens in its own viewer."}</p>
+            {!buyer && source.kind === "broker" && (
+              <a className="mt-2 text-xs text-teal hover:underline" href={`/deal/${encodeURIComponent(source.dealId)}/financials?fin=books&gl=ledger`} data-testid="vdr-ledger-books-link">
+                Open it on Financials → Add-backs in the books
+              </a>
+            )}
           </Centered>
         </ViewerFrame>
       );

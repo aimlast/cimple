@@ -1389,7 +1389,7 @@ async function processTurnLocked(
   })?.catch(() => {});
 
   // Build the system prompt with current knowledge base
-  const systemBlocks = await buildInterviewSystemBlocks(kb);
+  const systemBlocks = await buildInterviewSystemBlocks(kb, { dealId: deal.id });
   timer.mark("prompt");
 
   // Seller turns so far, including this one — drives completion governance

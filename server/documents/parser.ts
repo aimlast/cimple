@@ -90,18 +90,25 @@ async function extractNonPdfText(filePath: string, ext: string, mimeType?: strin
   if ([".xlsx", ".xls"].includes(ext) ||
       mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
       mimeType === "application/vnd.ms-excel") {
-    const XLSX = await import("xlsx");
-    const workbook = XLSX.read(fs.readFileSync(filePath));
-    const lines: string[] = [];
-    for (const sheetName of workbook.SheetNames) {
-      const sheet = workbook.Sheets[sheetName];
-      const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false });
-      if (csv.trim()) {
-        lines.push(`--- Sheet: ${sheetName} ---`);
-        lines.push(csv);
+    // One heavy spreadsheet parse at a time per server (gl spec D10); a file
+    // over 2 MB is read in the isolated worker (memory cap, timeout, its own
+    // realm against SheetJS 0.18.5's crafted-file flaws).
+    const { withHeavySheetSlot, xlsxToTextInWorker } = await import("./heavy-sheet");
+    return withHeavySheetSlot(async () => {
+      if (fs.statSync(filePath).size > 2 * 1024 * 1024) return xlsxToTextInWorker(filePath);
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(fs.readFileSync(filePath));
+      const lines: string[] = [];
+      for (const sheetName of workbook.SheetNames) {
+        const sheet = workbook.Sheets[sheetName];
+        const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false });
+        if (csv.trim()) {
+          lines.push(`--- Sheet: ${sheetName} ---`);
+          lines.push(csv);
+        }
       }
-    }
-    return lines.join("\n");
+      return lines.join("\n");
+    });
   }
 
   // The old binary Office formats: the parser reads only the XML ones.

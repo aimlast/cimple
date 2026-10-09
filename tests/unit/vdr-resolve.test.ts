@@ -258,8 +258,8 @@ await test("assertBuyerDocumentAccess: not shared, broker-only, unknown, other d
   if (p) { assert.equal(p.preview, true); p.logView(); assert.equal(f.activity.length, before); }
 });
 
-await test("gl's ledger rows route: behind the same check; 404 until gl is merged", async () => {
-  assert.equal((await call("GET", `${T}/ledger/t2/rows`)).status, 404, "adapter returns null → Not found");
+await test("gl's ledger rows route: behind the same check; a document that is not a ready ledger → 404", async () => {
+  assert.equal((await call("GET", `${T}/ledger/t2/rows`)).status, 404, "a tax return, not a ready ledger: the adapter answers null → Not found");
   assert.equal((await call("GET", `${T}/ledger/lease/rows`)).status, 404, "not shared");
   assert.equal((await call("GET", "/api/view/tok-blind-aaaaaaaaa/data-room/ledger/t2/rows")).status, 403, "no room");
 });

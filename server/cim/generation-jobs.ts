@@ -478,6 +478,10 @@ export async function startCimGeneration(
   mode: CimGenerationMode,
   opts: { beforeWriting?: BeforeWriting } = {},
 ): Promise<CimGenerationJob> {
+  // "Add-backs in the books" (gl spec §6.9): the broker's "hold the whole CIM" switch
+  // stops every full generation here (content, layout, any future caller). 409 gl_trace_required.
+  const { assertGlGate } = await import("../gl/gate");
+  await assertGlGate(deal, "cim");
   const existing = jobs.get(deal.id);
   if (existing?.status === "running") throw new CimGenerationRunningError(existing);
   const now = new Date().toISOString();

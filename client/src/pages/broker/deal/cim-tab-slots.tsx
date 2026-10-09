@@ -19,6 +19,7 @@ import type { ComponentType, ReactNode } from "react";
 import type { AccessLevel } from "@shared/access-levels";
 import { VdrPublishNote, useVdrTileLines, vdrTileTooltips } from "@/components/vdr/cim-slots";
 import { useRoom } from "@/hooks/useDataRoom";
+import { GlGenerationNotice } from "@/components/gl/GlGenerationNotice";
 
 export interface CimTabViewProps {
   dealId: string;
@@ -74,7 +75,13 @@ export interface VersionCardExtraSource {
   key: string;
   useExtras: (dealId: string) => Partial<Record<VersionCardKey, ReactNode>>;
 }
-export const VERSION_CARD_EXTRAS: VersionCardExtraSource[] = [];
+export const VERSION_CARD_EXTRAS: VersionCardExtraSource[] = [
+  // (dd's source goes FIRST at the dd merge: the Full and Blind lines, the DD summary + "Review and show to buyers".)
+  // Add-backs in the books (gl, merge step 7): the DD card's hold notice — "Waiting for 'Add-backs in the
+  // books' (3 of 7 to go)" + See add-backs + "Go ahead without the ledger…" (or the whole-CIM hold switch's
+  // notice). Renders nothing when nothing holds the DD CIM; CimTab hides the DD Generate/Refresh while held.
+  { key: "gl", useExtras: (dealId) => ({ dd: <GlGenerationNotice key="gl-dd" dealId={dealId} kind="dd" compact /> }) },
+];
 
 export interface AttentionGroupView {
   key: string;

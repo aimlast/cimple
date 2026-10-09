@@ -12,6 +12,11 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { parseJsonLoose } from "./shape";
+import {
+  addbackTerms, CATEGORY_KEYWORDS, CATEGORY_TERMS, escapeRegexTerm as escapeRe, guessCategory, normalizeDate, parseMoney, splitDelimited, TERM_STOP,
+} from "../gl/text";
+
+export { addbackTerms, CATEGORY_KEYWORDS, CATEGORY_TERMS, guessCategory, normalizeDate, parseMoney, splitDelimited, TERM_STOP };
 import { ADDBACK_MATCH_TOLERANCE, addbackSupport, claimPeriodYears, claimWords, periodLabel, wholeYears } from "@shared/addback-support";
 
 /** The model client (a stub in tests: _setAddbackClientForTests). */
@@ -58,76 +63,8 @@ function parseAiArray(content: string, what: string): any[] | null {
 
 // ── Direct CSV / tab-delimited fast path ──
 
-const CATEGORY_KEYWORDS: Array<[RegExp, string]> = [
-  [/payroll|salary|salaries|wage|wages|cpp|ei |employer|benefit/i, "payroll"],
-  [/rent|lease|occupancy/i, "rent"],
-  [/hydro|electric|gas bill|water|utilit|internet|phone|telecom/i, "utilities"],
-  [/insurance|wsib|premium/i, "insurance"],
-  [/legal|accounting|bookkeep|consult|professional|cpa|lawyer/i, "professional_fees"],
-  [/owner|shareholder|draw|dividend|management fee/i, "owner_draw"],
-  [/travel|flight|hotel|airfare|mileage/i, "travel"],
-  [/meal|restaurant|entertain|coffee/i, "meals"],
-  [/vehicle|auto|fuel|car |truck|parking/i, "vehicle"],
-  [/supplies|office|stationery|software|subscription/i, "supplies"],
-  [/deprec|amortiz/i, "depreciation"],
-  [/interest|loan|bank charge|finance charge/i, "interest"],
-  [/tax|hst|gst|cra|irs/i, "taxes"],
-  [/sales|revenue|income|deposit|invoice/i, "revenue"],
-];
-
-function guessCategory(...texts: string[]): string {
-  const joined = texts.join(" ");
-  for (const [re, category] of CATEGORY_KEYWORDS) {
-    if (re.test(joined)) return category;
-  }
-  return "other";
-}
-
-function splitDelimited(line: string, delimiter: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; }
-      else inQuotes = !inQuotes;
-    } else if (ch === delimiter && !inQuotes) {
-      out.push(cur.trim());
-      cur = "";
-    } else {
-      cur += ch;
-    }
-  }
-  out.push(cur.trim());
-  return out;
-}
-
-function parseMoney(raw: string | undefined): number | null {
-  if (raw === undefined) return null;
-  let s = raw.trim();
-  if (!s || s === "-" || s === "—") return null;
-  let negative = false;
-  if (/^\(.*\)$/.test(s)) { negative = true; s = s.slice(1, -1); }
-  if (s.endsWith("-")) { negative = true; s = s.slice(0, -1); }
-  if (s.startsWith("-")) { negative = true; s = s.slice(1); }
-  s = s.replace(/^(cr|dr)\s*/i, "").replace(/[$€£,\s]/g, "").replace(/(cad|usd)$/i, "");
-  if (!/^\d+(\.\d+)?$/.test(s)) return null;
-  const n = Number(s);
-  if (!Number.isFinite(n)) return null;
-  return negative ? -n : n;
-}
-
-function normalizeDate(raw: string): string {
-  const s = (raw || "").trim();
-  if (!s) return "";
-  const iso = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
-  if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
-  const parsed = new Date(s);
-  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
-  // Unparseable and no digits at all ("Total", "Opening balance") — not a date
-  return /\d/.test(s) ? s : "";
-}
+// (guessCategory, splitDelimited, parseMoney and normalizeDate live in server/gl/text.ts — the
+// ledger reader uses the same ones.)
 
 interface ColumnMap {
   date: number;
@@ -419,34 +356,7 @@ interface AddbackToMatch {
   yearAmounts: Record<string, number>;
 }
 
-/** Words that name nothing an add-back could be found by. */
-const TERM_STOP = new Set([
-  "the", "and", "for", "from", "with", "that", "this", "are", "was", "were", "per", "year", "years", "annual", "annually",
-  "monthly", "month", "business", "company", "expense", "expenses", "cost", "costs", "addback", "add", "back", "amount",
-  "paid", "pays", "payment", "payments", "through", "run", "runs", "not", "non", "all", "any", "one", "time", "normal",
-  "normalization", "adjustment", "adjust", "adjusted", "total", "part", "portion", "full", "only", "into", "out", "over",
-]);
-
-/** More words an add-back's category is found by in a ledger. */
-const CATEGORY_TERMS: Record<string, string[]> = {
-  owner_comp: ["owner", "shareholder", "officer", "management", "salary", "salaries", "draw", "draws", "bonus", "compensation", "dividend"],
-  discretionary: ["meal", "meals", "entertainment", "travel", "vehicle", "auto", "personal", "club", "membership", "donation", "gift"],
-  related_party: ["related", "management fee", "consulting", "rent", "family"],
-  one_time: ["legal", "settlement", "consulting", "relocation", "moving", "severance", "repair", "one-time"],
-  non_recurring: ["legal", "settlement", "consulting", "relocation", "moving", "severance", "repair"],
-  non_cash: ["depreciation", "amortization", "amortisation"],
-  other: [],
-};
-
-function escapeRe(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** What an add-back is looked for by in a ledger: its own words, and its category's. */
-function addbackTerms(ab: AddbackToMatch): string[] {
-  const own = `${ab.label} ${ab.description}`.toLowerCase().split(/[^a-z0-9-]+/).filter((w) => w.length >= 3 && !TERM_STOP.has(w) && !/^\d+$/.test(w));
-  return Array.from(new Set([...own, ...(CATEGORY_TERMS[ab.category] ?? [])]));
-}
+// (TERM_STOP, CATEGORY_TERMS, escapeRe and addbackTerms live in server/gl/text.ts.)
 
 export interface CandidateSelection {
   /** Indices (into the full list) of the transactions sent to the model, in order. */

@@ -505,6 +505,8 @@ export async function readerCim(deal: QaDeal, reader: QaReader): Promise<ReaderC
   ]);
   const changedAt = latestChange(rows.sections);
   if (rows.missing) return { text: "", changedAt, held: true };
+  const { buyerCimExtras } = await import("../cim/buyer-extras");
+  const extras = await buyerCimExtras(deal, reader.accessLevel, reader.id ?? null);
   const cim = buildBuyerCim({
     deal: codename ? { ...deal, blindCodename: codename } : deal,
     accessLevel: reader.accessLevel,
@@ -513,6 +515,7 @@ export async function readerCim(deal: QaDeal, reader: QaReader): Promise<ReaderC
     media,
     askingPrice: listedAskingPrice(deal as Parameters<typeof listedAskingPrice>[0]),
     published: rows.published,
+    ...extras,
   });
   const text = stripDdMarkers(buildAnswerContext(cim.sections.filter((s) => !s.locked).map((s) => ({
     title: s.sectionTitle,

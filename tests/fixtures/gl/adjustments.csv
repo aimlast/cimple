@@ -1,0 +1,8 @@
+Moore & Partners CPA
+"Adjusting Journal Entries - year ended December 31, 2023"
+
+Date,Account,Description,Debit,Credit
+12/31/2023,7000 Amortization Expense,AJE 1 - Year-end amortization,29700.00,
+12/31/2023,1510 Accumulated Amortization,AJE 1 - Year-end amortization,,29700.00
+12/31/2023,7100 Income Tax Expense,AJE 2 - Current income taxes,11500.00,
+12/31/2023,2100 HST Payable,AJE 2 - Taxes payable,,11500.00

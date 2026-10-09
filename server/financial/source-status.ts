@@ -50,13 +50,23 @@ const CORRESPONDENCE_RE = /\b(?:e-?mails?|thread|correspondence|transcript|call|
  * uncategorised upload named like one ("2024 P&L.pdf", "Profit and Loss
  * 2024.xlsx" — a seller's drop outside the checklist lands as "other").
  */
-export function isFinancialStatementDoc(doc: Pick<SourceDocLike, "name" | "category">): boolean {
+export function isFinancialStatementDoc(doc: Pick<SourceDocLike, "name" | "category" | "subcategory">): boolean {
+  // A general ledger or an add-back's supporting document (T4, invoice) is
+  // not a statement: the ledger reader (server/gl/*) handles it, and it
+  // never makes the analysis "out of date".
+  if (isGlOrSupportDoc(doc)) return false;
   if (doc.category === "financials") return true;
   const uncategorised = !doc.category || doc.category === "other";
   return uncategorised && STATEMENT_NAME_RE.test(doc.name ?? "") && !CORRESPONDENCE_RE.test(doc.name ?? "");
 }
 
+/** A general ledger (subcategory general_ledger) or an add-back's supporting document (addback_support). */
+export function isGlOrSupportDoc(doc: Pick<SourceDocLike, "subcategory">): boolean {
+  return doc.subcategory === "general_ledger" || doc.subcategory === "addback_support";
+}
+
 export function isTaxDocument(doc: Pick<SourceDocLike, "name" | "category" | "subcategory">): boolean {
+  if (isGlOrSupportDoc(doc)) return false;
   const s = `${doc.name} ${doc.category ?? ""} ${doc.subcategory ?? ""}`.toLowerCase();
   return /\btax\b|t2\b|t1\b|1120|1065|1040|notice of assessment|gifi/.test(s);
 }

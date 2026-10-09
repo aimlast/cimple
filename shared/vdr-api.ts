@@ -235,6 +235,8 @@ export type VdrManifest = {
   sheets: Array<{ index: number; name: string; rows: number; cols: number; firstRow: number; firstCol: number }>;
   error: string | null;
   download: { allowed: boolean; label: string };
+  /** A READY general ledger (kind "ledger"): its document, whose rows gl's viewer reads (buyer: `…/data-room/ledger/:documentId/rows`). */
+  ledgerDocumentId?: string | null;
 };
 
 export type VdrSheetRows = {

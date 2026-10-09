@@ -1,0 +1,710 @@
+Transaction ID,Transaction Date,Account Name,Transaction Description,Transaction Line Description,Amount (One column),Debit Amount (Two Column Approach),Credit Amount (Two Column Approach),Other Accounts for this Transaction,Customer,Vendor,Invoice Number,Bill Number,Notes / Memo,Amount Before Sales Tax,Sales Tax Amount,Sales Tax Name,Transaction Date Added,Transaction Date Last Modified,Account Group,Account Type,Account ID
+2409,2024-01-02,Sales - Service,Service call 2024-01-1,,-4434.00,,4434.00,Chequing,Maple Ridge Condos,,2409,,,-4434.00,,,2024-01-02,2024-01-02,Income,Income,A4000
+2420,2024-01-03,Materials & Supplies,"Pipe, fittings and parts",,4089.00,4089.00,,Chequing,,Wolseley Canada,,2420,,4089.00,,,2024-01-03,2024-01-03,Expense,Cost of Goods Sold,A5000
+2443,2024-01-03,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,236.07,236.07,,Chequing,,Petro-Canada,,2443,,236.07,,,2024-01-03,2024-01-03,Expense,Expense,A6120
+3006,2024-01-03,Automobile Expense:Vehicle - Owner,Lease Jan - Lexus RX,,1150.00,1150.00,,Chequing,,Lexus Financial,,3006,,1150.00,,,2024-01-03,2024-01-03,Expense,Expense,A6110
+2410,2024-01-05,Sales - Service,Service call 2024-01-2,,-3430.00,,3430.00,Chequing,J. Alvarez,,2410,,,-3430.00,,,2024-01-05,2024-01-05,Income,Income,A4000
+2417,2024-01-05,Sales - Installations,Furnace / boiler installation,,-10135.00,,10135.00,Chequing,Lakeview Dental Centre,,2417,,,-10135.00,,,2024-01-05,2024-01-05,Income,Income,A4010
+3043,2024-01-06,Meals and Entertainment,Client dinner,,268.35,268.35,,Chequing,,The Keg,,3043,,268.35,,,2024-01-06,2024-01-06,Expense,Expense,A6200
+2411,2024-01-08,Sales - Service,Service call 2024-01-3,,-6332.00,,6332.00,Chequing,Lakeview Dental Centre,,2411,,,-6332.00,,,2024-01-08,2024-01-08,Income,Income,A4000
+2421,2024-01-08,Materials & Supplies,"Pipe, fittings and parts",,1412.00,1412.00,,Chequing,,Emco Supply,,2421,,1412.00,,,2024-01-08,2024-01-08,Expense,Cost of Goods Sold,A5000
+2427,2024-01-09,Rent,Shop rent,,4500.00,4500.00,,Chequing,,Brightwater Holdings Inc.,,2427,,4500.00,,,2024-01-09,2024-01-09,Expense,Expense,A6500
+2432,2024-01-09,Advertising & Promotion,Search ads,,1162.15,1162.15,,Chequing,,Google Ads,,2432,,1162.15,,,2024-01-09,2024-01-09,Expense,Expense,A6600
+2433,2024-01-09,Office Supplies,Office supplies,,251.44,251.44,,Chequing,,Staples,,2433,,251.44,,,2024-01-09,2024-01-09,Expense,Expense,A6700
+2436,2024-01-09,Bank Charges,Monthly fee,,29.95,29.95,,Chequing,,RBC Royal Bank,,2436,,29.95,,,2024-01-09,2024-01-09,Expense,Expense,A6800
+2440,2024-01-09,Legal & Professional Fees,Monthly bookkeeping,,450.00,450.00,,Chequing,,Ledgerline Bookkeeping,,2440,,450.00,,,2024-01-09,2024-01-09,Expense,Expense,A6400
+2441,2024-01-09,Insurance,Life insurance premium - D. Brightwater,,750.00,750.00,,Chequing,,Sun Life,,2441,,750.00,,,2024-01-09,2024-01-09,Expense,Expense,A6300
+2442,2024-01-09,Dues & Memberships,Membership dues,,1250.00,1250.00,,Chequing,,Glen Abbey Golf Club,,2442,,1250.00,,,2024-01-09,2024-01-09,Expense,Expense,A6900
+2425,2024-01-10,Subcontractors,Subcontract work,,3384.00,3384.00,,Chequing,,Delta Electrical,,2425,,3384.00,,,2024-01-10,2024-01-10,Expense,Cost of Goods Sold,A5100
+2428,2024-01-10,Utilities,Gas,,364.16,364.16,,Chequing,,Enbridge Gas,,2428,,364.16,,,2024-01-10,2024-01-10,Expense,Expense,A6510
+2429,2024-01-10,Utilities,Hydro,,321.08,321.08,,Chequing,,Toronto Hydro,,2429,,321.08,,,2024-01-10,2024-01-10,Expense,Expense,A6510
+2434,2024-01-10,Software & Subscriptions,QuickBooks Online,,90.00,90.00,,Chequing,,Intuit QuickBooks,,2434,,90.00,,,2024-01-10,2024-01-10,Expense,Expense,A6710
+2435,2024-01-10,Software & Subscriptions,Field service software,,249.00,249.00,,Chequing,,Jobber,,2435,,249.00,,,2024-01-10,2024-01-10,Expense,Expense,A6710
+2437,2024-01-10,Interest Expense,Loan interest,,602.00,602.00,,Chequing,,RBC Royal Bank,,2437,,602.00,,,2024-01-10,2024-01-10,Expense,Expense,A6810
+2444,2024-01-10,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,244.97,244.97,,Chequing,,Esso,,2444,,244.97,,,2024-01-10,2024-01-10,Expense,Expense,A6120
+2412,2024-01-11,Sales - Service,Service call 2024-01-4,,-8583.00,,8583.00,Chequing,Northgate Schools,,2412,,,-8583.00,,,2024-01-11,2024-01-11,Income,Income,A4000
+2430,2024-01-11,Telephone & Internet,Phones,,342.18,342.18,,Chequing,,Bell Canada,,2430,,342.18,,,2024-01-11,2024-01-11,Expense,Expense,A6520
+2431,2024-01-11,Telephone & Internet,Internet,,129.95,129.95,,Chequing,,Rogers,,2431,,129.95,,,2024-01-11,2024-01-11,Expense,Expense,A6520
+2438,2024-01-11,Payroll Taxes - CPP/EI,CPP/EI remittance,,3138.81,3138.81,,Chequing,,Receiver General,,2438,,3138.81,,,2024-01-11,2024-01-11,Expense,Expense,A6020
+3018,2024-01-11,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,438.69,438.69,,Chequing,,Petro-Canada,,3018,,438.69,,,2024-01-11,2024-01-11,Expense,Expense,A6110
+2878,2024-01-12,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2878,,2615.38,,,2024-01-12,2024-01-12,Expense,Expense,A6000
+2904,2024-01-12,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2904,,2423.08,,,2024-01-12,2024-01-12,Expense,Expense,A6000
+2930,2024-01-12,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2930,,2192.31,,,2024-01-12,2024-01-12,Expense,Expense,A6000
+2956,2024-01-12,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2956,,3269.23,,,2024-01-12,2024-01-12,Expense,Expense,A6000
+2418,2024-01-13,Sales - Installations,Furnace / boiler installation,,-16644.00,,16644.00,Chequing,Northgate Schools,,2418,,,-16644.00,,,2024-01-13,2024-01-13,Income,Income,A4010
+2422,2024-01-13,Materials & Supplies,"Pipe, fittings and parts",,1988.00,1988.00,,Chequing,,The Home Depot,,2422,,1988.00,,,2024-01-13,2024-01-13,Expense,Cost of Goods Sold,A5000
+2439,2024-01-13,Employee Benefits,Group benefits,,1120.00,1120.00,,Chequing,,Manulife,,2439,,1120.00,,,2024-01-13,2024-01-13,Expense,Expense,A6040
+2413,2024-01-14,Sales - Service,Service call 2024-01-5,,-7515.00,,7515.00,Chequing,P. Nguyen,,2413,,,-7515.00,,,2024-01-14,2024-01-14,Income,Income,A4000
+3044,2024-01-14,Meals and Entertainment,Team lunch,,284.07,284.07,,Chequing,,Tim Hortons,,3044,,284.07,,,2024-01-14,2024-01-14,Expense,Expense,A6200
+2982,2024-01-15,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2982,,10000.00,,,2024-01-15,2024-01-15,Expense,Expense,A6010
+2414,2024-01-17,Sales - Service,Service call 2024-01-6,,-5992.00,,5992.00,Chequing,Oakville Medical Arts,,2414,,,-5992.00,,,2024-01-17,2024-01-17,Income,Income,A4000
+2445,2024-01-17,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,187.61,187.61,,Chequing,,Petro-Canada,,2445,,187.61,,,2024-01-17,2024-01-17,Expense,Expense,A6120
+2423,2024-01-18,Materials & Supplies,"Pipe, fittings and parts",,1288.00,1288.00,,Chequing,,Wolseley Canada,,2423,,1288.00,,,2024-01-18,2024-01-18,Expense,Cost of Goods Sold,A5000
+2426,2024-01-19,Subcontractors,Subcontract work,,6714.00,6714.00,,Chequing,,Precision Ductwork,,2426,,6714.00,,,2024-01-19,2024-01-19,Expense,Cost of Goods Sold,A5100
+2415,2024-01-20,Sales - Service,Service call 2024-01-7,,-6802.00,,6802.00,Chequing,Riverstone Homes,,2415,,,-6802.00,,,2024-01-20,2024-01-20,Income,Income,A4000
+2419,2024-01-21,Sales - Installations,Furnace / boiler installation,,-8116.00,,8116.00,Chequing,P. Nguyen,,2419,,,-8116.00,,,2024-01-21,2024-01-21,Income,Income,A4010
+3045,2024-01-22,Meals and Entertainment,Team lunch,,621.13,621.13,,Chequing,,Earls Kitchen,,3045,,621.13,,,2024-01-22,2024-01-22,Expense,Expense,A6200
+2416,2024-01-23,Sales - Service,Service call 2024-01-8,,-7823.00,,7823.00,Chequing,S. Kowalski,,2416,,,-7823.00,,,2024-01-23,2024-01-23,Income,Income,A4000
+2424,2024-01-23,Materials & Supplies,"Pipe, fittings and parts",,994.00,994.00,,Chequing,,Emco Supply,,2424,,994.00,,,2024-01-23,2024-01-23,Expense,Cost of Goods Sold,A5000
+2446,2024-01-24,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,196.82,196.82,,Chequing,,Esso,,2446,,196.82,,,2024-01-24,2024-01-24,Expense,Expense,A6120
+3019,2024-01-24,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,416.31,416.31,,Chequing,,Petro-Canada,,3019,,416.31,,,2024-01-24,2024-01-24,Expense,Expense,A6110
+2879,2024-01-26,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2879,,2615.38,,,2024-01-26,2024-01-26,Expense,Expense,A6000
+2905,2024-01-26,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2905,,2423.08,,,2024-01-26,2024-01-26,Expense,Expense,A6000
+2931,2024-01-26,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2931,,2192.31,,,2024-01-26,2024-01-26,Expense,Expense,A6000
+2957,2024-01-26,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2957,,3269.23,,,2024-01-26,2024-01-26,Expense,Expense,A6000
+2983,2024-01-28,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2983,,10000.00,,,2024-01-28,2024-01-28,Expense,Expense,A6010
+3089,2024-01-28,Chequing,Deposits - month,,90497.25,90497.25,,Chequing,,,,3089,,90497.25,,,2024-01-28,2024-01-28,Asset,Bank,A1000
+3090,2024-01-28,Chequing,Payments - month,,-42924.70,,42924.70,Chequing,,,,3090,,-42924.70,,,2024-01-28,2024-01-28,Asset,Bank,A1000
+3080,2024-02-01,Dues & Memberships,Association membership,,650.00,650.00,,Chequing,,HRAI,,3080,,650.00,,,2024-02-01,2024-02-01,Expense,Expense,A6900
+2447,2024-02-02,Sales - Service,Service call 2024-02-1,,-6575.00,,6575.00,Chequing,J. Alvarez,,2447,,,-6575.00,,,2024-02-02,2024-02-02,Income,Income,A4000
+2458,2024-02-03,Materials & Supplies,"Pipe, fittings and parts",,2236.00,2236.00,,Chequing,,Wolseley Canada,,2458,,2236.00,,,2024-02-03,2024-02-03,Expense,Cost of Goods Sold,A5000
+2481,2024-02-03,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,155.43,155.43,,Chequing,,Petro-Canada,,2481,,155.43,,,2024-02-03,2024-02-03,Expense,Expense,A6120
+3007,2024-02-03,Automobile Expense:Vehicle - Owner,Lease Feb - Lexus RX,,1150.00,1150.00,,Chequing,,Lexus Financial,,3007,,1150.00,,,2024-02-03,2024-02-03,Expense,Expense,A6110
+2448,2024-02-05,Sales - Service,Service call 2024-02-2,,-2909.00,,2909.00,Chequing,Lakeview Dental Centre,,2448,,,-2909.00,,,2024-02-05,2024-02-05,Income,Income,A4000
+2455,2024-02-05,Sales - Installations,Furnace / boiler installation,,-13317.00,,13317.00,Chequing,Oakville Medical Arts,,2455,,,-13317.00,,,2024-02-05,2024-02-05,Income,Income,A4010
+3046,2024-02-06,Meals and Entertainment,Team lunch,,733.39,733.39,,Chequing,,Café Novo,,3046,,733.39,,,2024-02-06,2024-02-06,Expense,Expense,A6200
+2449,2024-02-08,Sales - Service,Service call 2024-02-3,,-1568.00,,1568.00,Chequing,Northgate Schools,,2449,,,-1568.00,,,2024-02-08,2024-02-08,Income,Income,A4000
+2459,2024-02-08,Materials & Supplies,"Pipe, fittings and parts",,4713.00,4713.00,,Chequing,,Emco Supply,,2459,,4713.00,,,2024-02-08,2024-02-08,Expense,Cost of Goods Sold,A5000
+2465,2024-02-09,Rent,Shop rent,,4500.00,4500.00,,Chequing,,Brightwater Holdings Inc.,,2465,,4500.00,,,2024-02-09,2024-02-09,Expense,Expense,A6500
+2470,2024-02-09,Advertising & Promotion,Search ads,,1159.80,1159.80,,Chequing,,Google Ads,,2470,,1159.80,,,2024-02-09,2024-02-09,Expense,Expense,A6600
+2471,2024-02-09,Office Supplies,Office supplies,,141.67,141.67,,Chequing,,Staples,,2471,,141.67,,,2024-02-09,2024-02-09,Expense,Expense,A6700
+2474,2024-02-09,Bank Charges,Monthly fee,,29.95,29.95,,Chequing,,RBC Royal Bank,,2474,,29.95,,,2024-02-09,2024-02-09,Expense,Expense,A6800
+2478,2024-02-09,Legal & Professional Fees,Monthly bookkeeping,,450.00,450.00,,Chequing,,Ledgerline Bookkeeping,,2478,,450.00,,,2024-02-09,2024-02-09,Expense,Expense,A6400
+2479,2024-02-09,Insurance,Life insurance premium - D. Brightwater,,750.00,750.00,,Chequing,,Sun Life,,2479,,750.00,,,2024-02-09,2024-02-09,Expense,Expense,A6300
+2480,2024-02-09,Dues & Memberships,Membership dues,,1250.00,1250.00,,Chequing,,Glen Abbey Golf Club,,2480,,1250.00,,,2024-02-09,2024-02-09,Expense,Expense,A6900
+2880,2024-02-09,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2880,,2615.38,,,2024-02-09,2024-02-09,Expense,Expense,A6000
+2906,2024-02-09,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2906,,2423.08,,,2024-02-09,2024-02-09,Expense,Expense,A6000
+2932,2024-02-09,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2932,,2192.31,,,2024-02-09,2024-02-09,Expense,Expense,A6000
+2958,2024-02-09,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2958,,3269.23,,,2024-02-09,2024-02-09,Expense,Expense,A6000
+2463,2024-02-10,Subcontractors,Subcontract work,,6511.00,6511.00,,Chequing,,Delta Electrical,,2463,,6511.00,,,2024-02-10,2024-02-10,Expense,Cost of Goods Sold,A5100
+2466,2024-02-10,Utilities,Gas,,320.22,320.22,,Chequing,,Enbridge Gas,,2466,,320.22,,,2024-02-10,2024-02-10,Expense,Expense,A6510
+2467,2024-02-10,Utilities,Hydro,,362.41,362.41,,Chequing,,Toronto Hydro,,2467,,362.41,,,2024-02-10,2024-02-10,Expense,Expense,A6510
+2472,2024-02-10,Software & Subscriptions,QuickBooks Online,,90.00,90.00,,Chequing,,Intuit QuickBooks,,2472,,90.00,,,2024-02-10,2024-02-10,Expense,Expense,A6710
+2473,2024-02-10,Software & Subscriptions,Field service software,,249.00,249.00,,Chequing,,Jobber,,2473,,249.00,,,2024-02-10,2024-02-10,Expense,Expense,A6710
+2475,2024-02-10,Interest Expense,Loan interest,,594.00,594.00,,Chequing,,RBC Royal Bank,,2475,,594.00,,,2024-02-10,2024-02-10,Expense,Expense,A6810
+2482,2024-02-10,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,249.83,249.83,,Chequing,,Esso,,2482,,249.83,,,2024-02-10,2024-02-10,Expense,Expense,A6120
+2450,2024-02-11,Sales - Service,Service call 2024-02-4,,-6668.00,,6668.00,Chequing,P. Nguyen,,2450,,,-6668.00,,,2024-02-11,2024-02-11,Income,Income,A4000
+2468,2024-02-11,Telephone & Internet,Phones,,323.22,323.22,,Chequing,,Bell Canada,,2468,,323.22,,,2024-02-11,2024-02-11,Expense,Expense,A6520
+2469,2024-02-11,Telephone & Internet,Internet,,129.95,129.95,,Chequing,,Rogers,,2469,,129.95,,,2024-02-11,2024-02-11,Expense,Expense,A6520
+2476,2024-02-11,Payroll Taxes - CPP/EI,CPP/EI remittance,,3224.69,3224.69,,Chequing,,Receiver General,,2476,,3224.69,,,2024-02-11,2024-02-11,Expense,Expense,A6020
+3020,2024-02-11,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,387.97,387.97,,Chequing,,Petro-Canada,,3020,,387.97,,,2024-02-11,2024-02-11,Expense,Expense,A6110
+2456,2024-02-13,Sales - Installations,Furnace / boiler installation,,-11394.00,,11394.00,Chequing,Riverstone Homes,,2456,,,-11394.00,,,2024-02-13,2024-02-13,Income,Income,A4010
+2460,2024-02-13,Materials & Supplies,"Pipe, fittings and parts",,3706.00,3706.00,,Chequing,,The Home Depot,,2460,,3706.00,,,2024-02-13,2024-02-13,Expense,Cost of Goods Sold,A5000
+2477,2024-02-13,Employee Benefits,Group benefits,,1120.00,1120.00,,Chequing,,Manulife,,2477,,1120.00,,,2024-02-13,2024-02-13,Expense,Expense,A6040
+2451,2024-02-14,Sales - Service,Service call 2024-02-5,,-3283.00,,3283.00,Chequing,Oakville Medical Arts,,2451,,,-3283.00,,,2024-02-14,2024-02-14,Income,Income,A4000
+3047,2024-02-14,Meals and Entertainment,Client dinner,,641.30,641.30,,Chequing,,Jack Astor's,,3047,,641.30,,,2024-02-14,2024-02-14,Expense,Expense,A6200
+2984,2024-02-15,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2984,,10000.00,,,2024-02-15,2024-02-15,Expense,Expense,A6010
+2452,2024-02-17,Sales - Service,Service call 2024-02-6,,-5927.00,,5927.00,Chequing,Riverstone Homes,,2452,,,-5927.00,,,2024-02-17,2024-02-17,Income,Income,A4000
+2483,2024-02-17,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,196.44,196.44,,Chequing,,Petro-Canada,,2483,,196.44,,,2024-02-17,2024-02-17,Expense,Expense,A6120
+2461,2024-02-18,Materials & Supplies,"Pipe, fittings and parts",,3389.00,3389.00,,Chequing,,Wolseley Canada,,2461,,3389.00,,,2024-02-18,2024-02-18,Expense,Cost of Goods Sold,A5000
+2464,2024-02-19,Subcontractors,Subcontract work,,3504.00,3504.00,,Chequing,,Precision Ductwork,,2464,,3504.00,,,2024-02-19,2024-02-19,Expense,Cost of Goods Sold,A5100
+2453,2024-02-20,Sales - Service,Service call 2024-02-7,,-3945.00,,3945.00,Chequing,S. Kowalski,,2453,,,-3945.00,,,2024-02-20,2024-02-20,Income,Income,A4000
+2457,2024-02-21,Sales - Installations,Furnace / boiler installation,,-14211.00,,14211.00,Chequing,S. Kowalski,,2457,,,-14211.00,,,2024-02-21,2024-02-21,Income,Income,A4010
+3048,2024-02-22,Meals and Entertainment,Team lunch,,543.63,543.63,,Chequing,,The Keg,,3048,,543.63,,,2024-02-22,2024-02-22,Expense,Expense,A6200
+2454,2024-02-23,Sales - Service,Service call 2024-02-8,,-5434.00,,5434.00,Chequing,Bayfront Hotel,,2454,,,-5434.00,,,2024-02-23,2024-02-23,Income,Income,A4000
+2462,2024-02-23,Materials & Supplies,"Pipe, fittings and parts",,4982.00,4982.00,,Chequing,,Emco Supply,,2462,,4982.00,,,2024-02-23,2024-02-23,Expense,Cost of Goods Sold,A5000
+2881,2024-02-23,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2881,,2615.38,,,2024-02-23,2024-02-23,Expense,Expense,A6000
+2907,2024-02-23,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2907,,2423.08,,,2024-02-23,2024-02-23,Expense,Expense,A6000
+2933,2024-02-23,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2933,,2192.31,,,2024-02-23,2024-02-23,Expense,Expense,A6000
+2959,2024-02-23,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2959,,3269.23,,,2024-02-23,2024-02-23,Expense,Expense,A6000
+2484,2024-02-24,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,249.95,249.95,,Chequing,,Esso,,2484,,249.95,,,2024-02-24,2024-02-24,Expense,Expense,A6120
+3021,2024-02-24,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,368.14,368.14,,Chequing,,Petro-Canada,,3021,,368.14,,,2024-02-24,2024-02-24,Expense,Expense,A6110
+2985,2024-02-28,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2985,,10000.00,,,2024-02-28,2024-02-28,Expense,Expense,A6010
+3091,2024-02-28,Chequing,Deposits - month,,90497.25,90497.25,,Chequing,,,,3091,,90497.25,,,2024-02-28,2024-02-28,Asset,Bank,A1000
+3092,2024-02-28,Chequing,Payments - month,,-42924.70,,42924.70,Chequing,,,,3092,,-42924.70,,,2024-02-28,2024-02-28,Asset,Bank,A1000
+2485,2024-03-02,Sales - Service,Service call 2024-03-1,,-8967.00,,8967.00,Chequing,Lakeview Dental Centre,,2485,,,-8967.00,,,2024-03-02,2024-03-02,Income,Income,A4000
+2496,2024-03-03,Materials & Supplies,"Pipe, fittings and parts",,630.00,630.00,,Chequing,,Wolseley Canada,,2496,,630.00,,,2024-03-03,2024-03-03,Expense,Cost of Goods Sold,A5000
+2519,2024-03-03,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,173.21,173.21,,Chequing,,Petro-Canada,,2519,,173.21,,,2024-03-03,2024-03-03,Expense,Expense,A6120
+3008,2024-03-03,Automobile Expense:Vehicle - Owner,Lease Mar - Lexus RX,,1150.00,1150.00,,Chequing,,Lexus Financial,,3008,,1150.00,,,2024-03-03,2024-03-03,Expense,Expense,A6110
+2486,2024-03-05,Sales - Service,Service call 2024-03-2,,-8582.00,,8582.00,Chequing,Northgate Schools,,2486,,,-8582.00,,,2024-03-05,2024-03-05,Income,Income,A4000
+2493,2024-03-05,Sales - Installations,Furnace / boiler installation,,-11580.00,,11580.00,Chequing,Bayfront Hotel,,2493,,,-11580.00,,,2024-03-05,2024-03-05,Income,Income,A4010
+3049,2024-03-06,Meals and Entertainment,Team lunch,,411.50,411.50,,Chequing,,Tim Hortons,,3049,,411.50,,,2024-03-06,2024-03-06,Expense,Expense,A6200
+2487,2024-03-08,Sales - Service,Service call 2024-03-3,,-2299.00,,2299.00,Chequing,P. Nguyen,,2487,,,-2299.00,,,2024-03-08,2024-03-08,Income,Income,A4000
+2497,2024-03-08,Materials & Supplies,"Pipe, fittings and parts",,4544.00,4544.00,,Chequing,,Emco Supply,,2497,,4544.00,,,2024-03-08,2024-03-08,Expense,Cost of Goods Sold,A5000
+2882,2024-03-08,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2882,,2615.38,,,2024-03-08,2024-03-08,Expense,Expense,A6000
+2908,2024-03-08,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2908,,2423.08,,,2024-03-08,2024-03-08,Expense,Expense,A6000
+2934,2024-03-08,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2934,,2192.31,,,2024-03-08,2024-03-08,Expense,Expense,A6000
+2960,2024-03-08,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2960,,3269.23,,,2024-03-08,2024-03-08,Expense,Expense,A6000
+2503,2024-03-09,Rent,Shop rent,,4500.00,4500.00,,Chequing,,Brightwater Holdings Inc.,,2503,,4500.00,,,2024-03-09,2024-03-09,Expense,Expense,A6500
+2508,2024-03-09,Advertising & Promotion,Search ads,,1430.39,1430.39,,Chequing,,Google Ads,,2508,,1430.39,,,2024-03-09,2024-03-09,Expense,Expense,A6600
+2509,2024-03-09,Office Supplies,Office supplies,,91.35,91.35,,Chequing,,Staples,,2509,,91.35,,,2024-03-09,2024-03-09,Expense,Expense,A6700
+2512,2024-03-09,Bank Charges,Monthly fee,,29.95,29.95,,Chequing,,RBC Royal Bank,,2512,,29.95,,,2024-03-09,2024-03-09,Expense,Expense,A6800
+2516,2024-03-09,Legal & Professional Fees,Monthly bookkeeping,,450.00,450.00,,Chequing,,Ledgerline Bookkeeping,,2516,,450.00,,,2024-03-09,2024-03-09,Expense,Expense,A6400
+2517,2024-03-09,Insurance,Life insurance premium - D. Brightwater,,750.00,750.00,,Chequing,,Sun Life,,2517,,750.00,,,2024-03-09,2024-03-09,Expense,Expense,A6300
+2518,2024-03-09,Dues & Memberships,Membership dues,,1250.00,1250.00,,Chequing,,Glen Abbey Golf Club,,2518,,1250.00,,,2024-03-09,2024-03-09,Expense,Expense,A6900
+2501,2024-03-10,Subcontractors,Subcontract work,,3604.00,3604.00,,Chequing,,Delta Electrical,,2501,,3604.00,,,2024-03-10,2024-03-10,Expense,Cost of Goods Sold,A5100
+2504,2024-03-10,Utilities,Gas,,211.23,211.23,,Chequing,,Enbridge Gas,,2504,,211.23,,,2024-03-10,2024-03-10,Expense,Expense,A6510
+2505,2024-03-10,Utilities,Hydro,,329.93,329.93,,Chequing,,Toronto Hydro,,2505,,329.93,,,2024-03-10,2024-03-10,Expense,Expense,A6510
+2510,2024-03-10,Software & Subscriptions,QuickBooks Online,,90.00,90.00,,Chequing,,Intuit QuickBooks,,2510,,90.00,,,2024-03-10,2024-03-10,Expense,Expense,A6710
+2511,2024-03-10,Software & Subscriptions,Field service software,,249.00,249.00,,Chequing,,Jobber,,2511,,249.00,,,2024-03-10,2024-03-10,Expense,Expense,A6710
+2513,2024-03-10,Interest Expense,Loan interest,,586.00,586.00,,Chequing,,RBC Royal Bank,,2513,,586.00,,,2024-03-10,2024-03-10,Expense,Expense,A6810
+2520,2024-03-10,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,150.04,150.04,,Chequing,,Esso,,2520,,150.04,,,2024-03-10,2024-03-10,Expense,Expense,A6120
+2488,2024-03-11,Sales - Service,Service call 2024-03-4,,-2815.00,,2815.00,Chequing,Oakville Medical Arts,,2488,,,-2815.00,,,2024-03-11,2024-03-11,Income,Income,A4000
+2506,2024-03-11,Telephone & Internet,Phones,,346.69,346.69,,Chequing,,Bell Canada,,2506,,346.69,,,2024-03-11,2024-03-11,Expense,Expense,A6520
+2507,2024-03-11,Telephone & Internet,Internet,,129.95,129.95,,Chequing,,Rogers,,2507,,129.95,,,2024-03-11,2024-03-11,Expense,Expense,A6520
+2514,2024-03-11,Payroll Taxes - CPP/EI,CPP/EI remittance,,3280.93,3280.93,,Chequing,,Receiver General,,2514,,3280.93,,,2024-03-11,2024-03-11,Expense,Expense,A6020
+3022,2024-03-11,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,409.69,409.69,,Chequing,,Petro-Canada,,3022,,409.69,,,2024-03-11,2024-03-11,Expense,Expense,A6110
+2494,2024-03-13,Sales - Installations,Furnace / boiler installation,,-14806.00,,14806.00,Chequing,Halton Property Group,,2494,,,-14806.00,,,2024-03-13,2024-03-13,Income,Income,A4010
+2498,2024-03-13,Materials & Supplies,"Pipe, fittings and parts",,2281.00,2281.00,,Chequing,,The Home Depot,,2498,,2281.00,,,2024-03-13,2024-03-13,Expense,Cost of Goods Sold,A5000
+2515,2024-03-13,Employee Benefits,Group benefits,,1120.00,1120.00,,Chequing,,Manulife,,2515,,1120.00,,,2024-03-13,2024-03-13,Expense,Expense,A6040
+2489,2024-03-14,Sales - Service,Service call 2024-03-5,,-3334.00,,3334.00,Chequing,Riverstone Homes,,2489,,,-3334.00,,,2024-03-14,2024-03-14,Income,Income,A4000
+3050,2024-03-14,Meals and Entertainment,Team lunch,,834.84,834.84,,Chequing,,Earls Kitchen,,3050,,834.84,,,2024-03-14,2024-03-14,Expense,Expense,A6200
+2523,2024-03-15,WSIB,Quarterly premium,,2100.00,2100.00,,Chequing,,WSIB,,2523,,2100.00,,,2024-03-15,2024-03-15,Expense,Expense,A6030
+2986,2024-03-15,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2986,,10000.00,,,2024-03-15,2024-03-15,Expense,Expense,A6010
+2490,2024-03-17,Sales - Service,Service call 2024-03-6,,-5225.00,,5225.00,Chequing,S. Kowalski,,2490,,,-5225.00,,,2024-03-17,2024-03-17,Income,Income,A4000
+2521,2024-03-17,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,159.07,159.07,,Chequing,,Petro-Canada,,2521,,159.07,,,2024-03-17,2024-03-17,Expense,Expense,A6120
+2499,2024-03-18,Materials & Supplies,"Pipe, fittings and parts",,4036.00,4036.00,,Chequing,,Wolseley Canada,,2499,,4036.00,,,2024-03-18,2024-03-18,Expense,Cost of Goods Sold,A5000
+2502,2024-03-19,Subcontractors,Subcontract work,,6640.00,6640.00,,Chequing,,Precision Ductwork,,2502,,6640.00,,,2024-03-19,2024-03-19,Expense,Cost of Goods Sold,A5100
+2491,2024-03-20,Sales - Service,Service call 2024-03-7,,-6029.00,,6029.00,Chequing,Bayfront Hotel,,2491,,,-6029.00,,,2024-03-20,2024-03-20,Income,Income,A4000
+2524,2024-03-20,Insurance,Business insurance - quarterly,,3000.00,3000.00,,Chequing,,Intact Insurance,,2524,,3000.00,,,2024-03-20,2024-03-20,Expense,Expense,A6300
+2495,2024-03-21,Sales - Installations,Furnace / boiler installation,,-28765.00,,28765.00,Chequing,Maple Ridge Condos,,2495,,,-28765.00,,,2024-03-21,2024-03-21,Income,Income,A4010
+2525,2024-03-22,Automobile Expense:Van Repairs & Maintenance,Van service,,422.86,422.86,,Chequing,,Midas,,2525,,422.86,,,2024-03-22,2024-03-22,Expense,Expense,A6130
+2883,2024-03-22,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2883,,2615.38,,,2024-03-22,2024-03-22,Expense,Expense,A6000
+2909,2024-03-22,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2909,,2423.08,,,2024-03-22,2024-03-22,Expense,Expense,A6000
+2935,2024-03-22,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2935,,2192.31,,,2024-03-22,2024-03-22,Expense,Expense,A6000
+2961,2024-03-22,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2961,,3269.23,,,2024-03-22,2024-03-22,Expense,Expense,A6000
+3051,2024-03-22,Meals and Entertainment,Client dinner,,894.01,894.01,,Chequing,,Café Novo,,3051,,894.01,,,2024-03-22,2024-03-22,Expense,Expense,A6200
+2492,2024-03-23,Sales - Service,Service call 2024-03-8,,-4446.00,,4446.00,Chequing,Halton Property Group,,2492,,,-4446.00,,,2024-03-23,2024-03-23,Income,Income,A4000
+2500,2024-03-23,Materials & Supplies,"Pipe, fittings and parts",,2673.00,2673.00,,Chequing,,Emco Supply,,2500,,2673.00,,,2024-03-23,2024-03-23,Expense,Cost of Goods Sold,A5000
+2522,2024-03-24,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,153.74,153.74,,Chequing,,Esso,,2522,,153.74,,,2024-03-24,2024-03-24,Expense,Expense,A6120
+3023,2024-03-24,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,392.17,392.17,,Chequing,,Petro-Canada,,3023,,392.17,,,2024-03-24,2024-03-24,Expense,Expense,A6110
+2987,2024-03-28,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2987,,10000.00,,,2024-03-28,2024-03-28,Expense,Expense,A6010
+3093,2024-03-28,Chequing,Deposits - month,,90497.25,90497.25,,Chequing,,,,3093,,90497.25,,,2024-03-28,2024-03-28,Asset,Bank,A1000
+3094,2024-03-28,Chequing,Payments - month,,-42924.70,,42924.70,Chequing,,,,3094,,-42924.70,,,2024-03-28,2024-03-28,Asset,Bank,A1000
+3079,2024-03-30,Legal & Professional Fees,Year-end financial statements,,6500.00,6500.00,,Chequing,,Moore & Partners CPA,,3079,,6500.00,,,2024-03-30,2024-03-30,Expense,Expense,A6400
+3095,2024-03-30,HST Payable,HST remittance,,10280.64,10280.64,,Chequing,,Receiver General,,3095,,10280.64,,,2024-03-30,2024-03-30,Asset,Other Current Liability,A2100
+2526,2024-04-02,Sales - Service,Service call 2024-04-1,,-1844.00,,1844.00,Chequing,Northgate Schools,,2526,,,-1844.00,,,2024-04-02,2024-04-02,Income,Income,A4000
+3042,2024-04-02,Automobile Expense:Vehicle - Owner,Auto insurance - Lexus RX,,1860.00,1860.00,,Chequing,,Intact Insurance,,3042,,1860.00,,,2024-04-02,2024-04-02,Expense,Expense,A6110
+2537,2024-04-03,Materials & Supplies,"Pipe, fittings and parts",,3108.00,3108.00,,Chequing,,Wolseley Canada,,2537,,3108.00,,,2024-04-03,2024-04-03,Expense,Cost of Goods Sold,A5000
+2560,2024-04-03,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,184.93,184.93,,Chequing,,Petro-Canada,,2560,,184.93,,,2024-04-03,2024-04-03,Expense,Expense,A6120
+3009,2024-04-03,Automobile Expense:Vehicle - Owner,Lease Apr - Lexus RX,,1150.00,1150.00,,Chequing,,Lexus Financial,,3009,,1150.00,,,2024-04-03,2024-04-03,Expense,Expense,A6110
+2527,2024-04-05,Sales - Service,Service call 2024-04-2,,-2197.00,,2197.00,Chequing,P. Nguyen,,2527,,,-2197.00,,,2024-04-05,2024-04-05,Income,Income,A4000
+2534,2024-04-05,Sales - Installations,Furnace / boiler installation,,-12850.00,,12850.00,Chequing,J. Alvarez,,2534,,,-12850.00,,,2024-04-05,2024-04-05,Income,Income,A4010
+2884,2024-04-05,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2884,,2615.38,,,2024-04-05,2024-04-05,Expense,Expense,A6000
+2910,2024-04-05,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2910,,2423.08,,,2024-04-05,2024-04-05,Expense,Expense,A6000
+2936,2024-04-05,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2936,,2192.31,,,2024-04-05,2024-04-05,Expense,Expense,A6000
+2962,2024-04-05,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2962,,3269.23,,,2024-04-05,2024-04-05,Expense,Expense,A6000
+3052,2024-04-06,Meals and Entertainment,Team lunch,,781.57,781.57,,Chequing,,Jack Astor's,,3052,,781.57,,,2024-04-06,2024-04-06,Expense,Expense,A6200
+2528,2024-04-08,Sales - Service,Service call 2024-04-3,,-5204.00,,5204.00,Chequing,Oakville Medical Arts,,2528,,,-5204.00,,,2024-04-08,2024-04-08,Income,Income,A4000
+2538,2024-04-08,Materials & Supplies,"Pipe, fittings and parts",,4985.00,4985.00,,Chequing,,Emco Supply,,2538,,4985.00,,,2024-04-08,2024-04-08,Expense,Cost of Goods Sold,A5000
+2544,2024-04-09,Rent,Shop rent,,4500.00,4500.00,,Chequing,,Brightwater Holdings Inc.,,2544,,4500.00,,,2024-04-09,2024-04-09,Expense,Expense,A6500
+2549,2024-04-09,Advertising & Promotion,Search ads,,1512.54,1512.54,,Chequing,,Google Ads,,2549,,1512.54,,,2024-04-09,2024-04-09,Expense,Expense,A6600
+2550,2024-04-09,Office Supplies,Office supplies,,232.74,232.74,,Chequing,,Staples,,2550,,232.74,,,2024-04-09,2024-04-09,Expense,Expense,A6700
+2553,2024-04-09,Bank Charges,Monthly fee,,29.95,29.95,,Chequing,,RBC Royal Bank,,2553,,29.95,,,2024-04-09,2024-04-09,Expense,Expense,A6800
+2557,2024-04-09,Legal & Professional Fees,Monthly bookkeeping,,450.00,450.00,,Chequing,,Ledgerline Bookkeeping,,2557,,450.00,,,2024-04-09,2024-04-09,Expense,Expense,A6400
+2558,2024-04-09,Insurance,Life insurance premium - D. Brightwater,,750.00,750.00,,Chequing,,Sun Life,,2558,,750.00,,,2024-04-09,2024-04-09,Expense,Expense,A6300
+2559,2024-04-09,Dues & Memberships,Membership dues,,1250.00,1250.00,,Chequing,,Glen Abbey Golf Club,,2559,,1250.00,,,2024-04-09,2024-04-09,Expense,Expense,A6900
+2542,2024-04-10,Subcontractors,Subcontract work,,2946.00,2946.00,,Chequing,,Delta Electrical,,2542,,2946.00,,,2024-04-10,2024-04-10,Expense,Cost of Goods Sold,A5100
+2545,2024-04-10,Utilities,Gas,,245.11,245.11,,Chequing,,Enbridge Gas,,2545,,245.11,,,2024-04-10,2024-04-10,Expense,Expense,A6510
+2546,2024-04-10,Utilities,Hydro,,364.38,364.38,,Chequing,,Toronto Hydro,,2546,,364.38,,,2024-04-10,2024-04-10,Expense,Expense,A6510
+2551,2024-04-10,Software & Subscriptions,QuickBooks Online,,90.00,90.00,,Chequing,,Intuit QuickBooks,,2551,,90.00,,,2024-04-10,2024-04-10,Expense,Expense,A6710
+2552,2024-04-10,Software & Subscriptions,Field service software,,249.00,249.00,,Chequing,,Jobber,,2552,,249.00,,,2024-04-10,2024-04-10,Expense,Expense,A6710
+2554,2024-04-10,Interest Expense,Loan interest,,578.00,578.00,,Chequing,,RBC Royal Bank,,2554,,578.00,,,2024-04-10,2024-04-10,Expense,Expense,A6810
+2561,2024-04-10,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,214.16,214.16,,Chequing,,Esso,,2561,,214.16,,,2024-04-10,2024-04-10,Expense,Expense,A6120
+2529,2024-04-11,Sales - Service,Service call 2024-04-4,,-2575.00,,2575.00,Chequing,Riverstone Homes,,2529,,,-2575.00,,,2024-04-11,2024-04-11,Income,Income,A4000
+2547,2024-04-11,Telephone & Internet,Phones,,312.50,312.50,,Chequing,,Bell Canada,,2547,,312.50,,,2024-04-11,2024-04-11,Expense,Expense,A6520
+2548,2024-04-11,Telephone & Internet,Internet,,129.95,129.95,,Chequing,,Rogers,,2548,,129.95,,,2024-04-11,2024-04-11,Expense,Expense,A6520
+2555,2024-04-11,Payroll Taxes - CPP/EI,CPP/EI remittance,,3270.40,3270.40,,Chequing,,Receiver General,,2555,,3270.40,,,2024-04-11,2024-04-11,Expense,Expense,A6020
+3024,2024-04-11,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,513.28,513.28,,Chequing,,Petro-Canada,,3024,,513.28,,,2024-04-11,2024-04-11,Expense,Expense,A6110
+2535,2024-04-13,Sales - Installations,Furnace / boiler installation,,-9823.00,,9823.00,Chequing,Lakeview Dental Centre,,2535,,,-9823.00,,,2024-04-13,2024-04-13,Income,Income,A4010
+2539,2024-04-13,Materials & Supplies,"Pipe, fittings and parts",,4057.00,4057.00,,Chequing,,The Home Depot,,2539,,4057.00,,,2024-04-13,2024-04-13,Expense,Cost of Goods Sold,A5000
+2556,2024-04-13,Employee Benefits,Group benefits,,1120.00,1120.00,,Chequing,,Manulife,,2556,,1120.00,,,2024-04-13,2024-04-13,Expense,Expense,A6040
+2530,2024-04-14,Sales - Service,Service call 2024-04-5,,-4012.00,,4012.00,Chequing,S. Kowalski,,2530,,,-4012.00,,,2024-04-14,2024-04-14,Income,Income,A4000
+3053,2024-04-14,Meals and Entertainment,Team lunch,,786.22,786.22,,Chequing,,The Keg,,3053,,786.22,,,2024-04-14,2024-04-14,Expense,Expense,A6200
+2988,2024-04-15,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2988,,10000.00,,,2024-04-15,2024-04-15,Expense,Expense,A6010
+2531,2024-04-17,Sales - Service,Service call 2024-04-6,,-4586.00,,4586.00,Chequing,Bayfront Hotel,,2531,,,-4586.00,,,2024-04-17,2024-04-17,Income,Income,A4000
+2562,2024-04-17,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,238.88,238.88,,Chequing,,Petro-Canada,,2562,,238.88,,,2024-04-17,2024-04-17,Expense,Expense,A6120
+2540,2024-04-18,Materials & Supplies,"Pipe, fittings and parts",,3997.00,3997.00,,Chequing,,Wolseley Canada,,2540,,3997.00,,,2024-04-18,2024-04-18,Expense,Cost of Goods Sold,A5000
+2543,2024-04-19,Subcontractors,Subcontract work,,8630.00,8630.00,,Chequing,,Precision Ductwork,,2543,,8630.00,,,2024-04-19,2024-04-19,Expense,Cost of Goods Sold,A5100
+2885,2024-04-19,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2885,,2615.38,,,2024-04-19,2024-04-19,Expense,Expense,A6000
+2911,2024-04-19,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2911,,2423.08,,,2024-04-19,2024-04-19,Expense,Expense,A6000
+2937,2024-04-19,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2937,,2192.31,,,2024-04-19,2024-04-19,Expense,Expense,A6000
+2963,2024-04-19,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2963,,3269.23,,,2024-04-19,2024-04-19,Expense,Expense,A6000
+2532,2024-04-20,Sales - Service,Service call 2024-04-7,,-8967.00,,8967.00,Chequing,Halton Property Group,,2532,,,-8967.00,,,2024-04-20,2024-04-20,Income,Income,A4000
+2536,2024-04-21,Sales - Installations,Furnace / boiler installation,,-8736.00,,8736.00,Chequing,Northgate Schools,,2536,,,-8736.00,,,2024-04-21,2024-04-21,Income,Income,A4010
+3054,2024-04-22,Meals and Entertainment,Team lunch,,267.90,267.90,,Chequing,,Tim Hortons,,3054,,267.90,,,2024-04-22,2024-04-22,Expense,Expense,A6200
+2533,2024-04-23,Sales - Service,Service call 2024-04-8,,-1384.00,,1384.00,Chequing,Maple Ridge Condos,,2533,,,-1384.00,,,2024-04-23,2024-04-23,Income,Income,A4000
+2541,2024-04-23,Materials & Supplies,"Pipe, fittings and parts",,595.00,595.00,,Chequing,,Emco Supply,,2541,,595.00,,,2024-04-23,2024-04-23,Expense,Cost of Goods Sold,A5000
+2563,2024-04-24,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,217.02,217.02,,Chequing,,Esso,,2563,,217.02,,,2024-04-24,2024-04-24,Expense,Expense,A6120
+3025,2024-04-24,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,506.78,506.78,,Chequing,,Petro-Canada,,3025,,506.78,,,2024-04-24,2024-04-24,Expense,Expense,A6110
+2989,2024-04-28,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2989,,10000.00,,,2024-04-28,2024-04-28,Expense,Expense,A6010
+3096,2024-04-28,Chequing,Deposits - month,,90497.25,90497.25,,Chequing,,,,3096,,90497.25,,,2024-04-28,2024-04-28,Asset,Bank,A1000
+3097,2024-04-28,Chequing,Payments - month,,-42924.70,,42924.70,Chequing,,,,3097,,-42924.70,,,2024-04-28,2024-04-28,Asset,Bank,A1000
+2564,2024-05-02,Sales - Service,Service call 2024-05-1,,-3527.00,,3527.00,Chequing,P. Nguyen,,2564,,,-3527.00,,,2024-05-02,2024-05-02,Income,Income,A4000
+3084,2024-05-02,Shareholder Expenses,Prescription,,64.20,64.20,,Chequing,,Shoppers Drug Mart,,3084,,64.20,,,2024-05-02,2024-05-02,Expense,Expense,A6910
+2575,2024-05-03,Materials & Supplies,"Pipe, fittings and parts",,848.00,848.00,,Chequing,,Wolseley Canada,,2575,,848.00,,,2024-05-03,2024-05-03,Expense,Cost of Goods Sold,A5000
+2598,2024-05-03,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,222.89,222.89,,Chequing,,Petro-Canada,,2598,,222.89,,,2024-05-03,2024-05-03,Expense,Expense,A6120
+2886,2024-05-03,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2886,,2615.38,,,2024-05-03,2024-05-03,Expense,Expense,A6000
+2912,2024-05-03,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2912,,2423.08,,,2024-05-03,2024-05-03,Expense,Expense,A6000
+2938,2024-05-03,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2938,,2192.31,,,2024-05-03,2024-05-03,Expense,Expense,A6000
+2964,2024-05-03,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2964,,3269.23,,,2024-05-03,2024-05-03,Expense,Expense,A6000
+3010,2024-05-03,Automobile Expense:Vehicle - Owner,Lease May - Lexus RX,,1150.00,1150.00,,Chequing,,Lexus Financial,,3010,,1150.00,,,2024-05-03,2024-05-03,Expense,Expense,A6110
+2565,2024-05-05,Sales - Service,Service call 2024-05-2,,-8181.00,,8181.00,Chequing,Oakville Medical Arts,,2565,,,-8181.00,,,2024-05-05,2024-05-05,Income,Income,A4000
+2572,2024-05-05,Sales - Installations,Furnace / boiler installation,,-11222.00,,11222.00,Chequing,P. Nguyen,,2572,,,-11222.00,,,2024-05-05,2024-05-05,Income,Income,A4010
+3055,2024-05-06,Meals and Entertainment,Client dinner,,391.45,391.45,,Chequing,,Earls Kitchen,,3055,,391.45,,,2024-05-06,2024-05-06,Expense,Expense,A6200
+2566,2024-05-08,Sales - Service,Service call 2024-05-3,,-4280.00,,4280.00,Chequing,Riverstone Homes,,2566,,,-4280.00,,,2024-05-08,2024-05-08,Income,Income,A4000
+2576,2024-05-08,Materials & Supplies,"Pipe, fittings and parts",,4391.00,4391.00,,Chequing,,Emco Supply,,2576,,4391.00,,,2024-05-08,2024-05-08,Expense,Cost of Goods Sold,A5000
+2582,2024-05-09,Rent,Shop rent,,4500.00,4500.00,,Chequing,,Brightwater Holdings Inc.,,2582,,4500.00,,,2024-05-09,2024-05-09,Expense,Expense,A6500
+2587,2024-05-09,Advertising & Promotion,Search ads,,1348.24,1348.24,,Chequing,,Google Ads,,2587,,1348.24,,,2024-05-09,2024-05-09,Expense,Expense,A6600
+2588,2024-05-09,Office Supplies,Office supplies,,236.37,236.37,,Chequing,,Staples,,2588,,236.37,,,2024-05-09,2024-05-09,Expense,Expense,A6700
+2591,2024-05-09,Bank Charges,Monthly fee,,29.95,29.95,,Chequing,,RBC Royal Bank,,2591,,29.95,,,2024-05-09,2024-05-09,Expense,Expense,A6800
+2595,2024-05-09,Legal & Professional Fees,Monthly bookkeeping,,450.00,450.00,,Chequing,,Ledgerline Bookkeeping,,2595,,450.00,,,2024-05-09,2024-05-09,Expense,Expense,A6400
+2596,2024-05-09,Insurance,Life insurance premium - D. Brightwater,,750.00,750.00,,Chequing,,Sun Life,,2596,,750.00,,,2024-05-09,2024-05-09,Expense,Expense,A6300
+2597,2024-05-09,Dues & Memberships,Membership dues,,1250.00,1250.00,,Chequing,,Glen Abbey Golf Club,,2597,,1250.00,,,2024-05-09,2024-05-09,Expense,Expense,A6900
+2580,2024-05-10,Subcontractors,Subcontract work,,7471.00,7471.00,,Chequing,,Delta Electrical,,2580,,7471.00,,,2024-05-10,2024-05-10,Expense,Cost of Goods Sold,A5100
+2583,2024-05-10,Utilities,Gas,,249.14,249.14,,Chequing,,Enbridge Gas,,2583,,249.14,,,2024-05-10,2024-05-10,Expense,Expense,A6510
+2584,2024-05-10,Utilities,Hydro,,353.23,353.23,,Chequing,,Toronto Hydro,,2584,,353.23,,,2024-05-10,2024-05-10,Expense,Expense,A6510
+2589,2024-05-10,Software & Subscriptions,QuickBooks Online,,90.00,90.00,,Chequing,,Intuit QuickBooks,,2589,,90.00,,,2024-05-10,2024-05-10,Expense,Expense,A6710
+2590,2024-05-10,Software & Subscriptions,Field service software,,249.00,249.00,,Chequing,,Jobber,,2590,,249.00,,,2024-05-10,2024-05-10,Expense,Expense,A6710
+2592,2024-05-10,Interest Expense,Loan interest,,570.00,570.00,,Chequing,,RBC Royal Bank,,2592,,570.00,,,2024-05-10,2024-05-10,Expense,Expense,A6810
+2599,2024-05-10,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,220.36,220.36,,Chequing,,Esso,,2599,,220.36,,,2024-05-10,2024-05-10,Expense,Expense,A6120
+2567,2024-05-11,Sales - Service,Service call 2024-05-4,,-5699.00,,5699.00,Chequing,S. Kowalski,,2567,,,-5699.00,,,2024-05-11,2024-05-11,Income,Income,A4000
+2585,2024-05-11,Telephone & Internet,Phones,,327.11,327.11,,Chequing,,Bell Canada,,2585,,327.11,,,2024-05-11,2024-05-11,Expense,Expense,A6520
+2586,2024-05-11,Telephone & Internet,Internet,,129.95,129.95,,Chequing,,Rogers,,2586,,129.95,,,2024-05-11,2024-05-11,Expense,Expense,A6520
+2593,2024-05-11,Payroll Taxes - CPP/EI,CPP/EI remittance,,3212.89,3212.89,,Chequing,,Receiver General,,2593,,3212.89,,,2024-05-11,2024-05-11,Expense,Expense,A6020
+3026,2024-05-11,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,512.91,512.91,,Chequing,,Petro-Canada,,3026,,512.91,,,2024-05-11,2024-05-11,Expense,Expense,A6110
+2573,2024-05-13,Sales - Installations,Furnace / boiler installation,,-18249.00,,18249.00,Chequing,Oakville Medical Arts,,2573,,,-18249.00,,,2024-05-13,2024-05-13,Income,Income,A4010
+2577,2024-05-13,Materials & Supplies,"Pipe, fittings and parts",,1680.00,1680.00,,Chequing,,The Home Depot,,2577,,1680.00,,,2024-05-13,2024-05-13,Expense,Cost of Goods Sold,A5000
+2594,2024-05-13,Employee Benefits,Group benefits,,1120.00,1120.00,,Chequing,,Manulife,,2594,,1120.00,,,2024-05-13,2024-05-13,Expense,Expense,A6040
+2568,2024-05-14,Sales - Service,Service call 2024-05-5,,-4063.00,,4063.00,Chequing,Bayfront Hotel,,2568,,,-4063.00,,,2024-05-14,2024-05-14,Income,Income,A4000
+3056,2024-05-14,Meals and Entertainment,Team lunch,,327.43,327.43,,Chequing,,Café Novo,,3056,,327.43,,,2024-05-14,2024-05-14,Expense,Expense,A6200
+2990,2024-05-15,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2990,,10000.00,,,2024-05-15,2024-05-15,Expense,Expense,A6010
+2569,2024-05-17,Sales - Service,Service call 2024-05-6,,-4229.00,,4229.00,Chequing,Halton Property Group,,2569,,,-4229.00,,,2024-05-17,2024-05-17,Income,Income,A4000
+2600,2024-05-17,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,141.87,141.87,,Chequing,,Petro-Canada,,2600,,141.87,,,2024-05-17,2024-05-17,Expense,Expense,A6120
+2887,2024-05-17,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2887,,2615.38,,,2024-05-17,2024-05-17,Expense,Expense,A6000
+2913,2024-05-17,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2913,,2423.08,,,2024-05-17,2024-05-17,Expense,Expense,A6000
+2939,2024-05-17,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2939,,2192.31,,,2024-05-17,2024-05-17,Expense,Expense,A6000
+2965,2024-05-17,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2965,,3269.23,,,2024-05-17,2024-05-17,Expense,Expense,A6000
+2578,2024-05-18,Materials & Supplies,"Pipe, fittings and parts",,4209.00,4209.00,,Chequing,,Wolseley Canada,,2578,,4209.00,,,2024-05-18,2024-05-18,Expense,Cost of Goods Sold,A5000
+2581,2024-05-19,Subcontractors,Subcontract work,,6604.00,6604.00,,Chequing,,Precision Ductwork,,2581,,6604.00,,,2024-05-19,2024-05-19,Expense,Cost of Goods Sold,A5100
+2570,2024-05-20,Sales - Service,Service call 2024-05-7,,-5526.00,,5526.00,Chequing,Maple Ridge Condos,,2570,,,-5526.00,,,2024-05-20,2024-05-20,Income,Income,A4000
+2574,2024-05-21,Sales - Installations,Furnace / boiler installation,,-22354.00,,22354.00,Chequing,Riverstone Homes,,2574,,,-22354.00,,,2024-05-21,2024-05-21,Income,Income,A4010
+3057,2024-05-22,Meals and Entertainment,Team lunch,,885.01,885.01,,Chequing,,Jack Astor's,,3057,,885.01,,,2024-05-22,2024-05-22,Expense,Expense,A6200
+2571,2024-05-23,Sales - Service,Service call 2024-05-8,,-4943.00,,4943.00,Chequing,J. Alvarez,,2571,,,-4943.00,,,2024-05-23,2024-05-23,Income,Income,A4000
+2579,2024-05-23,Materials & Supplies,"Pipe, fittings and parts",,1662.00,1662.00,,Chequing,,Emco Supply,,2579,,1662.00,,,2024-05-23,2024-05-23,Expense,Cost of Goods Sold,A5000
+2601,2024-05-24,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,149.53,149.53,,Chequing,,Esso,,2601,,149.53,,,2024-05-24,2024-05-24,Expense,Expense,A6120
+3027,2024-05-24,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,676.73,676.73,,Chequing,,Petro-Canada,,3027,,676.73,,,2024-05-24,2024-05-24,Expense,Expense,A6110
+2991,2024-05-28,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2991,,10000.00,,,2024-05-28,2024-05-28,Expense,Expense,A6010
+3098,2024-05-28,Chequing,Deposits - month,,90497.25,90497.25,,Chequing,,,,3098,,90497.25,,,2024-05-28,2024-05-28,Asset,Bank,A1000
+3099,2024-05-28,Chequing,Payments - month,,-42924.70,,42924.70,Chequing,,,,3099,,-42924.70,,,2024-05-28,2024-05-28,Asset,Bank,A1000
+2888,2024-05-31,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2888,,2615.38,,,2024-05-31,2024-05-31,Expense,Expense,A6000
+2914,2024-05-31,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2914,,2423.08,,,2024-05-31,2024-05-31,Expense,Expense,A6000
+2940,2024-05-31,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2940,,2192.31,,,2024-05-31,2024-05-31,Expense,Expense,A6000
+2966,2024-05-31,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2966,,3269.23,,,2024-05-31,2024-05-31,Expense,Expense,A6000
+3117,2024-06-01,Shareholder Loan,Shareholder advance,,-10000.00,,10000.00,Chequing,,Dan Brightwater,,3117,,-10000.00,,,2024-06-01,2024-06-01,Asset,Long Term Liability,A2500
+2602,2024-06-02,Sales - Service,Service call 2024-06-1,,-8495.00,,8495.00,Chequing,Oakville Medical Arts,,2602,,,-8495.00,,,2024-06-02,2024-06-02,Income,Income,A4000
+2613,2024-06-03,Materials & Supplies,"Pipe, fittings and parts",,4042.00,4042.00,,Chequing,,Wolseley Canada,,2613,,4042.00,,,2024-06-03,2024-06-03,Expense,Cost of Goods Sold,A5000
+2636,2024-06-03,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,221.66,221.66,,Chequing,,Petro-Canada,,2636,,221.66,,,2024-06-03,2024-06-03,Expense,Expense,A6120
+3011,2024-06-03,Automobile Expense:Vehicle - Owner,Lease Jun - Lexus RX,,1150.00,1150.00,,Chequing,,Lexus Financial,,3011,,1150.00,,,2024-06-03,2024-06-03,Expense,Expense,A6110
+2603,2024-06-05,Sales - Service,Service call 2024-06-2,,-7660.00,,7660.00,Chequing,Riverstone Homes,,2603,,,-7660.00,,,2024-06-05,2024-06-05,Income,Income,A4000
+2610,2024-06-05,Sales - Installations,Furnace / boiler installation,,-19840.00,,19840.00,Chequing,S. Kowalski,,2610,,,-19840.00,,,2024-06-05,2024-06-05,Income,Income,A4010
+3058,2024-06-06,Meals and Entertainment,Team lunch,,382.47,382.47,,Chequing,,The Keg,,3058,,382.47,,,2024-06-06,2024-06-06,Expense,Expense,A6200
+2604,2024-06-08,Sales - Service,Service call 2024-06-3,,-5761.00,,5761.00,Chequing,S. Kowalski,,2604,,,-5761.00,,,2024-06-08,2024-06-08,Income,Income,A4000
+2614,2024-06-08,Materials & Supplies,"Pipe, fittings and parts",,5143.00,5143.00,,Chequing,,Emco Supply,,2614,,5143.00,,,2024-06-08,2024-06-08,Expense,Cost of Goods Sold,A5000
+2620,2024-06-09,Rent,Shop rent,,4500.00,4500.00,,Chequing,,Brightwater Holdings Inc.,,2620,,4500.00,,,2024-06-09,2024-06-09,Expense,Expense,A6500
+2625,2024-06-09,Advertising & Promotion,Search ads,,904.32,904.32,,Chequing,,Google Ads,,2625,,904.32,,,2024-06-09,2024-06-09,Expense,Expense,A6600
+2626,2024-06-09,Office Supplies,Office supplies,,70.48,70.48,,Chequing,,Staples,,2626,,70.48,,,2024-06-09,2024-06-09,Expense,Expense,A6700
+2629,2024-06-09,Bank Charges,Monthly fee,,29.95,29.95,,Chequing,,RBC Royal Bank,,2629,,29.95,,,2024-06-09,2024-06-09,Expense,Expense,A6800
+2633,2024-06-09,Legal & Professional Fees,Monthly bookkeeping,,450.00,450.00,,Chequing,,Ledgerline Bookkeeping,,2633,,450.00,,,2024-06-09,2024-06-09,Expense,Expense,A6400
+2634,2024-06-09,Insurance,Life insurance premium - D. Brightwater,,750.00,750.00,,Chequing,,Sun Life,,2634,,750.00,,,2024-06-09,2024-06-09,Expense,Expense,A6300
+2635,2024-06-09,Dues & Memberships,Membership dues,,1250.00,1250.00,,Chequing,,Glen Abbey Golf Club,,2635,,1250.00,,,2024-06-09,2024-06-09,Expense,Expense,A6900
+2618,2024-06-10,Subcontractors,Subcontract work,,4932.00,4932.00,,Chequing,,Delta Electrical,,2618,,4932.00,,,2024-06-10,2024-06-10,Expense,Cost of Goods Sold,A5100
+2621,2024-06-10,Utilities,Gas,,205.24,205.24,,Chequing,,Enbridge Gas,,2621,,205.24,,,2024-06-10,2024-06-10,Expense,Expense,A6510
+2622,2024-06-10,Utilities,Hydro,,340.61,340.61,,Chequing,,Toronto Hydro,,2622,,340.61,,,2024-06-10,2024-06-10,Expense,Expense,A6510
+2627,2024-06-10,Software & Subscriptions,QuickBooks Online,,90.00,90.00,,Chequing,,Intuit QuickBooks,,2627,,90.00,,,2024-06-10,2024-06-10,Expense,Expense,A6710
+2628,2024-06-10,Software & Subscriptions,Field service software,,249.00,249.00,,Chequing,,Jobber,,2628,,249.00,,,2024-06-10,2024-06-10,Expense,Expense,A6710
+2630,2024-06-10,Interest Expense,Loan interest,,562.00,562.00,,Chequing,,RBC Royal Bank,,2630,,562.00,,,2024-06-10,2024-06-10,Expense,Expense,A6810
+2637,2024-06-10,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,192.66,192.66,,Chequing,,Esso,,2637,,192.66,,,2024-06-10,2024-06-10,Expense,Expense,A6120
+2605,2024-06-11,Sales - Service,Service call 2024-06-4,,-4095.00,,4095.00,Chequing,Bayfront Hotel,,2605,,,-4095.00,,,2024-06-11,2024-06-11,Income,Income,A4000
+2623,2024-06-11,Telephone & Internet,Phones,,316.68,316.68,,Chequing,,Bell Canada,,2623,,316.68,,,2024-06-11,2024-06-11,Expense,Expense,A6520
+2624,2024-06-11,Telephone & Internet,Internet,,129.95,129.95,,Chequing,,Rogers,,2624,,129.95,,,2024-06-11,2024-06-11,Expense,Expense,A6520
+2631,2024-06-11,Payroll Taxes - CPP/EI,CPP/EI remittance,,3323.38,3323.38,,Chequing,,Receiver General,,2631,,3323.38,,,2024-06-11,2024-06-11,Expense,Expense,A6020
+3028,2024-06-11,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,457.40,457.40,,Chequing,,Petro-Canada,,3028,,457.40,,,2024-06-11,2024-06-11,Expense,Expense,A6110
+2611,2024-06-13,Sales - Installations,Furnace / boiler installation,,-18276.00,,18276.00,Chequing,Bayfront Hotel,,2611,,,-18276.00,,,2024-06-13,2024-06-13,Income,Income,A4010
+2615,2024-06-13,Materials & Supplies,"Pipe, fittings and parts",,2768.00,2768.00,,Chequing,,The Home Depot,,2615,,2768.00,,,2024-06-13,2024-06-13,Expense,Cost of Goods Sold,A5000
+2632,2024-06-13,Employee Benefits,Group benefits,,1120.00,1120.00,,Chequing,,Manulife,,2632,,1120.00,,,2024-06-13,2024-06-13,Expense,Expense,A6040
+2606,2024-06-14,Sales - Service,Service call 2024-06-5,,-7425.00,,7425.00,Chequing,Halton Property Group,,2606,,,-7425.00,,,2024-06-14,2024-06-14,Income,Income,A4000
+2889,2024-06-14,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2889,,2615.38,,,2024-06-14,2024-06-14,Expense,Expense,A6000
+2915,2024-06-14,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2915,,2423.08,,,2024-06-14,2024-06-14,Expense,Expense,A6000
+2941,2024-06-14,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2941,,2192.31,,,2024-06-14,2024-06-14,Expense,Expense,A6000
+2967,2024-06-14,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2967,,3269.23,,,2024-06-14,2024-06-14,Expense,Expense,A6000
+3059,2024-06-14,Meals and Entertainment,Client dinner,,251.83,251.83,,Chequing,,Tim Hortons,,3059,,251.83,,,2024-06-14,2024-06-14,Expense,Expense,A6200
+2640,2024-06-15,WSIB,Quarterly premium,,2100.00,2100.00,,Chequing,,WSIB,,2640,,2100.00,,,2024-06-15,2024-06-15,Expense,Expense,A6030
+2992,2024-06-15,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2992,,10000.00,,,2024-06-15,2024-06-15,Expense,Expense,A6010
+2607,2024-06-17,Sales - Service,Service call 2024-06-6,,-4205.00,,4205.00,Chequing,Maple Ridge Condos,,2607,,,-4205.00,,,2024-06-17,2024-06-17,Income,Income,A4000
+2638,2024-06-17,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,253.11,253.11,,Chequing,,Petro-Canada,,2638,,253.11,,,2024-06-17,2024-06-17,Expense,Expense,A6120
+2616,2024-06-18,Materials & Supplies,"Pipe, fittings and parts",,1058.00,1058.00,,Chequing,,Wolseley Canada,,2616,,1058.00,,,2024-06-18,2024-06-18,Expense,Cost of Goods Sold,A5000
+2643,2024-06-18,Repairs & Maintenance,Shop roof repair,,2090.10,2090.10,,Chequing,,Rapid Roofing,,2643,,2090.10,,,2024-06-18,2024-06-18,Expense,Expense,A6950
+2619,2024-06-19,Subcontractors,Subcontract work,,5112.00,5112.00,,Chequing,,Precision Ductwork,,2619,,5112.00,,,2024-06-19,2024-06-19,Expense,Cost of Goods Sold,A5100
+2608,2024-06-20,Sales - Service,Service call 2024-06-7,,-7878.00,,7878.00,Chequing,J. Alvarez,,2608,,,-7878.00,,,2024-06-20,2024-06-20,Income,Income,A4000
+2641,2024-06-20,Insurance,Business insurance - quarterly,,3000.00,3000.00,,Chequing,,Intact Insurance,,2641,,3000.00,,,2024-06-20,2024-06-20,Expense,Expense,A6300
+2612,2024-06-21,Sales - Installations,Furnace / boiler installation,,-27254.00,,27254.00,Chequing,Halton Property Group,,2612,,,-27254.00,,,2024-06-21,2024-06-21,Income,Income,A4010
+2642,2024-06-22,Automobile Expense:Van Repairs & Maintenance,Van service,,502.53,502.53,,Chequing,,Midas,,2642,,502.53,,,2024-06-22,2024-06-22,Expense,Expense,A6130
+3060,2024-06-22,Meals and Entertainment,Team lunch,,951.05,951.05,,Chequing,,Earls Kitchen,,3060,,951.05,,,2024-06-22,2024-06-22,Expense,Expense,A6200
+2609,2024-06-23,Sales - Service,Service call 2024-06-8,,-4981.00,,4981.00,Chequing,Lakeview Dental Centre,,2609,,,-4981.00,,,2024-06-23,2024-06-23,Income,Income,A4000
+2617,2024-06-23,Materials & Supplies,"Pipe, fittings and parts",,2154.00,2154.00,,Chequing,,Emco Supply,,2617,,2154.00,,,2024-06-23,2024-06-23,Expense,Cost of Goods Sold,A5000
+2639,2024-06-24,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,225.55,225.55,,Chequing,,Esso,,2639,,225.55,,,2024-06-24,2024-06-24,Expense,Expense,A6120
+3029,2024-06-24,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,504.47,504.47,,Chequing,,Petro-Canada,,3029,,504.47,,,2024-06-24,2024-06-24,Expense,Expense,A6110
+2890,2024-06-28,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2890,,2615.38,,,2024-06-28,2024-06-28,Expense,Expense,A6000
+2916,2024-06-28,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2916,,2423.08,,,2024-06-28,2024-06-28,Expense,Expense,A6000
+2942,2024-06-28,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2942,,2192.31,,,2024-06-28,2024-06-28,Expense,Expense,A6000
+2968,2024-06-28,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2968,,3269.23,,,2024-06-28,2024-06-28,Expense,Expense,A6000
+2993,2024-06-28,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2993,,10000.00,,,2024-06-28,2024-06-28,Expense,Expense,A6010
+3100,2024-06-28,Chequing,Deposits - month,,90497.25,90497.25,,Chequing,,,,3100,,90497.25,,,2024-06-28,2024-06-28,Asset,Bank,A1000
+3101,2024-06-28,Chequing,Payments - month,,-42924.70,,42924.70,Chequing,,,,3101,,-42924.70,,,2024-06-28,2024-06-28,Asset,Bank,A1000
+3102,2024-06-30,HST Payable,HST remittance,,10279.20,10279.20,,Chequing,,Receiver General,,3102,,10279.20,,,2024-06-30,2024-06-30,Asset,Other Current Liability,A2100
+2644,2024-07-02,Sales - Service,Service call 2024-07-1,,-4301.00,,4301.00,Chequing,Riverstone Homes,,2644,,,-4301.00,,,2024-07-02,2024-07-02,Income,Income,A4000
+2655,2024-07-03,Materials & Supplies,"Pipe, fittings and parts",,3312.00,3312.00,,Chequing,,Wolseley Canada,,2655,,3312.00,,,2024-07-03,2024-07-03,Expense,Cost of Goods Sold,A5000
+2678,2024-07-03,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,222.79,222.79,,Chequing,,Petro-Canada,,2678,,222.79,,,2024-07-03,2024-07-03,Expense,Expense,A6120
+3012,2024-07-03,Automobile Expense:Vehicle - Owner,Lease Jul - Lexus RX,,1150.00,1150.00,,Chequing,,Lexus Financial,,3012,,1150.00,,,2024-07-03,2024-07-03,Expense,Expense,A6110
+2645,2024-07-05,Sales - Service,Service call 2024-07-2,,-4423.00,,4423.00,Chequing,S. Kowalski,,2645,,,-4423.00,,,2024-07-05,2024-07-05,Income,Income,A4000
+2652,2024-07-05,Sales - Installations,Furnace / boiler installation,,-26743.00,,26743.00,Chequing,Maple Ridge Condos,,2652,,,-26743.00,,,2024-07-05,2024-07-05,Income,Income,A4010
+3061,2024-07-06,Meals and Entertainment,Team lunch,,807.76,807.76,,Chequing,,Café Novo,,3061,,807.76,,,2024-07-06,2024-07-06,Expense,Expense,A6200
+2646,2024-07-08,Sales - Service,Service call 2024-07-3,,-4586.00,,4586.00,Chequing,Bayfront Hotel,,2646,,,-4586.00,,,2024-07-08,2024-07-08,Income,Income,A4000
+2656,2024-07-08,Materials & Supplies,"Pipe, fittings and parts",,1013.00,1013.00,,Chequing,,Emco Supply,,2656,,1013.00,,,2024-07-08,2024-07-08,Expense,Cost of Goods Sold,A5000
+2662,2024-07-09,Rent,Shop rent,,4500.00,4500.00,,Chequing,,Brightwater Holdings Inc.,,2662,,4500.00,,,2024-07-09,2024-07-09,Expense,Expense,A6500
+2667,2024-07-09,Advertising & Promotion,Search ads,,1226.64,1226.64,,Chequing,,Google Ads,,2667,,1226.64,,,2024-07-09,2024-07-09,Expense,Expense,A6600
+2668,2024-07-09,Office Supplies,Office supplies,,216.21,216.21,,Chequing,,Staples,,2668,,216.21,,,2024-07-09,2024-07-09,Expense,Expense,A6700
+2671,2024-07-09,Bank Charges,Monthly fee,,29.95,29.95,,Chequing,,RBC Royal Bank,,2671,,29.95,,,2024-07-09,2024-07-09,Expense,Expense,A6800
+2675,2024-07-09,Legal & Professional Fees,Monthly bookkeeping,,450.00,450.00,,Chequing,,Ledgerline Bookkeeping,,2675,,450.00,,,2024-07-09,2024-07-09,Expense,Expense,A6400
+2676,2024-07-09,Insurance,Life insurance premium - D. Brightwater,,750.00,750.00,,Chequing,,Sun Life,,2676,,750.00,,,2024-07-09,2024-07-09,Expense,Expense,A6300
+2677,2024-07-09,Dues & Memberships,Membership dues,,1250.00,1250.00,,Chequing,,Glen Abbey Golf Club,,2677,,1250.00,,,2024-07-09,2024-07-09,Expense,Expense,A6900
+2660,2024-07-10,Subcontractors,Subcontract work,,5099.00,5099.00,,Chequing,,Delta Electrical,,2660,,5099.00,,,2024-07-10,2024-07-10,Expense,Cost of Goods Sold,A5100
+2663,2024-07-10,Utilities,Gas,,379.25,379.25,,Chequing,,Enbridge Gas,,2663,,379.25,,,2024-07-10,2024-07-10,Expense,Expense,A6510
+2664,2024-07-10,Utilities,Hydro,,326.97,326.97,,Chequing,,Toronto Hydro,,2664,,326.97,,,2024-07-10,2024-07-10,Expense,Expense,A6510
+2669,2024-07-10,Software & Subscriptions,QuickBooks Online,,90.00,90.00,,Chequing,,Intuit QuickBooks,,2669,,90.00,,,2024-07-10,2024-07-10,Expense,Expense,A6710
+2670,2024-07-10,Software & Subscriptions,Field service software,,249.00,249.00,,Chequing,,Jobber,,2670,,249.00,,,2024-07-10,2024-07-10,Expense,Expense,A6710
+2672,2024-07-10,Interest Expense,Loan interest,,554.00,554.00,,Chequing,,RBC Royal Bank,,2672,,554.00,,,2024-07-10,2024-07-10,Expense,Expense,A6810
+2679,2024-07-10,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,163.34,163.34,,Chequing,,Esso,,2679,,163.34,,,2024-07-10,2024-07-10,Expense,Expense,A6120
+2647,2024-07-11,Sales - Service,Service call 2024-07-4,,-1276.00,,1276.00,Chequing,Halton Property Group,,2647,,,-1276.00,,,2024-07-11,2024-07-11,Income,Income,A4000
+2665,2024-07-11,Telephone & Internet,Phones,,335.79,335.79,,Chequing,,Bell Canada,,2665,,335.79,,,2024-07-11,2024-07-11,Expense,Expense,A6520
+2666,2024-07-11,Telephone & Internet,Internet,,129.95,129.95,,Chequing,,Rogers,,2666,,129.95,,,2024-07-11,2024-07-11,Expense,Expense,A6520
+2673,2024-07-11,Payroll Taxes - CPP/EI,CPP/EI remittance,,3258.41,3258.41,,Chequing,,Receiver General,,2673,,3258.41,,,2024-07-11,2024-07-11,Expense,Expense,A6020
+3030,2024-07-11,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,622.31,622.31,,Chequing,,Petro-Canada,,3030,,622.31,,,2024-07-11,2024-07-11,Expense,Expense,A6110
+2891,2024-07-12,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2891,,2615.38,,,2024-07-12,2024-07-12,Expense,Expense,A6000
+2917,2024-07-12,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2917,,2423.08,,,2024-07-12,2024-07-12,Expense,Expense,A6000
+2943,2024-07-12,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2943,,2192.31,,,2024-07-12,2024-07-12,Expense,Expense,A6000
+2969,2024-07-12,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2969,,3269.23,,,2024-07-12,2024-07-12,Expense,Expense,A6000
+2653,2024-07-13,Sales - Installations,Furnace / boiler installation,,-24938.00,,24938.00,Chequing,J. Alvarez,,2653,,,-24938.00,,,2024-07-13,2024-07-13,Income,Income,A4010
+2657,2024-07-13,Materials & Supplies,"Pipe, fittings and parts",,2808.00,2808.00,,Chequing,,The Home Depot,,2657,,2808.00,,,2024-07-13,2024-07-13,Expense,Cost of Goods Sold,A5000
+2674,2024-07-13,Employee Benefits,Group benefits,,1120.00,1120.00,,Chequing,,Manulife,,2674,,1120.00,,,2024-07-13,2024-07-13,Expense,Expense,A6040
+2648,2024-07-14,Sales - Service,Service call 2024-07-5,,-8257.00,,8257.00,Chequing,Maple Ridge Condos,,2648,,,-8257.00,,,2024-07-14,2024-07-14,Income,Income,A4000
+3062,2024-07-14,Meals and Entertainment,Team lunch,,871.27,871.27,,Chequing,,Jack Astor's,,3062,,871.27,,,2024-07-14,2024-07-14,Expense,Expense,A6200
+2994,2024-07-15,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2994,,10000.00,,,2024-07-15,2024-07-15,Expense,Expense,A6010
+3082,2024-07-15,Legal & Professional Fees,Settlement - wrongful dismissal,,22000.00,22000.00,,Chequing,,Holloway LLP,,3082,,22000.00,,,2024-07-15,2024-07-15,Expense,Expense,A6400
+2649,2024-07-17,Sales - Service,Service call 2024-07-6,,-8716.00,,8716.00,Chequing,J. Alvarez,,2649,,,-8716.00,,,2024-07-17,2024-07-17,Income,Income,A4000
+2680,2024-07-17,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,240.16,240.16,,Chequing,,Petro-Canada,,2680,,240.16,,,2024-07-17,2024-07-17,Expense,Expense,A6120
+2658,2024-07-18,Materials & Supplies,"Pipe, fittings and parts",,3876.00,3876.00,,Chequing,,Wolseley Canada,,2658,,3876.00,,,2024-07-18,2024-07-18,Expense,Cost of Goods Sold,A5000
+2661,2024-07-19,Subcontractors,Subcontract work,,4324.00,4324.00,,Chequing,,Precision Ductwork,,2661,,4324.00,,,2024-07-19,2024-07-19,Expense,Cost of Goods Sold,A5100
+2650,2024-07-20,Sales - Service,Service call 2024-07-7,,-8275.00,,8275.00,Chequing,Lakeview Dental Centre,,2650,,,-8275.00,,,2024-07-20,2024-07-20,Income,Income,A4000
+2654,2024-07-21,Sales - Installations,Furnace / boiler installation,,-16763.00,,16763.00,Chequing,Lakeview Dental Centre,,2654,,,-16763.00,,,2024-07-21,2024-07-21,Income,Income,A4010
+3063,2024-07-22,Meals and Entertainment,Client dinner,,909.13,909.13,,Chequing,,The Keg,,3063,,909.13,,,2024-07-22,2024-07-22,Expense,Expense,A6200
+2651,2024-07-23,Sales - Service,Service call 2024-07-8,,-2721.00,,2721.00,Chequing,Northgate Schools,,2651,,,-2721.00,,,2024-07-23,2024-07-23,Income,Income,A4000
+2659,2024-07-23,Materials & Supplies,"Pipe, fittings and parts",,4630.00,4630.00,,Chequing,,Emco Supply,,2659,,4630.00,,,2024-07-23,2024-07-23,Expense,Cost of Goods Sold,A5000
+2681,2024-07-24,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,209.88,209.88,,Chequing,,Esso,,2681,,209.88,,,2024-07-24,2024-07-24,Expense,Expense,A6120
+3031,2024-07-24,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,580.48,580.48,,Chequing,,Petro-Canada,,3031,,580.48,,,2024-07-24,2024-07-24,Expense,Expense,A6110
+2892,2024-07-26,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2892,,2615.38,,,2024-07-26,2024-07-26,Expense,Expense,A6000
+2918,2024-07-26,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2918,,2423.08,,,2024-07-26,2024-07-26,Expense,Expense,A6000
+2944,2024-07-26,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2944,,2192.31,,,2024-07-26,2024-07-26,Expense,Expense,A6000
+2970,2024-07-26,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2970,,3269.23,,,2024-07-26,2024-07-26,Expense,Expense,A6000
+2995,2024-07-28,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2995,,10000.00,,,2024-07-28,2024-07-28,Expense,Expense,A6010
+3103,2024-07-28,Chequing,Deposits - month,,90497.25,90497.25,,Chequing,,,,3103,,90497.25,,,2024-07-28,2024-07-28,Asset,Bank,A1000
+3104,2024-07-28,Chequing,Payments - month,,-42924.70,,42924.70,Chequing,,,,3104,,-42924.70,,,2024-07-28,2024-07-28,Asset,Bank,A1000
+3083,2024-07-31,Legal & Professional Fees,Refund of retainer,,-500.00,,500.00,Chequing,,Holloway LLP,,3083,,-500.00,,,2024-07-31,2024-07-31,Expense,Expense,A6400
+2682,2024-08-02,Sales - Service,Service call 2024-08-1,,-4414.00,,4414.00,Chequing,S. Kowalski,,2682,,,-4414.00,,,2024-08-02,2024-08-02,Income,Income,A4000
+2693,2024-08-03,Materials & Supplies,"Pipe, fittings and parts",,3761.00,3761.00,,Chequing,,Wolseley Canada,,2693,,3761.00,,,2024-08-03,2024-08-03,Expense,Cost of Goods Sold,A5000
+2716,2024-08-03,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,183.72,183.72,,Chequing,,Petro-Canada,,2716,,183.72,,,2024-08-03,2024-08-03,Expense,Expense,A6120
+3013,2024-08-03,Automobile Expense:Vehicle - Owner,Lease Aug - Lexus RX,,1150.00,1150.00,,Chequing,,Lexus Financial,,3013,,1150.00,,,2024-08-03,2024-08-03,Expense,Expense,A6110
+2683,2024-08-05,Sales - Service,Service call 2024-08-2,,-7877.00,,7877.00,Chequing,Bayfront Hotel,,2683,,,-7877.00,,,2024-08-05,2024-08-05,Income,Income,A4000
+2690,2024-08-05,Sales - Installations,Furnace / boiler installation,,-10399.00,,10399.00,Chequing,Northgate Schools,,2690,,,-10399.00,,,2024-08-05,2024-08-05,Income,Income,A4010
+3064,2024-08-06,Meals and Entertainment,Team lunch,,345.41,345.41,,Chequing,,Tim Hortons,,3064,,345.41,,,2024-08-06,2024-08-06,Expense,Expense,A6200
+2684,2024-08-08,Sales - Service,Service call 2024-08-3,,-5809.00,,5809.00,Chequing,Halton Property Group,,2684,,,-5809.00,,,2024-08-08,2024-08-08,Income,Income,A4000
+2694,2024-08-08,Materials & Supplies,"Pipe, fittings and parts",,2689.00,2689.00,,Chequing,,Emco Supply,,2694,,2689.00,,,2024-08-08,2024-08-08,Expense,Cost of Goods Sold,A5000
+2700,2024-08-09,Rent,Shop rent,,4500.00,4500.00,,Chequing,,Brightwater Holdings Inc.,,2700,,4500.00,,,2024-08-09,2024-08-09,Expense,Expense,A6500
+2705,2024-08-09,Advertising & Promotion,Search ads,,1506.37,1506.37,,Chequing,,Google Ads,,2705,,1506.37,,,2024-08-09,2024-08-09,Expense,Expense,A6600
+2706,2024-08-09,Office Supplies,Office supplies,,139.47,139.47,,Chequing,,Staples,,2706,,139.47,,,2024-08-09,2024-08-09,Expense,Expense,A6700
+2709,2024-08-09,Bank Charges,Monthly fee,,29.95,29.95,,Chequing,,RBC Royal Bank,,2709,,29.95,,,2024-08-09,2024-08-09,Expense,Expense,A6800
+2713,2024-08-09,Legal & Professional Fees,Monthly bookkeeping,,450.00,450.00,,Chequing,,Ledgerline Bookkeeping,,2713,,450.00,,,2024-08-09,2024-08-09,Expense,Expense,A6400
+2714,2024-08-09,Insurance,Life insurance premium - D. Brightwater,,750.00,750.00,,Chequing,,Sun Life,,2714,,750.00,,,2024-08-09,2024-08-09,Expense,Expense,A6300
+2715,2024-08-09,Dues & Memberships,Membership dues,,1250.00,1250.00,,Chequing,,Glen Abbey Golf Club,,2715,,1250.00,,,2024-08-09,2024-08-09,Expense,Expense,A6900
+2893,2024-08-09,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2893,,2615.38,,,2024-08-09,2024-08-09,Expense,Expense,A6000
+2919,2024-08-09,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2919,,2423.08,,,2024-08-09,2024-08-09,Expense,Expense,A6000
+2945,2024-08-09,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2945,,2192.31,,,2024-08-09,2024-08-09,Expense,Expense,A6000
+2971,2024-08-09,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2971,,3269.23,,,2024-08-09,2024-08-09,Expense,Expense,A6000
+2698,2024-08-10,Subcontractors,Subcontract work,,4382.00,4382.00,,Chequing,,Delta Electrical,,2698,,4382.00,,,2024-08-10,2024-08-10,Expense,Cost of Goods Sold,A5100
+2701,2024-08-10,Utilities,Gas,,321.78,321.78,,Chequing,,Enbridge Gas,,2701,,321.78,,,2024-08-10,2024-08-10,Expense,Expense,A6510
+2702,2024-08-10,Utilities,Hydro,,336.79,336.79,,Chequing,,Toronto Hydro,,2702,,336.79,,,2024-08-10,2024-08-10,Expense,Expense,A6510
+2707,2024-08-10,Software & Subscriptions,QuickBooks Online,,90.00,90.00,,Chequing,,Intuit QuickBooks,,2707,,90.00,,,2024-08-10,2024-08-10,Expense,Expense,A6710
+2708,2024-08-10,Software & Subscriptions,Field service software,,249.00,249.00,,Chequing,,Jobber,,2708,,249.00,,,2024-08-10,2024-08-10,Expense,Expense,A6710
+2710,2024-08-10,Interest Expense,Loan interest,,546.00,546.00,,Chequing,,RBC Royal Bank,,2710,,546.00,,,2024-08-10,2024-08-10,Expense,Expense,A6810
+2717,2024-08-10,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,164.02,164.02,,Chequing,,Esso,,2717,,164.02,,,2024-08-10,2024-08-10,Expense,Expense,A6120
+2685,2024-08-11,Sales - Service,Service call 2024-08-4,,-7473.00,,7473.00,Chequing,Maple Ridge Condos,,2685,,,-7473.00,,,2024-08-11,2024-08-11,Income,Income,A4000
+2703,2024-08-11,Telephone & Internet,Phones,,332.72,332.72,,Chequing,,Bell Canada,,2703,,332.72,,,2024-08-11,2024-08-11,Expense,Expense,A6520
+2704,2024-08-11,Telephone & Internet,Internet,,129.95,129.95,,Chequing,,Rogers,,2704,,129.95,,,2024-08-11,2024-08-11,Expense,Expense,A6520
+2711,2024-08-11,Payroll Taxes - CPP/EI,CPP/EI remittance,,3345.34,3345.34,,Chequing,,Receiver General,,2711,,3345.34,,,2024-08-11,2024-08-11,Expense,Expense,A6020
+3032,2024-08-11,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,393.91,393.91,,Chequing,,Petro-Canada,,3032,,393.91,,,2024-08-11,2024-08-11,Expense,Expense,A6110
+2691,2024-08-13,Sales - Installations,Furnace / boiler installation,,-8340.00,,8340.00,Chequing,P. Nguyen,,2691,,,-8340.00,,,2024-08-13,2024-08-13,Income,Income,A4010
+2695,2024-08-13,Materials & Supplies,"Pipe, fittings and parts",,3169.00,3169.00,,Chequing,,The Home Depot,,2695,,3169.00,,,2024-08-13,2024-08-13,Expense,Cost of Goods Sold,A5000
+2712,2024-08-13,Employee Benefits,Group benefits,,1120.00,1120.00,,Chequing,,Manulife,,2712,,1120.00,,,2024-08-13,2024-08-13,Expense,Expense,A6040
+2686,2024-08-14,Sales - Service,Service call 2024-08-5,,-8838.00,,8838.00,Chequing,J. Alvarez,,2686,,,-8838.00,,,2024-08-14,2024-08-14,Income,Income,A4000
+3065,2024-08-14,Meals and Entertainment,Team lunch,,284.24,284.24,,Chequing,,Earls Kitchen,,3065,,284.24,,,2024-08-14,2024-08-14,Expense,Expense,A6200
+2996,2024-08-15,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2996,,10000.00,,,2024-08-15,2024-08-15,Expense,Expense,A6010
+2687,2024-08-17,Sales - Service,Service call 2024-08-6,,-8804.00,,8804.00,Chequing,Lakeview Dental Centre,,2687,,,-8804.00,,,2024-08-17,2024-08-17,Income,Income,A4000
+2718,2024-08-17,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,217.39,217.39,,Chequing,,Petro-Canada,,2718,,217.39,,,2024-08-17,2024-08-17,Expense,Expense,A6120
+2696,2024-08-18,Materials & Supplies,"Pipe, fittings and parts",,935.00,935.00,,Chequing,,Wolseley Canada,,2696,,935.00,,,2024-08-18,2024-08-18,Expense,Cost of Goods Sold,A5000
+2699,2024-08-19,Subcontractors,Subcontract work,,8443.00,8443.00,,Chequing,,Precision Ductwork,,2699,,8443.00,,,2024-08-19,2024-08-19,Expense,Cost of Goods Sold,A5100
+2688,2024-08-20,Sales - Service,Service call 2024-08-7,,-5599.00,,5599.00,Chequing,Northgate Schools,,2688,,,-5599.00,,,2024-08-20,2024-08-20,Income,Income,A4000
+2692,2024-08-21,Sales - Installations,Furnace / boiler installation,,-27274.00,,27274.00,Chequing,Oakville Medical Arts,,2692,,,-27274.00,,,2024-08-21,2024-08-21,Income,Income,A4010
+3066,2024-08-22,Meals and Entertainment,Team lunch,,598.09,598.09,,Chequing,,Café Novo,,3066,,598.09,,,2024-08-22,2024-08-22,Expense,Expense,A6200
+2689,2024-08-23,Sales - Service,Service call 2024-08-8,,-3859.00,,3859.00,Chequing,P. Nguyen,,2689,,,-3859.00,,,2024-08-23,2024-08-23,Income,Income,A4000
+2697,2024-08-23,Materials & Supplies,"Pipe, fittings and parts",,5157.00,5157.00,,Chequing,,Emco Supply,,2697,,5157.00,,,2024-08-23,2024-08-23,Expense,Cost of Goods Sold,A5000
+2894,2024-08-23,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2894,,2615.38,,,2024-08-23,2024-08-23,Expense,Expense,A6000
+2920,2024-08-23,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2920,,2423.08,,,2024-08-23,2024-08-23,Expense,Expense,A6000
+2946,2024-08-23,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2946,,2192.31,,,2024-08-23,2024-08-23,Expense,Expense,A6000
+2972,2024-08-23,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2972,,3269.23,,,2024-08-23,2024-08-23,Expense,Expense,A6000
+2719,2024-08-24,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,177.78,177.78,,Chequing,,Esso,,2719,,177.78,,,2024-08-24,2024-08-24,Expense,Expense,A6120
+3033,2024-08-24,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,515.68,515.68,,Chequing,,Petro-Canada,,3033,,515.68,,,2024-08-24,2024-08-24,Expense,Expense,A6110
+2997,2024-08-28,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2997,,10000.00,,,2024-08-28,2024-08-28,Expense,Expense,A6010
+3105,2024-08-28,Chequing,Deposits - month,,90497.25,90497.25,,Chequing,,,,3105,,90497.25,,,2024-08-28,2024-08-28,Asset,Bank,A1000
+3106,2024-08-28,Chequing,Payments - month,,-42924.70,,42924.70,Chequing,,,,3106,,-42924.70,,,2024-08-28,2024-08-28,Asset,Bank,A1000
+2720,2024-09-02,Sales - Service,Service call 2024-09-1,,-7617.00,,7617.00,Chequing,Bayfront Hotel,,2720,,,-7617.00,,,2024-09-02,2024-09-02,Income,Income,A4000
+2731,2024-09-03,Materials & Supplies,"Pipe, fittings and parts",,2666.00,2666.00,,Chequing,,Wolseley Canada,,2731,,2666.00,,,2024-09-03,2024-09-03,Expense,Cost of Goods Sold,A5000
+2754,2024-09-03,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,228.46,228.46,,Chequing,,Petro-Canada,,2754,,228.46,,,2024-09-03,2024-09-03,Expense,Expense,A6120
+3014,2024-09-03,Automobile Expense:Vehicle - Owner,Lease Sep - Lexus RX,,1150.00,1150.00,,Chequing,,Lexus Financial,,3014,,1150.00,,,2024-09-03,2024-09-03,Expense,Expense,A6110
+2721,2024-09-05,Sales - Service,Service call 2024-09-2,,-5387.00,,5387.00,Chequing,Halton Property Group,,2721,,,-5387.00,,,2024-09-05,2024-09-05,Income,Income,A4000
+2728,2024-09-05,Sales - Installations,Furnace / boiler installation,,-11433.00,,11433.00,Chequing,Riverstone Homes,,2728,,,-11433.00,,,2024-09-05,2024-09-05,Income,Income,A4010
+3085,2024-09-05,Shareholder Expenses,Tuition - fall term,,9500.00,9500.00,,Chequing,,Upper Canada College,,3085,,9500.00,,,2024-09-05,2024-09-05,Expense,Expense,A6910
+2895,2024-09-06,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2895,,2615.38,,,2024-09-06,2024-09-06,Expense,Expense,A6000
+2921,2024-09-06,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2921,,2423.08,,,2024-09-06,2024-09-06,Expense,Expense,A6000
+2947,2024-09-06,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2947,,2192.31,,,2024-09-06,2024-09-06,Expense,Expense,A6000
+2973,2024-09-06,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2973,,3269.23,,,2024-09-06,2024-09-06,Expense,Expense,A6000
+3067,2024-09-06,Meals and Entertainment,Client dinner,,657.39,657.39,,Chequing,,Jack Astor's,,3067,,657.39,,,2024-09-06,2024-09-06,Expense,Expense,A6200
+2722,2024-09-08,Sales - Service,Service call 2024-09-3,,-3796.00,,3796.00,Chequing,Maple Ridge Condos,,2722,,,-3796.00,,,2024-09-08,2024-09-08,Income,Income,A4000
+2732,2024-09-08,Materials & Supplies,"Pipe, fittings and parts",,2686.00,2686.00,,Chequing,,Emco Supply,,2732,,2686.00,,,2024-09-08,2024-09-08,Expense,Cost of Goods Sold,A5000
+2738,2024-09-09,Rent,Shop rent,,4500.00,4500.00,,Chequing,,Brightwater Holdings Inc.,,2738,,4500.00,,,2024-09-09,2024-09-09,Expense,Expense,A6500
+2743,2024-09-09,Advertising & Promotion,Search ads,,1521.43,1521.43,,Chequing,,Google Ads,,2743,,1521.43,,,2024-09-09,2024-09-09,Expense,Expense,A6600
+2744,2024-09-09,Office Supplies,Office supplies,,80.84,80.84,,Chequing,,Staples,,2744,,80.84,,,2024-09-09,2024-09-09,Expense,Expense,A6700
+2747,2024-09-09,Bank Charges,Monthly fee,,29.95,29.95,,Chequing,,RBC Royal Bank,,2747,,29.95,,,2024-09-09,2024-09-09,Expense,Expense,A6800
+2751,2024-09-09,Legal & Professional Fees,Monthly bookkeeping,,450.00,450.00,,Chequing,,Ledgerline Bookkeeping,,2751,,450.00,,,2024-09-09,2024-09-09,Expense,Expense,A6400
+2752,2024-09-09,Insurance,Life insurance premium - D. Brightwater,,750.00,750.00,,Chequing,,Sun Life,,2752,,750.00,,,2024-09-09,2024-09-09,Expense,Expense,A6300
+2753,2024-09-09,Dues & Memberships,Membership dues,,1250.00,1250.00,,Chequing,,Glen Abbey Golf Club,,2753,,1250.00,,,2024-09-09,2024-09-09,Expense,Expense,A6900
+2736,2024-09-10,Subcontractors,Subcontract work,,5719.00,5719.00,,Chequing,,Delta Electrical,,2736,,5719.00,,,2024-09-10,2024-09-10,Expense,Cost of Goods Sold,A5100
+2739,2024-09-10,Utilities,Gas,,386.22,386.22,,Chequing,,Enbridge Gas,,2739,,386.22,,,2024-09-10,2024-09-10,Expense,Expense,A6510
+2740,2024-09-10,Utilities,Hydro,,349.95,349.95,,Chequing,,Toronto Hydro,,2740,,349.95,,,2024-09-10,2024-09-10,Expense,Expense,A6510
+2745,2024-09-10,Software & Subscriptions,QuickBooks Online,,90.00,90.00,,Chequing,,Intuit QuickBooks,,2745,,90.00,,,2024-09-10,2024-09-10,Expense,Expense,A6710
+2746,2024-09-10,Software & Subscriptions,Field service software,,249.00,249.00,,Chequing,,Jobber,,2746,,249.00,,,2024-09-10,2024-09-10,Expense,Expense,A6710
+2748,2024-09-10,Interest Expense,Loan interest,,538.00,538.00,,Chequing,,RBC Royal Bank,,2748,,538.00,,,2024-09-10,2024-09-10,Expense,Expense,A6810
+2755,2024-09-10,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,208.91,208.91,,Chequing,,Esso,,2755,,208.91,,,2024-09-10,2024-09-10,Expense,Expense,A6120
+2723,2024-09-11,Sales - Service,Service call 2024-09-4,,-7612.00,,7612.00,Chequing,J. Alvarez,,2723,,,-7612.00,,,2024-09-11,2024-09-11,Income,Income,A4000
+2741,2024-09-11,Telephone & Internet,Phones,,349.20,349.20,,Chequing,,Bell Canada,,2741,,349.20,,,2024-09-11,2024-09-11,Expense,Expense,A6520
+2742,2024-09-11,Telephone & Internet,Internet,,129.95,129.95,,Chequing,,Rogers,,2742,,129.95,,,2024-09-11,2024-09-11,Expense,Expense,A6520
+2749,2024-09-11,Payroll Taxes - CPP/EI,CPP/EI remittance,,3266.16,3266.16,,Chequing,,Receiver General,,2749,,3266.16,,,2024-09-11,2024-09-11,Expense,Expense,A6020
+3034,2024-09-11,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,500.96,500.96,,Chequing,,Petro-Canada,,3034,,500.96,,,2024-09-11,2024-09-11,Expense,Expense,A6110
+2729,2024-09-13,Sales - Installations,Furnace / boiler installation,,-20610.00,,20610.00,Chequing,S. Kowalski,,2729,,,-20610.00,,,2024-09-13,2024-09-13,Income,Income,A4010
+2733,2024-09-13,Materials & Supplies,"Pipe, fittings and parts",,3650.00,3650.00,,Chequing,,The Home Depot,,2733,,3650.00,,,2024-09-13,2024-09-13,Expense,Cost of Goods Sold,A5000
+2750,2024-09-13,Employee Benefits,Group benefits,,1120.00,1120.00,,Chequing,,Manulife,,2750,,1120.00,,,2024-09-13,2024-09-13,Expense,Expense,A6040
+2724,2024-09-14,Sales - Service,Service call 2024-09-5,,-3063.00,,3063.00,Chequing,Lakeview Dental Centre,,2724,,,-3063.00,,,2024-09-14,2024-09-14,Income,Income,A4000
+3068,2024-09-14,Meals and Entertainment,Team lunch,,531.56,531.56,,Chequing,,The Keg,,3068,,531.56,,,2024-09-14,2024-09-14,Expense,Expense,A6200
+2758,2024-09-15,WSIB,Quarterly premium,,2100.00,2100.00,,Chequing,,WSIB,,2758,,2100.00,,,2024-09-15,2024-09-15,Expense,Expense,A6030
+2998,2024-09-15,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2998,,10000.00,,,2024-09-15,2024-09-15,Expense,Expense,A6010
+2725,2024-09-17,Sales - Service,Service call 2024-09-6,,-8428.00,,8428.00,Chequing,Northgate Schools,,2725,,,-8428.00,,,2024-09-17,2024-09-17,Income,Income,A4000
+2756,2024-09-17,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,199.24,199.24,,Chequing,,Petro-Canada,,2756,,199.24,,,2024-09-17,2024-09-17,Expense,Expense,A6120
+2734,2024-09-18,Materials & Supplies,"Pipe, fittings and parts",,4640.00,4640.00,,Chequing,,Wolseley Canada,,2734,,4640.00,,,2024-09-18,2024-09-18,Expense,Cost of Goods Sold,A5000
+2737,2024-09-19,Subcontractors,Subcontract work,,5443.00,5443.00,,Chequing,,Precision Ductwork,,2737,,5443.00,,,2024-09-19,2024-09-19,Expense,Cost of Goods Sold,A5100
+2726,2024-09-20,Sales - Service,Service call 2024-09-7,,-4314.00,,4314.00,Chequing,P. Nguyen,,2726,,,-4314.00,,,2024-09-20,2024-09-20,Income,Income,A4000
+2759,2024-09-20,Insurance,Business insurance - quarterly,,3000.00,3000.00,,Chequing,,Intact Insurance,,2759,,3000.00,,,2024-09-20,2024-09-20,Expense,Expense,A6300
+2896,2024-09-20,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2896,,2615.38,,,2024-09-20,2024-09-20,Expense,Expense,A6000
+2922,2024-09-20,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2922,,2423.08,,,2024-09-20,2024-09-20,Expense,Expense,A6000
+2948,2024-09-20,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2948,,2192.31,,,2024-09-20,2024-09-20,Expense,Expense,A6000
+2974,2024-09-20,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2974,,3269.23,,,2024-09-20,2024-09-20,Expense,Expense,A6000
+2730,2024-09-21,Sales - Installations,Furnace / boiler installation,,-18354.00,,18354.00,Chequing,Bayfront Hotel,,2730,,,-18354.00,,,2024-09-21,2024-09-21,Income,Income,A4010
+2760,2024-09-22,Automobile Expense:Van Repairs & Maintenance,Van service,,682.67,682.67,,Chequing,,Midas,,2760,,682.67,,,2024-09-22,2024-09-22,Expense,Expense,A6130
+3069,2024-09-22,Meals and Entertainment,Team lunch,,794.01,794.01,,Chequing,,Tim Hortons,,3069,,794.01,,,2024-09-22,2024-09-22,Expense,Expense,A6200
+2727,2024-09-23,Sales - Service,Service call 2024-09-8,,-1591.00,,1591.00,Chequing,Oakville Medical Arts,,2727,,,-1591.00,,,2024-09-23,2024-09-23,Income,Income,A4000
+2735,2024-09-23,Materials & Supplies,"Pipe, fittings and parts",,1736.00,1736.00,,Chequing,,Emco Supply,,2735,,1736.00,,,2024-09-23,2024-09-23,Expense,Cost of Goods Sold,A5000
+2757,2024-09-24,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,170.17,170.17,,Chequing,,Esso,,2757,,170.17,,,2024-09-24,2024-09-24,Expense,Expense,A6120
+3035,2024-09-24,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,530.01,530.01,,Chequing,,Petro-Canada,,3035,,530.01,,,2024-09-24,2024-09-24,Expense,Expense,A6110
+2999,2024-09-28,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,2999,,10000.00,,,2024-09-28,2024-09-28,Expense,Expense,A6010
+3107,2024-09-28,Chequing,Deposits - month,,90497.25,90497.25,,Chequing,,,,3107,,90497.25,,,2024-09-28,2024-09-28,Asset,Bank,A1000
+3108,2024-09-28,Chequing,Payments - month,,-42924.70,,42924.70,Chequing,,,,3108,,-42924.70,,,2024-09-28,2024-09-28,Asset,Bank,A1000
+3109,2024-09-30,HST Payable,HST remittance,,10040.00,10040.00,,Chequing,,Receiver General,,3109,,10040.00,,,2024-09-30,2024-09-30,Asset,Other Current Liability,A2100
+2761,2024-10-02,Sales - Service,Service call 2024-10-1,,-2690.00,,2690.00,Chequing,Halton Property Group,,2761,,,-2690.00,,,2024-10-02,2024-10-02,Income,Income,A4000
+2772,2024-10-03,Materials & Supplies,"Pipe, fittings and parts",,650.00,650.00,,Chequing,,Wolseley Canada,,2772,,650.00,,,2024-10-03,2024-10-03,Expense,Cost of Goods Sold,A5000
+2795,2024-10-03,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,181.75,181.75,,Chequing,,Petro-Canada,,2795,,181.75,,,2024-10-03,2024-10-03,Expense,Expense,A6120
+3015,2024-10-03,Automobile Expense:Vehicle - Owner,Lease Oct - Lexus RX,,1150.00,1150.00,,Chequing,,Lexus Financial,,3015,,1150.00,,,2024-10-03,2024-10-03,Expense,Expense,A6110
+2897,2024-10-04,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2897,,2615.38,,,2024-10-04,2024-10-04,Expense,Expense,A6000
+2923,2024-10-04,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2923,,2423.08,,,2024-10-04,2024-10-04,Expense,Expense,A6000
+2949,2024-10-04,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2949,,2192.31,,,2024-10-04,2024-10-04,Expense,Expense,A6000
+2975,2024-10-04,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2975,,3269.23,,,2024-10-04,2024-10-04,Expense,Expense,A6000
+2762,2024-10-05,Sales - Service,Service call 2024-10-2,,-4854.00,,4854.00,Chequing,Maple Ridge Condos,,2762,,,-4854.00,,,2024-10-05,2024-10-05,Income,Income,A4000
+2769,2024-10-05,Sales - Installations,Furnace / boiler installation,,-11683.00,,11683.00,Chequing,Halton Property Group,,2769,,,-11683.00,,,2024-10-05,2024-10-05,Income,Income,A4010
+3070,2024-10-06,Meals and Entertainment,Team lunch,,883.36,883.36,,Chequing,,Earls Kitchen,,3070,,883.36,,,2024-10-06,2024-10-06,Expense,Expense,A6200
+2763,2024-10-08,Sales - Service,Service call 2024-10-3,,-6823.00,,6823.00,Chequing,J. Alvarez,,2763,,,-6823.00,,,2024-10-08,2024-10-08,Income,Income,A4000
+2773,2024-10-08,Materials & Supplies,"Pipe, fittings and parts",,2060.00,2060.00,,Chequing,,Emco Supply,,2773,,2060.00,,,2024-10-08,2024-10-08,Expense,Cost of Goods Sold,A5000
+2779,2024-10-09,Rent,Shop rent,,4500.00,4500.00,,Chequing,,Brightwater Holdings Inc.,,2779,,4500.00,,,2024-10-09,2024-10-09,Expense,Expense,A6500
+2784,2024-10-09,Advertising & Promotion,Search ads,,1549.00,1549.00,,Chequing,,Google Ads,,2784,,1549.00,,,2024-10-09,2024-10-09,Expense,Expense,A6600
+2785,2024-10-09,Office Supplies,Office supplies,,111.51,111.51,,Chequing,,Staples,,2785,,111.51,,,2024-10-09,2024-10-09,Expense,Expense,A6700
+2788,2024-10-09,Bank Charges,Monthly fee,,29.95,29.95,,Chequing,,RBC Royal Bank,,2788,,29.95,,,2024-10-09,2024-10-09,Expense,Expense,A6800
+2792,2024-10-09,Legal & Professional Fees,Monthly bookkeeping,,450.00,450.00,,Chequing,,Ledgerline Bookkeeping,,2792,,450.00,,,2024-10-09,2024-10-09,Expense,Expense,A6400
+2793,2024-10-09,Insurance,Life insurance premium - D. Brightwater,,750.00,750.00,,Chequing,,Sun Life,,2793,,750.00,,,2024-10-09,2024-10-09,Expense,Expense,A6300
+2794,2024-10-09,Dues & Memberships,Membership dues,,1250.00,1250.00,,Chequing,,Glen Abbey Golf Club,,2794,,1250.00,,,2024-10-09,2024-10-09,Expense,Expense,A6900
+2777,2024-10-10,Subcontractors,Subcontract work,,3095.00,3095.00,,Chequing,,Delta Electrical,,2777,,3095.00,,,2024-10-10,2024-10-10,Expense,Cost of Goods Sold,A5100
+2780,2024-10-10,Utilities,Gas,,286.18,286.18,,Chequing,,Enbridge Gas,,2780,,286.18,,,2024-10-10,2024-10-10,Expense,Expense,A6510
+2781,2024-10-10,Utilities,Hydro,,306.21,306.21,,Chequing,,Toronto Hydro,,2781,,306.21,,,2024-10-10,2024-10-10,Expense,Expense,A6510
+2786,2024-10-10,Software & Subscriptions,QuickBooks Online,,90.00,90.00,,Chequing,,Intuit QuickBooks,,2786,,90.00,,,2024-10-10,2024-10-10,Expense,Expense,A6710
+2787,2024-10-10,Software & Subscriptions,Field service software,,249.00,249.00,,Chequing,,Jobber,,2787,,249.00,,,2024-10-10,2024-10-10,Expense,Expense,A6710
+2789,2024-10-10,Interest Expense,Loan interest,,530.00,530.00,,Chequing,,RBC Royal Bank,,2789,,530.00,,,2024-10-10,2024-10-10,Expense,Expense,A6810
+2796,2024-10-10,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,221.95,221.95,,Chequing,,Esso,,2796,,221.95,,,2024-10-10,2024-10-10,Expense,Expense,A6120
+2764,2024-10-11,Sales - Service,Service call 2024-10-4,,-3600.00,,3600.00,Chequing,Lakeview Dental Centre,,2764,,,-3600.00,,,2024-10-11,2024-10-11,Income,Income,A4000
+2782,2024-10-11,Telephone & Internet,Phones,,322.64,322.64,,Chequing,,Bell Canada,,2782,,322.64,,,2024-10-11,2024-10-11,Expense,Expense,A6520
+2783,2024-10-11,Telephone & Internet,Internet,,129.95,129.95,,Chequing,,Rogers,,2783,,129.95,,,2024-10-11,2024-10-11,Expense,Expense,A6520
+2790,2024-10-11,Payroll Taxes - CPP/EI,CPP/EI remittance,,3191.52,3191.52,,Chequing,,Receiver General,,2790,,3191.52,,,2024-10-11,2024-10-11,Expense,Expense,A6020
+3036,2024-10-11,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,528.56,528.56,,Chequing,,Petro-Canada,,3036,,528.56,,,2024-10-11,2024-10-11,Expense,Expense,A6110
+2770,2024-10-13,Sales - Installations,Furnace / boiler installation,,-16995.00,,16995.00,Chequing,Maple Ridge Condos,,2770,,,-16995.00,,,2024-10-13,2024-10-13,Income,Income,A4010
+2774,2024-10-13,Materials & Supplies,"Pipe, fittings and parts",,4336.00,4336.00,,Chequing,,The Home Depot,,2774,,4336.00,,,2024-10-13,2024-10-13,Expense,Cost of Goods Sold,A5000
+2791,2024-10-13,Employee Benefits,Group benefits,,1120.00,1120.00,,Chequing,,Manulife,,2791,,1120.00,,,2024-10-13,2024-10-13,Expense,Expense,A6040
+2765,2024-10-14,Sales - Service,Service call 2024-10-5,,-2140.00,,2140.00,Chequing,Northgate Schools,,2765,,,-2140.00,,,2024-10-14,2024-10-14,Income,Income,A4000
+3071,2024-10-14,Meals and Entertainment,Client dinner,,594.55,594.55,,Chequing,,Café Novo,,3071,,594.55,,,2024-10-14,2024-10-14,Expense,Expense,A6200
+3000,2024-10-15,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,3000,,10000.00,,,2024-10-15,2024-10-15,Expense,Expense,A6010
+2766,2024-10-17,Sales - Service,Service call 2024-10-6,,-5623.00,,5623.00,Chequing,P. Nguyen,,2766,,,-5623.00,,,2024-10-17,2024-10-17,Income,Income,A4000
+2797,2024-10-17,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,168.09,168.09,,Chequing,,Petro-Canada,,2797,,168.09,,,2024-10-17,2024-10-17,Expense,Expense,A6120
+2775,2024-10-18,Materials & Supplies,"Pipe, fittings and parts",,3164.00,3164.00,,Chequing,,Wolseley Canada,,2775,,3164.00,,,2024-10-18,2024-10-18,Expense,Cost of Goods Sold,A5000
+2898,2024-10-18,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2898,,2615.38,,,2024-10-18,2024-10-18,Expense,Expense,A6000
+2924,2024-10-18,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2924,,2423.08,,,2024-10-18,2024-10-18,Expense,Expense,A6000
+2950,2024-10-18,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2950,,2192.31,,,2024-10-18,2024-10-18,Expense,Expense,A6000
+2976,2024-10-18,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2976,,3269.23,,,2024-10-18,2024-10-18,Expense,Expense,A6000
+2778,2024-10-19,Subcontractors,Subcontract work,,6934.00,6934.00,,Chequing,,Precision Ductwork,,2778,,6934.00,,,2024-10-19,2024-10-19,Expense,Cost of Goods Sold,A5100
+2767,2024-10-20,Sales - Service,Service call 2024-10-7,,-8977.00,,8977.00,Chequing,Oakville Medical Arts,,2767,,,-8977.00,,,2024-10-20,2024-10-20,Income,Income,A4000
+2771,2024-10-21,Sales - Installations,Furnace / boiler installation,,-27991.00,,27991.00,Chequing,J. Alvarez,,2771,,,-27991.00,,,2024-10-21,2024-10-21,Income,Income,A4010
+3072,2024-10-22,Meals and Entertainment,Team lunch,,754.99,754.99,,Chequing,,Jack Astor's,,3072,,754.99,,,2024-10-22,2024-10-22,Expense,Expense,A6200
+2768,2024-10-23,Sales - Service,Service call 2024-10-8,,-7618.00,,7618.00,Chequing,Riverstone Homes,,2768,,,-7618.00,,,2024-10-23,2024-10-23,Income,Income,A4000
+2776,2024-10-23,Materials & Supplies,"Pipe, fittings and parts",,2921.00,2921.00,,Chequing,,Emco Supply,,2776,,2921.00,,,2024-10-23,2024-10-23,Expense,Cost of Goods Sold,A5000
+2798,2024-10-24,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,156.43,156.43,,Chequing,,Esso,,2798,,156.43,,,2024-10-24,2024-10-24,Expense,Expense,A6120
+3037,2024-10-24,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,593.05,593.05,,Chequing,,Petro-Canada,,3037,,593.05,,,2024-10-24,2024-10-24,Expense,Expense,A6110
+3001,2024-10-28,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,3001,,10000.00,,,2024-10-28,2024-10-28,Expense,Expense,A6010
+3110,2024-10-28,Chequing,Deposits - month,,90497.25,90497.25,,Chequing,,,,3110,,90497.25,,,2024-10-28,2024-10-28,Asset,Bank,A1000
+3111,2024-10-28,Chequing,Payments - month,,-42924.70,,42924.70,Chequing,,,,3111,,-42924.70,,,2024-10-28,2024-10-28,Asset,Bank,A1000
+2899,2024-11-01,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2899,,2615.38,,,2024-11-01,2024-11-01,Expense,Expense,A6000
+2925,2024-11-01,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2925,,2423.08,,,2024-11-01,2024-11-01,Expense,Expense,A6000
+2951,2024-11-01,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2951,,2192.31,,,2024-11-01,2024-11-01,Expense,Expense,A6000
+2977,2024-11-01,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2977,,3269.23,,,2024-11-01,2024-11-01,Expense,Expense,A6000
+2799,2024-11-02,Sales - Service,Service call 2024-11-1,,-6364.00,,6364.00,Chequing,Maple Ridge Condos,,2799,,,-6364.00,,,2024-11-02,2024-11-02,Income,Income,A4000
+2810,2024-11-03,Materials & Supplies,"Pipe, fittings and parts",,4154.00,4154.00,,Chequing,,Wolseley Canada,,2810,,4154.00,,,2024-11-03,2024-11-03,Expense,Cost of Goods Sold,A5000
+2833,2024-11-03,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,256.43,256.43,,Chequing,,Petro-Canada,,2833,,256.43,,,2024-11-03,2024-11-03,Expense,Expense,A6120
+3016,2024-11-03,Automobile Expense:Vehicle - Owner,Lease Nov - Lexus RX,,1150.00,1150.00,,Chequing,,Lexus Financial,,3016,,1150.00,,,2024-11-03,2024-11-03,Expense,Expense,A6110
+2800,2024-11-05,Sales - Service,Service call 2024-11-2,,-8050.00,,8050.00,Chequing,J. Alvarez,,2800,,,-8050.00,,,2024-11-05,2024-11-05,Income,Income,A4000
+2807,2024-11-05,Sales - Installations,Furnace / boiler installation,,-8273.00,,8273.00,Chequing,Lakeview Dental Centre,,2807,,,-8273.00,,,2024-11-05,2024-11-05,Income,Income,A4010
+3073,2024-11-06,Meals and Entertainment,Team lunch,,279.47,279.47,,Chequing,,The Keg,,3073,,279.47,,,2024-11-06,2024-11-06,Expense,Expense,A6200
+2801,2024-11-08,Sales - Service,Service call 2024-11-3,,-1921.00,,1921.00,Chequing,Lakeview Dental Centre,,2801,,,-1921.00,,,2024-11-08,2024-11-08,Income,Income,A4000
+2811,2024-11-08,Materials & Supplies,"Pipe, fittings and parts",,1684.00,1684.00,,Chequing,,Emco Supply,,2811,,1684.00,,,2024-11-08,2024-11-08,Expense,Cost of Goods Sold,A5000
+2817,2024-11-09,Rent,Shop rent,,4500.00,4500.00,,Chequing,,Brightwater Holdings Inc.,,2817,,4500.00,,,2024-11-09,2024-11-09,Expense,Expense,A6500
+2822,2024-11-09,Advertising & Promotion,Search ads,,1403.11,1403.11,,Chequing,,Google Ads,,2822,,1403.11,,,2024-11-09,2024-11-09,Expense,Expense,A6600
+2823,2024-11-09,Office Supplies,Office supplies,,229.73,229.73,,Chequing,,Staples,,2823,,229.73,,,2024-11-09,2024-11-09,Expense,Expense,A6700
+2826,2024-11-09,Bank Charges,Monthly fee,,29.95,29.95,,Chequing,,RBC Royal Bank,,2826,,29.95,,,2024-11-09,2024-11-09,Expense,Expense,A6800
+2830,2024-11-09,Legal & Professional Fees,Monthly bookkeeping,,450.00,450.00,,Chequing,,Ledgerline Bookkeeping,,2830,,450.00,,,2024-11-09,2024-11-09,Expense,Expense,A6400
+2831,2024-11-09,Insurance,Life insurance premium - D. Brightwater,,750.00,750.00,,Chequing,,Sun Life,,2831,,750.00,,,2024-11-09,2024-11-09,Expense,Expense,A6300
+2832,2024-11-09,Dues & Memberships,Membership dues,,1250.00,1250.00,,Chequing,,Glen Abbey Golf Club,,2832,,1250.00,,,2024-11-09,2024-11-09,Expense,Expense,A6900
+2815,2024-11-10,Subcontractors,Subcontract work,,2957.00,2957.00,,Chequing,,Delta Electrical,,2815,,2957.00,,,2024-11-10,2024-11-10,Expense,Cost of Goods Sold,A5100
+2818,2024-11-10,Utilities,Gas,,382.16,382.16,,Chequing,,Enbridge Gas,,2818,,382.16,,,2024-11-10,2024-11-10,Expense,Expense,A6510
+2819,2024-11-10,Utilities,Hydro,,242.00,242.00,,Chequing,,Toronto Hydro,,2819,,242.00,,,2024-11-10,2024-11-10,Expense,Expense,A6510
+2824,2024-11-10,Software & Subscriptions,QuickBooks Online,,90.00,90.00,,Chequing,,Intuit QuickBooks,,2824,,90.00,,,2024-11-10,2024-11-10,Expense,Expense,A6710
+2825,2024-11-10,Software & Subscriptions,Field service software,,249.00,249.00,,Chequing,,Jobber,,2825,,249.00,,,2024-11-10,2024-11-10,Expense,Expense,A6710
+2827,2024-11-10,Interest Expense,Loan interest,,522.00,522.00,,Chequing,,RBC Royal Bank,,2827,,522.00,,,2024-11-10,2024-11-10,Expense,Expense,A6810
+2834,2024-11-10,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,175.22,175.22,,Chequing,,Esso,,2834,,175.22,,,2024-11-10,2024-11-10,Expense,Expense,A6120
+2802,2024-11-11,Sales - Service,Service call 2024-11-4,,-3575.00,,3575.00,Chequing,Northgate Schools,,2802,,,-3575.00,,,2024-11-11,2024-11-11,Income,Income,A4000
+2820,2024-11-11,Telephone & Internet,Phones,,318.92,318.92,,Chequing,,Bell Canada,,2820,,318.92,,,2024-11-11,2024-11-11,Expense,Expense,A6520
+2821,2024-11-11,Telephone & Internet,Internet,,129.95,129.95,,Chequing,,Rogers,,2821,,129.95,,,2024-11-11,2024-11-11,Expense,Expense,A6520
+2828,2024-11-11,Payroll Taxes - CPP/EI,CPP/EI remittance,,3132.92,3132.92,,Chequing,,Receiver General,,2828,,3132.92,,,2024-11-11,2024-11-11,Expense,Expense,A6020
+3038,2024-11-11,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,608.01,608.01,,Chequing,,Petro-Canada,,3038,,608.01,,,2024-11-11,2024-11-11,Expense,Expense,A6110
+2808,2024-11-13,Sales - Installations,Furnace / boiler installation,,-8898.00,,8898.00,Chequing,Northgate Schools,,2808,,,-8898.00,,,2024-11-13,2024-11-13,Income,Income,A4010
+2812,2024-11-13,Materials & Supplies,"Pipe, fittings and parts",,2710.00,2710.00,,Chequing,,The Home Depot,,2812,,2710.00,,,2024-11-13,2024-11-13,Expense,Cost of Goods Sold,A5000
+2829,2024-11-13,Employee Benefits,Group benefits,,1120.00,1120.00,,Chequing,,Manulife,,2829,,1120.00,,,2024-11-13,2024-11-13,Expense,Expense,A6040
+2803,2024-11-14,Sales - Service,Service call 2024-11-5,,-1349.00,,1349.00,Chequing,P. Nguyen,,2803,,,-1349.00,,,2024-11-14,2024-11-14,Income,Income,A4000
+3074,2024-11-14,Meals and Entertainment,Team lunch,,523.89,523.89,,Chequing,,Tim Hortons,,3074,,523.89,,,2024-11-14,2024-11-14,Expense,Expense,A6200
+2900,2024-11-15,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2900,,2615.38,,,2024-11-15,2024-11-15,Expense,Expense,A6000
+2926,2024-11-15,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2926,,2423.08,,,2024-11-15,2024-11-15,Expense,Expense,A6000
+2952,2024-11-15,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2952,,2192.31,,,2024-11-15,2024-11-15,Expense,Expense,A6000
+2978,2024-11-15,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2978,,3269.23,,,2024-11-15,2024-11-15,Expense,Expense,A6000
+3002,2024-11-15,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,3002,,10000.00,,,2024-11-15,2024-11-15,Expense,Expense,A6010
+2804,2024-11-17,Sales - Service,Service call 2024-11-6,,-7415.00,,7415.00,Chequing,Oakville Medical Arts,,2804,,,-7415.00,,,2024-11-17,2024-11-17,Income,Income,A4000
+2835,2024-11-17,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,198.92,198.92,,Chequing,,Petro-Canada,,2835,,198.92,,,2024-11-17,2024-11-17,Expense,Expense,A6120
+2813,2024-11-18,Materials & Supplies,"Pipe, fittings and parts",,5363.00,5363.00,,Chequing,,Wolseley Canada,,2813,,5363.00,,,2024-11-18,2024-11-18,Expense,Cost of Goods Sold,A5000
+2816,2024-11-19,Subcontractors,Subcontract work,,3637.00,3637.00,,Chequing,,Precision Ductwork,,2816,,3637.00,,,2024-11-19,2024-11-19,Expense,Cost of Goods Sold,A5100
+2805,2024-11-20,Sales - Service,Service call 2024-11-7,,-4331.00,,4331.00,Chequing,Riverstone Homes,,2805,,,-4331.00,,,2024-11-20,2024-11-20,Income,Income,A4000
+3081,2024-11-20,Donations,Donation,,1000.00,1000.00,,Chequing,,SickKids Foundation,,3081,,1000.00,,,2024-11-20,2024-11-20,Expense,Expense,A6920
+2809,2024-11-21,Sales - Installations,Furnace / boiler installation,,-9173.00,,9173.00,Chequing,P. Nguyen,,2809,,,-9173.00,,,2024-11-21,2024-11-21,Income,Income,A4010
+3075,2024-11-22,Meals and Entertainment,Client dinner,,836.63,836.63,,Chequing,,Earls Kitchen,,3075,,836.63,,,2024-11-22,2024-11-22,Expense,Expense,A6200
+2806,2024-11-23,Sales - Service,Service call 2024-11-8,,-6854.00,,6854.00,Chequing,S. Kowalski,,2806,,,-6854.00,,,2024-11-23,2024-11-23,Income,Income,A4000
+2814,2024-11-23,Materials & Supplies,"Pipe, fittings and parts",,3227.00,3227.00,,Chequing,,Emco Supply,,2814,,3227.00,,,2024-11-23,2024-11-23,Expense,Cost of Goods Sold,A5000
+2836,2024-11-24,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,249.49,249.49,,Chequing,,Esso,,2836,,249.49,,,2024-11-24,2024-11-24,Expense,Expense,A6120
+3039,2024-11-24,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,609.56,609.56,,Chequing,,Petro-Canada,,3039,,609.56,,,2024-11-24,2024-11-24,Expense,Expense,A6110
+3003,2024-11-28,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,3003,,10000.00,,,2024-11-28,2024-11-28,Expense,Expense,A6010
+3112,2024-11-28,Chequing,Deposits - month,,90497.25,90497.25,,Chequing,,,,3112,,90497.25,,,2024-11-28,2024-11-28,Asset,Bank,A1000
+3113,2024-11-28,Chequing,Payments - month,,-42924.70,,42924.70,Chequing,,,,3113,,-42924.70,,,2024-11-28,2024-11-28,Asset,Bank,A1000
+2901,2024-11-29,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2901,,2615.38,,,2024-11-29,2024-11-29,Expense,Expense,A6000
+2927,2024-11-29,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2927,,2423.08,,,2024-11-29,2024-11-29,Expense,Expense,A6000
+2953,2024-11-29,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2953,,2192.31,,,2024-11-29,2024-11-29,Expense,Expense,A6000
+2979,2024-11-29,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2979,,3269.23,,,2024-11-29,2024-11-29,Expense,Expense,A6000
+2837,2024-12-02,Sales - Service,Service call 2024-12-1,,-2679.00,,2679.00,Chequing,J. Alvarez,,2837,,,-2679.00,,,2024-12-02,2024-12-02,Income,Income,A4000
+2848,2024-12-03,Materials & Supplies,"Pipe, fittings and parts",,1120.00,1120.00,,Chequing,,Wolseley Canada,,2848,,1120.00,,,2024-12-03,2024-12-03,Expense,Cost of Goods Sold,A5000
+2871,2024-12-03,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,141.44,141.44,,Chequing,,Petro-Canada,,2871,,141.44,,,2024-12-03,2024-12-03,Expense,Expense,A6120
+3017,2024-12-03,Automobile Expense:Vehicle - Owner,Lease Dec - Lexus RX,,1150.00,1150.00,,Chequing,,Lexus Financial,,3017,,1150.00,,,2024-12-03,2024-12-03,Expense,Expense,A6110
+2838,2024-12-05,Sales - Service,Service call 2024-12-2,,-4822.00,,4822.00,Chequing,Lakeview Dental Centre,,2838,,,-4822.00,,,2024-12-05,2024-12-05,Income,Income,A4000
+2845,2024-12-05,Sales - Installations,Furnace / boiler installation,,-14748.00,,14748.00,Chequing,Oakville Medical Arts,,2845,,,-14748.00,,,2024-12-05,2024-12-05,Income,Income,A4010
+3076,2024-12-06,Meals and Entertainment,Team lunch,,849.82,849.82,,Chequing,,Café Novo,,3076,,849.82,,,2024-12-06,2024-12-06,Expense,Expense,A6200
+2839,2024-12-08,Sales - Service,Service call 2024-12-3,,-7230.00,,7230.00,Chequing,Northgate Schools,,2839,,,-7230.00,,,2024-12-08,2024-12-08,Income,Income,A4000
+2849,2024-12-08,Materials & Supplies,"Pipe, fittings and parts",,3206.00,3206.00,,Chequing,,Emco Supply,,2849,,3206.00,,,2024-12-08,2024-12-08,Expense,Cost of Goods Sold,A5000
+2855,2024-12-09,Rent,Shop rent,,4500.00,4500.00,,Chequing,,Brightwater Holdings Inc.,,2855,,4500.00,,,2024-12-09,2024-12-09,Expense,Expense,A6500
+2860,2024-12-09,Advertising & Promotion,Search ads,,1088.21,1088.21,,Chequing,,Google Ads,,2860,,1088.21,,,2024-12-09,2024-12-09,Expense,Expense,A6600
+2861,2024-12-09,Office Supplies,Office supplies,,194.45,194.45,,Chequing,,Staples,,2861,,194.45,,,2024-12-09,2024-12-09,Expense,Expense,A6700
+2864,2024-12-09,Bank Charges,Monthly fee,,29.95,29.95,,Chequing,,RBC Royal Bank,,2864,,29.95,,,2024-12-09,2024-12-09,Expense,Expense,A6800
+2868,2024-12-09,Legal & Professional Fees,Monthly bookkeeping,,450.00,450.00,,Chequing,,Ledgerline Bookkeeping,,2868,,450.00,,,2024-12-09,2024-12-09,Expense,Expense,A6400
+2869,2024-12-09,Insurance,Life insurance premium - D. Brightwater,,750.00,750.00,,Chequing,,Sun Life,,2869,,750.00,,,2024-12-09,2024-12-09,Expense,Expense,A6300
+2870,2024-12-09,Dues & Memberships,Membership dues,,1250.00,1250.00,,Chequing,,Glen Abbey Golf Club,,2870,,1250.00,,,2024-12-09,2024-12-09,Expense,Expense,A6900
+2853,2024-12-10,Subcontractors,Subcontract work,,7077.00,7077.00,,Chequing,,Delta Electrical,,2853,,7077.00,,,2024-12-10,2024-12-10,Expense,Cost of Goods Sold,A5100
+2856,2024-12-10,Utilities,Gas,,301.89,301.89,,Chequing,,Enbridge Gas,,2856,,301.89,,,2024-12-10,2024-12-10,Expense,Expense,A6510
+2857,2024-12-10,Utilities,Hydro,,289.13,289.13,,Chequing,,Toronto Hydro,,2857,,289.13,,,2024-12-10,2024-12-10,Expense,Expense,A6510
+2862,2024-12-10,Software & Subscriptions,QuickBooks Online,,90.00,90.00,,Chequing,,Intuit QuickBooks,,2862,,90.00,,,2024-12-10,2024-12-10,Expense,Expense,A6710
+2863,2024-12-10,Software & Subscriptions,Field service software,,249.00,249.00,,Chequing,,Jobber,,2863,,249.00,,,2024-12-10,2024-12-10,Expense,Expense,A6710
+2865,2024-12-10,Interest Expense,Loan interest,,514.00,514.00,,Chequing,,RBC Royal Bank,,2865,,514.00,,,2024-12-10,2024-12-10,Expense,Expense,A6810
+2872,2024-12-10,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,219.60,219.60,,Chequing,,Esso,,2872,,219.60,,,2024-12-10,2024-12-10,Expense,Expense,A6120
+2840,2024-12-11,Sales - Service,Service call 2024-12-4,,-1949.00,,1949.00,Chequing,P. Nguyen,,2840,,,-1949.00,,,2024-12-11,2024-12-11,Income,Income,A4000
+2858,2024-12-11,Telephone & Internet,Phones,,326.97,326.97,,Chequing,,Bell Canada,,2858,,326.97,,,2024-12-11,2024-12-11,Expense,Expense,A6520
+2859,2024-12-11,Telephone & Internet,Internet,,129.95,129.95,,Chequing,,Rogers,,2859,,129.95,,,2024-12-11,2024-12-11,Expense,Expense,A6520
+2866,2024-12-11,Payroll Taxes - CPP/EI,CPP/EI remittance,,3348.54,3348.54,,Chequing,,Receiver General,,2866,,3348.54,,,2024-12-11,2024-12-11,Expense,Expense,A6020
+3040,2024-12-11,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,526.54,526.54,,Chequing,,Petro-Canada,,3040,,526.54,,,2024-12-11,2024-12-11,Expense,Expense,A6110
+2846,2024-12-13,Sales - Installations,Furnace / boiler installation,,-13579.00,,13579.00,Chequing,Riverstone Homes,,2846,,,-13579.00,,,2024-12-13,2024-12-13,Income,Income,A4010
+2850,2024-12-13,Materials & Supplies,"Pipe, fittings and parts",,1166.00,1166.00,,Chequing,,The Home Depot,,2850,,1166.00,,,2024-12-13,2024-12-13,Expense,Cost of Goods Sold,A5000
+2867,2024-12-13,Employee Benefits,Group benefits,,1120.00,1120.00,,Chequing,,Manulife,,2867,,1120.00,,,2024-12-13,2024-12-13,Expense,Expense,A6040
+2902,2024-12-13,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2902,,2615.38,,,2024-12-13,2024-12-13,Expense,Expense,A6000
+2928,2024-12-13,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2928,,2423.08,,,2024-12-13,2024-12-13,Expense,Expense,A6000
+2954,2024-12-13,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2954,,2192.31,,,2024-12-13,2024-12-13,Expense,Expense,A6000
+2980,2024-12-13,Wages & Salaries,Biweekly pay,,3269.23,3269.23,,Chequing,,Payroll — E. Brightwater,,2980,,3269.23,,,2024-12-13,2024-12-13,Expense,Expense,A6000
+2841,2024-12-14,Sales - Service,Service call 2024-12-5,,-1466.00,,1466.00,Chequing,Oakville Medical Arts,,2841,,,-1466.00,,,2024-12-14,2024-12-14,Income,Income,A4000
+3077,2024-12-14,Meals and Entertainment,Team lunch,,936.85,936.85,,Chequing,,Jack Astor's,,3077,,936.85,,,2024-12-14,2024-12-14,Expense,Expense,A6200
+2875,2024-12-15,WSIB,Quarterly premium,,2100.00,2100.00,,Chequing,,WSIB,,2875,,2100.00,,,2024-12-15,2024-12-15,Expense,Expense,A6030
+3004,2024-12-15,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,3004,,10000.00,,,2024-12-15,2024-12-15,Expense,Expense,A6010
+2842,2024-12-17,Sales - Service,Service call 2024-12-6,,-5262.00,,5262.00,Chequing,Riverstone Homes,,2842,,,-5262.00,,,2024-12-17,2024-12-17,Income,Income,A4000
+2873,2024-12-17,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,140.82,140.82,,Chequing,,Petro-Canada,,2873,,140.82,,,2024-12-17,2024-12-17,Expense,Expense,A6120
+2851,2024-12-18,Materials & Supplies,"Pipe, fittings and parts",,5543.00,5543.00,,Chequing,,Wolseley Canada,,2851,,5543.00,,,2024-12-18,2024-12-18,Expense,Cost of Goods Sold,A5000
+2854,2024-12-19,Subcontractors,Subcontract work,,7322.00,7322.00,,Chequing,,Precision Ductwork,,2854,,7322.00,,,2024-12-19,2024-12-19,Expense,Cost of Goods Sold,A5100
+2843,2024-12-20,Sales - Service,Service call 2024-12-7,,-5647.00,,5647.00,Chequing,S. Kowalski,,2843,,,-5647.00,,,2024-12-20,2024-12-20,Income,Income,A4000
+2876,2024-12-20,Insurance,Business insurance - quarterly,,3000.00,3000.00,,Chequing,,Intact Insurance,,2876,,3000.00,,,2024-12-20,2024-12-20,Expense,Expense,A6300
+2847,2024-12-21,Sales - Installations,Furnace / boiler installation,,-28666.00,,28666.00,Chequing,S. Kowalski,,2847,,,-28666.00,,,2024-12-21,2024-12-21,Income,Income,A4010
+2877,2024-12-22,Automobile Expense:Van Repairs & Maintenance,Van service,,317.65,317.65,,Chequing,,Midas,,2877,,317.65,,,2024-12-22,2024-12-22,Expense,Expense,A6130
+3078,2024-12-22,Meals and Entertainment,Team lunch,,284.43,284.43,,Chequing,,The Keg,,3078,,284.43,,,2024-12-22,2024-12-22,Expense,Expense,A6200
+2844,2024-12-23,Sales - Service,Service call 2024-12-8,,-4626.00,,4626.00,Chequing,Bayfront Hotel,,2844,,,-4626.00,,,2024-12-23,2024-12-23,Income,Income,A4000
+2852,2024-12-23,Materials & Supplies,"Pipe, fittings and parts",,1190.00,1190.00,,Chequing,,Emco Supply,,2852,,1190.00,,,2024-12-23,2024-12-23,Expense,Cost of Goods Sold,A5000
+2874,2024-12-24,Automobile Expense:Fuel - Service Vans,Fuel - service vans,,145.42,145.42,,Chequing,,Esso,,2874,,145.42,,,2024-12-24,2024-12-24,Expense,Expense,A6120
+3041,2024-12-24,Automobile Expense:Vehicle - Owner,Fuel - Lexus RX,,586.39,586.39,,Chequing,,Petro-Canada,,3041,,586.39,,,2024-12-24,2024-12-24,Expense,Expense,A6110
+2903,2024-12-27,Wages & Salaries,Biweekly pay,,2615.38,2615.38,,Chequing,,Payroll — M. Chen,,2903,,2615.38,,,2024-12-27,2024-12-27,Expense,Expense,A6000
+2929,2024-12-27,Wages & Salaries,Biweekly pay,,2423.08,2423.08,,Chequing,,Payroll — J. Okafor,,2929,,2423.08,,,2024-12-27,2024-12-27,Expense,Expense,A6000
+2955,2024-12-27,Wages & Salaries,Biweekly pay,,2192.31,2192.31,,Chequing,,Payroll — R. Singh,,2955,,2192.31,,,2024-12-27,2024-12-27,Expense,Expense,A6000
+2981,2024-12-27,Wages & Salaries,Biweekly pay,,3269.25,3269.25,,Chequing,,Payroll — E. Brightwater,,2981,,3269.25,,,2024-12-27,2024-12-27,Expense,Expense,A6000
+3005,2024-12-28,Wages - Officers,Semi-monthly salary,,10000.00,10000.00,,Chequing,,Payroll — D. Brightwater,,3005,,10000.00,,,2024-12-28,2024-12-28,Expense,Expense,A6010
+3114,2024-12-28,Chequing,Deposits - month,,90497.25,90497.25,,Chequing,,,,3114,,90497.25,,,2024-12-28,2024-12-28,Asset,Bank,A1000
+3115,2024-12-28,Chequing,Payments - month,,-42924.70,,42924.70,Chequing,,,,3115,,-42924.70,,,2024-12-28,2024-12-28,Asset,Bank,A1000
+3116,2024-12-30,HST Payable,HST remittance,,10341.90,10341.90,,Chequing,,Receiver General,,3116,,10341.90,,,2024-12-30,2024-12-30,Asset,Other Current Liability,A2100
+3086,2024-12-31,Amortization Expense,Year-end amortization,,31000.00,31000.00,,Chequing,,,,3086,,31000.00,,,2024-12-31,2024-12-31,Expense,Expense,A7000
+3087,2024-12-31,Accumulated Amortization,Year-end amortization,,-31000.00,,31000.00,Chequing,,,,3087,,-31000.00,,,2024-12-31,2024-12-31,Asset,Fixed Asset,A1510
+3088,2024-12-31,Income Tax Expense,Current income taxes,,14200.00,14200.00,,Chequing,,,,3088,,14200.00,,,2024-12-31,2024-12-31,Expense,Other Expense,A7100

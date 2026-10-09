@@ -44,6 +44,7 @@ import { useBuilderState } from "@/components/cim-builder/CimSummaryCard";
 import { useAiGate } from "@/components/cim-builder/useAiGate";
 import { builderRequest, errorText, type BuilderState } from "@/components/cim-builder/api";
 import { useDdRun } from "@/components/cim-builder/useDdRun";
+import { useGlDdHeld } from "@/components/gl/GlGenerationNotice";
 import { CimFactsChanged, CimReviewPanel, attentionNoteGroups, notesDismissed } from "@/components/cim-builder/CimReviewPanel";
 import { HeldPrivateCard, heldPrivateKey } from "@/components/cim-builder/HeldPrivateCard";
 import { classifyGenerationWarnings, regenerateBuyerImpact, reviewingUpdate } from "@shared/cim-generation-warnings";
@@ -139,6 +140,8 @@ export function CimTab() {
   // The DD version is written in the background; its real outcome is
   // announced when this run's result arrives (useDdRun), never "ready" up front.
   const ddRun = useDdRun(dealId, { dd: data?.dd, fetchedAt: dataUpdatedAt, refetch });
+  // The DD version waits for "Add-backs in the books" (gl spec §6.9; the server refuses too).
+  const ddHeld = useGlDdHeld(dealId);
   // Held-back blind sections: clear their back-off and redo them now.
   const retryBlind = useMutation({
     mutationFn: () => builderRequest("POST", `/api/deals/${dealId}/cim-blind/refresh`),
@@ -470,7 +473,7 @@ export function CimTab() {
                     </>
                   )}
                   onPreview={() => openBuilder(PREVIEW_PARAM[DD_ACCESS_LEVEL])}
-                  action={{
+                  action={ddHeld ? undefined : {
                     label: data.dd.generated ? "Refresh" : "Generate",
                     busy: ddRun.busy,
                     onClick: ddRun.start,

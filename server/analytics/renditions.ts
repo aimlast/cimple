@@ -285,8 +285,8 @@ export function _resetRenditionCache(): void {
  * publishes. Everything else is identical: buildBuyerCim, every blind
  * guard (fail-closed), the published versions, the kept copy.
  * opts.accessId: the buyer link a per-buyer rendition is for (null = the
- * level-wide one; INTEGRATION §2.2 — extras for that buyer arrive with
- * buyerCimExtras when gl/dd merge).
+ * level-wide one; INTEGRATION §2.2 — that buyer's extras come through
+ * buyerCimExtras: gl's evidence now, dd's figures at its merge).
  */
 export async function servedCimFor(
   deal: import("@shared/schema").Deal,
@@ -310,7 +310,11 @@ export async function servedCimFor(
   ]);
   if (rows.missing) return null;
   const servedDeal = keptCodename ? { ...deal, blindCodename: keptCodename } : deal;
-  const cim = buildBuyerCim({ deal: servedDeal, accessLevel, sections: rows.sections, overrides: rows.overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published });
+  const { buyerCimExtras } = await import("../cim/buyer-extras");
+  // One extras helper for every buyer path (INTEGRATION §2.2): a per-buyer rendition gets that
+  // buyer's extras (gl: the data room's per-buyer deny tightening); level-wide (null) gets none of that.
+  const extras = await buyerCimExtras(servedDeal, accessLevel, opts.accessId ?? null);
+  const cim = buildBuyerCim({ deal: servedDeal, accessLevel, sections: rows.sections, overrides: rows.overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published, ...extras });
   if (cim.preparing || cim.sections.length === 0) return null;
   const design = await designPayload(deal, mode);
   return {

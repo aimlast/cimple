@@ -24,6 +24,7 @@ import {
   dealTeasers, buyerLinkEmailChecks,
   togetherSittings, togetherLines, togetherChunks, coverageMarks,
   vdrRooms, vdrFolders, vdrItems, vdrShares, vdrBuyerSettings, vdrRequests, vdrViews, vdrActivity, vdrPageText, vdrTeamMembers,
+  glLedgers, glTransactions, glTracing, glAddbackTraces, glTraceLinks,
 } from "@shared/schema";
 import { resolveDocumentPath } from "../documents/document-path";
 
@@ -85,6 +86,13 @@ export const DEAL_CHILD_TABLES = {
   vdr_activity: { table: vdrActivity, column: vdrActivity.dealId, mode: "delete" },
   vdr_page_text: { table: vdrPageText, column: vdrPageText.dealId, mode: "delete" },
   vdr_team_members: { table: vdrTeamMembers, column: vdrTeamMembers.dealId, mode: "delete" },
+  // Add-backs in the books (server/gl/*): the ledgers, their entries, the
+  // deal's tracing row, the traced add-backs and their links.
+  gl_ledgers: { table: glLedgers, column: glLedgers.dealId, mode: "delete" },
+  gl_transactions: { table: glTransactions, column: glTransactions.dealId, mode: "delete" },
+  gl_tracing: { table: glTracing, column: glTracing.dealId, mode: "delete" },
+  gl_addback_traces: { table: glAddbackTraces, column: glAddbackTraces.dealId, mode: "delete" },
+  gl_trace_links: { table: glTraceLinks, column: glTraceLinks.dealId, mode: "delete" },
   buyer_emails: { table: buyerEmails, column: buyerEmails.dealId, mode: "detach", field: "dealId" },
   buyer_users: { table: buyerUsers, column: buyerUsers.invitedByDeal, mode: "detach", field: "invitedByDeal" },
 } as const;

@@ -17,6 +17,7 @@ import { formatRequestLogLine, scrubSentryEvent } from "./log-redact";
 import { AI_LIMIT, applyInterviewRateLimits } from "./rate-limit-scope";
 import { applyBulkRateLimits } from "./security/bulk-limits";
 import { applyTeaserRateLimits } from "./routes/teaser";
+import { applyGlRateLimits } from "./routes/gl";
 
 // Error monitoring — activates only when SENTRY_DSN is set (free tier is
 // plenty for beta). Without it this is a no-op.
@@ -214,6 +215,12 @@ applyAnalyticsRateLimits(app);
 // ── vdr limiters ── the data room's buyer routes (per link), the broker's upload, emails and "Draft again" (server/vdr/rate-limits.ts).
 applyVdrRateLimits(app, aiLimiter);
 
+// ── gl limiters (Add-backs in the books) ──
+// Ledger uploads: 20 an hour per IP (broker and seller GL upload routes
+// together), checked before a byte is written; seller GL routes keyed by a
+// hash of the link. Defined in server/routes/gl.ts (applyGlRateLimits).
+applyGlRateLimits(app, aiLimiter);
+
 // Session type augmentation
 declare module "express-session" {
   interface SessionData {
@@ -305,6 +312,8 @@ app.use((req, res, next) => {
       import("./vdr/prepare").then((m) => m.startPrepareQueue()).catch((err) => console.error("[vdr] prepare queue failed to start:", err));
       // ── vdr: buyer descriptions waiting to be drafted (persisted queue; per-deal daily cap) ──
       import("./vdr/buyer-summary").then((m) => m.startSummaryQueue()).catch((err) => console.error("[vdr] description queue failed to start:", err));
+      // ── gl: ledger reads a restart cut off are queued again (twice at most) ──
+      import("./gl/ingest").then((m) => m.startLedgerReadRecovery()).catch((err) => console.error("[gl] ledger read recovery failed:", err));
       // Once per volume: files earlier deletes left behind (no row points at them) leave the volume.
       if (process.env.NODE_ENV === "production") {
         // First what deleted deals left (their rows made their files look in use), then files no row points at.

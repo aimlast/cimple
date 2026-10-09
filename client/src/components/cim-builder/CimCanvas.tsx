@@ -11,6 +11,8 @@
  * The brokerage pages (disclaimer, contact) appear where buyers see them.
  */
 import { Check, EyeOff, Loader2, Pencil, Plus, Sparkles, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import type { GlEvidencePayload } from "@shared/gl-evidence";
 import type { CimSection, CimSectionOverride } from "@shared/schema";
 import type { MediaAssetRef } from "@shared/cim-media";
 import { buildBuyerCim } from "@shared/cim-buyer-view";
@@ -198,8 +200,26 @@ function EditorSheetBody({ sections, branding, selectedId, onSelect, onAddAfter,
   );
 }
 
+/**
+ * gl: the add-back evidence this preview shows — what buyers see once it's
+ * published, else the live data marked "Not shown to buyers yet".
+ */
+function useGlPreviewEvidence(dealId: string, mode: "blind" | "normal" | "dd") {
+  return useQuery<{ payload: GlEvidencePayload | null }>({
+    queryKey: ["/api/deals", dealId, "gl", "evidence", mode, "preview"],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/gl/evidence?mode=${mode}&source=preview`, { credentials: "include" });
+      if (!r.ok) return { payload: null };
+      return r.json();
+    },
+    staleTime: 30_000,
+  }).data?.payload ?? null;
+}
+
 function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId, onSelect, media, design: designPayload, askingPrice }: Props) {
+  const glEvidence = useGlPreviewEvidence(deal.id, cimModeForAccessLevel(previewAs));
   const view = buildBuyerCim({
+    glEvidence,
     deal,
     accessLevel: previewAs,
     sections: sections as unknown as CimSection[],

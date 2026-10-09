@@ -57,6 +57,8 @@ export async function createUploadedDocument(i: {
   readSkipped?: boolean;
   /** Runs after the row exists and before the read starts (the data room places the document first). */
   beforeParse?: (doc: any) => Promise<void>;
+  /** A seller upload's link token (gl: only the owner's or the accountant's link uploads the general ledger). */
+  sellerToken?: string;
 }): Promise<UploadOutcome> {
   const { dealId, file, uploadedBy, body } = i;
   const drop = () => fs.unlink(file.path, () => {});
@@ -119,13 +121,26 @@ export async function createUploadedDocument(i: {
     uploadedBy === "broker" && (body.visibility === "broker_only" || body.visibility === "shared")
       ? body.visibility
       : uploadedBy === "broker" ? defaultVisibilityForKind(requestedKind as any) : "shared";
+  // A file uploaded for the general-ledger row is filed as a ledger (the
+  // ledger reader credits the row once it is read — gl spec D23).
+  const { isGlRequirement } = await import("./requirements");
+  const forGlRow = !!targetRequirement && isGlRequirement(targetRequirement);
+  if (forGlRow && uploadedBy === "seller") {
+    // Only the owner's or the accountant's link uploads the ledger (gl spec D24).
+    const invite = i.sellerToken ? await storage.getSellerInviteByToken(i.sellerToken) : undefined;
+    const { sellerLinkRights, OWNER_OR_ACCOUNTANT_MESSAGE } = await import("@shared/seller-link-rights");
+    if (!invite || !sellerLinkRights(invite, await storage.getDealMembers(dealId)).canTraceAddbacks) {
+      drop();
+      return { ok: false, status: 403, error: OWNER_OR_ACCOUNTANT_MESSAGE };
+    }
+  }
   const doc = await storage.createDocument({
     dealId,
     uploadedBy,
     name: displayName,
     originalName: displayName,
-    category,
-    subcategory: subcategory || null,
+    category: forGlRow ? "financials" : category,
+    subcategory: forGlRow ? "general_ledger" : subcategory || null,
     fileUrl: `/uploads/docs/${file.filename}`,
     fileSize: file.size ?? null,
     mimeType: file.mimetype || null,

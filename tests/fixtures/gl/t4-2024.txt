@@ -1,0 +1,8 @@
+Canada Revenue Agency    T4    Statement of Remuneration Paid    2024
+Employer's name: Brightwater Plumbing & Heating Ltd.
+Employee's name: BRIGHTWATER, DAN
+Box 14  Employment income         240,000.00
+Box 16  Employee's CPP contributions   4,034.10
+Box 18  Employee's EI premiums          1,049.12
+Box 22  Income tax deducted        78,412.55
+Sample document — fictional business

@@ -440,6 +440,12 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
   activeReads.add(doc.id);
   const stopHeartbeat = startReadHeartbeat(doc.id);
   try {
+    // A general ledger (INTEGRATION §2.17, top step 2) is read entry by entry
+    // by the ledger reader (server/gl/ingest.ts) — never by the extractor,
+    // never merged as facts; a PDF/Word ledger is stored with a note. $0.
+    const { ingestLedgerFromDocument } = await import("../gl/ingest");
+    const asLedger = await ingestLedgerFromDocument(doc);
+    if (asLedger) return asLedger;
     // The data room (INTEGRATION §2.17, top step 3): a picture is never read
     // (it has no text and Cimple never sends pictures to the AI), and a file
     // the broker chose to "Just store in the data room" isn't read until
@@ -517,6 +523,11 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
   } finally {
     stopHeartbeat();
     activeReads.delete(doc.id);
+    // INTEGRATION §2.17 finally step 1: an add-back's supporting document (a T4,
+    // an invoice) was read — the amounts the seller typed are looked for in it.
+    if (doc.subcategory === "addback_support") {
+      void import("../gl/support-docs").then((m) => m.onGlSupportDocumentRead(doc.id)).catch(() => undefined);
+    }
     // The data room (INTEGRATION §2.17, finally step 2): a new room document is
     // filed into its folder, unshared, when the room adds new documents.
     void import("../vdr/setup").then((m) => m.autoFileIfRoom(doc.id)).catch(() => undefined);

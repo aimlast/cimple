@@ -58,6 +58,11 @@ export async function restampSourceVisibility(dealId: string, documentId: string
   });
   // Merge rows are re-read against the re-stamped facts.
   await settleMergeRowsQuietly(dealId, "visibility");
+  // A general ledger or an add-back's supporting document (INTEGRATION §2.17
+  // step 1): who may see its entries changes with it — the checklist row and
+  // the seller's and buyers' views follow at once. Never throws.
+  const { onGlSourceAudienceChanged } = await import("../gl/ingest");
+  await onGlSourceAudienceChanged(documentId);
   // The data room (INTEGRATION §2.17 step 2): a source made broker-only leaves
   // the room at once; shared again, it is offered back, never re-shared.
   const { onSourceVisibilityChanged } = await import("../vdr/setup");

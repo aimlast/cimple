@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { GlAddbackChip } from "@/components/gl/GlTraceCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -46,6 +47,8 @@ const isCustomAddback = (ab: Addback) => ab.custom === true || ab.id.startsWith(
 interface NormalizationPanelProps {
   data: NormalizationData | null;
   onUpdate?: (updated: NormalizationData) => void;
+  /** The deal — each add-back then shows where it stands in the books (gl spec §3.5). */
+  dealId?: string;
 }
 
 /* ──────────────────────────────────────────────
@@ -86,7 +89,7 @@ function YoYTrend({ current, previous }: { current?: number; previous?: number }
 /* ──────────────────────────────────────────────
    Component
 ─────────────────────────────────────────────── */
-export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) {
+export function NormalizationPanel({ data, onUpdate, dealId }: NormalizationPanelProps) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -300,6 +303,7 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
                               {ab.approved ? "From your private notes" : "Private notes · include to use"}
                             </Badge>
                           )}
+                          {dealId && ab.approved && <GlAddbackChip dealId={dealId} label={ab.label} />}
                           <Badge className={`${catCfg.color} text-2xs shrink-0`}>
                             {catCfg.label}
                           </Badge>

@@ -83,14 +83,15 @@ check("J5 replay (Ridgeline clone): correction → the seller returns → the ma
   await ensureDealDocumentRequirements(deal.id, deal, session);
   const names = () => rows.map((r) => r.documentName);
   const manufacturingOnly = requirementsForIndustry("Manufacturing").filter((r) => !requirementsForIndustry(null).some((u) => u.documentName === r.documentName)).map((r) => r.documentName);
-  assert.equal(rows.length, requirementsForIndustry("Manufacturing").length);
+  // (+1: the general-ledger row every deal gets — gl spec D23; it isn't an industry row and never goes with one.)
+  assert.equal(rows.length, requirementsForIndustry("Manufacturing").length + 1);
   // The broker corrects the industry (PATCH → switchIndustryDocumentRequirements).
   deal.industry = "Restaurant / Food Service";
   deal.subIndustry = null as any;
   await switchIndustryDocumentRequirements(deal.id, deal.industry, deal.subIndustry);
   assert.ok(!manufacturingOnly.some((m) => names().includes(m)), "the untouched manufacturing rows are gone");
   const afterCorrection = rows.length;
-  assert.equal(afterCorrection, requirementsForIndustry("Restaurant / Food Service").length);
+  assert.equal(afterCorrection, requirementsForIndustry("Restaurant / Food Service").length + 1);
   // The seller returns: session start + a turn, both with the session's stored "Manufacturing".
   await ensureDealDocumentRequirements(deal.id, deal, session);
   await ensureDealDocumentRequirements(deal.id, deal, session);
@@ -104,7 +105,7 @@ check("J5 replay (Ridgeline clone): correction → the seller returns → the ma
   // An "Other" deal still gets what the interview identified.
   const other = { id: "D-other", industry: "Other", subIndustry: null };
   await ensureDealDocumentRequirements(other.id, other, { industry: "Healthcare", subIndustry: "Physiotherapy clinic" });
-  assert.equal(rows.filter((r) => r.dealId === "D-other").length, requirementsForIndustry("Healthcare").length);
+  assert.equal(rows.filter((r) => r.dealId === "D-other").length, requirementsForIndustry("Healthcare").length + 1);
 });
 
 // ── J2: the follow-up email window ──────────────────────────────────────

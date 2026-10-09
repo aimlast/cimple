@@ -556,16 +556,21 @@ export function sellerPortalRecipients(
 export async function notifySellerPortal(
   dealId: string,
   eventType: string,
-  opts: { title: string; body: string; path: string; businessName?: string; metadata?: Record<string, any> },
+  opts: {
+    title: string; body: string; path: string; businessName?: string; metadata?: Record<string, any>;
+    /** Only these recipients (deal_members ids or seller_invites ids) — the broker's ticks decide (gl "Ask the seller…"). */
+    onlyRecipients?: string[];
+  },
 ): Promise<NotifyResult & { optedOut?: number }> {
   try {
     const deal = await storage.getDeal(dealId);
     if (!deal) return NO_RECIPIENTS;
-    const targets = sellerPortalRecipients(
+    const routed = sellerPortalRecipients(
       eventType,
       await storage.getDealMembers(dealId),
       await storage.getSellerInvitesByDealId(dealId),
     );
+    const targets = opts.onlyRecipients ? routed.filter((t) => opts.onlyRecipients!.includes(t.recipientId)) : routed;
     if (targets.length === 0) {
       console.log(`[notify] ${eventType}: no seller with a link of their own on deal ${dealId}`);
       return NO_RECIPIENTS;

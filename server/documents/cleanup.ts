@@ -91,6 +91,17 @@ export async function deleteDocumentAndProvenance(docId: string): Promise<string
     console.warn("[documents] together clean-up failed:", e);
   }
 
+  // A general ledger (INTEGRATION §2.17 step 2): its entries and ledger row
+  // go under the GL lock, links keep their snapshot as "orphaned", the
+  // checklist row follows. Never throws.
+  if (doc.subcategory === "general_ledger") {
+    const { onLedgerDocumentDeleted } = await import("../gl/ingest");
+    await onLedgerDocumentDeleted(doc);
+  } else if (doc.subcategory === "addback_support") {
+    const { onGlSupportDocumentDeleted } = await import("../gl/support-docs");
+    await onGlSupportDocumentDeleted(doc);
+  }
+
   // The data room (INTEGRATION §2.17 step 3): its item becomes a tombstone;
   // the cleaned copy, prepared pages and page text go. Never throws.
   const { onSourceDeleted } = await import("../vdr/setup");

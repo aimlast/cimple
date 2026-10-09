@@ -65,6 +65,8 @@ import { registerTeaserRoutes } from "./routes/teaser.js";
 import { registerTogetherRoutes } from "./routes/together.js";
 import { registerDataRoomRoutes } from "./routes/data-room.js";
 import { registerDataRoomBuyerRoutes } from "./routes/data-room-buyer.js";
+import { registerGlRoutes } from "./routes/gl.js";
+import { registerGlDataRoomWiring } from "./routes/gl-data-room-wiring.js";
 import { registerReadingRoutes } from "./routes/reading.js";
 import { recordRendition } from "./analytics/renditions.js";
 import { viewRoomStamp } from "./analytics/reading-ingest.js";
@@ -349,6 +351,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     getDocumentsByFileUrl: (u) => storage.getDocumentsByFileUrl(u) as any,
     getDeal: (id) => storage.getDeal(id) as any,
     getSellerInviteByToken: (t) => storage.getSellerInviteByToken(t) as any,
+    // gl: a ledger / add-back support file opens only for the owner's or accountant's link.
+    getDealMembers: (id) => storage.getDealMembers(id) as any,
   }, (root) => expressStatic(root));
 
   // ── Broker + buyer authentication, buyer dashboard ────────────────────
@@ -2567,6 +2571,17 @@ Return JSON only.`,
       // seller link must get the seller allowlist, not the checklist editor.
       const isBrokerSession =
         !!req.session.brokerId && !!(await getOwnedDeal(req.params.dealId, req.session.brokerId));
+      // The general-ledger row (gl spec E21) updates itself when the ledger is
+      // read: a seller can't change it at all, the broker only its note,
+      // whether it's required and its place in the list.
+      const { isGlRequirement } = await import("./documents/requirements");
+      if (isGlRequirement(existing)) {
+        const glKeys = ["notes", "isRequired", "sortOrder"];
+        const touched = Object.keys(body).filter((k) => body[k] !== undefined && k !== "reason");
+        if (!isBrokerSession || touched.some((k) => !glKeys.includes(k))) {
+          return res.status(409).json({ error: "This item updates itself when the ledger is read." });
+        }
+      }
       const allowedKeys = isBrokerSession
         ? ["status", "uploadedFileId", "uploadedBy", "uploadedAt", "notes", "isRequired", "documentName", "category", "sortOrder"]
         : ["status", "uploadedFileId", "uploadedBy"];
@@ -3267,6 +3282,8 @@ Return JSON only.`,
         file: req.file,
         uploadedBy: viaSellerToken ? "seller" : "broker",
         body: req.body ?? {},
+        // gl: the general-ledger row checks the seller link's rights (owner / accountant only).
+        sellerToken: viaSellerToken ? ((req.headers["x-seller-token"] as string | undefined) || (typeof req.query.token === "string" ? req.query.token : "")) : undefined,
       });
       if (!out.ok) return res.status(out.status).json({ error: out.error });
       res.json({ ...out.doc, linkedRequirement: out.linkedRequirement, satisfiedTask: out.satisfiedTask });
@@ -3666,10 +3683,9 @@ Return JSON only.`,
       // Broker decisions marked for re-runs, EBITDA/SDE recomputed, and
       // everything computed from an edited table computed again (working
       // capital from the balance sheet; notes and insights from the add-backs).
-      const { applyBrokerAnalysisEdit } = await import("./financial/broker-edit");
-      const updates = applyBrokerAnalysisEdit(existing as Record<string, any>, req.body ?? {}, new Date());
-
-      const updated = await storage.updateFinancialAnalysis(req.params.id, updates);
+      // (Factored out unchanged — "Use what the ledger shows" saves through it too.)
+      const { saveBrokerAnalysisEdit } = await import("./gl/analysis-edit");
+      const updated = await saveBrokerAnalysisEdit(existing, req.body ?? {});
       res.json(updated);
     } catch (error: any) {
       console.error("Error updating financial analysis:", error);
@@ -4283,34 +4299,8 @@ Return JSON only.`,
 
   // One invite per seller email per deal — both the questionnaire invite and
   // the NDA flow share the same token. Validates through the insert schema.
-  const findOrCreateSellerInvite = async (
-    dealId: string,
-    sellerEmail: string,
-    sellerName?: string | null,
-  ) => {
-    const { insertSellerInviteSchema } = await import("@shared/schema");
-    const existing = await storage.getSellerInvitesByDealId(dealId);
-    const match = sellerEmail
-      ? existing.find(
-          (i) => (i.sellerEmail || "").toLowerCase() === sellerEmail.toLowerCase(),
-        )
-      : undefined;
-    if (match) {
-      // Keep the seller's name current on re-invite.
-      if (sellerName && sellerName !== match.sellerName) {
-        const updated = await storage.updateSellerInvite(match.id, { sellerName });
-        if (updated) return updated;
-      }
-      return match;
-    }
-    const validated = insertSellerInviteSchema.parse({
-      dealId,
-      token: crypto.randomUUID(),
-      sellerEmail: sellerEmail || null,
-      sellerName: sellerName || null,
-    });
-    return storage.createSellerInvite(validated);
-  };
+  // (Moved to server/deals/seller-invites.ts unchanged — "Add-backs in the books" uses it too.)
+  const { findOrCreateSellerInvite } = await import("./deals/seller-invites");
 
   const sellerInviteEmailHtml = (
     sellerName: string | null,
@@ -4717,6 +4707,10 @@ Return JSON only.`,
         todo,
         followUpQuestions,
         cimReview: { stage: reviewStage, canApprove: linkRights.canApproveCim },
+        // "Show us where a few costs are in your books" (gl) — only for a link that may do it (owner / accountant).
+        glTracing: linkRights.canTraceAddbacks
+          ? await (await import("./gl/progress")).sellerGlProgress(invite, await storage.getDealMembers(deal.id))
+          : null,
         pendingApprovals: pendingSeller.length,
         pendingApprovalItems: pendingSeller
           .filter((q) => !!q.sellerApprovalToken)
@@ -5066,7 +5060,10 @@ Return JSON only.`,
       // — [] after a failed read, so nothing unapproved is served). The kept
       // copy of an update under review is already what buyers were served
       // (published: null).
-      const buyerCim = buildBuyerCim({ deal: servedDeal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published });
+      // What gl (and dd, at its merge) add on top of the sections — one helper for every buyer path.
+      const { buyerCimExtras } = await import("./cim/buyer-extras");
+      const extras = await buyerCimExtras(servedDeal, access.accessLevel, access.id);
+      const buyerCim = buildBuyerCim({ deal: servedDeal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published, ...extras });
       if (buyerCim.preparing) {
         // No redacted version exists yet. Do NOT serve the real, un-redacted
         // sections — that would leak identity to the first viewer. Serve a
@@ -6413,6 +6410,9 @@ Return JSON only.`,
         if (err instanceof CimGenerationRunningError) {
           return res.status(409).json({ error: "CIM generation is already running for this deal", job: err.job });
         }
+        // The broker's hold on "Add-backs in the books" (gl spec §6.9).
+        const glGate = await import("./gl/gate");
+        if (glGate.isGlTraceRequiredError(err)) return res.status(409).json(glGate.glGateBody(err));
         throw err;
       }
     } catch (error: any) {
@@ -6462,6 +6462,17 @@ Return JSON only.`,
       // disputed figure would reach due-diligence buyers straight away.
       const openCritical = await blockingCriticalDiscrepancies(dealId);
       if (openCritical.length > 0) return discrepancyBlockResponse(res, openCritical, "generating the due-diligence CIM");
+      // The due-diligence CIM shows the ledger entries behind each add-back: it waits for
+      // "Add-backs in the books" (reviewed, or gone ahead without the ledger) — gl spec §6.9.
+      {
+        const glGate = await import("./gl/gate");
+        try {
+          await glGate.assertGlGate(deal, "dd");
+        } catch (err) {
+          if (glGate.isGlTraceRequiredError(err)) return res.status(409).json(glGate.glGateBody(err));
+          throw err;
+        }
+      }
 
       // DD context: shared documents only, CIM-safe facts, the computed
       // financial analysis (never the analyzer's raw JSON or its internal
@@ -7260,6 +7271,9 @@ Return JSON only.`,
         if (err instanceof CimGenerationRunningError) {
           return res.status(409).json({ error: "CIM generation is already running for this deal", job: err.job });
         }
+        // The broker's hold on "Add-backs in the books" (gl spec §6.9).
+        const glGate = await import("./gl/gate");
+        if (glGate.isGlTraceRequiredError(err)) return res.status(409).json(glGate.glGateBody(err));
         throw err;
       }
     } catch (error: any) {
@@ -7792,7 +7806,9 @@ Return JSON only.`,
           held = true;
         } else {
           chatBaseSections = chatRows.sections;
-          chatSections = buildBuyerCim({ deal: chatCodename ? { ...deal, blindCodename: chatCodename } : deal, accessLevel: access.accessLevel, sections: chatRows.sections, overrides: chatRows.overrides, media: chatMedia, askingPrice: listedAskingPrice(deal), published: chatRows.published }).sections;
+          const { buyerCimExtras } = await import("./cim/buyer-extras");
+          const chatExtras = await buyerCimExtras(deal, access.accessLevel, access.id);
+          chatSections = buildBuyerCim({ deal: chatCodename ? { ...deal, blindCodename: chatCodename } : deal, accessLevel: access.accessLevel, sections: chatRows.sections, overrides: chatRows.overrides, media: chatMedia, askingPrice: listedAskingPrice(deal), published: chatRows.published, ...chatExtras }).sections;
         }
       }
       const answerSections: AnswerSection[] = chatSections
@@ -8242,6 +8258,10 @@ Return JSON only.`,
   // Data room (vdr): the broker's room + the renderer canary (GET /api/vdr/health), then the buyer's room.
   registerDataRoomRoutes(app);
   registerDataRoomBuyerRoutes(app);
+  // Add-backs in the books (gl): ledgers, traces, the seller's books page.
+  registerGlRoutes(app);
+  // gl × the data room: ledger status changes re-prepare room items; the room's per-buyer deny reaches gl's DD page.
+  await registerGlDataRoomWiring();
 
   const httpServer = createServer(app);
   return httpServer;

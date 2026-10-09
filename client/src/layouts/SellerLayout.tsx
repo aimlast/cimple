@@ -16,6 +16,7 @@ import SellerIntake from "@/pages/seller/SellerIntake";
 import SellerProgress from "@/pages/seller/SellerProgress";
 import SellerDocuments from "@/pages/seller/SellerDocuments";
 import SellerReview from "@/pages/seller/SellerReview";
+import SellerBooks from "@/pages/seller/SellerBooks";
 import NotFound from "@/pages/not-found";
 import { CimpleWordmark } from "@/components/brand/CimpleLogo";
 
@@ -127,6 +128,7 @@ export default function SellerLayout() {
           <Route path="/seller/:token/progress" component={SellerProgress} />
           <Route path="/seller/:token/documents" component={SellerDocuments} />
           <Route path="/seller/:token/review" component={SellerReview} />
+          <Route path="/seller/:token/books" component={SellerBooks} />
           <Route component={NotFound} />
         </Switch>
       </div>

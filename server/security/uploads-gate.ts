@@ -67,10 +67,15 @@ export function classifyUploadsPath(rawPath: string): UploadsPath {
 
 export interface UploadsGateDeps {
   /** Every row pointing at the file (a copied document may share one). */
-  getDocumentsByFileUrl(fileUrl: string): Promise<Array<{ id: string; dealId: string; fileUrl?: string | null; visibility?: string | null }>>;
+  getDocumentsByFileUrl(fileUrl: string): Promise<Array<{ id: string; dealId: string; fileUrl?: string | null; visibility?: string | null; subcategory?: string | null }>>;
   getDeal(dealId: string): Promise<{ id: string; brokerId?: string | null } | undefined>;
-  getSellerInviteByToken(token: string): Promise<{ dealId: string } | undefined>;
+  getSellerInviteByToken(token: string): Promise<{ dealId: string; sellerEmail?: string | null } | undefined>;
+  /** The deal's team (a ledger or an add-back's support file opens only for the owner's or accountant's seller link). */
+  getDealMembers?(dealId: string): Promise<Array<{ id: string; email?: string | null; teamType?: string | null; role?: string | null; permissions?: unknown; inviteStatus?: string | null }>>;
 }
+
+/** Ledger-stream files: every employee's pay is in a ledger (gl spec D24). */
+const GL_PRIVATE_SUBCATEGORIES = new Set(["general_ledger", "addback_support"]);
 
 /**
  * Who may open a stored document: the broker session that owns the deal,
@@ -79,7 +84,7 @@ export interface UploadsGateDeps {
  */
 export async function mayOpenDocument(
   deps: UploadsGateDeps,
-  doc: { dealId: string; visibility?: string | null },
+  doc: { dealId: string; visibility?: string | null; subcategory?: string | null },
   who: { brokerId?: string | null; sellerToken?: string | null },
 ): Promise<boolean> {
   const deal = await deps.getDeal(doc.dealId);
@@ -90,7 +95,16 @@ export async function mayOpenDocument(
   if (doc.visibility === "broker_only") return false;
   if (who.sellerToken) {
     const invite = await deps.getSellerInviteByToken(who.sellerToken);
-    if (invite && invite.dealId === doc.dealId) return true;
+    if (!invite || invite.dealId !== doc.dealId) return false;
+    // A general ledger or an add-back's support file: only the owner's or the
+    // accountant's link (an attorney's or representative's link, a revoked
+    // member — nothing). Without the team lookup, nobody but the broker.
+    if (doc.subcategory && GL_PRIVATE_SUBCATEGORIES.has(doc.subcategory)) {
+      if (!deps.getDealMembers) return false;
+      const { sellerLinkRights } = await import("@shared/seller-link-rights");
+      return sellerLinkRights(invite, await deps.getDealMembers(doc.dealId)).canTraceAddbacks;
+    }
+    return true;
   }
   return false;
 }

@@ -53,6 +53,8 @@ export function manifestFor(item: VdrItem, doc: Document | null, download: Downl
     sheets: (p.sheets ?? []).map((s, index) => ({ index, name: s.name, rows: s.rows, cols: s.cols, firstRow: s.firstRow, firstCol: s.firstCol })),
     error: null,
     download: { allowed: download.allowed, label: downloadCopy(download) },
+    // gl's ledger viewer reads a ready ledger's rows by its document (INTEGRATION §2.6).
+    ...(p.kind === "ledger" && doc ? { ledgerDocumentId: doc.id } : {}),
   };
 }
 

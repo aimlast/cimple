@@ -68,7 +68,7 @@ export type SystemBlock = {
  * whole 62K-token corpus — this is the single biggest lever on interview
  * quality: the relevant intelligence is no longer drowned out.
  */
-export async function buildInterviewSystemBlocks(kb: KnowledgeBase): Promise<SystemBlock[]> {
+export async function buildInterviewSystemBlocks(kb: KnowledgeBase, opts: { dealId?: string } = {}): Promise<SystemBlock[]> {
   // Prefer the IDENTIFIED industry over the deal's label: a deal created as
   // generic "Consulting" whose interview reveals construction-safety work
   // must get the specific playbook, not the generic one. This busts the
@@ -159,6 +159,13 @@ export async function buildInterviewSystemBlocks(kb: KnowledgeBase): Promise<Sys
       "The person answering is the BROKER, filling in what they know from their own calls, notes and files — not the business owner. Address them as the broker: refer to the owner in the third person (\"the seller\", or by name), never \"you\" for the owner and never \"your business\". What they tell you is the broker's account — never write that the seller said, mentioned or confirmed it. When they don't know something, it is a question for the seller: note it as a follow-up and move on. Sensitive personal details they share (health, family, the seller's price floor, their negotiating view) go to broker-private notes, never into a fact.",
       "\n---\n",
     );
+  }
+
+  // The broker's open request to show a few costs in the books (gl spec §6.13):
+  // seller sessions only, never the broker alone. Deterministic, no extra AI call.
+  if (opts.dealId && kb.conductedBy !== "broker") {
+    const { glRequestOpen, GL_INTERVIEW_BLOCK } = await import("../gl/progress");
+    if (await glRequestOpen(opts.dealId)) dynamicParts.push(GL_INTERVIEW_BLOCK, "\n---\n");
   }
 
   dynamicParts.push(
