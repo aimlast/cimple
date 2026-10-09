@@ -62,6 +62,7 @@ import {
   type RawRendition,
   type RawVisit,
   type RawVisitPage,
+  type ReadingQuery,
   type ReadingSource,
 } from "./queries";
 
@@ -98,6 +99,15 @@ export interface CaptureFacts extends DealReadingFacts {
   pageHeat?: Record<string, PageHeatFacts>;
   /** What the drawn version is, against what buyers are served now (kept copy, held update, an older version). */
   versionNote?: VersionNote | null;
+  /**
+   * The drawn pages (pageIds) with ANY reading on file for this deal — any
+   * buyer, any date range or device, whatever the view is filtered to. With
+   * old tracking (responses.ts reach basis) a page outside this set was never
+   * recorded (added after these buyers read, or the old tracker didn't see
+   * it): hatched, never a drop, never "skipped" (heat-map spec §5.4). A buyer
+   * filter never makes another buyer's recorded pages "not recorded".
+   */
+  recordedPages?: string[];
 }
 
 export interface PageHeatFacts {
@@ -121,7 +131,12 @@ export async function loadDealReadingFacts(
     device: filters.device,
     accessIds: filters.buyers.length > 0 || filters.segment !== "all" ? listed.map((a) => a.id) : null,
   };
-  const [renditionsStored, visitsStored, sumsStored, visitPagesStored, events, questions, decisions, exits] = await Promise.all([
+  // Which pages have any reading is a fact about the deal, not about the
+  // buyers in view: with a narrowed view, read every buyer's page rows too
+  // (one grouped read; on failure the view's own rows stand in).
+  const allQ: ReadingQuery = { dealId: deal.id, since: null, device: "all", accessIds: null };
+  const narrowed = q.accessIds !== null || q.since !== null || q.device !== "all";
+  const [renditionsStored, visitsStored, sumsStored, visitPagesStored, events, questions, decisions, exits, dealWideStored] = await Promise.all([
     source.renditions(deal.id),
     source.visits(q),
     source.blockSums(q),
@@ -130,6 +145,7 @@ export async function loadDealReadingFacts(
     source.questions(deal.id),
     source.decisions(deal.id),
     source.legacyExits(deal.id).catch((): LegacyExit[] => []),
+    narrowed ? source.visitPages(allQ).catch((): RawVisitPage[] | null => null) : Promise.resolve(null),
   ]);
   // Reading from the old tracker (before part-by-part tracking), read on the
   // fly (or stored by the legacy backfill): page totals, marked legacy. Every
@@ -173,11 +189,21 @@ export async function loadDealReadingFacts(
   liveIndexes.forEach((v, k) => indexes.set(k, v));
   // Old-tracker pages placed on the version drawn (by page, lineage, or what
   // the old key resolves to among the current sections).
-  const placed = remapLegacyReading(unplaced, legacyPageRemap(live, blindSectionKey, chosen ? indexes.get(chosen.id) ?? [] : null));
+  const remap = legacyPageRemap(live, blindSectionKey, chosen ? indexes.get(chosen.id) ?? [] : null);
+  const placed = remapLegacyReading(unplaced, remap);
   const { visits, sums, visitPages } = placed;
+  let dealWideVisitPages: RawVisitPage[] | undefined;
+  if (dealWideStored) {
+    // Old-tracker rows (no version) are placed the same way as the view's.
+    dealWideVisitPages = [...dealWideStored, ...legacyRows(sessions, allQ, () => null).visitPages].map((r) => {
+      if (r.renditionId !== null) return r;
+      const to = remap(r.pageId, r.lineageId);
+      return to ? { ...r, pageId: to.pageId, lineageId: to.lineageId } : r;
+    });
+  }
   const titles = await loadTitleSources(deal, live, renditionsStored, chosen, indexes);
   const facts = assembleFacts({
-    deal, filters, now, accesses: listed, live, renditions, chosen, indexes, visits, sums, visitPages, events, questions, decisions, titles,
+    deal, filters, now, accesses: listed, live, renditions, chosen, indexes, visits, sums, visitPages, events, questions, decisions, titles, dealWideVisitPages,
   });
   if (placed.unmatched && chosen) facts.legacyUnmatched = placed.unmatched;
   return facts;
@@ -281,6 +307,11 @@ export interface AssembleInput {
   decisions: RawDecision[];
   /** Where page titles come from (default: the live sections only). */
   titles?: TitleSources;
+  /**
+   * Every buyer's page rows, whatever the filters (CaptureFacts.recordedPages);
+   * only needed when the view is narrowed (else this view's rows are all of them).
+   */
+  dealWideVisitPages?: RawVisitPage[];
 }
 
 /** Pure: raw grouped rows → DealReadingFacts. */
@@ -497,6 +528,15 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
     if (set) heatOf(viewerPageKey(p.pageId, p.part)).partBuyers = Array.from(set);
   }
 
+  // Drawn pages with any reading on file, deal-wide (CaptureFacts.recordedPages):
+  // this view's reading, plus every other buyer's when the view is narrowed.
+  const recorded = new Set<string>();
+  for (const r of [...input.sums, ...(input.dealWideVisitPages ?? [])]) {
+    if (!(r.attentionMs > 0)) continue;
+    const target = mapPage(r.pageId, r.lineageId);
+    if (target) recorded.add(target.pageId);
+  }
+
   const renditions = input.renditions.map(summary);
   const lastSeen = input.visits.reduce<number>((m, v) => Math.max(m, v.lastSeenAt.getTime()), 0);
   const changedReaders: Record<string, string[]> = {};
@@ -518,6 +558,7 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
     blockLevelPages: Array.from(blockLevel),
     pageHeat,
     versionNote: versionNoteOf(deal, chosenPages, input.titles?.kept ?? null, live, sampleReading),
+    recordedPages: Array.from(recorded),
   };
 }
 

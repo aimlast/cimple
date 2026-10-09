@@ -11,8 +11,11 @@ import assert from "node:assert/strict";
 import { PgDialect } from "drizzle-orm/pg-core";
 import {
   DEMO_READING_TAG, applyRemovalInMemory, apportion, checkPlanTotals, demoDevice, kindWeight, planDemoReading, planRemoval,
-  readingDepth, refuseReason, removalSql, splitPage, type DemoInput, type DemoMemoryTables,
+  readingDepth, refuseReason, removalSql, seesLabel, splitPage, type DemoInput, type DemoMemoryTables,
 } from "../../server/engagement/demo-reading";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { buildPageIndex } from "../../server/analytics/renditions";
 import { isValidBlockKey } from "../../shared/cim-blocks";
 import type { RenditionPage } from "../../shared/analytics-v2";
@@ -279,6 +282,36 @@ test("in memory: deal A's sample rows go and its old visits come back; deal B's 
   assert.deepEqual(t.events.map((e) => e.visitId), ["s2"]);
   assert.deepEqual(t.renditions.map((r) => [r.id, r.demoSeed]), [["rA2", null], ["rA3", null], ["rA4", null], ["rB", DEMO_READING_TAG]]);
   assert.deepEqual(res.keptVersions.sort(), ["rA2", "rA3"]);
+});
+
+test("the dry run names what each buyer reads in the new names, never the old key's (HM-C6)", () => {
+  // Old `full` = the blind CIM with every section unlocked → "Blind CIM", never "Full CIM".
+  assert.equal(seesLabel("full"), "Blind CIM");
+  assert.equal(seesLabel("loi"), "Full CIM", "the named CIM");
+  assert.equal(seesLabel("due_diligence"), "Due diligence");
+  assert.equal(seesLabel("teaser"), "Blind CIM (old teaser)");
+  for (const l of ["full", "loi", "due_diligence", "teaser"]) assert.doesNotMatch(seesLabel(l), /LOI/);
+  // The script prints through it (never buyerAccessLabel, which says "Full CIM" for the old blind `full`).
+  const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "scripts", "seed-demo-reading.ts"), "utf8");
+  assert.doesNotMatch(src, /buyerAccessLabel/);
+  assert.match(src, /seesLabel\(v\.level\)/);
+  assert.match(src, /seesLabel\(b\.level\)/);
+});
+test("the write-time check covers the whole planning window: fingerprint before anything the plan reads (HM-C4)", () => {
+  const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "scripts", "seed-demo-reading.ts"), "utf8");
+  const main = src.slice(src.indexOf("async function main()"));
+  const at = (re: RegExp) => { const m = re.exec(main); assert.ok(m, `missing ${re}`); return m!.index; };
+  const store = at(/await storeLegacyReading\(/);
+  const finger = at(/const before = a\.apply && !refusals\.length \? await fingerprint\(/);
+  const reload = at(/await loadCtx\(id, cols\)\)/);
+  const plan = [at(/await oldReading\(/), at(/await versionsFor\(/), at(/planDemoReading\(input\)/), at(/await lineageChecked\(/)];
+  const write = at(/await writePlan\(pctx, plan, versions, firstVisit, before,/);
+  assert.ok(store < finger, "our own store of the old reading comes first (it changes the legacy ids)");
+  assert.ok(finger < reload, "then the fingerprint, then a fresh read of the deal");
+  for (const p of plan) assert.ok(reload < p && p < write, "every planning read sits between the fingerprint and the write");
+  // writePlan compares it inside the transaction, under the deal's locks.
+  const wp = src.slice(src.indexOf("async function writePlan("), src.indexOf("async function servingNow("));
+  assert.match(wp, /pg_advisory_xact_lock[\s\S]*if \(\(await fingerprint\(dealId, tx\)\) !== before\) throw/);
 });
 
 console.log(`\n${passed} passed`);

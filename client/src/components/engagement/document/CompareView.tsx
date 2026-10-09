@@ -32,7 +32,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSepa
 import { cn } from "@/lib/utils";
 import { Segmented } from "../FilterBar";
 import { PageCanvas, type WashCard } from "./PageCanvas";
-import { HeatLegend } from "./Legends";
+import { HeatLegend, PageLegend } from "./Legends";
 import {
   compareGroups, compareReaders, compareSideB, drawMode, effectiveScope, heatIntensity, pageHeatMaxMs, pageInView, pageRank, perBuyerPage, sharedMaxMs,
   type CompareAction, type CompareBuyer, type CompareState, type HeatScope, type SectionView,
@@ -251,10 +251,15 @@ export function CompareCanvases(props: CompareCanvasesProps) {
     );
   };
 
-  const anyParts = [A, B].some((x) => !!x.page && !x.empty && drawMode(x.page) === "parts");
-  const legend = props.showHeat && maxMs > 0 && anyParts
-    ? <HeatLegend maxMs={maxMs} scope={effectiveScope(props.scope, A.page ?? B.page)} perBuyer={b.group} />
-    : null;
+  // One key for both sides (they share one scale), right under the pages.
+  const drawn = [A, B].filter((x) => !!x.page && !x.empty).map((x) => drawMode(x.page));
+  const legend = !props.showHeat
+    ? null
+    : drawn.includes("parts") && maxMs > 0
+      ? <HeatLegend maxMs={maxMs} scope={effectiveScope(props.scope, A.page ?? B.page)} perBuyer={b.group} note="Same scale on both sides" />
+      : drawn.includes("wash") && maxPageMs > 0
+        ? <PageLegend maxPageMs={maxPageMs} note="Same scale on both sides" />
+        : null;
   if (wide) {
     return (
       <div className="space-y-3">

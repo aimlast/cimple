@@ -25,14 +25,15 @@ import {
   effectiveScope, heatIntensity, heatMaxMs, interactionLines, legendTicks, msAtIntensity, orderPages, paperTint,
   parsePageParam, partVisibility, partVisibilityCss, pathWidths, reachFallback, readersText, selectPageIndex,
   steepestDrop, topBlocks, unreadBlocks, TINT_STRENGTH, defaultSectionView, inView, isUnread, pageInView, pageOfText,
-  drawMode, statusSentence, whyNotes, washFill, WASH_MAX_ALPHA, pageRank, railTint, pageLegendTicks, recordedReach, reachCountsLine,
+  drawMode, statusSentence, whyNotes, washFill, WASH_MAX_ALPHA, pageRank, railTint, pageLegendTicks, recordedReach, reachCountsLine, recordedDrop, pageRunsText,
   pageHeatMaxMs, ordinal, shortDate, type StatusContext,
   parseCompareParam, compareParam, compareGroups, defaultCompareB, compareReducer, compareStart, compareSideB, validCompare,
   perBuyerPage, sharedMaxMs, firstName, COMPARE_GROUP_MAX, type CompareBuyer, type CompareState,
 } from "../../client/src/components/engagement/document/viewer-model";
 import { compareFiltersText } from "../../client/src/components/engagement/document/CompareView";
 import { PageCanvas } from "../../client/src/components/engagement/document/PageCanvas";
-import { updateNote } from "../../client/src/components/engagement/document/PagePanel";
+import { PagePanel, updateNote } from "../../client/src/components/engagement/document/PagePanel";
+import { HeatLegend, PageLegend } from "../../client/src/components/engagement/document/Legends";
 
 (globalThis as any).window ??= { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) };
 
@@ -387,6 +388,10 @@ test("the whole-page legend speaks in seconds of page reading time", () => {
 test("the status line: one sentence, first match wins (spec §3.4)", () => {
   const d = docOf();
   assert.equal(statusSentence(hp(0, heat("none")), d, ctx()), "Nobody has read this page yet.");
+  // Filtered views ("See where they read"): other buyers may have read it — unless nobody's reading was recorded on it.
+  assert.equal(statusSentence(hp(0, heat("none")), d, ctx({ filter: "one" })), "This buyer hasn't read this page.");
+  assert.equal(statusSentence(hp(0, heat("none")), d, ctx({ filter: "some" })), "None of the buyers in this view has read this page.");
+  assert.equal(statusSentence({ ...hp(0, heat("none")), reachRecorded: false }, d, ctx({ filter: "one" })), "Nobody has read this page yet.");
   assert.equal(statusSentence(hp(60_000, heat("page")), docOf({ versionNote: { kind: "kept_copy", since: "2026-09-29T14:02:17Z" } }), ctx({ blind: true })),
     "Shaded as a whole page: read before Cimple tracked each part of a page.");
   assert.equal(statusSentence(hp(60_000, heat("page", { reason: "other_layout" })), d, ctx()), "Shaded as a whole page: buyers read a version of it with different parts.");
@@ -423,6 +428,36 @@ test("Why? lists every note that applies, in plain words", () => {
   for (const n of [...notes, ...held, ...named]) assert.doesNotMatch(`${n.title} ${n.text}`, /legacy|rendition|dwell/i);
   assert.deepEqual(whyNotes(hp(60_000, heat("parts")), docOf(), ctx()), []);
 });
+test("Why? for pages with no reading recorded in between (a rebuild's new pages): listed as runs, honest about why", () => {
+  const labels = ["1", "2", "3", "4a", "4b", "5", "6", "7", "8", "9"];
+  const unrec = new Set(["4a", "4b", "8"]);
+  const pages = labels.map((label, i) => ({ index: i, label, title: label.startsWith("4") ? "Executive Summary" : label === "8" ? "Three-Year Revenue Growth" : `Page ${label}`, reachRecorded: !unrec.has(label) }));
+  const doc = { reachBasis: "old_tracking", lastRecordedIndex: 9, pages };
+  const kept = whyNotes(null, docOf({ ...doc }), ctx()).find((n) => n.key === "not_recorded")!;
+  assert.equal(kept.title, "Pages with no reading recorded");
+  assert.equal(kept.text, `Cimple's earlier tracking didn't record pages 4a–4b and 8 (Executive Summary, Three-Year Revenue Growth), so they're hatched and left out of "how far buyers got".`);
+  const held = whyNotes(null, docOf({ ...doc, versionNote: { kind: "held", sample: true } }), ctx()).find((n) => n.key === "not_recorded")!;
+  assert.equal(held.text, `No reading was recorded on pages 4a–4b and 8 (Executive Summary, Three-Year Revenue Growth): they were added after these buyers read, or Cimple's earlier tracking didn't record them. So they're hatched and left out of "how far buyers got".`);
+  // Trailing only, on a held version: "stops at page …".
+  const trail = labels.map((label, i) => ({ index: i, label, title: `Page ${label}`, reachRecorded: i < 8 }));
+  const heldTrail = whyNotes(null, docOf({ reachBasis: "old_tracking", lastRecordedIndex: 7, pages: trail, versionNote: { kind: "held", sample: false } }), ctx()).find((n) => n.key === "not_recorded")!;
+  assert.equal(heldTrail.text, `No reading was recorded on pages 8–9 (Page 8, Page 9): they were added after these buyers read, or Cimple's earlier tracking didn't record them. So "how far buyers got" stops at page 7.`);
+  // One page.
+  const one = labels.map((label, i) => ({ index: i, label, title: `Page ${label}`, reachRecorded: label !== "5" }));
+  assert.equal(whyNotes(null, docOf({ reachBasis: "old_tracking", lastRecordedIndex: 9, pages: one }), ctx()).find((n) => n.key === "not_recorded")!.text,
+    `Cimple's earlier tracking didn't record page 5 (Page 5), so it's hatched and left out of "how far buyers got".`);
+  assert.equal(pageRunsText([1, 3, 5, 7, 9, 11, 13].map((i) => ({ index: i, label: String(i) }))), "1, 3, 5, 7, 9 and 2 more");
+  assert.equal(pageRunsText([{ index: 2, label: "3" }]), "3");
+  assert.equal(pageRunsText([{ index: 2, label: "3" }, { index: 3, label: "4" }]), "3–4");
+});
+test("the ▼ sits on the page itself when unrecorded pages are in between (recordedDrop)", () => {
+  // Pages 9–13; page 11 (index 2) was never recorded: the drop 10 → 7 is onto page 12 (index 3).
+  const reach = [10, 10, 7, 7, 7].map((b, i) => ({ buyers: b, label: String(9 + i) }));
+  const pages = reach.map((_, i) => ({ reachRecorded: i !== 2 }));
+  assert.equal(steepestDrop(recordedReach(reach, pages))!.index, 2, "a position in the filtered list");
+  assert.deepEqual(recordedDrop(reach, pages), { index: 3, from: 10, to: 7 });
+  assert.equal(recordedDrop(reach.map(() => ({ buyers: 4 })), pages), null);
+});
 test("how far buyers got: pages never recorded are left out of the drop; the counts match the Buyers view", () => {
   // Pacific: 12 ×8, 11, 9, 9, 8 ×13, 7, 6, 6, then 0 0 on the two pages the old tracking never recorded.
   const counts = [...Array(8).fill(12), 11, 9, 9, ...Array(13).fill(8), 7, 6, 6, 0, 0];
@@ -442,6 +477,43 @@ test("the update note on a kept copy: renamed in the update, or nothing carries 
   assert.equal(updateNote({ update: { status: "no_successor" } }, kept), "No page in your update carries on this page's reading history.");
   assert.equal(updateNote({ update: { status: "renamed", title: "X" } }, { versionNote: null }), null);
   assert.equal(updateNote({ update: null }, kept), null);
+});
+
+function renderPanel(pg: DocumentPage): string {
+  const doc = { openedBy: 11, versionNote: null, byKind: [], pages: [pg] } as any;
+  return renderToStaticMarkup(React.createElement(PagePanel, {
+    page: pg, doc, dealId: "d", renditionPage: undefined, selectedKey: null, onHoverKey() {}, onSelectKey() {}, onOnlyBuyer() {},
+    filteredToOne: false, paint: false,
+  }));
+}
+test("the panel on a page nobody read: no 'Only the page total is known' beside 'Nobody has read this page yet' (HM-C3)", () => {
+  const unread = { ...page(0, [block("para:0", 0), block("para:1", 0)]), readers: 0, reachedBy: 7, readLabel: null, heat: heat("none"), reachRecorded: false } as DocumentPage;
+  const html = renderPanel(unread);
+  assert.match(html, /Nobody has read this page yet\./);
+  assert.doesNotMatch(html, /Only the page total is known/);
+  assert.doesNotMatch(html, /Parts of this page/);
+  assert.match(html, /no reading recorded on this page/, "never '7 got this far' on a page nobody's reading was recorded on");
+  assert.doesNotMatch(html, /7 got this far|Skipped/);
+  // A page known only as a total still says so.
+  // Filtered to one buyer, a page other buyers read: "This buyer hasn't read this page."
+  const unreadByOne = renderToStaticMarkup(React.createElement(PagePanel, {
+    page: { ...unread, reachRecorded: true }, doc: { openedBy: 1, versionNote: null, byKind: [], pages: [] } as any, dealId: "d", renditionPage: undefined,
+    selectedKey: null, onHoverKey() {}, onSelectKey() {}, onOnlyBuyer() {}, filteredToOne: true, paint: false,
+  }));
+  assert.match(unreadByOne, /This buyer hasn(&#x27;|')t read this page\./);
+  const total = { ...page(0, [block("para:0", 0), block("para:1", 0)]), attentionMs: 90_000, readers: 3, heat: heat("page"), reachRecorded: true } as DocumentPage;
+  assert.match(renderPanel(total), /Only the page total is known for this reading\./);
+});
+test("compare's legend says both sides share one scale (HM-C5)", () => {
+  const parts = renderToStaticMarkup(React.createElement(HeatLegend, { maxMs: 120_000, scope: "document", perBuyer: true, note: "Same scale on both sides" }));
+  assert.match(parts, /Reading time on each part per buyer/);
+  assert.match(parts, /data-testid="legend-note"[^>]*>· Same scale on both sides/);
+  const wash = renderToStaticMarkup(React.createElement(PageLegend, { maxPageMs: 1_660_000, note: "Same scale on both sides" }));
+  assert.match(wash, /Same scale on both sides/);
+  assert.doesNotMatch(renderToStaticMarkup(React.createElement(HeatLegend, { maxMs: 120_000, scope: "page" })), /legend-note/);
+  // CompareCanvases draws the legend for parts AND for whole-page shading, with the note.
+  const src = fs.readFileSync(path.join(ROOT, "client/src/components/engagement/document/CompareView.tsx"), "utf8");
+  assert.equal((src.match(/note="Same scale on both sides"/g) ?? []).length, 2);
 });
 
 function renderWash(showHeat: boolean, modeOver: "wash" | "parts" = "wash", h: Heat = heat("page")): string {

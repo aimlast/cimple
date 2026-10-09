@@ -441,11 +441,37 @@ export function pageLegendTicks(maxPageMs: number, steps = 4): Array<{ t: number
 
 /**
  * The reach points the old tracking recorded (DocumentPage.reachRecorded):
- * pages after the last one with reading are left out of the drop. The
- * recorded pages are a prefix, so indexes stay aligned.
+ * pages nobody has any reading on — anywhere, trailing or in between — are
+ * left out of the drop. Indexes here are positions in the returned list;
+ * use recordedDrop for a drop at a page's own index.
  */
 export function recordedReach<T extends Pick<ReachPoint, "buyers">>(reach: readonly T[], pages: ReadonlyArray<Pick<DocumentPage, "reachRecorded">>): T[] {
   return reach.filter((_, i) => pages[i]?.reachRecorded !== false);
+}
+
+/**
+ * The steepest marked drop between recorded pages, at the page's own index
+ * in `reach` (the ▼ on the chart): a drop is measured from the previous
+ * recorded page, never onto a page nobody's reading was recorded on.
+ */
+export function recordedDrop(reach: ReadonlyArray<Pick<ReachPoint, "buyers">>, pages: ReadonlyArray<Pick<DocumentPage, "reachRecorded">>): { index: number; from: number; to: number } | null {
+  const at = reach.map((_, i) => i).filter((i) => pages[i]?.reachRecorded !== false);
+  const d = steepestDrop(at.map((i) => reach[i]));
+  return d ? { ...d, index: at[d.index] } : null;
+}
+
+/** "4a–4b, 8, 11 and 25–28": viewer pages as runs of neighbouring pages (by index). */
+export function pageRunsText(pages: ReadonlyArray<Pick<DocumentPage, "index" | "label">>, maxRuns = 6): string {
+  const sorted = [...pages].sort((a, b) => a.index - b.index);
+  const runs: string[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1].index === sorted[j].index + 1) j++;
+    runs.push(j > i ? `${sorted[i].label}–${sorted[j].label}` : sorted[i].label);
+    i = j;
+  }
+  const shown = runs.length > maxRuns ? [...runs.slice(0, maxRuns - 1), `${runs.length - maxRuns + 1} more`] : runs;
+  return shown.length <= 1 ? shown.join("") : `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
 }
 
 // ── The status line and "Why?" ──────────────────────────────────────────
@@ -458,10 +484,12 @@ export interface StatusContext {
   showNamed: boolean;
   /** The shown version has the same parts as the one buyers read. */
   sameLayout: boolean;
+  /** The view shows chosen buyers: "one" (a single buyer, e.g. from "See where they read") or "some". */
+  filter?: "one" | "some" | null;
 }
 
 type DocForStatus = Pick<EngagementDocumentResponse, "versionNote" | "sampleReading" | "reachBasis" | "lastRecordedIndex" | "legacyUnmatched" | "pages">;
-type PageForStatus = Pick<DocumentPage, "heat" | "attentionMs">;
+type PageForStatus = Pick<DocumentPage, "heat" | "attentionMs"> & { reachRecorded?: boolean };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** "2026-09-29T14:02:17Z" → "29 Sep" (null when it isn't a date). */
@@ -481,7 +509,12 @@ const s_ = (n: number) => (n === 1 ? "" : "s");
 export function statusSentence(page: PageForStatus | null, doc: DocForStatus, ctx: StatusContext): string | null {
   if (page) {
     const mode = drawMode(page, ctx.sameLayout);
-    if (page.heat.basis === "none" || mode === "none") return "Nobody has read this page yet.";
+    if (page.heat.basis === "none" || mode === "none") {
+      // In a filtered view other buyers may have read it; a page nobody's reading was recorded on is unread by all.
+      if (page.reachRecorded !== false && ctx.filter === "one") return "This buyer hasn't read this page.";
+      if (page.reachRecorded !== false && ctx.filter === "some") return "None of the buyers in this view has read this page.";
+      return "Nobody has read this page yet.";
+    }
     if (page.heat.basis === "page") {
       if (page.heat.reason === "before_part_tracking") return "Shaded as a whole page: read before Cimple tracked each part of a page.";
       if (page.heat.reason === "other_layout") return "Shaded as a whole page: buyers read a version of it with different parts.";
@@ -562,12 +595,21 @@ export function whyNotes(page: PageForStatus | null, doc: DocForStatus, ctx: Sta
     const missing = doc.pages.filter((p) => p.reachRecorded === false);
     if (missing.length > 0) {
       const last = doc.lastRecordedIndex != null ? doc.pages.find((p) => p.index === doc.lastRecordedIndex) : null;
-      const range = missing.length === 1 ? missing[0].label : `${missing[0].label}–${missing[missing.length - 1].label}`;
-      const titles = missing.slice(0, 3).map((p) => p.title).join(", ") + (missing.length > 3 ? ", …" : "");
+      const titles = Array.from(new Set(missing.map((p) => p.title)));
+      const list = `${pageRunsText(missing)} (${titles.slice(0, 3).join(", ")}${titles.length > 3 ? ", …" : ""})`;
+      const many = missing.length !== 1;
+      // Only after the last page with reading: "stops at page 27" says it all.
+      const trailing = !!last && missing.every((p) => p.index > last.index);
+      const so = trailing
+        ? `"how far buyers got" stops at page ${last!.label}`
+        : `${many ? "they're" : "it's"} hatched and left out of "how far buyers got"`;
       out.push({
         key: "not_recorded",
-        title: "Pages not recorded",
-        text: `Cimple's earlier tracking didn't record page${s_(missing.length)} ${range} (${titles}), so "how far buyers got" stops at page ${last?.label ?? "—"}.`,
+        title: "Pages with no reading recorded",
+        // Drawn on a version buyers haven't been served yet: a page with no reading is most likely new in the update.
+        text: v?.kind === "held"
+          ? `No reading was recorded on page${s_(missing.length)} ${list}: ${many ? "they were" : "it was"} added after these buyers read, or Cimple's earlier tracking didn't record ${many ? "them" : "it"}. So ${so}.`
+          : `Cimple's earlier tracking didn't record page${s_(missing.length)} ${list}, so ${so}.`,
       });
     }
   }

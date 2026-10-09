@@ -54,6 +54,7 @@ type Facts = DealReadingFacts & {
   blockLevelPages?: string[];
   pageHeat?: Record<string, { partBuyers: string[]; pageOnly: Record<string, { beforeMs: number; otherMs: number }> }>;
   versionNote?: import("@shared/analytics-v2").VersionNote | null;
+  recordedPages?: string[];
 };
 
 export function insightContext(facts: DealReadingFacts): InsightContext {
@@ -136,12 +137,43 @@ function pageHeatOf(
 }
 const lastSeenMs = (b: BuyerReadingFacts) => b.visits.reduce((m, v) => Math.max(m, Date.parse(v.lastSeenAt) || 0), 0);
 
+/**
+ * How far buyers got is known from the old tracking only (heat-map spec
+ * §5.4) when every visit in view is an old-tracker visit or sample reading
+ * converted from one; else from each visit's furthest page ("tracked").
+ */
+export function reachBasisOf(facts: DealReadingFacts): ReachBasis {
+  const drawn = facts.buyers.flatMap((b) => b.visits);
+  return drawn.length > 0 && drawn.every((v) => v.legacy || v.sample) ? "old_tracking" : "tracked";
+}
+
+/**
+ * With old tracking: the drawn pages (pageIds) nobody has any reading on —
+ * deal-wide, whatever the view is filtered to (facts.recordedPages). The old
+ * tracker recorded a page only when someone spent time on it, so such a page
+ * was either added after these buyers read or never tracked: it is hatched,
+ * never a drop, never "skipped". Null with tracked reach (every page known).
+ */
+export function unrecordedPageIds(facts: DealReadingFacts, basis: ReachBasis = reachBasisOf(facts)): Set<string> | null {
+  if (basis !== "old_tracking") return null;
+  const f = facts as Facts;
+  let recorded: Set<string>;
+  if (f.recordedPages) recorded = new Set(f.recordedPages);
+  else {
+    // Hand-built facts: this view's own reading stands in.
+    recorded = new Set(facts.pages.filter((p) => facts.buyers.some((b) => attentionOn(b, p) > 0)).map((p) => p.pageId));
+  }
+  return new Set(facts.pages.filter((p) => !recorded.has(p.pageId)).map((p) => p.pageId));
+}
+
 // ── Buyers (call list) ─────────────────────────────────────────────────────
 
 export function buildBuyersResponse(facts: DealReadingFacts): EngagementBuyersResponse {
   const ctx = insightContext(facts);
   const shown = facts.buyers.filter((b) => openedForCounts(b, facts.filters.range));
   const ranked = rankBuyers(shown.map((f) => ({ facts: f, insight: buyerInsight(f, ctx) })));
+  // A page nobody has any old-tracker reading on was never "skipped" (it may not have existed yet).
+  const unrecorded = unrecordedPageIds(facts);
   const buyers: BuyerEngagementCard[] = ranked.map(({ facts: b, insight }, rank) => {
     const furthest = furthestViewerIndex(b, facts.pages);
     const pageStrip: PageStripCell[] = facts.pages.map((p) => {
@@ -153,7 +185,7 @@ export function buildBuyersResponse(facts: DealReadingFacts): EngagementBuyersRe
         part: p.part,
         label: p.label,
         attentionMs: att,
-        readLabel: (insight.pageLabels[key] as ReadLabel | undefined) ?? pageReadLabel(p.role, att, p.expectedMs, reached),
+        readLabel: unrecorded?.has(p.pageId) ? null : (insight.pageLabels[key] as ReadLabel | undefined) ?? pageReadLabel(p.role, att, p.expectedMs, reached),
         reached,
       };
     });
@@ -213,8 +245,17 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
   const openedTotal = facts.buyers.filter((b) => openedForCounts(b, facts.filters.range)).length;
   const furthest = new Map(readersOf.map((b) => [b.accessId, furthestViewerIndex(b, facts.pages)]));
   const listed = new Set(facts.buyers.map((b) => b.accessId));
+  // How far buyers got: with old tracking, a page nobody has any reading on
+  // (deal-wide, whatever the filter) was never recorded — added after these
+  // buyers read, or the old tracker didn't see it. It is hatched on the
+  // chart, left out of the drop and the headline, and never "skipped". A
+  // filtered view's later pages stay normal unreached pages when other
+  // buyers' reading there was recorded.
+  const reachBasis = reachBasisOf(facts);
+  const unrecorded = unrecordedPageIds(facts, reachBasis);
 
   const pages: DocumentPage[] = facts.pages.map((p) => {
+    const recorded = !unrecorded?.has(p.pageId);
     const reachedBuyers = readersOf.filter((b) => (furthest.get(b.accessId) ?? -1) >= p.index);
     const perBuyer = readersOf.map((b) => ({ b, att: attentionOn(b, p), skim: b.pages[viewerPageKey(p.pageId, p.part)]?.skimMs ?? 0 }));
     const attentionMs = perBuyer.reduce((s, x) => s + x.att, 0);
@@ -275,7 +316,7 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
       readers: perBuyer.filter((x) => x.att >= READING_RULES.readerMinMs).length,
       reachedBy: reachedBuyers.length,
       attentionMs, skimMs, expectedMs: p.expectedMs,
-      readLabel: groupReadLabel(reachedBuyers.map((b) => pageReadLabel(p.role, attentionOn(b, p), p.expectedMs, true))),
+      readLabel: recorded ? groupReadLabel(reachedBuyers.map((b) => pageReadLabel(p.role, attentionOn(b, p), p.expectedMs, true))) : null,
       headline: null,
       blocks,
       buyers,
@@ -284,21 +325,13 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
       changedSince: changedN > 0 ? changedN : null,
       pageLevelOnly: heat.heat.basis === "page",
       heat: heat.heat,
-      reachRecorded: true,
+      reachRecorded: recorded,
       update: p.update ?? null,
     };
   });
 
-  // How far buyers got: the old tracking recorded only pages with reading,
-  // so pages after the last one with any reading are "not recorded" — left
-  // out of the drop and the headline, hatched on the chart.
-  const drawnVisits = facts.buyers.flatMap((b) => b.visits);
-  const reachBasis: ReachBasis = drawnVisits.length > 0 && drawnVisits.every((v) => v.legacy || v.sample) ? "old_tracking" : "tracked";
   let lastRecordedIndex: number | null = null;
-  if (reachBasis === "old_tracking") {
-    for (const p of pages) if (p.attentionMs > 0) lastRecordedIndex = p.index;
-    for (const p of pages) p.reachRecorded = lastRecordedIndex !== null && p.index <= lastRecordedIndex;
-  }
+  if (reachBasis === "old_tracking") for (const p of pages) if (p.reachRecorded) lastRecordedIndex = p.index;
 
   const doc = { pages, openedBy };
   for (const pg of pages) pg.headline = pageHeadline(pg, doc);
@@ -330,7 +363,10 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
     sampleReading: !!facts.sampleReading,
     versionNote: f.versionNote ?? null,
     reach,
-    reachHeadline: reachHeadline(reach, reachBasis === "old_tracking" ? { lastRecorded: lastRecordedIndex } : {}),
+    reachHeadline: reachHeadline(reach, {
+      ...(reachBasis === "old_tracking" ? { recorded: new Set(pages.filter((p) => p.reachRecorded).map((p) => p.index)) } : {}),
+      filtered: facts.filters.buyers.length > 0 || facts.filters.segment !== "all",
+    }),
     pages,
     byKind,
     totals: {

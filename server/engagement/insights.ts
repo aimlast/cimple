@@ -776,6 +776,9 @@ export function pageHeadline(page: DocumentPage, doc: { pages: DocumentPage[]; o
   if (page.questions.length > 0) {
     return `${plural(page.questions.length, "question")} asked on this page.`;
   }
+  // No reading was ever recorded on it (old tracking: added after these
+  // buyers read, or never tracked) — nothing to say about how it was read.
+  if (page.reachRecorded === false) return null;
   if (page.reachedBy === 0 && page.readers === 0) {
     return page.role === "front_matter" ? null : "No buyer has reached this page yet.";
   }
@@ -816,14 +819,26 @@ export function isMarkedDrop(drop: number, openedBy: number): boolean {
 /**
  * "Most buyers stopped around page 14 · Employees & Management (9 → 4 readers)", or null.
  *
- * `lastRecorded` (the old tracking, heat-map spec §5.4): the last page the
- * old tracker could record. Later pages never had reading recorded, so they
- * are left out — never "6 → 0 readers" on a page nobody's tracker could see —
- * and the last page named is that one ("…, the last page recorded").
+ * The old tracking (heat-map spec §5.4): `recorded` = the reach indexes of
+ * pages with any reading on file for the deal (`lastRecorded` = every page up
+ * to that index, the older form). Other pages never had reading recorded, so
+ * they are left out — never "6 → 0 readers" on a page nobody's tracker could
+ * see, nor a drop onto a page added after these buyers read — the drop is
+ * measured between recorded pages, and the last page named is the last one
+ * recorded ("…, the last page recorded").
+ *
+ * `filtered` (the view shows chosen buyers): one buyer reads as "This buyer",
+ * never "The buyer who opened the CIM".
  */
-export function reachHeadline(reach: ReachPoint[], opts: { lastRecorded?: number | null } = {}): string | null {
-  const limited = opts.lastRecorded !== undefined;
-  const pts = [...reach].sort((a, b) => a.index - b.index).filter((p) => !limited || (opts.lastRecorded != null && p.index <= opts.lastRecorded));
+export function reachHeadline(
+  reach: ReachPoint[],
+  opts: { lastRecorded?: number | null; recorded?: ReadonlySet<number>; filtered?: boolean } = {},
+): string | null {
+  const limited = opts.recorded !== undefined || opts.lastRecorded !== undefined;
+  const keep = (p: ReachPoint) => opts.recorded
+    ? opts.recorded.has(p.index)
+    : opts.lastRecorded === undefined || (opts.lastRecorded != null && p.index <= opts.lastRecorded);
+  const pts = [...reach].sort((a, b) => a.index - b.index).filter(keep);
   if (pts.length === 0) return null;
   const n = pts[0].buyers;
   if (n <= 0) return null;
@@ -836,7 +851,8 @@ export function reachHeadline(reach: ReachPoint[], opts: { lastRecorded?: number
   const lastWords = `got to page ${last.label} · ${last.title}, the last page recorded`;
   if (n === 1) {
     // One buyer (or a view filtered to one): where they got to, never "most buyers".
-    if (last.buyers >= 1) return limited ? `The buyer who opened the CIM ${lastWords}.` : "The buyer who opened the CIM reached the last page.";
+    const who = opts.filtered ? "This buyer" : "The buyer who opened the CIM";
+    if (last.buyers >= 1) return limited ? `${who} ${lastWords}.` : `${who} reached the last page.`;
     const furthest = [...pts].reverse().find((p) => p.buyers >= 1);
     return furthest ? `This buyer got as far as page ${furthest.label} · ${furthest.title}.` : null;
   }

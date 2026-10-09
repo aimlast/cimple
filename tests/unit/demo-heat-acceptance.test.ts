@@ -92,4 +92,26 @@ test("the Beacon expectations need the held + sample note and the 3 pages this v
   assert.ok(res.lines.some((l) => /0 page\(s\) reported, expected 3/.test(l)));
 });
 
+test("Beacon (HM-C2): pages with no reading never count as recorded, and the reach sentence names a page with reading", () => {
+  const doc = docOf({ sample: true });
+  // The seeded fixture is right: page 3 has no reading and is not recorded; the sentence names page 2.
+  assert.deepEqual(doc.pages.map((p) => p.reachRecorded), [true, true, false]);
+  assert.match(doc.reachHeadline ?? "", /page 2 · Capital Expenditures & Fleet Replacement/);
+  const ok = heatAcceptance(doc, "beacon");
+  assert.ok(!ok.lines.some((l) => /no reading but counts as recorded|names page|no reading$|labelled/.test(l)), ok.lines.join("\n"));
+  // The bug: a rebuild page with no reading counted as recorded, labelled "skipped", and the drop named on it.
+  const bug = {
+    ...doc,
+    reachHeadline: "The biggest drop is around page 3 · Next Steps (10 → 7 readers).",
+    pages: doc.pages.map((p) => (p.pageId === "p3" ? { ...p, reachRecorded: true, readLabel: "skipped" as const } : p)),
+  };
+  const res = heatAcceptance(bug, "beacon");
+  assert.ok(res.lines.includes("FAIL page 3 “Next Steps” has no reading but counts as recorded (it can show a drop or “skipped”)"), res.lines.join("\n"));
+  assert.ok(res.lines.includes("FAIL the reach sentence names page 3, which has no reading"));
+  const labelled = { ...doc, pages: doc.pages.map((p) => (p.pageId === "p3" ? { ...p, readLabel: "skipped" as const } : p)) };
+  assert.ok(heatAcceptance(labelled, null).lines.includes("FAIL page 3 “Next Steps” wasn't recorded but is labelled “skipped”"));
+  // No sentence at all is a failure on Beacon (outside preview).
+  assert.ok(heatAcceptance({ ...doc, reachHeadline: null }, "beacon").lines.includes("FAIL there is no “how far buyers got” sentence"));
+});
+
 console.log(`\n${passed} passed`);

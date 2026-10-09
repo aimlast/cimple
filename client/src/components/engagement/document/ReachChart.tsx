@@ -6,8 +6,9 @@
  * before any click. Clicking a column or a cell opens that page.
  *
  * The sentence names the steepest drop in words; a small ▼ marks it on the
- * chart. Pages the old tracking never recorded (after the last page with
- * any reading) are hatched and left out of the drop. The counts line uses the
+ * chart. With old tracking, pages nobody has any reading on (never recorded:
+ * added after these buyers read, or never tracked) are hatched and left out
+ * of the drop, wherever they sit. The counts line uses the
  * same numbers as the Buyers view ("13 opened it · 12 with reading recorded").
  *
  * Phones: one collapsed row ("How far buyers got · 6 of 12 to page 27 ▾");
@@ -18,7 +19,7 @@ import { ChevronDown } from "lucide-react";
 import { formatReadingTime, type DocumentPage, type ReachPoint } from "@shared/analytics-v2";
 import { cn } from "@/lib/utils";
 import { heatChrome } from "../heat";
-import { heatIntensity, reachCountsLine, reachFallback, recordedReach, steepestDrop } from "./viewer-model";
+import { heatIntensity, reachCountsLine, reachFallback, recordedDrop, recordedReach } from "./viewer-model";
 
 const HATCH = "repeating-linear-gradient(135deg, hsl(var(--muted-foreground) / 0.25) 0 2px, transparent 2px 5px)";
 
@@ -45,9 +46,12 @@ export function ReachChart({
   if (reach.length === 0 || openedBy === 0) return null;
   const max = Math.max(openedBy, ...reach.map((r) => r.buyers), 1);
   const recorded = recordedReach(reach, pages);
-  const drop = steepestDrop(recorded);
-  const first = reach[0];
+  const drop = recordedDrop(reach, pages);
+  const first = recorded[0] ?? reach[0];
   const lastRec = recorded[recorded.length - 1] ?? reach[reach.length - 1];
+  // Phones' one-line summary: how many got to the last recorded page — or, when
+  // nobody in view did (a buyer who stopped early), how far they did get.
+  const furthestRec = lastRec.buyers > 0 ? lastRec : [...recorded].reverse().find((r) => r.buyers > 0) ?? lastRec;
   const H = compact ? 36 : 44;
   const sentence = headline ?? reachFallback(recorded, openedBy);
   const counts = reachCountsLine({ openedTotal, openedBy, reach, pages, oldTracking });
@@ -66,7 +70,7 @@ export function ReachChart({
             const stopped = isDrop && drop ? drop.from - drop.to : 0;
             const label = rec
               ? `Page ${r.label} · ${r.title}: ${r.buyers} buyer${r.buyers === 1 ? "" : "s"} got this far`
-              : `Page ${r.label} · ${r.title}: Cimple's earlier tracking didn't record this page`;
+              : `Page ${r.label} · ${r.title}: no reading recorded on this page`;
             return (
               <button
                 key={`${r.pageId}#${r.part}`}
@@ -108,7 +112,7 @@ export function ReachChart({
             const t = heatIntensity(ms, maxPageMs);
             const label = rec
               ? `Page ${r.label} · ${r.title}: ${formatReadingTime(ms)} of reading time`
-              : `Page ${r.label} · ${r.title}: Cimple's earlier tracking didn't record this page`;
+              : `Page ${r.label} · ${r.title}: no reading recorded on this page`;
             return (
               <button
                 key={`${r.pageId}#${r.part}`}
@@ -152,7 +156,7 @@ export function ReachChart({
         >
           <span className="font-semibold uppercase tracking-wider text-[10px] text-muted-foreground">How far buyers got</span>
           <span className="min-w-0 flex-1 truncate tabular-nums text-foreground/90">
-            · {lastRec.buyers} of {openedBy} to page {lastRec.label}
+            · {furthestRec.buyers} of {openedBy} to page {furthestRec.label}
           </span>
           <ChevronDown className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")} aria-hidden />
         </button>

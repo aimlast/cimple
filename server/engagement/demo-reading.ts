@@ -50,6 +50,21 @@ export const REAL_DEAL_IDS: ReadonlySet<string> = new Set([
 ]);
 const REAL_DEAL_NAME_RE = /amlin|sariknotsari|180 smoke/i;
 
+/**
+ * What a buyer at this access level READS, in the new access names (the
+ * dry run's "Sees" column and version list): "Blind CIM", "Full CIM" or
+ * "Due diligence" — by the version served, never the old key's name (the
+ * old `full` is the blind CIM with every section unlocked: "Blind CIM", not
+ * "Full CIM"; the old `loi` is the named one: "Full CIM"). A buyer on the old
+ * teaser (blind, some sections locked) reads "Blind CIM (old teaser)".
+ */
+export function seesLabel(level: string | null | undefined): string {
+  const mode = cimModeForAccessLevel(level);
+  if (mode === "dd") return "Due diligence";
+  if (mode === "normal") return "Full CIM";
+  return level === "teaser" ? "Blind CIM (old teaser)" : "Blind CIM";
+}
+
 // ── Inputs and outputs ───────────────────────────────────────────────────
 
 export interface DemoBuyer {

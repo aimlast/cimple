@@ -695,7 +695,12 @@ export interface DocumentPage extends ViewerPageRef {
   pageLevelOnly: boolean;
   /** How this page's reading is known: part by part, as a page total, or both. */
   heat: PageHeat;
-  /** False for pages the old tracking could never record (after the last page with reading, reachBasis "old_tracking"). */
+  /**
+   * False (reachBasis "old_tracking" only) for a page nobody has any reading
+   * on, deal-wide whatever the filter: the old tracking never recorded it
+   * (added after these buyers read, or never tracked). Hatched, never a drop,
+   * no read label.
+   */
   reachRecorded: boolean;
   /** What the current CIM does with this page when it is no longer a current section. */
   update: PageUpdate;
@@ -763,7 +768,7 @@ export interface EngagementDocumentResponse {
   /** Buyers who opened it: a visit, or (all time) a stamped first view — the pulse's rule. */
   openedTotal: number;
   reachBasis: ReachBasis;
-  /** reachBasis "old_tracking": the last viewer page with any reading in this view (later pages: reachRecorded false). */
+  /** reachBasis "old_tracking": the last recorded viewer page (DocumentPage.reachRecorded — deal-wide, not this view's). */
   lastRecordedIndex: number | null;
   /** This example deal's reading is sample data. */
   sampleReading: boolean;

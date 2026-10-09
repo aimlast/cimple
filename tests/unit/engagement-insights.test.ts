@@ -384,6 +384,23 @@ await test("reach headline: the steepest drop, or how many reached the end", () 
   assert.equal(reachHeadline([]), null);
   assert.equal(reachHeadline([r("1", 0)]), null);
 });
+await test("reach headline over recorded pages only (old tracking): never a drop onto a page nobody's reading was recorded on", () => {
+  const r = (label: string, buyers: number, title = `Page ${label}`): ReachPoint => ({ index: Number(label) - 1, pageId: label, part: 0, label, title, buyers });
+  // Beacon-like: page 11 is new in the rebuild (nobody had it); 10 → 7 there is not a drop onto it.
+  const reach = [r("9", 10), r("10", 10), r("11", 7, "LTC Contract Terms"), r("12", 7, "Pharmacy Operations"), r("13", 7)];
+  assert.match(reachHeadline(reach) ?? "", /LTC Contract Terms/, "without the rule");
+  const recorded = new Set([8, 9, 11, 12]);
+  assert.equal(reachHeadline(reach, { recorded }), "The biggest drop is around page 12 · Pharmacy Operations (10 → 7 readers).");
+  // No marked drop: the last RECORDED page is named (an unrecorded page after it never is).
+  const flat = [r("1", 5), r("2", 5), r("3", 0, "Contact")];
+  assert.equal(reachHeadline(flat, { recorded: new Set([0, 1]) }), "All 5 buyers who opened the CIM got to page 2 · Page 2, the last page recorded.");
+  // Filtered to one buyer: "This buyer", never "The buyer who opened the CIM".
+  assert.equal(reachHeadline([r("1", 1), r("2", 1)], { recorded: new Set([0, 1]), filtered: true }), "This buyer got to page 2 · Page 2, the last page recorded.");
+  assert.equal(reachHeadline([r("1", 1), r("2", 1)], { filtered: true }), "This buyer reached the last page.");
+  assert.equal(reachHeadline([r("1", 1), r("2", 0), r("3", 0)], { recorded: new Set([0, 1, 2]), filtered: true }), "This buyer got as far as page 1 · Page 1.");
+  // The older form (every page up to an index) still works.
+  assert.equal(reachHeadline(flat, { lastRecorded: 1 }), "All 5 buyers who opened the CIM got to page 2 · Page 2, the last page recorded.");
+});
 await test("what holds attention: compared per unit of content", () => {
   assert.equal(kindMixHeadline([
     { group: "tables", label: "Tables", attentionMs: 200_000, expectedMs: 100_000 },

@@ -62,7 +62,8 @@ export function PageRail({
         {ordered.map((p) => {
           const Icon = layoutIcon(p.layoutType);
           const on = p.index === selectedIndex;
-          const unreached = p.reachedBy === 0;
+          // Nobody reached it — or nobody's reading was ever recorded on it (old tracking).
+          const unreached = p.reachedBy === 0 || p.reachRecorded === false;
           const tint = railTint(heatIntensity(p.attentionMs, maxMs));
           return (
             <button
@@ -94,7 +95,7 @@ export function PageRail({
                     <span className="block h-full rounded-full" style={{ width: `${maxMs ? Math.max(p.attentionMs > 0 ? 3 : 0, (p.attentionMs / maxMs) * 100) : 0}%`, background: heatChrome(maxMs ? p.attentionMs / maxMs : 0) }} />
                   </div>
                   <div className="mt-1 flex items-baseline justify-between gap-2 whitespace-nowrap text-[10px] text-muted-foreground">
-                    <span className="tabular-nums text-foreground/80">{p.attentionMs > 0 ? formatReadingTime(p.attentionMs) : "not read"}</span>
+                    <span className="tabular-nums text-foreground/80">{p.attentionMs > 0 ? formatReadingTime(p.attentionMs) : p.reachRecorded === false ? "no reading recorded" : "not read"}</span>
                     <span className="tabular-nums" title={`${p.readers} of ${Math.max(openedBy, p.readers)} buyers read this page${p.readLabel ? ` · ${READ_LABEL_TEXT[p.readLabel]}` : ""}`}>
                       {p.readers}/{Math.max(openedBy, p.readers)}
                       {p.readLabel && <span className={cn(p.readLabel === "studied" ? "text-teal" : "")}> · {READ_LABEL_TEXT[p.readLabel]}</span>}

@@ -33,14 +33,14 @@ import { sql } from "drizzle-orm";
 import type { Deal } from "@shared/schema";
 import { DEFAULT_ENGAGEMENT_FILTERS, type CimMode, type CimVariant, type RenditionPage } from "@shared/analytics-v2";
 import { blindSectionKey, cimHeldFromBuyers, servesPublishedSnapshot } from "@shared/cim-buyer-view";
-import { BUYER_ACCESS_LEVELS, buyerAccessLabel } from "@shared/cim-layouts";
+import { BUYER_ACCESS_LEVELS } from "@shared/cim-layouts";
 import { storage } from "../server/storage";
 import { asDate } from "../server/analytics/reading-ingest";
 import { buildPageIndex, renditionId, servedCimFor } from "../server/analytics/renditions";
 import { legacyPageRemap, legacyPlacementHow, type LegacySection } from "../server/engagement/legacy";
 import { planLegacyReading, storeLegacyReading, unstoredRows } from "../server/engagement/legacy-store";
 import {
-  DEMO_READING_TAG, checkPlanTotals, planDemoReading, planRemoval, refuseReason, removalSql,
+  DEMO_READING_TAG, checkPlanTotals, planDemoReading, planRemoval, refuseReason, removalSql, seesLabel,
   type DemoBuyer, type DemoInput, type DemoOldPage, type DemoOldVisit, type DemoPlan,
 } from "../server/engagement/demo-reading";
 import { loadDealReadingFacts } from "../server/engagement/facts";
@@ -176,7 +176,7 @@ function stateLine(deal: Deal): string {
 
 function printPlan(ctx: Ctx, plan: DemoPlan, versions: Record<string, Version | null>, old: { visits: DemoOldVisit[]; pages: DemoOldPage[] }, firstVisit: Date, place: DemoInput["place"], lineageChecked: boolean) {
   const used = plan.renditions.map((r) => versions[r.level]!);
-  if (used.length) console.log(`  Versions: ${used.map((v) => `${buyerAccessLabel(v.level)} ${v.served.pages.length} pages`).join(" · ")} — dated ${fmtDay(firstVisit)} (the first visit, as the Engagement tab shows today)`);
+  if (used.length) console.log(`  Versions: ${used.map((v) => `${seesLabel(v.level)} ${v.served.pages.length} pages`).join(" · ")} — dated ${fmtDay(firstVisit)} (the first visit, as the Engagement tab shows today)`);
   // Every old key with how it lands.
   const levelOf = new Map(ctx.buyers.map((b) => [b.id, b.accessLevel]));
   const byKey = new Map<string, { ms: number; how: string; title: string }>();
@@ -223,11 +223,11 @@ function printPlan(ctx: Ctx, plan: DemoPlan, versions: Record<string, Version | 
     const content = main.served.pages.length;
     console.log(`  Colour will show on ${plural(pageHas.size, "page")} of ${content}; ${content - pageHas.size} have no old reading.`);
   }
-  console.log("  Buyer                    Sees            Decision          Depth  Visits  Pages  Minutes  Part rows  Device");
+  console.log(`  ${"Buyer".padEnd(23)}  ${"Sees".padEnd(22)}  ${"Decision".padEnd(16)}  Depth  Visits  Pages  Minutes  Part rows  Device`);
   for (const b of plan.perBuyer) {
     const buyer = ctx.buyers.find((x) => x.id === b.accessId)!;
     const decision = buyer.decision === "not_interested" ? "passed" : buyer.decision === "need_more_time" ? "needs more time" : buyer.decision === "interested" || buyer.decision === "lapsed" ? buyer.decision : "undecided";
-    console.log(`  ${b.name.slice(0, 23).padEnd(23)}  ${buyerAccessLabel(b.level).padEnd(14)}  ${decision.padEnd(16)}  ${b.depth.toFixed(2).padStart(5)}  ${String(b.visits).padStart(6)}  ${String(b.pages).padStart(5)}  ${String(Math.round(b.minutes)).padStart(7)}  ${String(b.partRows).padStart(9)}  ${b.device}`);
+    console.log(`  ${b.name.slice(0, 23).padEnd(23)}  ${seesLabel(b.level).padEnd(22)}  ${decision.padEnd(16)}  ${b.depth.toFixed(2).padStart(5)}  ${String(b.visits).padStart(6)}  ${String(b.pages).padStart(5)}  ${String(Math.round(b.minutes)).padStart(7)}  ${String(b.partRows).padStart(9)}  ${b.device}`);
   }
   for (const s of plan.skipped) {
     const name = ctx.buyers.find((x) => x.id === s.accessId)?.name ?? "A buyer";
@@ -390,7 +390,15 @@ async function main() {
       const s = await storeLegacyReading(deal.id);
       if (s.visits.length > s.alreadyStored) stored = s;
     }
-    const old = await oldReading(deal.id, !a.apply);
+    // 2. The write-time check (writePlan) covers the WHOLE planning window:
+    // fingerprint the deal now — after our own store, before anything the
+    // plan uses is read — and plan from a fresh read of the deal. A
+    // regeneration, hold change, kept copy or legacy store landing while the
+    // plan is built is then caught, and nothing is written.
+    const before = a.apply && !refusals.length ? await fingerprint(deal.id) : null;
+    const pctx = before ? (await loadCtx(id, cols)) ?? ctx : ctx;
+    const pdeal = pctx.deal;
+    const old = await oldReading(pdeal.id, !a.apply);
     if (old.willStore) {
       console.log(`  Will first store the old reading (as a regeneration would): ${old.willStore.exits} exits → ${plural(old.willStore.visits, "visit")}`);
     } else if (stored) {
@@ -398,37 +406,36 @@ async function main() {
     }
     if (old.visits.length === 0) { console.log("  No old reading on file: nothing to convert."); continue; }
     const firstVisit = new Date(Math.min(...old.visits.map((v) => v.startedAt.getTime())));
-    const readingLevels = Array.from(new Set(ctx.buyers.filter((b) => old.visits.some((v) => v.accessId === b.id)).map((b) => b.accessLevel)));
-    const versions = await versionsFor(deal, readingLevels);
+    const readingLevels = Array.from(new Set(pctx.buyers.filter((b) => old.visits.some((v) => v.accessId === b.id)).map((b) => b.accessLevel)));
+    const versions = await versionsFor(pdeal, readingLevels);
     const remaps = new Map<string, ReturnType<typeof legacyPageRemap>>();
     const place: DemoInput["place"] = (level, pageId, lineageId) => {
       const v = versions[level];
       if (!v) return null;
-      if (!remaps.has(level)) remaps.set(level, legacyPageRemap(ctx.live, blindSectionKey, v.served.pages));
+      if (!remaps.has(level)) remaps.set(level, legacyPageRemap(pctx.live, blindSectionKey, v.served.pages));
       const to = remaps.get(level)!(pageId, lineageId);
       if (!to) return null;
       return v.served.pages.find((p) => p.pageId === to.pageId) ?? v.served.pages.find((p) => p.lineageId === to.lineageId) ?? null;
     };
     const input: DemoInput = {
-      tag: a.tag, deal: { id: deal.id, demoKey: deal.demoKey ?? null, businessName: deal.businessName ?? "" },
-      buyers: ctx.buyers, visits: old.visits, pages: old.pages,
+      tag: a.tag, deal: { id: pdeal.id, demoKey: pdeal.demoKey ?? null, businessName: pdeal.businessName ?? "" },
+      buyers: pctx.buyers, visits: old.visits, pages: old.pages,
       served: Object.fromEntries(Object.entries(versions).map(([k, v]) => [k, v ? v.served : null])),
       place,
     };
     const plan = planDemoReading(input);
-    printPlan(ctx, plan, versions, old, firstVisit, place, await lineageChecked(deal));
+    printPlan(pctx, plan, versions, old, firstVisit, place, await lineageChecked(pdeal));
     const diffs = checkPlanTotals(input, plan);
     if (diffs.length) {
       console.log(`  Refused: the plan doesn't keep the reading time exactly (${diffs.length} difference${diffs.length === 1 ? "" : "s"}, e.g. ${diffs[0].pageId}: ${diffs[0].oldMs} → ${diffs[0].newMs} ms). Nothing written.`);
       failed = true;
       continue;
     }
-    if (!a.apply || refusals.length) continue;
-    const before = await fingerprint(deal.id);
-    const res = await writePlan(ctx, plan, versions, firstVisit, before, { tag: a.tag, preview: a.preview });
+    if (!before) continue;
+    const res = await writePlan(pctx, plan, versions, firstVisit, before, { tag: a.tag, preview: a.preview });
     console.log(`  Written: ${plural(res.inserted.length, "version")} added · ${plural(res.visitsAdded, "sample visit")} added${res.visitsAdded < plan.visits.length ? ` (${plan.visits.length - res.visitsAdded} already in place)` : ""} · ${plural(res.hidden, "old visit")} ${a.preview ? "set aside (preview)" : "hidden"}.`);
     // Read-only check: what the Engagement tab now shows.
-    const doc = buildDocumentResponse(await loadDealReadingFacts(deal, DEFAULT_ENGAGEMENT_FILTERS));
+    const doc = buildDocumentResponse(await loadDealReadingFacts(pdeal, DEFAULT_ENGAGEMENT_FILTERS));
     console.log(`  What “Where they read” shows now (${doc.rendition?.label ?? "no version"}):`);
     for (const line of heatTable(doc)) console.log(`    ${line}`);
     for (const line of heatAcceptance(doc, null, { preview: a.preview }).lines) console.log(`  ${line}`);

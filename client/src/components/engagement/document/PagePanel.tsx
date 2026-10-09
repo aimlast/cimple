@@ -138,7 +138,11 @@ export function PagePanel({
         <>
           <dl className="grid grid-cols-2 gap-x-3 gap-y-3">
             <Stat term="Reading time" value={formatReadingTime(page.attentionMs)} note="all buyers together" />
-            <Stat term="Buyers who read it" value={readersText(page.readers, doc.openedBy)} note={`${page.reachedBy} got this far`} />
+            <Stat
+              term="Buyers who read it"
+              value={readersText(page.readers, doc.openedBy)}
+              note={page.reachRecorded === false ? "no reading recorded on this page" : `${page.reachedBy} got this far`}
+            />
             <Stat
               term="Per buyer"
               value={perReader != null ? formatReadingTime(perReader) : "—"}
@@ -176,7 +180,9 @@ export function PagePanel({
           <section>
             <h4 className="mb-2 text-xs font-medium text-foreground/90">Buyers on this page</h4>
             {page.buyers.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Nobody has read this page yet.</p>
+              <p className="text-xs text-muted-foreground">
+                {filteredToOne && page.reachRecorded !== false ? "This buyer hasn't read this page." : "Nobody has read this page yet."}
+              </p>
             ) : (
               <ul className="space-y-1.5">
                 {page.buyers.map((b) => (
@@ -210,7 +216,8 @@ export function PagePanel({
             )}
           </section>
 
-          {parts.length > 0 && (
+          {/* Nobody read it: the buyers list above already says so — no parts to rank. */}
+          {parts.length > 0 && page.heat?.basis !== "none" && (
             <section>
               <h4 className="mb-2 text-xs font-medium text-foreground/90">
                 Parts of this page{sectionView === "collapsed" ? " (collapsed, as buyers first see it)" : sectionView === "opened" ? " (opened)" : ""}
@@ -219,7 +226,7 @@ export function PagePanel({
                 <p className="text-xs text-muted-foreground">Nobody has opened this section yet.</p>
               ) : !paint ? (
                 <p className="text-xs text-muted-foreground">
-                  {page.heat?.basis === "page" || page.heat?.basis === "none"
+                  {page.heat?.basis === "page"
                     ? "Only the page total is known for this reading."
                     : "The version shown has different parts, so only the page total applies here."}
                 </p>

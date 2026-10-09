@@ -185,7 +185,10 @@ export function DocumentView({ dealId, filters, onFiltersChange, page: pageParam
   const washCard: WashCard | null = current && mode === "wash"
     ? { time: formatReadingTime(current.attentionMs), buyers: current.buyers.length, rankText: rank?.text ?? null }
     : null;
-  const statusCtx = { blind: rendition?.mode === "blind", showNamed, sameLayout };
+  const statusCtx = {
+    blind: rendition?.mode === "blind", showNamed, sameLayout,
+    filter: filters.buyers.length === 1 ? "one" as const : filters.buyers.length > 1 || filters.segment !== "all" ? "some" as const : null,
+  };
   const sectionDefault = current ? defaultSectionView(current, servedPage) : null;
   const sectionView: SectionView | null = sectionDefault ? viewWanted ?? sectionDefault : null;
   const currentInView = current ? pageInView(current, sectionView) : null;

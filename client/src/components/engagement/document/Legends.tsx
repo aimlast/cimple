@@ -8,7 +8,7 @@ import { formatReadingTime } from "@shared/analytics-v2";
 import { legendTicks, pageLegendTicks, paperTint, washFill, type HeatScope } from "./viewer-model";
 
 /** Seconds legend for the paper colours (drawn on a paper swatch so the shades match the page). */
-export function HeatLegend({ maxMs, scope, perBuyer = false }: { maxMs: number; scope: HeatScope; perBuyer?: boolean }) {
+export function HeatLegend({ maxMs, scope, perBuyer = false, note }: { maxMs: number; scope: HeatScope; perBuyer?: boolean; note?: string }) {
   const ticks = legendTicks(maxMs);
   if (ticks.length === 0) return <span />;
   return (
@@ -26,12 +26,13 @@ export function HeatLegend({ maxMs, scope, perBuyer = false }: { maxMs: number; 
         <span className="inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-semibold" style={{ background: "#201D18", color: "#FBF9F4" }}>1</span>
         most time on this page
       </span>
+      {note && <span className="font-medium text-foreground/80" data-testid="legend-note">· {note}</span>}
     </div>
   );
 }
 
 /** Legend for the whole-page shade: the page's reading time against the busiest page. */
-export function PageLegend({ maxPageMs }: { maxPageMs: number }) {
+export function PageLegend({ maxPageMs, note }: { maxPageMs: number; note?: string }) {
   const ticks = pageLegendTicks(maxPageMs);
   if (ticks.length === 0) return <span />;
   return (
@@ -46,6 +47,7 @@ export function PageLegend({ maxPageMs }: { maxPageMs: number }) {
         ))}
       </span>
       <span>· darkest = the most-read page ({formatReadingTime(maxPageMs)})</span>
+      {note && <span className="font-medium text-foreground/80" data-testid="legend-note">· {note}</span>}
     </div>
   );
 }

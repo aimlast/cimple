@@ -97,12 +97,29 @@ export function heatAcceptance(
     if (coloured.length < 14) fails.push(`only ${coloured.length} of ${all.length} pages are coloured part by part (need ≥ 14)`);
     const unmatched = doc.legacyUnmatched?.pages ?? [];
     if (unmatched.length < 3) fails.push(`earlier reading on pages this version doesn't have: ${unmatched.length} page(s) reported, expected 3`);
+    // The pages new in the rebuild have no reading: never a drop, never "skipped".
+    if (!opts.preview) {
+      if (!doc.reachHeadline) fails.push("there is no “how far buyers got” sentence");
+      const pageMs = new Map<string, number>();
+      for (const p of doc.pages) pageMs.set(p.pageId, (pageMs.get(p.pageId) ?? 0) + p.attentionMs);
+      for (const p of doc.pages.filter((x) => pageMs.get(x.pageId) === 0 && x.reachRecorded)) {
+        fails.push(`page ${p.label} “${p.title}” has no reading but counts as recorded (it can show a drop or “skipped”)`);
+      }
+    }
   }
-  // The reach sentence never names a page the old tracking couldn't record.
+  // The reach sentence never names a page the old tracking couldn't record,
+  // and the page it names has reading.
   if (doc.reachHeadline) {
     for (const p of doc.pages.filter((x) => !x.reachRecorded)) {
       if (doc.reachHeadline.includes(p.title)) fails.push(`the reach sentence names page ${p.label} “${p.title}”, which wasn't recorded`);
     }
+    const named = /\bpage (\S+) · /.exec(doc.reachHeadline)?.[1];
+    const page = named ? doc.pages.find((p) => p.label === named) : null;
+    if (named && (!page || page.attentionMs < 1000)) fails.push(`the reach sentence names page ${named}, which has no reading`);
+  }
+  // A page nobody read never says buyers skipped it.
+  for (const p of doc.pages.filter((x) => !x.reachRecorded && x.readLabel)) {
+    fails.push(`page ${p.label} “${p.title}” wasn't recorded but is labelled “${p.readLabel}”`);
   }
   const lines = [
     `${coloured.length} of ${all.length} pages coloured part by part · ${read.length} with reading · opened ${doc.openedTotal} · with reading ${doc.openedBy}`

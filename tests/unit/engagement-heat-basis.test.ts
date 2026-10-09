@@ -259,6 +259,68 @@ test("sample reading counts as old tracking for reach and is flagged on every re
   assert.equal(buildDocumentResponse(assembleFacts(reachFixture())).sampleReading, false);
 });
 
+test("HM-C1: a buyer filter never makes the pages other buyers read 'not recorded' (the buyer just stopped)", () => {
+  // A and B read p1–p3; C stopped after p1. Filtered to C, p2–p3 stay recorded
+  // pages C didn't reach — only p4 (nobody's reading) is not recorded.
+  const f = reachFixture();
+  const vc = f.visits.find((v) => v.accessId === "C")!;
+  const everyone = f.sums.map((x) => vp(x.accessId, f.visits.find((v) => v.accessId === x.accessId)!.id, x.pageId, x.attentionMs));
+  const onlyC = base({
+    accesses: [acc("C")],
+    visits: [vc],
+    sums: f.sums.filter((x) => x.accessId === "C"),
+    visitPages: [vp("C", vc.id, "p1", 30_000)],
+    filters: { ...DEFAULT_ENGAGEMENT_FILTERS, buyers: ["C"] },
+    dealWideVisitPages: everyone,
+  });
+  const doc = buildDocumentResponse(assembleFacts(onlyC));
+  assert.equal(doc.reachBasis, "old_tracking");
+  assert.deepEqual(doc.pages.map((p) => p.reachRecorded), [true, true, true, false]);
+  assert.equal(doc.lastRecordedIndex, 2, "the deal's last recorded page, not this buyer's");
+  assert.equal(doc.reachHeadline, "This buyer got as far as page 1 · Overview.");
+  assert.doesNotMatch(doc.reachHeadline ?? "", /last page recorded/);
+  // Without the deal-wide rows (the old behaviour) p2–p3 read as "not recorded".
+  const old = buildDocumentResponse(assembleFacts({ ...onlyC, dealWideVisitPages: undefined }));
+  assert.deepEqual(old.pages.map((p) => p.reachRecorded), [true, false, false, false]);
+  // The same buyer on its own when the deal has only that buyer: "The buyer who opened the CIM".
+  const alone = buildDocumentResponse(assembleFacts({ ...onlyC, filters: DEFAULT_ENGAGEMENT_FILTERS, dealWideVisitPages: undefined }));
+  assert.match(alone.reachHeadline ?? "", /^The buyer who opened the CIM got to page 1 · Overview, the last page recorded\.$/);
+});
+test("HM-C2: a page nobody has any reading on, in between (added in a rebuild), is not recorded: no drop, no 'skipped', no 'reached but none stopped'", () => {
+  // Five buyers read p1, p2, p4 — p3 is new (nobody had it); two stop after p2.
+  const ids = ["A", "B", "C", "D", "E"];
+  const visits = ids.map((id) => visit(id));
+  const sums = ids.flatMap((id) => [sum(id, "p1", 40_000), sum(id, "p2", 40_000), ...(id === "D" || id === "E" ? [] : [sum(id, "p4", 40_000)])]);
+  const facts = assembleFacts(base({
+    accesses: ids.map((id) => acc(id)), visits, sums,
+    visitPages: sums.map((x) => vp(x.accessId, visits[ids.indexOf(x.accessId)].id, x.pageId, x.attentionMs)),
+  }));
+  const doc = buildDocumentResponse(facts);
+  assert.deepEqual(doc.pages.map((p) => p.reachRecorded), [true, true, false, true]);
+  assert.equal(doc.lastRecordedIndex, 3);
+  const p3 = page(doc, "p3");
+  assert.equal(p3.readLabel, null, "never 'Skipped'");
+  assert.equal(p3.headline, null, "never 'N buyers reached this page but none stopped to read it'");
+  assert.equal(p3.heat.basis, "none");
+  // The drop is measured between recorded pages (p2 → p4), never onto p3.
+  assert.equal(doc.reachHeadline, "The biggest drop is around page 4 · Next Steps (5 → 3 readers).");
+  assert.doesNotMatch(doc.reachHeadline ?? "", /Fleet/);
+  // The Buyers view's strips never call it skipped either.
+  const strip = buildBuyersResponse(facts).buyers.find((b) => b.accessId === "A")!.pageStrip;
+  assert.equal(strip.find((c) => c.pageId === "p3")!.readLabel, null);
+  assert.ok(strip.find((c) => c.pageId === "p2")!.readLabel, "recorded pages keep their label");
+});
+test("tracked reach (part-by-part visits) never marks a page unread by everyone as not recorded", () => {
+  const a = visit("A", { legacy: false, renditionId: "r1", maxPageIndex: 3 });
+  const doc = buildDocumentResponse(assembleFacts(base({
+    accesses: [acc("A")], visits: [a],
+    sums: [sum("A", "p1", 30_000, { renditionId: "r1", blockKey: "metric:0" }), sum("A", "p4", 30_000, { renditionId: "r1", blockKey: "metric:0" })],
+    visitPages: [vp("A", a.id, "p1", 30_000, "r1"), vp("A", a.id, "p4", 30_000, "r1")],
+  })));
+  assert.ok(doc.pages.every((p) => p.reachRecorded));
+  assert.equal(page(doc, "p3").readLabel, "skipped", "a tracked buyer really scrolled past it");
+});
+
 console.log("version note");
 const kept = SECTIONS.map((s) => ({ id: s.id }));
 test("kept copy: buyers read the version kept while the update waits (and this is it)", () => {
