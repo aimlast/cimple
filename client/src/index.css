@@ -463,3 +463,14 @@
 /* ─────────────────────────────────────────────
    SIDEBAR — hover-to-expand, content pushes over
 ───────────────────────────────────────────── */
+
+/* ── vdr: the data room's viewer never prints (vdr spec §6.3) ── */
+.vdr-printonly { display: none; }
+@media print {
+  .vdr-noprint img,
+  .vdr-noprint iframe,
+  .vdr-noprint table,
+  .vdr-noprint pre,
+  [data-vdr-overlay] { display: none !important; }
+  .vdr-printonly { display: block !important; padding: 2rem; font-size: 14px; }
+}

@@ -27,6 +27,7 @@ import BuyerSetPassword from "@/pages/buyer/BuyerSetPassword";
 import BuyerDashboard from "@/pages/buyer/BuyerDashboard";
 import BuyerProfile from "@/pages/buyer/BuyerProfile";
 import BuyerViewRoom from "@/pages/buyer/BuyerViewRoom";
+import BuyerDataRoom from "@/pages/buyer/BuyerDataRoom";
 import BuyerApprovalReviewPage from "@/pages/buyer/BuyerApprovalReviewPage";
 import NotFound from "@/pages/not-found";
 
@@ -44,6 +45,8 @@ export default function BuyerLayout() {
         <Route path="/buyer/dashboard" component={BuyerDashboard} />
         <Route path="/buyer/profile" component={BuyerProfile} />
         {/* Immersive pages (no chrome — pages handle their own layout) */}
+        {/* The data room (vdr) goes before the memorandum's route. */}
+        <Route path="/view/:token/data-room" component={BuyerDataRoom} />
         <Route path="/view/:token" component={BuyerViewRoom} />
         <Route path="/review/:token" component={BuyerApprovalReviewPage} />
         <Route component={NotFound} />

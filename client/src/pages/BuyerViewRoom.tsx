@@ -9,7 +9,7 @@
  * Falls back to legacy cimContent text if no AI sections exist yet.
  */
 import { useState, useEffect, useRef } from "react";
-import { useParams } from "wouter";
+import { Link, useLocation, useParams } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -37,6 +37,8 @@ import { NdaBuyerProfileGate } from "@/components/buyer/NdaBuyerProfileGate";
 import { CimBlockScope, CimBlocksProvider } from "@/components/cim/blocks";
 import { READING_SHEET_ATTR, useCimReading } from "@/lib/cim-reading";
 import type { ViewRoomReading } from "@shared/analytics-v2";
+import type { ViewRoomDataRoom } from "@shared/vdr-api";
+import { RoomSwitch } from "@/components/vdr/RoomSwitch";
 
 type BuyerDecision = "under_review" | "interested" | "not_interested" | "lapsed";
 
@@ -83,19 +85,21 @@ interface ViewData {
   pendingSections?: number;
   /** Reading analytics: the served version's opaque id + page order (content branch only). */
   reading?: ViewRoomReading;
+  /** The data room (vdr): the header switch and the downloads line. */
+  dataRoom?: ViewRoomDataRoom;
 }
 
 /** A section the buyer's access level doesn't open yet (server sends title only). */
 const isLocked = (s: CimSection) => (s as CimSection & { locked?: boolean }).locked === true;
 
 /** Parse an error body defensively — proxies return HTML during deploys. */
-async function readErrorBody(res: Response): Promise<{ error?: string; code?: string }> {
+async function readErrorBody(res: Response): Promise<{ error?: string; code?: string; [k: string]: any }> {
   return res.json().catch(() => ({}));
 }
 
 /** A load failure that carries the server's reason code (e.g. not_published). */
 class ViewRoomError extends Error {
-  constructor(message: string, readonly code?: string) {
+  constructor(message: string, readonly code?: string, readonly body: Record<string, any> = {}) {
     super(message);
   }
 }
@@ -125,6 +129,7 @@ function Watermark({ email }: { email: string }) {
 // ── Main component ─────────────────────────────────────────────────────────
 export default function BuyerViewRoom() {
   const { token } = useParams<{ token: string }>();
+  const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const [timeOnPage, setTimeOnPage] = useState(0);
   const [localDecision, setLocalDecision] = useState<BuyerDecision | null>(null);
@@ -137,7 +142,7 @@ export default function BuyerViewRoom() {
       const res = await fetch(`/api/view/${token}`);
       if (!res.ok) {
         const body = await readErrorBody(res);
-        throw new ViewRoomError(body.error || "Access denied", body.code);
+        throw new ViewRoomError(body.error || "Access denied", body.code, body);
       }
       return res.json();
     },
@@ -183,6 +188,12 @@ export default function BuyerViewRoom() {
     );
   }
 
+  // A buyer's team member's link: their data room (never the memorandum).
+  if (error instanceof ViewRoomError && error.code === "team_link" && typeof error.body.redirect === "string" && error.body.redirect.startsWith("/view/")) {
+    setTimeout(() => setLocation(error.body.redirect, { replace: true }), 0);
+    return null;
+  }
+
   // Not published yet (or taken offline): a calm holding card, not an error.
   if (error instanceof ViewRoomError && error.code === "not_published") {
     return (
@@ -191,6 +202,13 @@ export default function BuyerViewRoom() {
           <Clock className="h-8 w-8 mx-auto text-muted-foreground/60" />
           <h2 className="text-lg font-semibold">Not available yet</h2>
           <p className="text-sm text-muted-foreground">Your broker will let you know as soon as this CIM is ready to view.</p>
+          {error.body?.dataRoom?.available && (
+            <div className="pt-2">
+              <Button asChild size="sm" data-testid="view-room-open-data-room">
+                <Link href={`/view/${token}/data-room`}>Open the data room</Link>
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -304,6 +322,9 @@ export default function BuyerViewRoom() {
               </p>
             </div>
           </div>
+          {data.dataRoom?.available && (
+            <RoomSwitch token={token!} active="memo" newCount={data.dataRoom.newCount} className="hidden md:inline-flex" />
+          )}
           <div className="flex items-center gap-3">
             <p className="text-xs text-muted-foreground hidden sm:block">{access.buyerEmail}</p>
             <span className="flex items-center gap-1.5 text-xs text-muted-foreground border border-border rounded-full px-2.5 py-1">
@@ -312,6 +333,11 @@ export default function BuyerViewRoom() {
             </span>
           </div>
         </div>
+        {data.dataRoom?.available && (
+          <div className="border-t border-border px-4 py-2 md:hidden">
+            <RoomSwitch token={token!} active="memo" newCount={data.dataRoom.newCount} full />
+          </div>
+        )}
       </header>
 
       {/* ── Sticky section nav (appears after scrolling past cover) ────── */}
@@ -364,7 +390,7 @@ export default function BuyerViewRoom() {
                   <span>Access</span>
                   <Badge variant="outline" className="text-[9px] h-4">{buyerAccessLabel(access.accessLevel)}</Badge>
                 </div>
-                {access.canDownload === false && (
+                {(data.dataRoom?.available ? !data.dataRoom.allowDownloads : access.canDownload === false) && (
                   <div className="flex items-center gap-1 text-muted-foreground/60">
                     <Lock className="h-3 w-3" /> No downloads
                   </div>

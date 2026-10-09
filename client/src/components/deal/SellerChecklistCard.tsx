@@ -35,6 +35,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { checklistCounts, sellerUnavailableReason, withSellerUnavailableNote, withoutSellerUnavailableNote } from "@shared/seller-portal";
 import type { DealDocumentRequirement, Document as DocType } from "@shared/schema";
+import type { RoomItemRow } from "@shared/vdr-api";
 import { apiErrorText } from "./SellerReviewControls";
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -52,10 +53,18 @@ export function checklistKey(dealId: string) {
 
 type Filter = "attention" | "all";
 
-export function SellerChecklistCard({ dealId }: { dealId: string }) {
+/**
+ * `variant="room"` (the Data room's To do › Seller checklist): always open,
+ * and each row says where its file is in the data room — Missing ·
+ * Uploaded, not in the room (Put in the room) · In the room, not shared
+ * (Share…) · Shared. Rows the broker added from a buyer's request say so
+ * (the seller never sees who asked) with their "Needed by" date.
+ */
+export function SellerChecklistCard({ dealId, variant = "card", roomItems, onOpenItem }: { dealId: string; variant?: "card" | "room"; roomItems?: RoomItemRow[]; onOpenItem?: (itemId: string) => void }) {
   const { toast } = useToast();
-  const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState<Filter>("attention");
+  const room = variant === "room";
+  const [open, setOpen] = useState(room);
+  const [filter, setFilter] = useState<Filter>(room ? "all" : "attention");
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
   const [newCategory, setNewCategory] = useState("financial");
@@ -76,6 +85,24 @@ export function SellerChecklistCard({ dealId }: { dealId: string }) {
     enabled: open,
   });
   const docName = useMemo(() => new Map(docs.map((d) => [d.id, d.name])), [docs]);
+  const roomByDoc = useMemo(() => new Map((roomItems ?? []).filter((i) => !i.removed && i.documentId).map((i) => [i.documentId!, i])), [roomItems]);
+  const place = useMutation({
+    mutationFn: async (documentId: string) => (await apiRequest("POST", `/api/deals/${dealId}/data-room/items`, { documentId })).json(),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "data-room"] }); toast({ title: "Put in the room" }); },
+    onError: (e) => toast({ title: "Couldn't put it in the room", description: apiErrorText(e), variant: "destructive" }),
+  });
+  const roomLine = (r: DealDocumentRequirement) => {
+    if (!room) return null;
+    if (!r.uploadedFileId) return <span className="text-[11px] text-muted-foreground">Data room: missing</span>;
+    const item = roomByDoc.get(r.uploadedFileId);
+    if (!item) return (
+      <span className="text-[11px] text-muted-foreground">Data room: uploaded, not in the room · <button className="text-teal underline-offset-2 hover:underline" disabled={place.isPending} onClick={() => place.mutate(r.uploadedFileId!)}>Put in the room</button></span>
+    );
+    if (!item.sharing.shared) return (
+      <span className="text-[11px] text-muted-foreground">Data room: {item.number} · not shared · <button className="text-teal underline-offset-2 hover:underline" onClick={() => onOpenItem?.(item.id)}>Share…</button></span>
+    );
+    return <span className="text-[11px] text-muted-foreground">Data room: {item.number} · shared with {item.sharing.label.charAt(0).toLowerCase() + item.sharing.label.slice(1)}</span>;
+  };
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: checklistKey(dealId) });
   const patch = useMutation({
@@ -224,6 +251,10 @@ export function SellerChecklistCard({ dealId }: { dealId: string }) {
                                 {statusLabel(r.status, r.uploadedBy)}
                                 {r.uploadedFileId && docName.get(r.uploadedFileId) ? ` · ${docName.get(r.uploadedFileId)}` : ""}
                               </p>
+                              {room && r.source === "buyer_request" && (
+                                <p className="text-[11px] text-teal mt-0.5">Asked for by a buyer{r.neededBy ? ` · needed by ${new Date(r.neededBy).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}</p>
+                              )}
+                              {room && <p className="mt-0.5">{roomLine(r)}</p>}
                               {reason !== null && (
                                 <p className="text-xs text-amber-600 mt-1 break-words">Seller: “{reason || "I don't have this"}”</p>
                               )}
