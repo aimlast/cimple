@@ -20,12 +20,13 @@ export function RoomKpis({ kpis, onGo }: { kpis: Kpis; onGo: (view: RoomView, ex
     { key: "missing", value: String(kpis.missingRequired), label: "Missing", sub: "required, from the seller's checklist", go: () => onGo("todo", { todo: "checklist" }), wide: true },
   ];
   return (
-    <div className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border/70 bg-border/70 md:grid-cols-5" data-testid="room-kpis">
+    // Phones: a compact 3 + 2 grid (labels only), so the documents start on the first screen.
+    <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-border/70 bg-border/70 md:grid-cols-5" data-testid="room-kpis">
       {cells.map((c) => (
-        <button key={c.key} onClick={c.go} className={cn("group relative bg-card px-4 py-4 text-left transition-colors hover:bg-muted/30", c.wide && "col-span-2 md:col-span-1")} data-testid={`room-kpi-${c.key}`}>
-          <p className="text-2xs font-medium uppercase tracking-[0.14em] text-muted-foreground/70">{c.label}</p>
-          <p className="mt-2 font-mono text-2xl font-medium leading-none tabular-nums">{c.value}</p>
-          {c.sub && <p className="mt-1.5 truncate text-xs text-muted-foreground">{c.sub}</p>}
+        <button key={c.key} onClick={c.go} className={cn("group relative bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted/30 md:px-4 md:py-4", c.wide && "col-span-2 md:col-span-1")} data-testid={`room-kpi-${c.key}`}>
+          <p className="text-[10px] font-medium uppercase leading-tight tracking-[0.1em] text-muted-foreground/70 md:text-2xs md:tracking-[0.14em]">{c.label}</p>
+          <p className="mt-1.5 font-mono text-xl font-medium leading-none tabular-nums md:mt-2 md:text-2xl">{c.value}</p>
+          {c.sub && <p className="mt-1.5 hidden truncate text-xs text-muted-foreground md:block">{c.sub}</p>}
           <div className="absolute bottom-0 left-4 right-4 h-px bg-teal/0 transition-colors group-hover:bg-teal/40" />
         </button>
       ))}

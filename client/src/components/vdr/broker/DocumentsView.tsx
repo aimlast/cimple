@@ -197,7 +197,7 @@ export function DocumentsView(p: DocumentsViewProps) {
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input value={p.q} onChange={(e) => p.onQ(e.target.value)} placeholder="Search the room" className="h-8 pl-8 text-sm" data-testid="room-doc-search" />
           </label>
-          <div className="flex max-w-full overflow-x-auto rounded-md border border-border p-0.5 text-xs" role="tablist" aria-label="Filter">
+          <div ref={(el) => { el?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" }); }} className="flex max-w-full overflow-x-auto rounded-md border border-border p-0.5 text-xs" role="tablist" aria-label="Filter">
             {(["all", "shared", "not_shared", "new", "attention", ...(data.ddCited.available ? ["dd_cited"] : [])] as DocFilter[]).map((f) => (
               <button key={f} role="tab" aria-selected={p.filter === f} onClick={() => p.onFilter(f)} className={cn("shrink-0 rounded-[5px] px-2.5 py-1", p.filter === f ? "bg-teal/15 text-teal" : "text-muted-foreground hover:text-foreground")} data-testid={`room-filter-${f}`}>
                 {f === "all" ? "All" : f === "shared" ? "Shared" : f === "not_shared" ? "Not shared" : f === "new" ? "New" : f === "dd_cited" ? "In the DD CIM" : `Needs a look (${attention})`}

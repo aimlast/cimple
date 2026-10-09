@@ -34,7 +34,9 @@ export function ShareWithBuyerDialog({ dealId, buyer, open, onOpenChange }: { de
         const hidden = i.sharing.deny.some((a) => a.email.toLowerCase() === buyer.key);
         const why = i.unchecked.length > 0 ? "Check it first: open it and tick \"I've checked it\"." : i.isLedger && buyer.rule !== "auto_on" ? "Only due diligence buyers can open the general ledger." : null;
         return { item: i, has: has && !hidden, why };
-      });
+      })
+      // What can be picked first, then what needs a check, then what they can already open; each in index order.
+      .sort((a, b) => (Number(a.has) * 2 + Number(!!a.why)) - (Number(b.has) * 2 + Number(!!b.why)) || (a.item.number ?? "~").localeCompare(b.item.number ?? "~", undefined, { numeric: true }));
   }, [room.data, buyer]);
 
   const share = async () => {
@@ -90,7 +92,7 @@ export function ShareWithBuyerDialog({ dealId, buyer, open, onOpenChange }: { de
         {!saved && (
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={share} disabled={busy || picked.size === 0} data-testid="share-with-buyer-save">{busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}Share {picked.size || ""} with {label}</Button>
+            <Button onClick={share} disabled={busy || picked.size === 0} className="max-w-full" data-testid="share-with-buyer-save">{busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}<span className="truncate">{picked.size === 0 ? "Share" : `Share ${picked.size} ${picked.size === 1 ? "document" : "documents"}`}</span></Button>
           </DialogFooter>
         )}
       </DialogContent>
