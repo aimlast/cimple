@@ -172,6 +172,11 @@ export interface CoverageSummary {
   quality: { label: CimReadiness["label"] };
 }
 
+/** The seller's words as shown: in quotes — except a broker statement the seller agreed to, which already quotes both. */
+export function quoted(excerpt: string): string {
+  return /^The seller agreed:/.test(excerpt) ? excerpt : `“${excerpt}”`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Non-answers
 // ─────────────────────────────────────────────────────────────────────────
@@ -556,6 +561,8 @@ export function scoreItem(item: CoverageItem, section: Pick<CoverageSection, "im
   if (item.marks.some((m) => m.kind === "verify_later")) s += 0.5;
   const asked = ctx.askedAt?.[item.id];
   if (asked !== undefined && now - asked < 10 * 60_000) s -= 5;
+  // Asked already, and someone else has the answer ("Denise has the EMR") — it waits for them.
+  if (item.reason?.code === "not_known") s -= 4;
   return s;
 }
 
@@ -593,7 +600,7 @@ export function nextToAsk(board: Pick<CoverageBoard, "sections">, ctx: NextToAsk
     const same = ranked.find((i) => ctx.topicSections!.includes(i.sectionKey) && !used.has(i.id));
     if (same) push({ kind: "same_topic", chip: "Same topic", itemId: same.id, label: same.label, ask: same.ask, sectionKey: same.sectionKey });
   }
-  const crit = ranked.find((i) => i.critical && !used.has(i.id) && !(ctx.askedAt?.[i.id] !== undefined && now - (ctx.askedAt?.[i.id] ?? 0) < 10 * 60_000));
+  const crit = ranked.find((i) => i.critical && !used.has(i.id) && i.reason?.code !== "not_known" && !(ctx.askedAt?.[i.id] !== undefined && now - (ctx.askedAt?.[i.id] ?? 0) < 10 * 60_000));
   if (crit) push({ kind: "critical", chip: "Critical, not asked yet", itemId: crit.id, label: crit.label, ask: crit.ask, sectionKey: crit.sectionKey });
   for (const i of ranked) {
     if (out.length >= limit) break;

@@ -294,11 +294,12 @@ export function registerTogetherRoutes(app: Express): void {
       if (sitting.status === "ended") return res.status(409).json({ error: "This session has ended.", code: "ended" });
       const chunkId = typeof req.body?.chunkId === "string" ? req.body.chunkId : "";
       const held = ((sitting.captureState ?? {}) as { held?: Array<{ itemId: string; chunkId: string; lines: number[] }> }).held ?? [];
-      const h = held.find((x) => x.itemId === itemId && x.chunkId === chunkId);
-      if (!h) return res.status(404).json({ error: "That possible answer isn't there any more." });
-      await togetherStore().attestLines(sitting.id, h.lines, new Date());
+      // (Every possible answer held for the item — the board shows them together.)
+      const hs = held.filter((x) => x.itemId === itemId);
+      if (hs.length === 0 || !hs.some((x) => x.chunkId === chunkId)) return res.status(404).json({ error: "That possible answer isn't there any more." });
+      await togetherStore().attestLines(sitting.id, Array.from(new Set(hs.flatMap((x) => x.lines))), new Date());
       const fresh = (await togetherStore().getSitting(sitting.id)) ?? sitting;
-      const out = await promoteHeldAnswers(fresh, { only: { itemId, chunkId } });
+      const out = await promoteHeldAnswers(fresh, { only: { itemId } });
       hub.touch(sitting.id, String(req.session.brokerId));
       void publishBoard(req.params.dealId, sitting.id);
       res.json({ ok: true, filed: out.filed > 0 });

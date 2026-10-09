@@ -400,7 +400,8 @@ export function spelledNumbers(text: string): number[] {
   // (a naive per-word walk yielded [600, 18000] and falsely flagged the
   // correctly captured $618,000 — QA-caught). Standard accumulator: units
   // add, "hundred" multiplies the running group, big magnitudes bank it.
-  const words = text.toLowerCase().split(/[^a-z0-9.]+/);
+  // (A word at the end of a sentence — "thirty-five." — is still a number.)
+  const words = text.toLowerCase().split(/[^a-z0-9.]+/).map((w) => w.replace(/\.+$/, ""));
   const out: number[] = [];
   let current = 0;
   let total = 0;

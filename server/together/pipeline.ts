@@ -737,8 +737,13 @@ async function recordOnSitting(s: TogetherSitting, chunk: TogetherChunk, result:
   const st = captureStateOf(fresh);
   const at = new Date(deps.now()).toISOString();
   const labelOf = (itemId: string | null) => (itemId && catalogue?.items.find((i) => i.itemId === itemId)?.label) || "";
-  // Held possible answers: the newest per item; ones the item no longer needs drop off the board on read.
-  const held: HeldEntry[] = [...(st.held ?? []).filter((h) => !result.suggestions.some((n) => n.itemId === h.itemId)), ...guarded.suggestions.map((h) => ({ ...h, chunkId: chunk.id, at }))].slice(-HELD_MAX);
+  // Held possible answers: every one is kept ("busy months" and "quiet months" are two answers for one
+  // item); a newer answer for the same member replaces an older one. Ones the item no longer needs drop
+  // off the board on read.
+  const held: HeldEntry[] = [
+    ...(st.held ?? []).filter((h) => !guarded.suggestions.some((n) => n.itemId === h.itemId && n.memberKey === h.memberKey)),
+    ...guarded.suggestions.map((h) => ({ ...h, chunkId: chunk.id, at })),
+  ].slice(-HELD_MAX);
   const unconfirmed: BrokerUnconfirmedView[] = [
     ...(st.brokerUnconfirmed ?? []),
     ...result.brokerUnconfirmed.filter((b) => b.itemId).map((b) => ({ itemId: b.itemId!, key: b.key, label: labelOf(b.itemId), value: b.value, quote: b.quote, chunkId: chunk.id, at })),
@@ -808,9 +813,9 @@ export function withHeldAnswers(board: CoverageBoard, sitting: Pick<TogetherSitt
   if (board.audience !== "broker" || sitting.status === "ended") return board;
   const held = captureStateOf(sitting).held ?? [];
   if (held.length === 0) return board;
-  // (Several possible answers for one item — "busy months" and "quiet months" — show together, from the newest part.)
+  // (Several possible answers for one item — "busy months" and "quiet months" — show together; ✓ File it files them all.)
   const byItem = new Map<string, HeldEntry[]>();
-  for (const h of held) byItem.set(h.itemId, [...(byItem.get(h.itemId) ?? []).filter((x) => x.chunkId === h.chunkId), h]);
+  for (const h of held) byItem.set(h.itemId, [...(byItem.get(h.itemId) ?? []), h]);
   return {
     ...board,
     sections: board.sections.map((sec) => ({
@@ -818,7 +823,7 @@ export function withHeldAnswers(board: CoverageBoard, sitting: Pick<TogetherSitt
       items: sec.items.map((i): CoverageItem => {
         const hs = byItem.get(i.id);
         if (!hs || hs.length === 0 || i.status === "on_file") return i;
-        const h = hs[0];
+        const h = hs[hs.length - 1];
         const quote = hs.map((x) => x.quote).join(" … ");
         return { ...i, suggestion: { value: hs.map((x) => x.value).join("; "), quote, chunkId: h.chunkId, memberKey: h.memberKey } };
       }),
@@ -860,11 +865,11 @@ export async function publishStatus(sittingId: string): Promise<void> {
  * attested). Answers citing the broker's lines become "you said … — the
  * seller didn't confirm". No AI call.
  */
-export async function promoteHeldAnswers(sitting: TogetherSitting, opts: { only?: { itemId: string; chunkId: string } } = {}): Promise<{ filed: number }> {
+export async function promoteHeldAnswers(sitting: TogetherSitting, opts: { only?: { itemId: string } } = {}): Promise<{ filed: number }> {
   const store = togetherStore();
   const s = (await store.getSitting(sitting.id)) ?? sitting;
   const st = captureStateOf(s);
-  const held = (st.held ?? []).filter((h) => !opts.only || (h.itemId === opts.only.itemId && h.chunkId === opts.only.chunkId));
+  const held = (st.held ?? []).filter((h) => !opts.only || h.itemId === opts.only.itemId);
   if (held.length === 0) return { filed: 0 };
   const speakers = (s.speakers ?? {}) as SpeakerMap;
   const allSeqs = Array.from(new Set(held.flatMap((h) => h.lines)));

@@ -559,10 +559,10 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
         </div>
       )}
       {sitting.aiDown && !ended && !sitting.sourceDeleted && (
-        <div className="flex flex-wrap items-center gap-2 px-4 py-2 text-xs tg-warn-bg border-b border-border" role="status" data-testid="banner-ai-down">
-          <AlertTriangle className="h-3.5 w-3.5 tg-warn-text shrink-0" />
-          <span className="min-w-0">Cimple can't file answers right now. Everything said is being kept and will be filed as soon as it's back — keep talking.</span>
-          <Button size="sm" variant="outline" className="h-7 text-xs ml-auto" onClick={() => void retryFiling()} data-testid="button-try-now">Try now</Button>
+        <div className="flex items-start gap-2 px-4 py-2 text-xs tg-warn-bg border-b border-border" role="status" data-testid="banner-ai-down">
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 tg-warn-text shrink-0" />
+          <span className="min-w-0 flex-1">Cimple can't file answers right now. Everything said is being kept and will be filed as soon as it's back — keep talking.</span>
+          <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => void retryFiling()} data-testid="button-try-now">Try now</Button>
         </div>
       )}
       {sitting.longSession && !ended && !sitting.aiDown && (
@@ -635,10 +635,13 @@ function LiveBoard({ dealId, via, meetingLink }: { dealId: string; via: Together
   } else if (isPhone) {
     const counts = viewCounts(board, sitting.id);
     const active = sit.filing.active && Date.now() - sit.filing.active.at < 120_000;
+    const heldItems = board.sections.reduce((n, s) => n + s.items.filter((i) => i.suggestion).length, 0);
     const filingText = listenIsProblem(listening.state)
       ? listenCopy(listening.state)
       : sitting.aiDown
-        ? "Keeping everything said — filing resumes when Cimple is back"
+        ? "Filing paused — nothing is lost"
+        : heldItems > 0 && !active
+          ? `${heldItems} possible ${heldItems === 1 ? "answer" : "answers"} waiting`
         : active
           ? `Filing${sit.filing.active?.sectionTitle ? ` · ${sit.filing.active.sectionTitle}` : ""}…`
           : filedCount > 0 ? `${filedCount} filed this session` : "Cimple files answers as the seller talks";

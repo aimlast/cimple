@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { StatusIcon } from "@/components/coverage/StatusIcon";
 import { summaryLine, type SittingSummary, type TogetherSittingView } from "@shared/together";
+import { quoted } from "@shared/coverage-board";
 
 const DOCS_SHOWN = 6;
 
@@ -172,7 +173,7 @@ export function EndSessionDialog({
                     <div className="min-w-0 flex-1">
                       <p className="text-sm"><span className="font-medium">{f.label}</span> <span className="text-xs text-muted-foreground">· {f.sectionTitle}</span></p>
                       {f.value && <p className="text-xs text-muted-foreground line-clamp-2">{f.value}</p>}
-                      <p className="text-[11px] text-muted-foreground/80">{f.yourNote ? "Your note" : f.quote ? `“${f.quote}”` : null}</p>
+                      <p className="text-[11px] text-muted-foreground/80">{f.yourNote ? "Your note" : f.quote ? quoted(f.quote) : null}</p>
                     </div>
                     {!ended && onUndo && f.chunkId && f.key && (
                       <Button

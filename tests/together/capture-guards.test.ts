@@ -167,6 +167,12 @@ test("grounding: spelled-out figures are the seller's words; a figure they never
   assert.equal(g2.spoken[0]?.confidence, "approximate");
 });
 
+test("spelled numbers at the end of a sentence count ('… closer to thirty-five.')", () => {
+  const g = guardCaptured(out({ answers: [ans("grossProfit", "Service about 50%, installs about 35%", "Service runs about fifty percent, installs closer to thirty-five", [1])] }), ctx([S(1, "Service runs about fifty percent, installs closer to thirty-five.")]));
+  assert.equal(g.spoken[0]?.verify, undefined);
+  assert.equal(g.spoken[0]?.confidence, "confirmed");
+});
+
 test("date fidelity: a year the seller never said → to verify (date)", () => {
   const g = guardCaptured(out({ answers: [ans("companyHistory", "Opened the second shop in 2019", "we opened the second shop", [1])] }), ctx([S(1, "We opened the second shop a few years back.")]));
   assert.equal(g.spoken[0]?.verify, "date");

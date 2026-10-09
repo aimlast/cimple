@@ -37,6 +37,7 @@ import {
   CHIP,
   MASKED_VALUE,
   STATUS_LABEL,
+  quoted,
   reasonText,
   type CoverageItem,
 } from "@shared/coverage-board";
@@ -130,7 +131,7 @@ function SecondLine({ item, audience }: { item: CoverageItem; audience: BrokerAu
           {item.source && (
             <p className="text-[11px] text-muted-foreground/70 line-clamp-1">
               {item.source.label}
-              {item.source.excerpt ? ` · “${item.source.excerpt}”` : ""}
+              {item.source.excerpt ? ` · ${quoted(item.source.excerpt)}` : ""}
             </p>
           )}
         </div>
@@ -174,7 +175,7 @@ export function ItemDetailBody({ dealId, item, audience, sittingId }: { dealId: 
           {data.item.source?.excerpt && (
             <div>
               {heading("What the seller said")}
-              <p className="text-xs italic">“{data.item.source.excerpt}”</p>
+              <p className="text-xs italic">{quoted(data.item.source.excerpt)}</p>
             </div>
           )}
           {data.otherValues.length > 0 && (
@@ -222,6 +223,7 @@ export function CoverageItemRow({
   onResolve,
   onMenuOpenChange,
   sittingId,
+  allowUndo,
 }: {
   dealId: string;
   item: CoverageItem;
@@ -236,6 +238,8 @@ export function CoverageItemRow({
   onResolve?: (discrepancyId: string) => void;
   /** Freeze the list while a menu, editor, popover or sheet is open (key = "<itemId>:<what>"). */
   onMenuOpenChange?: (key: string, open: boolean) => void;
+  /** "Filed this session": every row this session filed can be undone (not only the last minute's). */
+  allowUndo?: boolean;
 }) {
   const { toast } = useToast();
   const [editor, setEditor] = useState<null | "add" | "edit" | "note" | "answered">(null);
@@ -315,7 +319,7 @@ export function CoverageItemRow({
       () => boardRequest("POST", `/api/deals/${dealId}/together/sittings/${sittingId}/captures/${encodeURIComponent(item.filedByChunkId ?? "")}/undo`, { key: item.valueKey }, "Couldn't undo it"),
       "Undone — back to what it was",
     );
-  const canUndo = mode === "live" && !!justFiled && !!sittingId && !!item.filedByChunkId && !!item.valueKey && item.filedInSittingId === sittingId;
+  const canUndo = mode === "live" && (!!justFiled || !!allowUndo) && !!sittingId && !!item.filedByChunkId && !!item.valueKey && item.filedInSittingId === sittingId;
   const mark = (kind: "verify_later", on: boolean) =>
     run(() =>
       on
@@ -358,7 +362,7 @@ export function CoverageItemRow({
         }}
         data-testid={`button-primary-${item.id}`}
       >
-        {busy && (action === "confirm" || action === "answered" || action === "file_it") ? <Loader2 className="h-3 w-3 animate-spin" /> : touch && (action === "confirm" || action === "answered" || action === "file_it") ? <Check className="h-3.5 w-3.5" aria-label={action === "answered" ? "Answered" : action === "file_it" ? "File it" : "Confirmed"} /> : touch && action === "resolve" ? "Resolve" : touch && action === "add" ? "Add" : PRIMARY_LABEL[action]}
+        {busy && (action === "confirm" || action === "answered" || action === "file_it") ? <Loader2 className="h-3 w-3 animate-spin" /> : touch && action === "file_it" ? "File it" : touch && (action === "confirm" || action === "answered") ? <Check className="h-3.5 w-3.5" aria-label={action === "answered" ? "Answered" : "Confirmed"} /> : touch && action === "resolve" ? "Resolve" : touch && action === "add" ? "Add" : PRIMARY_LABEL[action]}
       </Button>
     );
 

@@ -203,6 +203,7 @@ export function BoardList({
               onResolve={setResolving}
               onMenuOpenChange={stable.onMenuOpenChange}
               sittingId={rowMode === "live" ? sittingId : undefined}
+              allowUndo={state.view === "filed"}
             />
           ))}
           {showFolded && (

@@ -470,5 +470,18 @@ import("../../client/src/components/coverage/CoverageItemRow").then(({ primaryAc
   assert.equal(primaryActionFor({ ...base, status: "on_file" }, "checklist"), null);
   assert.equal(primaryActionFor({ ...base, members: [{ key: "sde", label: "SDE", writable: false }] }, "checklist"), null, "the broker's own calculation has no Add answer");
   assert.equal(primaryActionFor({ ...base }, "panel"), null, "the AI-interview panel is read-only");
+  assert.equal(primaryActionFor({ ...base, suggestion: { value: "v", quote: "q", chunkId: "c", memberKey: "y" } }, "live"), "file_it", "a held possible answer: ✓ File it");
+  assert.equal(primaryActionFor({ ...base, suggestion: { value: "v", quote: "q", chunkId: "c", memberKey: "y" } }, "checklist"), "add", "no File it outside a live session");
   console.log("✓ one context-aware primary button per row");
 });
+
+// Suggest next: an item someone else has the answer for ("Denise has the EMR") waits for them.
+{
+  const mk = (id: string, status: any, reason: any, critical = true) => ({ id, sectionKey: "employees", label: id, members: [], readKeys: [], valueKey: null, critical, origin: "generic", status, reason, value: null, source: null, ask: `Ask ${id}?`, why: "", marks: [] });
+  const board: any = { sections: [{ key: "employees", title: "Employees", order: 9, importance: "critical", importanceReason: "", items: [mk("employees:emr", "partial", { code: "not_known", whoHasIt: "Denise" }), mk("employees:staff", "missing", null)], references: [], counts: { on_file: 0, partial: 1, verify: 0, missing: 1 }, figureQuestions: 0 }] };
+  const ideas = nextToAsk(board, { now: 0 });
+  assert.equal(ideas[0].itemId, "employees:staff");
+  assert.ok(!ideas.some((i) => i.kind === "critical" && i.itemId === "employees:emr"), "never 'critical, not asked yet'");
+  console.log("✓ Suggest next: 'someone else has it' items wait for that person");
+}
+
