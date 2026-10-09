@@ -36,7 +36,18 @@ export type RenderJob =
    */
   | { kind: "prepare"; file: string; outDir: string; fileKind: PrepareFileKind; ext: string; text?: string | null; prerender?: number }
   /** Render one page's base image (1,400 px, personal numbers covered) into the cache, for pages past the pre-rendered ones. */
-  | { kind: "basePage"; outDir: string; page: number; source: "served" | "original"; file?: string | null };
+  | { kind: "basePage"; outDir: string; page: number; source: "served" | "original"; file?: string | null }
+  /** A base page → the page a reader sees: scaled, watermark burned in, JPEG (vdr spec §9.7). */
+  | { kind: "composite"; file: string; width: PageWidth; mark: WatermarkSpec; quality?: number }
+  /** Download: a PDF of watermarked page images (no text layer, no file details). */
+  | { kind: "pagesPdf"; outDir: string; pages: number; source: "served" | "original" | "image"; file?: string | null; mark: WatermarkSpec }
+  /** Download: a values-only workbook of the covered cells, with a first "Confidential" sheet. */
+  | { kind: "valuesXlsx"; outDir: string; sheets: Array<{ index: number; name: string }>; stamp: string }
+  /** Download: the sanitised served PDF, stamped on every page. */
+  | { kind: "originalPdf"; outDir: string; mark: WatermarkSpec };
+
+/** The watermark burned into a page (child/watermark.ts). `line` null = no diagonal text (the broker's own view). */
+export type WatermarkSpec = { line: string | null; footer: string };
 
 export type CanaryResult = {
   node: string;
@@ -101,6 +112,9 @@ export type PrepareResult = {
 
 export type BasePageResult = { page: number; width: number; height: number; bytes: number };
 
+export type CompositeResult = { jpeg: Uint8Array; width: number; height: number };
+export type DownloadResult = { bytes: Uint8Array };
+
 export type RenderResultFor<J extends RenderJob> =
   J extends { kind: "canary" } ? CanaryResult
   : J extends { kind: "pdfPage" } ? PdfPageResult
@@ -108,6 +122,10 @@ export type RenderResultFor<J extends RenderJob> =
   : J extends { kind: "zipCheck" } ? ZipCheckResult
   : J extends { kind: "prepare" } ? PrepareResult
   : J extends { kind: "basePage" } ? BasePageResult
+  : J extends { kind: "composite" } ? CompositeResult
+  : J extends { kind: "pagesPdf" } ? DownloadResult
+  : J extends { kind: "valuesXlsx" } ? DownloadResult
+  : J extends { kind: "originalPdf" } ? DownloadResult
   : never;
 
 // ── Wire protocol (IPC, advanced serialization) ────────────────────────────

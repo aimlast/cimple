@@ -256,7 +256,9 @@ export function principalLinkFor<T extends AccessRowLike>(
 export type VdrHidden =
   | "link" | "nda" | "room_none" | "room_closed" | "no_room_access" | "team_ended"   // whole-room reasons
   | "removed" | "private" | "not_room_material" | "file_missing"                    // item reasons
-  | "not_shared" | "excluded" | "dd_only" | "ledger_pending" | "not_ready";
+  | "not_shared" | "excluded" | "dd_only" | "ledger_pending" | "not_ready"
+  /** Shared, but a needs-a-look flag (§4.9) isn't ticked for the current file: held back until the broker checks it (fail-closed). */
+  | "held_for_check";
 
 export type ShareLike = { audience: "level" | "buyer" | string; accessLevel: string | null; buyerEmail: string | null; effect: "allow" | "deny" | string };
 
@@ -267,6 +269,8 @@ export type VisibilityInput = {
   doc: (RoomDocLike & { dealId: string }) | null;
   servedFileExists: boolean;
   shares: ReadonlyArray<ShareLike>;
+  /** Needs-a-look flags not ticked for the current file (uncheckedLookFlags). Any → held back. */
+  uncheckedFlags?: number;
 };
 
 export type Visibility = { visible: true } | { visible: false; reason: VdrHidden };
@@ -289,6 +293,9 @@ export function itemVisibility(i: VisibilityInput): Visibility {
   if (i.item.isLedger && i.reader.mode !== "dd") return hide("dd_only");
   if (i.item.prepared?.kind === "ledger_pending") return hide("ledger_pending");
   if (!i.item.prepared || i.item.prepared.status !== "ready") return hide("not_ready");
+  // A document shared before Cimple finished checking it (the plan, a folder
+  // share) and found to need a look is never served until the broker ticks it.
+  if ((i.uncheckedFlags ?? 0) > 0) return hide("held_for_check");
   return { visible: true };
 }
 
@@ -708,3 +715,162 @@ export type VdrAction = (typeof VDR_ACTIONS)[number];
 export function storedLevelKey(level: string): string {
   return normalizeAccessLevel(level);
 }
+
+// ── Sharing, eligibility and plain labels (pass 2: the broker's tab, the buyer's room) ──
+
+/** What a document's grants come to, for the broker's sharing chip (§5.3). */
+export type ShareSummary = {
+  shared: boolean;
+  levels: string[];          // normalised data-room levels with a grant, in display order
+  buyers: number;            // specific buyers allowed
+  hiddenFrom: number;        // specific buyers denied
+  label: string;             // "Not shared" · "Due diligence buyers" · "Due diligence + 2 buyers" · "3 buyers" · "Every buyer with the room"
+};
+
+export function shareSummary(shares: ReadonlyArray<ShareLike>): ShareSummary {
+  const levels = DATA_ROOM_LEVELS.filter((l) => shares.some((s) => s.audience === "level" && s.effect !== "deny" && !!s.accessLevel && sameAccessLevel(s.accessLevel, l)));
+  const buyers = new Set(shares.filter((s) => s.audience === "buyer" && s.effect === "allow").map((s) => buyerKey(s.buyerEmail))).size;
+  const hiddenFrom = new Set(shares.filter((s) => s.audience === "buyer" && s.effect === "deny").map((s) => buyerKey(s.buyerEmail))).size;
+  let label: string;
+  if (levels.length === DATA_ROOM_LEVELS.length) label = "Every buyer with the room";
+  else if (levels.length === 1) {
+    const base = accessLevelLabel(levels[0]);
+    label = buyers > 0 ? `${base} + ${buyers} ${buyers === 1 ? "buyer" : "buyers"}` : `${base} buyers`;
+  } else if (buyers > 0) label = `${buyers} ${buyers === 1 ? "buyer" : "buyers"}`;
+  else label = "Not shared";
+  if (hiddenFrom > 0 && label !== "Not shared") label += ` (hidden from ${hiddenFrom})`;
+  return { shared: levels.length > 0 || buyers > 0, levels, buyers, hiddenFrom, label };
+}
+
+export type BuyerIneligibleReason = "teaser" | "blind" | "nda" | "revoked" | "expired";
+
+/** Why a buyer's link can't have documents (§5.7 "Not eligible yet"), or null when it can. */
+export function roomIneligibleReason(row: Pick<AccessRowLike, "accessLevel" | "ndaSigned" | "revokedAt" | "expiresAt">, now: Date = new Date()): BuyerIneligibleReason | null {
+  if (row.revokedAt) return "revoked";
+  if (row.expiresAt && new Date(row.expiresAt).getTime() <= now.getTime()) return "expired";
+  const rule = dataRoomLevelRule(row.accessLevel);
+  if (rule === "never_teaser") return "teaser";
+  if (rule === "never_blind") return "blind";
+  if (!row.ndaSigned) return "nda";
+  return null;
+}
+
+export function ineligibleCopy(reason: BuyerIneligibleReason): string {
+  switch (reason) {
+    case "teaser": return "Teaser: no data room before the NDA";
+    case "blind": return "Blind CIM: documents name the business.";
+    case "nda": return "Hasn't signed the NDA";
+    case "revoked": return "Link revoked";
+    default: return "Link expired";
+  }
+}
+
+/** The download chip on a broker row. */
+export function downloadChipLabel(item: { downloadable: boolean; downloadOriginal: boolean }): string {
+  if (!item.downloadable) return "View only";
+  return item.downloadOriginal ? "Download · original" : "Download";
+}
+
+const DOC_TYPE_WORDS: Array<[RegExp, string]> = [
+  [/\bt2\b|corporat\w* income tax/i, "T2 corporate income tax return"],
+  [/\bt1\b/i, "T1 personal income tax return"],
+  [/notice of assessment/i, "Notice of assessment"],
+  [/tax return|\b1120s?\b|\b1065\b/i, "Tax return"],
+  [/financial statement|compil|review engagement|audited/i, "Financial statements"],
+  [/income statement|profit (and|&) loss|\bp&l\b/i, "Income statement"],
+  [/balance sheet/i, "Balance sheet"],
+  [/general ledger/i, "General ledger"],
+  [/lease/i, "Lease"],
+  [/minute book/i, "Minute book"],
+];
+
+/** "PDF · 6 pages" · "Spreadsheet · 3 sheets" · "Word" · "Photo" · "General ledger". */
+export function fileSizeLabel(prepared: Pick<VdrPrepared, "kind" | "pages" | "sheets" | "status"> | null, fallbackKind?: VdrPreparedKind | null): string {
+  const kind = prepared?.kind ?? fallbackKind ?? "unsupported";
+  const pages = prepared?.status === "ready" ? prepared.pages?.length ?? 0 : 0;
+  const sheets = prepared?.status === "ready" ? prepared.sheets?.length ?? 0 : 0;
+  switch (kind) {
+    case "pdf": return pages ? `PDF · ${pages} ${pages === 1 ? "page" : "pages"}` : "PDF";
+    case "image": return "Photo";
+    case "sheet": return sheets ? `Spreadsheet · ${sheets} ${sheets === 1 ? "sheet" : "sheets"}` : "Spreadsheet";
+    case "html": return "Word";
+    case "text": return "Text";
+    case "ledger":
+    case "ledger_pending": return "General ledger";
+    default: return "File";
+  }
+}
+
+/** A document's period end as words ("Dec 31, 2023"), from the extraction or the source's details. */
+export function periodEndLabel(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const m = raw.trim().match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
+  if (!m) return raw.trim().slice(0, 40);
+  const month = Number(m[2]);
+  if (month < 1 || month > 12) return raw.trim().slice(0, 40);
+  return m[3] ? `${MONTHS[month - 1]} ${Number(m[3])}, ${m[1]}` : `${MONTHS[month - 1]} ${m[1]}`;
+}
+
+/** A document's type in plain words, from the extraction (`_documentType`) or its name. */
+export function documentTypeLabel(doc: { name?: string | null; extractedData?: unknown } | null): string | null {
+  const ed = (doc?.extractedData ?? null) as Record<string, unknown> | null;
+  const t = typeof ed?._documentType === "string" ? ed._documentType.trim() : "";
+  if (t) return (t.charAt(0).toUpperCase() + t.slice(1)).slice(0, 80);
+  const name = String(doc?.name ?? "");
+  for (const [re, words] of DOC_TYPE_WORDS) if (re.test(name)) return words;
+  return null;
+}
+
+/**
+ * The basic line buyers read about a document until the broker accepts a
+ * description (V12): "{Document type} for the period ending {date}, {pages} pages."
+ * Built only from the document's type, period and page count — no figures.
+ */
+export function basicDescription(
+  doc: { name?: string | null; extractedData?: unknown; sourceMeta?: unknown } | null,
+  prepared: Pick<VdrPrepared, "kind" | "pages" | "sheets" | "status"> | null,
+): string {
+  const ed = (doc?.extractedData ?? null) as Record<string, unknown> | null;
+  const meta = (doc?.sourceMeta ?? null) as Record<string, unknown> | null;
+  const type = documentTypeLabel(doc) ?? (prepared?.kind === "sheet" ? "Spreadsheet" : prepared?.kind === "image" ? "Photo" : "Document");
+  const period = periodEndLabel(ed?._periodEnd ?? meta?.periodEnd);
+  const pages = prepared?.status === "ready" ? prepared.pages?.length ?? 0 : 0;
+  const sheets = prepared?.status === "ready" ? prepared.sheets?.length ?? 0 : 0;
+  const size = pages > 1 ? `, ${pages} pages` : sheets > 1 ? `, ${sheets} sheets` : "";
+  return `${type}${period ? ` for the period ending ${period}` : ""}${size}.`;
+}
+
+/** The description a buyer reads: the broker-accepted one, else the basic line (V12). */
+export function buyerDescriptionFor(
+  item: { buyerSummary: string | null; buyerSummaryPoints: unknown; buyerSummaryStatus: string | null; buyerSummaryHidden: boolean },
+  basic: string,
+): { text: string; points: string[]; accepted: boolean } {
+  if (!item.buyerSummaryHidden && item.buyerSummaryStatus === "accepted" && item.buyerSummary && item.buyerSummary.trim()) {
+    const points = Array.isArray(item.buyerSummaryPoints) ? (item.buyerSummaryPoints as unknown[]).filter((p): p is string => typeof p === "string" && !!p.trim()).slice(0, 4) : [];
+    return { text: item.buyerSummary.trim(), points, accepted: true };
+  }
+  return { text: basic, points: [], accepted: false };
+}
+
+/** The watermark line burned into every page a reader sees (§9.7). */
+export function watermarkLine(i: { name?: string | null; email: string; at: Date; trace: string; principalCompany?: string | null }): string {
+  const iso = i.at.toISOString();
+  const when = `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+  const who = (i.name && i.name.trim()) || i.email;
+  return [who, i.email, ...(i.principalCompany ? [`for ${i.principalCompany}`] : []), when, i.trace].join(" · ");
+}
+
+/** The footer band on every page a reader sees. */
+export function watermarkFooter(i: { email: string; at: Date; firm?: string | null }): string {
+  const d = `${MONTHS[i.at.getUTCMonth()]} ${i.at.getUTCDate()}, ${i.at.getUTCFullYear()}`;
+  return `Confidential · shared with ${i.email} on ${d}${i.firm ? ` by ${i.firm}` : ""}`;
+}
+
+/** A device class from a viewport width (the view's `deviceClass`). */
+export function deviceClassFor(width: number | null | undefined): "desktop" | "tablet" | "phone" {
+  const w = Number(width) || 0;
+  return w > 0 && w < 600 ? "phone" : w > 0 && w < 1024 ? "tablet" : "desktop";
+}
+
+export const VDR_VIEW_SOURCES = ["room", "search", "new", "cim", "question", "preview", "demo"] as const;
+export type VdrViewSource = (typeof VDR_VIEW_SOURCES)[number];

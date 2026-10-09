@@ -8,28 +8,57 @@
  * partial unique index) followed by a re-read, so two uploads finishing at
  * once can't place a document twice.
  */
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   documents,
   vdrActivity,
+  vdrBuyerSettings,
   vdrFolders,
   vdrItems,
   vdrPageText,
   vdrRequests,
   vdrRooms,
   vdrShares,
+  vdrTeamMembers,
+  vdrViews,
   type Document,
   type InsertVdrActivity,
+  type InsertVdrBuyerSettings,
   type InsertVdrFolder,
   type InsertVdrItem,
   type InsertVdrRoom,
   type InsertVdrShare,
+  type InsertVdrView,
+  type VdrActivity,
+  type VdrBuyerSettings,
   type VdrFolder,
   type VdrItem,
+  type VdrPageText,
   type VdrRequest,
   type VdrRoom,
   type VdrShare,
+  type VdrTeamMember,
+  type VdrView,
 } from "@shared/schema";
+
+/** A merge into a view: the larger of each counter wins (GREATEST), never less. */
+export type ViewMerge = { activeMs: number; pageMs: Record<string, number>; maxPage: number | null; lastSeenAt: Date };
+
+/** The GREATEST merge of a view's counters (pure; the DB store and the fake share it). */
+export function mergeViewCounters(
+  prev: { activeMs: number; pageMs: Record<string, number> | null; maxPage: number | null },
+  next: Omit<ViewMerge, "lastSeenAt">,
+): { activeMs: number; pageMs: Record<string, number>; maxPage: number | null } {
+  const pageMs: Record<string, number> = { ...(prev.pageMs ?? {}) };
+  for (const [k, v] of Object.entries(next.pageMs)) pageMs[k] = Math.max(pageMs[k] ?? 0, v);
+  const maxPage = prev.maxPage == null ? next.maxPage : next.maxPage == null ? prev.maxPage : Math.max(prev.maxPage, next.maxPage);
+  return { activeMs: Math.max(prev.activeMs ?? 0, next.activeMs), pageMs, maxPage };
+}
+
+/** Escapes a search term for ILIKE (%, _ and \ are literal). */
+export function escapeLike(q: string): string {
+  return q.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
 
 export interface VdrStore {
   getRoom(dealId: string): Promise<VdrRoom | null>;
@@ -70,6 +99,29 @@ export interface VdrStore {
 
   /** Buyer requests waiting on this checklist row become "ready to share". */
   markRequestsReady(requirementId: string, documentId: string): Promise<VdrRequest[]>;
+
+  // ── Pass 2: the broker's tab and the buyer's room ──
+  updateFolder(id: string, patch: Partial<InsertVdrFolder>): Promise<VdrFolder | null>;
+  deleteFolder(id: string): Promise<void>;
+  /** Several items moved / reordered in one transaction. */
+  moveItems(moves: Array<{ id: string; folderId: string; position: number }>): Promise<void>;
+  /** Replaces the grants of several items at once, atomically (one transaction). */
+  replaceShares(changes: Array<{ itemId: string; rows: InsertVdrShare[] }>): Promise<void>;
+  listBuyerSettings(dealId: string): Promise<VdrBuyerSettings[]>;
+  upsertBuyerSettings(dealId: string, buyerEmail: string, patch: Partial<InsertVdrBuyerSettings>): Promise<VdrBuyerSettings>;
+  insertView(row: InsertVdrView): Promise<VdrView>;
+  getView(id: string): Promise<VdrView | null>;
+  /** GREATEST merge of the view's counters (never lowers one). */
+  mergeView(id: string, m: ViewMerge): Promise<VdrView | null>;
+  markViewDownloaded(id: string): Promise<void>;
+  listViews(dealId: string): Promise<VdrView[]>;
+  /** Page text rows of these items that contain `q` (case-insensitive, literal). */
+  searchPageText(dealId: string, itemIds: string[], q: string, limit: number): Promise<Array<Pick<VdrPageText, "itemId" | "page" | "label" | "text">>>;
+  getPageText(itemId: string): Promise<VdrPageText[]>;
+  listActivity(dealId: string, limit: number): Promise<VdrActivity[]>;
+  teamMemberByTokenHash(hash: string): Promise<VdrTeamMember | null>;
+  listTeamMembers(dealId: string): Promise<VdrTeamMember[]>;
+  updateTeamMember(id: string, patch: Partial<VdrTeamMember>): Promise<void>;
 }
 
 async function getDb() {
@@ -210,6 +262,106 @@ export const dbVdrStore: VdrStore = {
       .set({ status: "ready_to_share", readyDocumentId: documentId })
       .where(and(eq(vdrRequests.requirementId, requirementId), inArray(vdrRequests.status, ["open", "asked_seller"])))
       .returning();
+  },
+
+  async updateFolder(id, patch) {
+    const db = await getDb();
+    const [r] = await db.update(vdrFolders).set({ ...patch, updatedAt: new Date() }).where(eq(vdrFolders.id, id)).returning();
+    return r ?? null;
+  },
+  async deleteFolder(id) {
+    const db = await getDb();
+    await db.delete(vdrFolders).where(eq(vdrFolders.id, id));
+  },
+  async moveItems(moves) {
+    if (moves.length === 0) return;
+    const db = await getDb();
+    await db.transaction(async (tx) => {
+      for (const m of moves) await tx.update(vdrItems).set({ folderId: m.folderId, position: m.position, updatedAt: new Date() }).where(eq(vdrItems.id, m.id));
+    });
+  },
+  async replaceShares(changes) {
+    if (changes.length === 0) return;
+    const db = await getDb();
+    await db.transaction(async (tx) => {
+      for (const c of changes) {
+        await tx.delete(vdrShares).where(eq(vdrShares.itemId, c.itemId));
+        if (c.rows.length) await tx.insert(vdrShares).values(c.rows).onConflictDoNothing();
+      }
+    });
+  },
+  async listBuyerSettings(dealId) {
+    const db = await getDb();
+    return db.select().from(vdrBuyerSettings).where(eq(vdrBuyerSettings.dealId, dealId));
+  },
+  async upsertBuyerSettings(dealId, buyerEmail, patch) {
+    const db = await getDb();
+    const set = { ...patch, updatedAt: new Date() };
+    await db.insert(vdrBuyerSettings).values({ dealId, buyerEmail, ...patch }).onConflictDoUpdate({ target: [vdrBuyerSettings.dealId, vdrBuyerSettings.buyerEmail], set });
+    const [r] = await db.select().from(vdrBuyerSettings).where(and(eq(vdrBuyerSettings.dealId, dealId), eq(vdrBuyerSettings.buyerEmail, buyerEmail)));
+    return r;
+  },
+  async insertView(row) {
+    const db = await getDb();
+    const [r] = await db.insert(vdrViews).values(row).returning();
+    return r;
+  },
+  async getView(id) {
+    const db = await getDb();
+    const [r] = await db.select().from(vdrViews).where(eq(vdrViews.id, id));
+    return r ?? null;
+  },
+  async mergeView(id, m) {
+    const db = await getDb();
+    return db.transaction(async (tx) => {
+      const [cur] = await tx.select().from(vdrViews).where(eq(vdrViews.id, id)).for("update");
+      if (!cur) return null;
+      const merged = mergeViewCounters({ activeMs: cur.activeMs, pageMs: (cur.pageMs as Record<string, number> | null) ?? {}, maxPage: cur.maxPage }, m);
+      const lastSeenAt = m.lastSeenAt.getTime() > new Date(cur.lastSeenAt).getTime() ? m.lastSeenAt : cur.lastSeenAt;
+      const [r] = await tx.update(vdrViews).set({ ...merged, lastSeenAt }).where(eq(vdrViews.id, id)).returning();
+      return r ?? null;
+    });
+  },
+  async markViewDownloaded(id) {
+    const db = await getDb();
+    await db.update(vdrViews).set({ downloaded: true }).where(eq(vdrViews.id, id));
+  },
+  async listViews(dealId) {
+    const db = await getDb();
+    return db.select().from(vdrViews).where(eq(vdrViews.dealId, dealId)).orderBy(desc(vdrViews.lastSeenAt)).limit(5000);
+  },
+  async searchPageText(dealId, itemIds, q, limit) {
+    if (itemIds.length === 0) return [];
+    const db = await getDb();
+    const pattern = `%${escapeLike(q)}%`;
+    return db
+      .select({ itemId: vdrPageText.itemId, page: vdrPageText.page, label: vdrPageText.label, text: vdrPageText.text })
+      .from(vdrPageText)
+      .where(and(eq(vdrPageText.dealId, dealId), inArray(vdrPageText.itemId, itemIds), sql`${vdrPageText.text} ILIKE ${pattern} ESCAPE '\\'`))
+      .orderBy(asc(vdrPageText.itemId), asc(vdrPageText.page))
+      .limit(limit);
+  },
+  async getPageText(itemId) {
+    const db = await getDb();
+    return db.select().from(vdrPageText).where(eq(vdrPageText.itemId, itemId)).orderBy(asc(vdrPageText.page));
+  },
+  async listActivity(dealId, limit) {
+    const db = await getDb();
+    return db.select().from(vdrActivity).where(eq(vdrActivity.dealId, dealId)).orderBy(desc(vdrActivity.at)).limit(limit);
+  },
+  async teamMemberByTokenHash(hash) {
+    if (!/^[a-f0-9]{64}$/.test(hash)) return null;
+    const db = await getDb();
+    const [r] = await db.select().from(vdrTeamMembers).where(eq(vdrTeamMembers.tokenHash, hash));
+    return r ?? null;
+  },
+  async listTeamMembers(dealId) {
+    const db = await getDb();
+    return db.select().from(vdrTeamMembers).where(eq(vdrTeamMembers.dealId, dealId));
+  },
+  async updateTeamMember(id, patch) {
+    const db = await getDb();
+    await db.update(vdrTeamMembers).set({ ...patch, updatedAt: new Date() }).where(eq(vdrTeamMembers.id, id));
   },
 };
 

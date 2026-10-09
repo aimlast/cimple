@@ -5,7 +5,7 @@
  * (vdr_folders_deal_preset_uq), unique level / buyer share rows.
  */
 import { randomUUID } from "node:crypto";
-import type { VdrStore } from "../../server/vdr/store";
+import { mergeViewCounters, type VdrStore } from "../../server/vdr/store";
 
 export function fakeVdrStore(seed: { documents?: any[] } = {}) {
   const rooms = new Map<string, any>();
@@ -15,6 +15,9 @@ export function fakeVdrStore(seed: { documents?: any[] } = {}) {
   const pageText: any[] = [];
   const activity: any[] = [];
   const requests: any[] = [];
+  const settings: any[] = [];
+  const views: any[] = [];
+  const team: any[] = [];
   const documents: any[] = (seed.documents ?? []).map((d) => ({ createdAt: new Date(), uploadedBy: "broker", sourceKind: "document", visibility: "shared", subcategory: null, ...d }));
   const now = () => new Date();
 
@@ -96,6 +99,57 @@ export function fakeVdrStore(seed: { documents?: any[] } = {}) {
       for (const r of out) Object.assign(r, { status: "ready_to_share", readyDocumentId: documentId });
       return out;
     },
+    async updateFolder(id, patch) {
+      const f = folders.find((x) => x.id === id);
+      if (!f) return null;
+      Object.assign(f, structuredClone(patch), { updatedAt: now() });
+      return f;
+    },
+    async deleteFolder(id) { const i = folders.findIndex((x) => x.id === id); if (i >= 0) folders.splice(i, 1); },
+    async moveItems(moves) {
+      for (const m of moves) { const it = items.find((i) => i.id === m.id); if (it) Object.assign(it, { folderId: m.folderId, position: m.position, updatedAt: now() }); }
+    },
+    async replaceShares(changes) {
+      for (const c of changes) {
+        for (let i = shares.length - 1; i >= 0; i--) if (shares[i].itemId === c.itemId) shares.splice(i, 1);
+        await store.insertShares(c.rows);
+      }
+    },
+    async listBuyerSettings(dealId) { return settings.filter((s) => s.dealId === dealId); },
+    async upsertBuyerSettings(dealId, buyerEmail, patch) {
+      let s = settings.find((x) => x.dealId === dealId && x.buyerEmail === buyerEmail);
+      if (!s) { s = { id: randomUUID(), dealId, buyerEmail, roomAccess: "auto", allowDownloads: false, lastVisitAt: null, previousVisitAt: null, updatedBy: null, updatedAt: now() }; settings.push(s); }
+      Object.assign(s, structuredClone(patch), { updatedAt: now() });
+      return s;
+    },
+    async insertView(row) {
+      const v = { id: randomUUID(), startedAt: now(), lastSeenAt: now(), activeMs: 0, pageMs: {}, maxPage: null, deviceClass: null, downloaded: false, teamMemberId: null, documentId: null, fileVersion: 1, source: null, ...row };
+      views.push(v);
+      return v;
+    },
+    async getView(id) { return views.find((v) => v.id === id) ?? null; },
+    async mergeView(id, m) {
+      const v = views.find((x) => x.id === id);
+      if (!v) return null;
+      Object.assign(v, mergeViewCounters(v, m));
+      if (m.lastSeenAt.getTime() > new Date(v.lastSeenAt).getTime()) v.lastSeenAt = m.lastSeenAt;
+      return v;
+    },
+    async markViewDownloaded(id) { const v = views.find((x) => x.id === id); if (v) v.downloaded = true; },
+    async listViews(dealId) { return views.filter((v) => v.dealId === dealId); },
+    async searchPageText(dealId, itemIds, q, limit) {
+      const needle = q.toLowerCase();
+      return pageText
+        .filter((r) => r.dealId === dealId && itemIds.includes(r.itemId) && String(r.text).toLowerCase().includes(needle))
+        .sort((a, b) => a.itemId.localeCompare(b.itemId) || a.page - b.page)
+        .slice(0, limit)
+        .map((r) => ({ itemId: r.itemId, page: r.page, label: r.label, text: r.text }));
+    },
+    async getPageText(itemId) { return pageText.filter((r) => r.itemId === itemId).sort((a, b) => a.page - b.page); },
+    async listActivity(dealId, limit) { return activity.filter((a) => a.dealId === dealId).slice(-limit).reverse(); },
+    async teamMemberByTokenHash(hash) { return team.find((t) => t.tokenHash === hash) ?? null; },
+    async listTeamMembers(dealId) { return team.filter((t) => t.dealId === dealId); },
+    async updateTeamMember(id, patch) { const t = team.find((x) => x.id === id); if (t) Object.assign(t, patch); },
   };
-  return { store, rooms, folders, items, shares, pageText, activity, requests, documents };
+  return { store, rooms, folders, items, shares, pageText, activity, requests, documents, settings, views, team };
 }

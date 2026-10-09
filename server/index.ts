@@ -5,6 +5,7 @@ import pg from "pg";
 import path from "path";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import { applyVdrRateLimits } from "./vdr/rate-limits";
 import { createHash } from "crypto";
 import * as Sentry from "@sentry/node";
 import { registerRoutes } from "./routes";
@@ -196,6 +197,9 @@ app.use("/api/view/:token/reading", rateLimit({
   keyGenerator: (req) => `reading:${createHash("sha256").update(String(req.params.token ?? "")).digest("hex").slice(0, 32)}`,
   message: { error: "Too many requests" },
 }));
+
+// ── vdr limiters ── the data room's buyer routes (per link) and the broker's upload (server/vdr/rate-limits.ts).
+applyVdrRateLimits(app);
 
 // Session type augmentation
 declare module "express-session" {

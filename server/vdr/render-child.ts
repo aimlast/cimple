@@ -18,6 +18,8 @@ import { openPdf, pageText, renderPage } from "./child/pdf";
 import { renderPhoto } from "./child/photo";
 import { readJobFile } from "./child/read-file";
 import { runBasePage, runPrepare } from "./child/prepare";
+import { compositePage } from "./child/watermark";
+import { buildOriginalPdf, buildPagesPdf, buildValuesXlsx } from "./child/download";
 import type { ChildMessage, ChildRequest, RenderJob } from "./render-jobs";
 
 const shimInstalled = installGetBuiltinModuleShim();
@@ -52,6 +54,15 @@ async function runJob(job: RenderJob): Promise<unknown> {
       return runPrepare(job);
     case "basePage":
       return runBasePage(job);
+    case "composite":
+      if (!isPageWidth(job.width)) throw new ChildJobError("unreadable", "width must be 700 or 1400");
+      return compositePage(job.file, job.width, job.mark, clampQuality(job.quality));
+    case "pagesPdf":
+      return { bytes: await buildPagesPdf(job) };
+    case "valuesXlsx":
+      return { bytes: await buildValuesXlsx(job) };
+    case "originalPdf":
+      return { bytes: await buildOriginalPdf(job) };
     default:
       throw new ChildJobError("unreadable", "unknown job");
   }

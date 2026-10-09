@@ -294,6 +294,10 @@ function defaultTimeout(job: RenderJob): number {
     case "canary": return VDR_JOB_TIMEOUTS_MS.canary;
     case "zipCheck": return VDR_JOB_TIMEOUTS_MS.inspect;
     case "prepare": return VDR_JOB_TIMEOUTS_MS.prepare;
+    case "composite": return VDR_JOB_TIMEOUTS_MS.composite;
+    case "pagesPdf":
+    case "valuesXlsx":
+    case "originalPdf": return VDR_JOB_TIMEOUTS_MS.download;
     default: return VDR_JOB_TIMEOUTS_MS.page;
   }
 }
