@@ -16,6 +16,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { isUtf8 } from "node:buffer";
 import { readXlsxInWorker } from "../documents/heavy-sheet";
 import type { GlCell, GlRawRow } from "@shared/gl-types";
 
@@ -46,25 +47,38 @@ export async function detectEncoding(filePath: string): Promise<{ encoding: Text
     if (h[0] === 0xff && h[1] === 0xfe) return { encoding: "utf-16le", bomBytes: 2 };
     if (h[0] === 0xfe && h[1] === 0xff) return { encoding: "utf-16be", bomBytes: 2 };
     const bom = h[0] === 0xef && h[1] === 0xbb && h[2] === 0xbf ? 3 : 0;
-    // Valid UTF-8 all the way through? (A streaming fatal decode — ~1 s per GB.)
-    const decoder = new TextDecoder("utf-8", { fatal: true });
+    // Valid UTF-8 all the way through? Checked on the bytes (buffer.isUtf8) —
+    // decoding 60 MB just to throw the text away cost ~40 MB of memory.
     const buf = Buffer.alloc(1 << 20);
     let pos = 0;
-    try {
-      for (;;) {
-        const { bytesRead: n } = await fd.read(buf, 0, buf.length, pos);
-        if (n === 0) break;
-        decoder.decode(buf.subarray(0, n), { stream: true });
-        pos += n;
-      }
-      decoder.decode();
-      return { encoding: "utf-8", bomBytes: bom };
-    } catch {
-      return { encoding: "windows-1252", bomBytes: 0 };
+    let carry: Buffer = Buffer.alloc(0);
+    for (;;) {
+      const { bytesRead: n } = await fd.read(buf, 0, buf.length, pos);
+      if (n === 0) break;
+      pos += n;
+      const chunk = carry.length ? Buffer.concat([carry, buf.subarray(0, n)]) : buf.subarray(0, n);
+      const cut = completeUtf8Length(chunk);
+      if (!isUtf8(chunk.subarray(0, cut))) return { encoding: "windows-1252", bomBytes: 0 };
+      carry = Buffer.from(chunk.subarray(cut));
+      if (carry.length > 3) return { encoding: "windows-1252", bomBytes: 0 };
     }
+    if (carry.length > 0) return { encoding: "windows-1252", bomBytes: 0 };
+    return { encoding: "utf-8", bomBytes: bom };
   } finally {
     await fd.close();
   }
+}
+
+/** How many leading bytes end on a whole UTF-8 character (a multi-byte character cut by the chunk's end waits for the next). */
+export function completeUtf8Length(b: Buffer): number {
+  const n = b.length;
+  for (let back = 1; back <= 3 && back <= n; back++) {
+    const byte = b[n - back];
+    if ((byte & 0xc0) === 0x80) continue; // a continuation byte: keep looking for the lead
+    const need = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+    return need > back ? n - back : n;
+  }
+  return n;
 }
 
 // ── Delimited records ────────────────────────────────────────────────────
@@ -115,7 +129,10 @@ export class DelimitedReader {
   private state: 0 | 1 | 2 | 3 = 0;
   private pendingCR = false;
   private recordNo = 0;
-  constructor(private readonly delimiter: string) {}
+  constructor(private readonly delimiter: string) {
+    const esc = delimiter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    this.special = new RegExp(`[${esc}\\r\\n"]`, "g");
+  }
 
   private endRecord(out: Array<{ recordNo: number; cells: string[] }>): void {
     this.row.push(this.cell);
@@ -129,42 +146,58 @@ export class DelimitedReader {
   push(text: string): Array<{ recordNo: number; cells: string[] }> {
     const out: Array<{ recordNo: number; cells: string[] }> = [];
     const d = this.delimiter;
-    for (let i = 0; i < text.length; i++) {
-      const c = text[i];
+    const special = this.special;
+    let i = 0;
+    const n = text.length;
+    while (i < n) {
       if (this.pendingCR) {
         this.pendingCR = false;
-        if (c === "\n") continue;
+        if (text.charCodeAt(i) === 10) { i++; continue; }
       }
-      switch (this.state) {
-        case 2:
-          if (c === '"') this.state = 3;
-          else this.cell += c;
-          continue;
-        case 3:
-          if (c === '"') { this.cell += '"'; this.state = 2; continue; }
-          // The quote closed the field; fall through to the unquoted rules.
-          this.state = 1;
-          break;
-        case 0:
-          if (c === '"') { this.state = 2; continue; }
-          break;
-        default:
-          break;
+      if (this.state === 2) {
+        // Inside quotes: everything up to the next quote is the cell's.
+        const q = text.indexOf('"', i);
+        if (q === -1) { this.cell += text.slice(i); i = n; break; }
+        this.cell += text.slice(i, q);
+        this.state = 3;
+        i = q + 1;
+        continue;
       }
+      if (this.state === 3) {
+        const c = text[i];
+        if (c === '"') { this.cell += '"'; this.state = 2; i++; continue; }
+        // The quote closed the field; what follows is read unquoted.
+        this.state = 1;
+      }
+      const c = text[i];
+      if (this.state === 0 && c === '"') { this.state = 2; i++; continue; }
       if (c === d) {
         this.row.push(this.cell);
         this.cell = "";
         this.state = 0;
-      } else if (c === "\n" || c === "\r") {
+        i++;
+        continue;
+      }
+      if (c === "\n" || c === "\r") {
         if (c === "\r") this.pendingCR = true;
         this.endRecord(out);
-      } else {
-        this.cell += c;
-        this.state = 1;
+        i++;
+        continue;
       }
+      // An unquoted run: up to the next delimiter, newline (or a quote, kept as text).
+      special.lastIndex = i + 1;
+      const m = special.exec(text);
+      const stop = m ? m.index : n;
+      this.cell += text.slice(i, stop);
+      this.state = 1;
+      i = stop;
+      // A quote in the middle of an unquoted field is just a character.
+      if (m && text[stop] === '"') { this.cell += '"'; i = stop + 1; }
     }
     return out;
   }
+
+  private readonly special: RegExp;
 
   /** The last record when the text doesn't end with a newline. */
   end(): Array<{ recordNo: number; cells: string[] }> {

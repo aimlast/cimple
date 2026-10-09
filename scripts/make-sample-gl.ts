@@ -643,8 +643,12 @@ export function writeFixtures(outDir: string): Record<string, unknown> {
   return key;
 }
 
-/** A big QBO-classic-style ledger (perf): `rows` entries across 180 accounts, 2022–2024, as CSV and XLSX. */
-export function writeBench(outDir: string, rowsWanted: number): { csv: string; xlsx: string; rows: number } {
+/**
+ * A big QBO-classic-style ledger (perf): `rows` entries across 180 accounts,
+ * 2022–2024, as CSV, plus the same layout as an Excel file of at most 15 MB
+ * (the Excel cap — `xlsxRows` entries, default 100,000).
+ */
+export function writeBench(outDir: string, rowsWanted: number, xlsxRows = 100_000): { csv: string; xlsx: string; rows: number; xlsxRows: number } {
   fs.mkdirSync(outDir, { recursive: true });
   const rnd = mulberry32(7);
   const accts = Array.from({ length: 180 }, (_, i) => `${5000 + i * 10} · Expense account ${i + 1}`);
@@ -668,9 +672,18 @@ export function writeBench(outDir: string, rowsWanted: number): { csv: string; x
   }
   const csv = path.join(outDir, "gl-200k.csv");
   fs.writeFileSync(csv, toCsv(rows));
-  const xlsx = path.join(outDir, "gl-200k.xlsx");
-  writeXlsx(xlsx, rows.map((r) => r.map((c, i) => ((i === 7 || i === 8) && typeof c === "string" && /^-?\d+\.\d{2}$/.test(c) ? Number(c) : c))));
-  return { csv, xlsx, rows: made };
+  // The Excel file: the first `xlsxRows` entries (Excel ledgers are capped at 15 MB; bigger ones go as CSV).
+  let kept = 0;
+  const xlsxSource: unknown[][] = [];
+  for (const r of rows) {
+    const isEntry = typeof r[1] === "string" && /^\d{2}\/\d{2}\/\d{4}$/.test(r[1] as string);
+    if (isEntry && kept >= xlsxRows) continue;
+    if (isEntry) kept++;
+    xlsxSource.push(r);
+  }
+  const xlsx = path.join(outDir, "gl-15mb.xlsx");
+  writeXlsx(xlsx, xlsxSource.map((r) => r.map((c, i) => ((i === 7 || i === 8) && typeof c === "string" && /^-?\d+\.\d{2}$/.test(c) ? Number(c) : c))));
+  return { csv, xlsx, rows: made, xlsxRows: kept };
 }
 
 // ── CLI ───────────────────────────────────────────────────────────────────
@@ -685,7 +698,7 @@ if (isMain) {
   const outDir = outIdx >= 0 ? path.resolve(args[outIdx + 1]) : path.join(here, "..", "tests", "fixtures", "gl");
   if (rowsIdx >= 0) {
     const r = writeBench(outDir, Number(args[rowsIdx + 1]) || 200_000);
-    console.log(`bench ledger: ${r.rows.toLocaleString()} entries → ${r.csv} (${(fs.statSync(r.csv).size / 1e6).toFixed(1)} MB), ${r.xlsx} (${(fs.statSync(r.xlsx).size / 1e6).toFixed(1)} MB)`);
+    console.log(`bench ledger: ${r.rows.toLocaleString()} entries → ${r.csv} (${(fs.statSync(r.csv).size / 1e6).toFixed(1)} MB); ${r.xlsxRows.toLocaleString()} entries → ${r.xlsx} (${(fs.statSync(r.xlsx).size / 1e6).toFixed(1)} MB)`);
   } else {
     const key = writeFixtures(outDir);
     console.log(`fixtures written to ${outDir}: ${Object.keys(key).length} answer-key entries`);

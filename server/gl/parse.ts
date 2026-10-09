@@ -64,6 +64,12 @@ export interface ParseStats {
 
 interface Heading { name: string; number: string | null; depth: number }
 
+function isBlank(c: GlCell): boolean {
+  if (c === null || c === undefined) return true;
+  if (typeof c === "string") return c.trim() === "";
+  return false;
+}
+
 function leadingSpaces(raw: GlCell): number {
   if (typeof raw !== "string") return 0;
   const m = raw.match(/^[  ]*/);
@@ -171,7 +177,7 @@ export class LedgerParser {
   push(row: GlRawRow): void {
     const cells = row.cells;
     const nonEmpty: number[] = [];
-    for (let i = 0; i < cells.length; i++) if (cellText(cells[i], 400) !== "") nonEmpty.push(i);
+    for (let i = 0; i < cells.length; i++) if (!isBlank(cells[i])) nonEmpty.push(i);
     if (nonEmpty.length === 0) return;
     const sheetKey = row.sheet ?? "";
     if (this.layout.sheet && row.sheet && row.sheet !== this.layout.sheet) return;
@@ -193,26 +199,28 @@ export class LedgerParser {
       this.titleRows.add(text);
       return;
     }
-    if (this.isHeaderRow(cells)) { this.stats.structural++; return; }
-    const text = this.rowText(cells);
-    if (this.titleRows.has(text)) { this.stats.structural++; return; }
-
-    const firstIdx = nonEmpty[0];
-    const firstRaw = cells[firstIdx];
-    const firstText = cellText(firstRaw, 400);
-    const leadTexts = nonEmpty.slice(0, 3).map((i) => cellText(cells[i], 400));
-
     const date = this.col.date !== undefined ? parseLedgerDate(cells[this.col.date], this.layout.dateOrder) : null;
     const { amount, debit, credit } = this.amountOf(cells);
-
-    // Footers: basis, page numbers, print timestamps (never with an entry's date and amount).
-    if (!(date && amount !== null)) {
+    const entryLike = !!date && amount !== null;
+    // The headings again (a page break), a title row repeated, a footer: never
+    // with an entry's date and amount — the common row skips these checks.
+    let text = "";
+    if (!entryLike) {
+      if (this.isHeaderRow(cells)) { this.stats.structural++; return; }
+      text = this.rowText(cells);
+      if (this.titleRows.has(text)) { this.stats.structural++; return; }
+      // Footers: basis, page numbers, print timestamps.
       if (this.captureBasis(text) || PAGE_RE.test(text) || (TIMESTAMP_RE.test(text) && amount === null)) {
         this.stats.structural++;
         this.lastWasEntry = false;
         return;
       }
     }
+
+    const firstIdx = nonEmpty[0];
+    const firstRaw = cells[firstIdx];
+    const firstText = cellText(firstRaw, 400);
+    const leadTexts = nonEmpty.slice(0, 3).map((i) => cellText(cells[i], 400));
     if (leadTexts.some((t) => SKIP_ANYWHERE.test(t))) { this.stats.structural++; this.lastWasEntry = false; return; }
     if (!date && SKIP_WITHOUT_DATE.test(firstText)) {
       // "Total 6110 · Vehicle - Owner" closes that heading (and anything nested deeper).
