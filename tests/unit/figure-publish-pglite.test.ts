@@ -99,7 +99,7 @@ test("questions: one per figure; status changes compare-and-set on the status re
   assert.equal(await updateQuestionIf("another-deal", id!, ["answered"], { status: "closed" }, db), false, "scoped to the deal");
   const counts = await figureCounts(DEAL, db);
   assert.equal(counts.questionsWithSeller, 0);
-  assert.ok(counts.notesShown >= 2);
+  assert.ok(counts.notesApproved >= 2);
 });
 
 await run("figure-publish-pglite");

@@ -48,7 +48,7 @@ export interface FiguresStatus {
   refreshedAt: string | null;
   version: string | null;
   ddShownAt: string | null;
-  counts?: { notesWaiting: number; notesShown: number; ownerFlagged?: number; questionsSuggested: number; questionsWithSeller: number };
+  counts?: { notesWaiting: number; notesApproved: number; ownerFlagged?: number; questionsSuggested: number; questionsWithSeller: number };
 }
 
 /** Invalidate everything that shows the figures (workspace, status, the builder's previews, the CIM tab lines). */

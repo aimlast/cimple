@@ -449,7 +449,7 @@ export async function inFigureTransaction<T>(fn: (tx: FigureDb) => Promise<T>, d
 }
 
 /** Counts for the CIM tab's lines and the follow-up card (cheap). */
-export async function figureCounts(dealId: string, d?: FigureDb): Promise<{ notesWaiting: number; notesShown: number; ownerFlagged: number; questionsSuggested: number; questionsWithSeller: number }> {
+export async function figureCounts(dealId: string, d?: FigureDb): Promise<{ notesWaiting: number; notesApproved: number; ownerFlagged: number; questionsSuggested: number; questionsWithSeller: number }> {
   const rows = await exec(d, sql`
     SELECT
       (SELECT count(*)::int FROM cim_figure_notes WHERE deal_id = ${dealId} AND status = 'suggested' AND stale_reason IS NULL
@@ -459,7 +459,7 @@ export async function figureCounts(dealId: string, d?: FigureDb): Promise<{ note
       (SELECT count(*)::int FROM cim_figure_questions WHERE deal_id = ${dealId} AND status = 'suggested') AS suggested,
       (SELECT count(*)::int FROM cim_figure_questions WHERE deal_id = ${dealId} AND status = 'ask_seller') AS with_seller`);
   const r = rows[0] ?? {};
-  return { notesWaiting: Number(r.waiting ?? 0), notesShown: Number(r.shown ?? 0), ownerFlagged: Number(r.flagged ?? 0), questionsSuggested: Number(r.suggested ?? 0), questionsWithSeller: Number(r.with_seller ?? 0) };
+  return { notesWaiting: Number(r.waiting ?? 0), notesApproved: Number(r.shown ?? 0), ownerFlagged: Number(r.flagged ?? 0), questionsSuggested: Number(r.suggested ?? 0), questionsWithSeller: Number(r.with_seller ?? 0) };
 }
 
 // ── Cache key parts ──────────────────────────────────────────────────────
