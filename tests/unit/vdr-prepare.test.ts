@@ -24,7 +24,7 @@ process.env.UPLOADS_DIR = root;
 process.env.DISABLE_SCHEDULERS = "1";
 
 const { fakeVdrStore } = await import("./vdr-fake-store");
-const { prepareItem, enqueuePrepare, startPrepareQueue, preparedCacheFile } = await import("../../server/vdr/prepare");
+const { prepareItem, enqueuePrepare, startPrepareQueue, preparedCacheFile, ensureBasePage, sweepStaleCaches } = await import("../../server/vdr/prepare");
 const { createRenderPool, RenderJobError } = await import("../../server/vdr/render-pool");
 const { setUpRoom } = await import("../../server/vdr/setup");
 const { cleanCopyRelPath, cleanCopyPath, newPrivateName, vdrCacheDir } = await import("../../server/vdr/files");
@@ -112,6 +112,33 @@ try {
   const again = await prepareItem(item("t2").id, {}, deps);
   assert.equal(again!.forFile, p!.forFile);
   assert.equal(fs.statSync(preparedCacheFile(item("t2"), p!, "p1.webp", root)!).mtimeMs, mtime);
+
+  // Later pages are rendered when first needed, with the same covers.
+  const bigPdf = path.join(docsDir, "doc_long.pdf");
+  await pdf(bigPdf, (d) => { for (let i = 1; i <= 5; i++) { if (i > 1) d.addPage(); d.fontSize(12).text(`Page ${i}: Shareholder SIN 046 454 286 note`, 72, 100); } });
+  f.documents.push({ id: "long", dealId: D, name: "Long statements", originalName: "long.pdf", category: "financials", fileUrl: "/uploads/docs/doc_long.pdf", mimeType: "application/pdf", createdAt: at, uploadedBy: "broker", sourceKind: "document", visibility: "shared", subcategory: null });
+  const { fileDocumentIntoRoom } = await import("../../server/vdr/setup");
+  const longItem = await fileDocumentIntoRoom(D, "long", "broker", {}, { store: f.store, enqueue: () => {}, now: deps.now });
+  const lp = await prepareItem(longItem!.id, {}, deps);
+  assert.ok(!fs.existsSync(preparedCacheFile(longItem!, lp!, "p5.webp", root)!), "page 5 isn't made up front");
+  const p5 = await ensureBasePage(longItem!, f.documents.find((d) => d.id === "long"), lp!, 5, deps);
+  assert.ok(p5 && fs.existsSync(p5), "made on first need");
+  {
+    const { loadImage } = await import("@napi-rs/canvas");
+    const im = await loadImage(fs.readFileSync(p5!));
+    const cv = createCanvas(im.width, im.height); const g = cv.getContext("2d"); g.drawImage(im, 0, 0);
+    const s = im.width / 612;
+    const px = g.getImageData(Math.round(200 * s), Math.round(105 * s), 1, 1).data;
+    assert.ok(px[0] < 60 && px[1] < 60 && px[2] < 60, "page 5's number is covered");
+  }
+  assert.equal(await ensureBasePage(longItem!, null, lp!, 6, deps), null, "no page 6");
+  assert.equal(await ensureBasePage(longItem!, null, lp!, 0, deps), null);
+
+  // The weekly sweep removes folders nobody opened for 30 days; the next open rebuilds.
+  const later = Date.now() + 31 * 24 * 60 * 60_000;
+  assert.ok((await sweepStaleCaches(root, later)) >= 1);
+  assert.equal(fs.existsSync(vdrCacheDir(D, longItem!.id, lp!.forFile, root)!), false);
+  assert.equal(await sweepStaleCaches(root, Date.now()), 0, "fresh folders stay");
 
   // A pruned cache folder (the 30-day sweep) is rebuilt on the next open.
   fs.rmSync(vdrCacheDir(D, item("t2").id, p!.forFile, root)!, { recursive: true, force: true });

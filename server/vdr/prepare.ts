@@ -25,12 +25,13 @@
  * at start-up.
  */
 import fs from "fs";
+import path from "path";
 import { createHash } from "crypto";
 import { extensionOf, fileKindFor, isLedgerDoc, preparedErrorCopy, presetFolder, VDR_LIMITS, type VdrPrepared } from "@shared/vdr";
 import { personalRecordsHint } from "@shared/vdr-sensitive";
 import { uploadsRoot } from "../documents/document-path";
 import { dbVdrStore, type VdrStore } from "./store";
-import { cacheFile, removeItemCache, servedFilePath, vdrCacheDir } from "./files";
+import { cacheFile, removeItemCache, servedFilePath, vdrCacheDir, VDR_CACHE_FOLDER } from "./files";
 import { renderPool, RenderJobError, type RenderPool } from "./render-pool";
 import { isGlDocument, ledgerStatusForVdr, withHeavySheetSlot, type LedgerStatusForVdr } from "./gl-adapter";
 import { VDR_RENDER_LIMITS } from "./child/limits";
@@ -242,6 +243,7 @@ async function drain(): Promise<void> {
 /** At start-up: items never prepared, or left "pending" for over 2 minutes by a restart, go back in the queue. */
 export async function startPrepareQueue(store: VdrStore = dbVdrStore): Promise<number> {
   if (schedulersDisabled()) return 0;
+  startCacheSweep();
   try {
     const items = await store.itemsNeedingPrepare(new Date(Date.now() - 2 * 60_000));
     for (const it of items) enqueuePrepare(it.id);
@@ -251,6 +253,100 @@ export async function startPrepareQueue(store: VdrStore = dbVdrStore): Promise<n
     console.warn("[vdr] the prepare queue couldn't start:", err?.message ?? err);
     return 0;
   }
+}
+
+/**
+ * The base image (1,400 px, personal numbers covered) of one page of a ready
+ * PDF item: pages 1–3 are made while preparing; a later page is rendered the
+ * first time someone scrolls to it (from the served copy, or — for a PDF that
+ * couldn't be sanitised — the original with no annotations). Returns the
+ * file's absolute path, or null when the page doesn't exist.
+ */
+export async function ensureBasePage(
+  item: { id: string; dealId: string; cleanCopyPath?: string | null },
+  doc: { fileUrl?: string | null } | null,
+  prepared: VdrPrepared,
+  page: number,
+  deps: Pick<PrepareDeps, "pool" | "root"> = defaultPrepareDeps(),
+): Promise<string | null> {
+  if (prepared.status !== "ready" || (prepared.kind !== "pdf" && prepared.kind !== "image")) return null;
+  const pages = prepared.pages?.length ?? 0;
+  if (!Number.isInteger(page) || page < 1 || page > pages) return null;
+  const dir = vdrCacheDir(item.dealId, item.id, prepared.forFile, deps.root);
+  const file = dir ? cacheFile(dir, `p${page}.webp`) : null;
+  if (!dir || !file) return null;
+  if (fs.existsSync(file)) {
+    markCacheUsed(dir);
+    return file;
+  }
+  if (prepared.kind === "image") return null; // a photo's one page is made while preparing
+  const key = file;
+  let running = basePagesInFlight.get(key);
+  if (!running) {
+    const source = prepared.servedCopy === "original" ? "original" : "served";
+    const original = source === "original" ? servedFilePath(item, doc, deps.root) : null;
+    running = deps.pool
+      .run({ kind: "basePage", outDir: dir, page, source, file: original })
+      .then(() => undefined)
+      .finally(() => basePagesInFlight.delete(key));
+    basePagesInFlight.set(key, running);
+  }
+  await running;
+  return fs.existsSync(file) ? file : null;
+}
+const basePagesInFlight = new Map<string, Promise<void>>();
+
+/** Reading a prepared folder keeps it from the 30-day sweep (its time is bumped at most hourly). */
+const lastTouched = new Map<string, number>();
+export function markCacheUsed(dir: string): void {
+  const now = Date.now();
+  if ((lastTouched.get(dir) ?? 0) > now - 60 * 60_000) return;
+  lastTouched.set(dir, now);
+  if (lastTouched.size > 5000) lastTouched.clear();
+  const t = new Date(now);
+  fs.promises.utimes(dir, t, t).catch(() => undefined);
+}
+
+/**
+ * The weekly sweep (vdr spec §8 "Disk"): prepared folders nobody has read for
+ * 30 days are removed (they are rebuilt on the next open). Returns how many.
+ */
+export async function sweepStaleCaches(root: string = uploadsRoot(), now: number = Date.now(), maxAgeMs = 30 * 24 * 60 * 60_000): Promise<number> {
+  const base = path.join(root, VDR_CACHE_FOLDER);
+  let removed = 0;
+  let deals: string[] = [];
+  try { deals = await fs.promises.readdir(base); } catch { return 0; }
+  for (const d of deals) {
+    let items: string[] = [];
+    try { items = await fs.promises.readdir(path.join(base, d)); } catch { continue; }
+    for (const it of items) {
+      let versions: string[] = [];
+      try { versions = await fs.promises.readdir(path.join(base, d, it)); } catch { continue; }
+      for (const v of versions) {
+        const dir = path.join(base, d, it, v);
+        try {
+          const names = await fs.promises.readdir(dir);
+          // The folder's own time is bumped whenever a page is read (markCacheUsed).
+          let newest = (await fs.promises.stat(dir)).mtimeMs;
+          for (const n of names) newest = Math.max(newest, (await fs.promises.stat(path.join(dir, n))).mtimeMs);
+          if (now - newest > maxAgeMs) {
+            await fs.promises.rm(dir, { recursive: true, force: true });
+            removed++;
+          }
+        } catch { /* gone meanwhile */ }
+      }
+    }
+  }
+  return removed;
+}
+
+let sweepTimer: NodeJS.Timeout | null = null;
+function startCacheSweep(): void {
+  if (sweepTimer || schedulersDisabled()) return;
+  sweepTimer = setInterval(() => {
+    sweepStaleCaches().then((n) => { if (n) console.log(`[vdr] removed ${n} data-room preview folder(s) nobody opened for 30 days`); }).catch(() => undefined);
+  }, 7 * 24 * 60 * 60_000);
+  sweepTimer.unref();
 }
 
 /** Cache file of a prepared item (for the viewer routes). */
