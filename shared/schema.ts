@@ -2884,7 +2884,7 @@ export const dealTeasers = pgTable("deal_teasers", {
   showAskingPrice: boolean("show_asking_price").notNull().default(true),
   linkLifetime: text("link_lifetime").notNull().default("until_offline"), // until_offline | 30 | 90
   autoGrant: text("auto_grant").notNull().default("off"),           // off | blind | named
-  draft: jsonb("draft").notNull().default(sql`'{"header":null,"blocks":[]}'::jsonb`),
+  draft: jsonb("draft").notNull().default(sql`'{"blocks":[],"header":null}'::jsonb`),
   draftRev: integer("draft_rev").notNull().default(0),
   history: jsonb("history").notNull().default(sql`'[]'::jsonb`),    // ≤ 20 {at, reason, doc}
   generation: jsonb("generation"),
