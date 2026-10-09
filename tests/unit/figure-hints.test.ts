@@ -47,4 +47,20 @@ test("a hint used as a note is screened like broker text: staff named in it are 
   assert.match(holdsText("Daniel Okafor negotiated the fuel contract.", ctx, { owners: true }) ?? "", /staff member/);
 });
 
+test("checker r2: a sentence about EBITDA margin is never interest's reason (it only mentions 'interest rates' in passing)", async () => {
+  const { fx, raw } = await fixtureRaw("pacific", { locate: false });
+  const sentences = analysisNoteSentences(fx.analyses[0]);
+  const ebitda = "EBITDA margin declined from 13.2% (2022) to 11.3% (2023) due to full-year impact of Campbell Ridge warehouse rent and higher equipment loan interest rates.";
+  const hints = hintsFor(["interest|2023"], raw.registry, [...sentences, ebitda]);
+  assert.ok(!hints["interest|2023"] || !/^EBITDA margin|margin compression/i.test(hints["interest|2023"]), hints["interest|2023"]);
+  // The fixture's own sentence about the margin compression is not offered either.
+  for (const s of Object.values(hintsFor(["interest|2023", "interest|2024"], raw.registry, sentences))) assert.ok(!/margin/i.test(s), s);
+  // A sentence whose subject IS interest still is.
+  const own = "Interest expense rose in 2023 with higher rates on the new equipment loans (2022 rates were lower).";
+  assert.equal(hintsFor(["interest|2023"], raw.registry, [own])["interest|2023"], own);
+  // The facility-rent hint (subject: the warehouse lease) is unchanged.
+  const rent = Object.keys(raw.registry).find((k) => /^line:facility-rent/.test(k) && k.endsWith("|2023"))!;
+  assert.match(hintsFor([rent], raw.registry, sentences)[rent], /^Warehouse lease commenced/);
+});
+
 await run("figure-hints");

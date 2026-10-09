@@ -42,6 +42,7 @@ import {
 import { refreshFingerprint, runFigureRefresh, scheduleFigureRefresh } from "../cim/figures/refresh";
 import { dailyLimitReached, effectiveBuild, figureBuildRunning, guardCtxFor, startFigureBuild } from "../cim/figures/build";
 import { guardBrokerText } from "../cim/figures/guards";
+import { cimPrintedPercents } from "../cim/figures/cim-text";
 import { buildWorkspace } from "../cim/figures/workspace";
 import { autoAskEffective, closeAnsweredQuestions, lineWordOf, questionWording, sellerValues, planExplainQuestions } from "../cim/figures/requests";
 import { movedEnough, previousOf } from "../cim/figures/computed";
@@ -254,7 +255,8 @@ export function registerFigureRoutes(app: Express): void {
         const raw = await loadFigureRaw(deal.id);
         const g = guardBrokerText(body.text ?? note.text, body.blindText === undefined ? note.blindText : body.blindText, brokerGuardCtx(deal, raw), {
           candidate: noteCandidate(raw, note.figureKey, note.kind, note.compareKey),
-          quotes: (note.sources ?? []).map((s) => s.quote ?? "").filter(Boolean),
+          // A margin the CIM itself prints is a figure on file (checker r2 R2-3).
+          quotes: [...(note.sources ?? []).map((s) => s.quote ?? "").filter(Boolean), await cimPrintedPercents(deal)],
         });
         if (!g.ok) return res.status(422).json({ field: g.field, message: g.message });
         warnings = g.warnings;
@@ -336,7 +338,8 @@ export function registerFigureRoutes(app: Express): void {
       const question = body.fromQuestionId ? await getQuestion(deal.id, body.fromQuestionId) : null;
       const candidate = { id: body.figureKey, value: fig.value, ...(fromValue !== undefined ? { fromValue } : {}), ...(other !== undefined ? { other } : {}) };
       const answer = question ? String(raw.info[question.captureKey] ?? "") : "";
-      const g = guardBrokerText(body.text, body.blindText ?? null, brokerGuardCtx(deal, raw), { candidate, quotes: answer ? [answer] : [] });
+      // A margin the CIM itself prints is a figure on file (checker r2 R2-3).
+      const g = guardBrokerText(body.text, body.blindText ?? null, brokerGuardCtx(deal, raw), { candidate, quotes: [...(answer ? [answer] : []), await cimPrintedPercents(deal)] });
       if (!g.ok) return res.status(422).json({ field: g.field, message: g.message });
       const sources = [
         ...(body.fromHint ? [{ kind: "hint" as const }] : []),

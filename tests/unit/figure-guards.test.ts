@@ -167,4 +167,23 @@ test("broker text: an unknown figure only warns (\"Your figure\")", () => {
   assert.ok(fine.ok && fine.warnings.length === 0);
 });
 
+test("checker r2: broker text may quote a margin the CIM prints (no false 'Your figure' warning)", async () => {
+  const { printedPercents } = await import("../../server/cim/figures/cim-text");
+  const sections = [
+    { layoutData: { rows: [{ label: "Adjusted EBITDA margin", values: ["13.2%", "11.3%", "12.6%"] }] } },
+    { layoutData: { items: [{ label: "Gross margin", value: "26.9 %" }], body: "A margin of −2.5% in one quarter." } },
+  ];
+  const printed = printedPercents(sections);
+  for (const p of ["13.2%", "11.3%", "12.6%", "26.9%", "-2.5%"]) assert.ok(printed.includes(p), `${p} in ${printed}`);
+  const text = "Margins fell from 13.2% to 11.3% as the new loans' interest came in.";
+  const without = guardBrokerText(text, null, ctx, { candidate });
+  assert.ok(without.ok && without.warnings.some((w) => /13\.2%/.test(w.message)), "without the CIM's figures it warns");
+  const withCim = guardBrokerText(text, null, ctx, { candidate, quotes: [printed] });
+  assert.ok(withCim.ok && withCim.warnings.length === 0, JSON.stringify(withCim));
+  // A percentage the CIM doesn't print still warns; amounts are never taken from the CIM's text.
+  const other = guardBrokerText("Margins fell to 9.7% after the move.", null, ctx, { candidate, quotes: [printed] });
+  assert.ok(other.ok && /9\.7%/.test(other.warnings[0]?.message ?? ""));
+  assert.equal(printedPercents([{ layoutData: { value: "$1,120,500" } }]), "");
+});
+
 await run("figure-guards");

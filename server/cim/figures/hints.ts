@@ -11,7 +11,7 @@
  * computed …") is never offered. Pure.
  */
 import type { FigureRegistry } from "@shared/figure-anchors";
-import { lineWords, parseFigureKey } from "@shared/figure-lines";
+import { FIGURE_LINES, lineWords, parseFigureKey } from "@shared/figure-lines";
 
 const INTERNAL = /^\s*check:|does not tie|doesn't tie|net income computed|reported net income|not added back unless you approve|rests only on your private notes|left out of ebitda|review the income statement reclassification/i;
 
@@ -76,6 +76,30 @@ function mentions(sentence: string, label: string, synonyms: string[]): boolean 
   return ownHits >= 1 && hits(sentence, extra) >= 1;
 }
 
+/** Measures a sentence can be about that aren't one of the figure lines (a margin, EBITDA, SDE…). */
+const MEASURE_WORDS = ["margin", "ebitda", "sde", "cash flow", "working capital", "earnings", "profit", "profitability"];
+
+/** The words before the sentence's first verb ("EBITDA margin" in "EBITDA margin declined from …"), else its first six words. */
+function subjectOf(sentence: string): string {
+  const m = sentence.match(/^(.*?)\b(?:declined|decreased|increased|rose|fell|grew|dropped|improved|was|were|is|are|has|have|had|reflects?|reflected|remained|went|came|includes?|included|stayed|jumped|climbed|compressed|expanded|recovered|due|because|driven|owing|following|reached|totall?ed)\b/i);
+  return (m ? m[1] : sentence.split(/\s+/).slice(0, 6).join(" ")).trim();
+}
+
+/**
+ * A sentence whose subject is another line or measure ("EBITDA margin
+ * declined … due to … higher equipment loan interest rates") is about that
+ * one, not this figure — even when it mentions this line's word in passing
+ * (checker r2 R2-3: it was offered as interest's reason).
+ */
+function aboutAnotherSubject(sentence: string, label: string, words: string[]): boolean {
+  const subject = subjectOf(sentence);
+  if (!subject) return false;
+  const own = new Set([...ownWords(label), ...words.map((w) => w.toLowerCase())]);
+  if (hits(subject, Array.from(own)) > 0) return false;
+  const others = [...MEASURE_WORDS, ...FIGURE_LINES.flatMap((l) => l.synonyms)].filter((w) => !own.has(w.toLowerCase()));
+  return hits(subject, others) > 0;
+}
+
 /**
  * A recital of figures, not a reason: a formula ("Reported EBITDA (net
  * income + income taxes + interest + amortization): FY2022 $489,325; …"), a
@@ -106,7 +130,7 @@ export function hintsFor(figureKeys: Iterable<string>, registry: FigureRegistry,
     if (words.length === 0) continue;
     const prev = String(Number(parsed.year) - 1);
     const isMovement = opts.movement ? opts.movement(key) : true;
-    const about = (s: string) => !isRecital(s) && mentions(s, fig.lineLabel, words);
+    const about = (s: string) => !isRecital(s) && mentions(s, fig.lineLabel, words) && !aboutAnotherSubject(s, fig.lineLabel, words);
     const hit = sentences.find((s) => about(s) && s.includes(parsed.year) && (!isMovement || s.includes(prev)))
       ?? (isMovement ? undefined : sentences.find((s) => about(s) && s.includes(parsed.year)));
     if (hit) out[key] = hit.length > 400 ? `${hit.slice(0, 397)}…` : hit;
