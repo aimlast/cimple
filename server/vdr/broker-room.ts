@@ -13,7 +13,7 @@
  *    due-diligence only (gl's copy), needs-a-look flags must be ticked.
  */
 import fs from "fs";
-import type { BuyerAccess, DealDocumentRequirement, Deal, Document, InsertVdrShare, VdrBuyerSettings, VdrFolder, VdrItem, VdrShare, VdrView } from "@shared/schema";
+import type { BuyerAccess, BuyerQuestion, DealDocumentRequirement, Deal, Document, InsertVdrShare, VdrBuyerSettings, VdrFolder, VdrItem, VdrShare, VdrView } from "@shared/schema";
 import { accessLevelLabel, normalizeAccessLevel, parseAccessLevelInput, sameAccessLevel, DD_ACCESS_LEVEL } from "@shared/access-levels";
 import {
   DATA_ROOM_LEVELS,
@@ -51,10 +51,12 @@ import type {
   RoomItemRow,
   RoomShareRow,
   ShareAudience,
+  WaitingItem,
 } from "@shared/vdr-api";
 import { presetFor } from "./auto-file";
 import { decideItems, flagsFor, isLedgerItemDoc, loadRoom, type RoomSnapshot, type VdrReader } from "./access";
 import { servedFilePath } from "./files";
+import { waitingItems } from "./todo";
 import type { VdrStore } from "./store";
 
 export type BrokerDeps = {
@@ -66,6 +68,8 @@ export type BrokerDeps = {
   root: string;
   now: () => Date;
   fileExists?: (p: string) => boolean;
+  /** The deal's buyer questions (document questions feed "Waiting on you"). */
+  questionsForDeal?: (dealId: string) => Promise<BuyerQuestion[]>;
 };
 
 const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
@@ -171,12 +175,10 @@ function folderRows(folders: ReadonlyArray<VdrFolder>, items: ReadonlyArray<VdrI
     .sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
 }
 
-/** Waiting-on-you items available in pass 2 (flags, new seller versions, links ending). Pass 3 adds requests, questions, team asks. */
-export function waitingCount(items: ReadonlyArray<RoomItemRow>, buyers: ReadonlyArray<RoomBuyerRow>): number {
-  const flags = items.filter((i) => !i.removed && i.unchecked.length > 0).length;
-  const versions = items.filter((i) => !i.removed && i.newVersion?.oldWasShared).length;
-  const ending = buyers.filter((b) => b.hasRoom && b.endsInDays != null && b.endsInDays <= VDR_LIMITS.expiryWarnDays).length;
-  return flags + versions + ending;
+/** The "set aside" keys of the Waiting list ("Not now" on a hinted file, "Dismiss" on the DD line). */
+export async function dismissedKeys(store: VdrStore, dealId: string): Promise<Set<string>> {
+  const rows = await store.listActivityByActions(dealId, ["todo_dismissed"]).catch(() => []);
+  return new Set(rows.map((r) => String(((r.detail ?? {}) as Record<string, unknown>).key ?? "")).filter(Boolean));
 }
 
 /** The Buyers view (§5.7) — and the per-buyer numbers the KPI strip needs. */
@@ -350,6 +352,9 @@ export async function roomPayload(deps: BrokerDeps, deal: Deal): Promise<BrokerR
     sharedByLevel[level] = live.filter((i) => i.sharing.levels.includes(level)).length;
     roomBuyersByLevel[level] = buyers.eligible.filter((b) => b.hasRoom && sameAccessLevel(b.level, level)).length;
   }
+  const waiting = room
+    ? await waitingFor(deps, deal, ctx, items, buyers.eligible, folderRows(snap.folders, snap.items, numbers.folders))
+    : [];
   const weekAgo = now.getTime() - 7 * 86_400_000;
   const recent = views.filter((v) => v.source !== "preview" && new Date(v.lastSeenAt).getTime() >= weekAgo);
   const cited = await deps.ddCitedDocumentIds(deal.id).catch(() => null);
@@ -367,7 +372,7 @@ export async function roomPayload(deps: BrokerDeps, deal: Deal): Promise<BrokerR
       shared: live.filter((i) => i.sharing.shared).length,
       buyersWithAccess: buyers.eligible.filter((b) => b.hasRoom).length,
       openedThisWeek: { documents: new Set(recent.map((v) => v.itemId)).size, buyers: new Set(recent.map((v) => v.buyerEmail)).size },
-      waiting: waitingCount(live, buyers.eligible),
+      waiting: waiting.length,
       missingRequired: requirements.filter((r) => r.status === "missing" && r.isRequired !== false).length,
       sharedByLevel,
       roomBuyersByLevel,
@@ -376,6 +381,43 @@ export async function roomPayload(deps: BrokerDeps, deal: Deal): Promise<BrokerR
     deal: { live: !!deal.isLive, everLive: !!deal.isLive || rows.length > 0, name: deal.businessName },
     ddCited: { available: !!cited, total: citedIds.length, notShared: ddNotShared },
   };
+}
+
+/** "Waiting on you" (§5.8) for a deal, from the tab's own context. */
+export async function waitingFor(
+  deps: BrokerDeps,
+  deal: Deal,
+  ctx: BrokerContext,
+  items: ReadonlyArray<RoomItemRow>,
+  buyers: ReadonlyArray<RoomBuyerRow>,
+  folders: ReadonlyArray<RoomFolderRow>,
+): Promise<WaitingItem[]> {
+  const [requests, questions, team, dismissed, cited] = await Promise.all([
+    deps.store.listRequests(deal.id).catch(() => []),
+    deps.questionsForDeal ? deps.questionsForDeal(deal.id).catch(() => [] as BuyerQuestion[]) : Promise.resolve([] as BuyerQuestion[]),
+    deps.store.listTeamMembers(deal.id).catch(() => []),
+    dismissedKeys(deps.store, deal.id),
+    deps.ddCitedDocumentIds(deal.id).catch(() => null),
+  ]);
+  const live = items.filter((i) => !i.removed);
+  const ddShared = new Set(live.filter((i) => i.sharing.levels.includes(DD_ACCESS_LEVEL) && i.documentId).map((i) => i.documentId!));
+  const citedIds = cited ? Array.from(new Set(cited)) : [];
+  return waitingItems({
+    now: ctx.now,
+    items,
+    rawItems: ctx.snap.items,
+    folders: folders.map((f) => ({ id: f.id, number: f.number, name: f.name, shareHint: f.shareHint })),
+    shares: ctx.snap.shares,
+    groups: ctx.groups,
+    buyers,
+    accessRows: ctx.rows,
+    requests,
+    questions,
+    team,
+    dismissed,
+    ddCited: { available: !!cited, total: citedIds.length, notShared: citedIds.filter((id) => !ddShared.has(id)).length },
+    docNames: new Map(Array.from(ctx.snap.docs.values()).map((d) => [d.id, d.name])),
+  });
 }
 
 /** The Share dialog's audience (§5.5). */

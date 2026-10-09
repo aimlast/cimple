@@ -4,10 +4,11 @@
  * and the document list. On phones the rail becomes rows: a breadcrumb, the
  * folder's sub-folders and its documents.
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { CheckCircle2, ChevronRight, Download, FileText, Folder, Loader2, Search, Star } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { BuyerRoomFolder, BuyerRoomItem, BuyerSearchHit } from "@shared/vdr-api";
+import type { BuyerRequestRow, BuyerRoomFolder, BuyerRoomItem, BuyerSearchHit } from "@shared/vdr-api";
 
 export type RoomPlace = { kind: "all" } | { kind: "new" } | { kind: "folder"; id: string };
 
@@ -19,6 +20,9 @@ export function RoomRail(props: {
   query: string;
   onQuery: (q: string) => void;
   canSearch: boolean;
+  /** Pass 3: the reader's requests and "Ask for a document". */
+  requests?: BuyerRequestRow[];
+  onAsk?: (() => void) | null;
 }) {
   const newCount = props.items.filter((i) => i.isNew || i.isUpdated).length;
   const top = props.folders.filter((f) => !f.parentId);
@@ -59,6 +63,36 @@ export function RoomRail(props: {
           {top.map((f) => <FolderRow key={f.id} f={f} depth={0} />)}
         </div>
       )}
+      {(props.onAsk || (props.requests?.length ?? 0) > 0) && (
+        <div className="border-t border-border pt-3">
+          <YourRequests requests={props.requests ?? []} onAsk={props.onAsk ?? null} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** "Your requests" (§6.5): each request with where it stands, plus "Ask for a document". */
+export function YourRequests({ requests, onAsk }: { requests: BuyerRequestRow[]; onAsk: (() => void) | null }) {
+  const [open, setOpen] = useState(false);
+  const shown = open ? requests : requests.slice(0, 3);
+  return (
+    <div className="space-y-2" data-testid="vdr-your-requests">
+      {requests.length > 0 && (
+        <>
+          <p className="px-2 text-xs font-semibold text-muted-foreground">Your requests ({requests.length})</p>
+          <ul className="space-y-1.5 px-2">
+            {shown.map((r) => (
+              <li key={r.id} className="text-xs">
+                <p className="truncate text-foreground/90" title={r.text}>'{r.text}'</p>
+                <p className={cn("text-[11px]", r.status === "shared" ? "text-teal" : "text-muted-foreground")}>{r.statusText}</p>
+              </li>
+            ))}
+          </ul>
+          {requests.length > 3 && <button className="px-2 text-[11px] text-teal hover:underline" onClick={() => setOpen((v) => !v)}>{open ? "Show fewer" : `Show all ${requests.length}`}</button>}
+        </>
+      )}
+      {onAsk && <Button size="sm" variant="outline" className="w-full" onClick={onAsk} data-testid="vdr-ask-for-document">Ask for a document</Button>}
     </div>
   );
 }

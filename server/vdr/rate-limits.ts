@@ -5,7 +5,7 @@
  * brokerage office sharing one address isn't throttled together; the
  * broker's upload is limited per broker session.
  */
-import type { Express, Request } from "express";
+import type { Express, Request, RequestHandler } from "express";
 import rateLimit from "express-rate-limit";
 import { createHash } from "crypto";
 
@@ -26,10 +26,11 @@ function perToken(prefix: string, windowMs: number, limit: number) {
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 
-export function applyVdrRateLimits(app: Express): void {
+export function applyVdrRateLimits(app: Express, aiLimiter?: RequestHandler): void {
   const B = "/api/view/:token/data-room";
   // Most specific first (express matches every app.use prefix that fits).
   app.use(`${B}/items/:itemId/pages/:n`, perToken("pages", MIN, 600));
+  app.use(`${B}/items/:itemId/questions`, perToken("questions", HOUR, 20));
   app.use(`${B}/items/:itemId/download`, perToken("download", HOUR, 30));
   app.use(`${B}/index.csv`, perToken("index", HOUR, 10));
   app.use(`${B}/views/start`, perToken("start", MIN, 120));
@@ -46,6 +47,20 @@ export function applyVdrRateLimits(app: Express): void {
     if (/^\/api\/view\/[^/]+\/data-room(\/|$)/.test(req.path)) return general(req, res, next);
     next();
   });
+  // "Draft again" is the only model call in the data room (plus the per-deal daily cap).
+  if (aiLimiter) app.use("/api/deals/:dealId/data-room/items/:itemId/summary", (req, res, next) => (req.method === "POST" && /\/summary\/?$/.test(req.originalUrl.split("?")[0]) ? aiLimiter(req, res, next) : next()));
+  // Emails the broker sends from the data room: the same ceiling as "email this buyer".
+  const emails = rateLimit({
+    windowMs: 10 * MIN,
+    limit: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => `vdr:email:${String((req as Request).session?.brokerId ?? "anon")}`,
+    message: { error: "You've sent a lot of emails in a short time. Please wait a few minutes." },
+  });
+  app.use("/api/deals/:dealId/data-room/requests/email-seller", emails);
+  app.use("/api/deals/:dealId/data-room/requests/:requestId/tell-buyer", (req, res, next) => (req.method === "POST" ? emails(req, res, next) : next()));
+  app.use("/api/deals/:dealId/data-room/let-buyers-know", (req, res, next) => (req.method === "POST" && !/\/draft\/?$/.test(req.originalUrl.split("?")[0]) ? emails(req, res, next) : next()));
   // The broker's data-room upload: 300 files an hour per broker session.
   app.use("/api/deals/:dealId/data-room/upload", rateLimit({
     windowMs: HOUR,

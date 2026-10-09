@@ -15,3 +15,25 @@
 export async function ddCitedDocumentIds(_dealId: string): Promise<string[] | null> {
   return null;
 }
+
+/** dd's per-document checks (INTEGRATION §2.6 `ddDocumentChecks`; `regrouped` counts as match). */
+export type DdDocumentCheck = {
+  label: string;
+  thisValue: string;
+  other: { documentId: string } | null;
+  otherValue: string | null;
+  status: "match" | "differs";
+  explanation: string | null;
+};
+
+/**
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ INTEGRATOR, at the dd merge:                                             │
+ * │   const { ddDocumentChecks: dd } = await import("../cim/dd-citations");  │
+ * │   return dd(dealId, documentId);                                         │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ * Until then: null (the broker sees the discrepancy-based checks; buyers none).
+ */
+export async function ddDocumentChecks(_dealId: string, _documentId: string): Promise<DdDocumentCheck[] | null> {
+  return null;
+}

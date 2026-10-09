@@ -13,9 +13,13 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { DD_ACCESS_LEVEL } from "@shared/access-levels";
-import type { BrokerRoomPayload } from "@shared/vdr-api";
+import type { BrokerRoomPayload, NewlyVisible } from "@shared/vdr-api";
+import { LetThemKnow, type ShareSaved } from "./ShareDialog";
 import { invalidateRoom, roomBase, shortDate, usePlan, vdrFetch } from "@/hooks/useDataRoom";
 import { queryClient } from "@/lib/queryClient";
 import { PanelError } from "@/components/deal/PanelError";
@@ -87,6 +91,9 @@ export function SharingPlan({ dealId, data, onDone }: { dealId: string; data: Br
   const [levels, setLevels] = useState<Record<string, "dd" | "not_yet">>({});
   const [ticks, setTicks] = useState<Record<string, boolean>>({});
   const [showAll, setShowAll] = useState(false);
+  const [hideDraft, setHideDraft] = useState<Record<string, boolean>>({});
+  const [editing, setEditing] = useState<{ itemId: string; text: string } | null>(null);
+  const [saved, setSaved] = useState<ShareSaved | null>(null);
   useEffect(() => {
     if (plan) setLevels(Object.fromEntries(plan.folders.map((f) => [f.folderId, f.levels.length ? "dd" : "not_yet"])));
   }, [plan]);
@@ -95,15 +102,16 @@ export function SharingPlan({ dealId, data, onDone }: { dealId: string; data: Br
   const willShare = live.filter((i) => levels[i.folderId] === "dd" && (!flaggedIds.has(i.id) || ticks[i.id])).length;
   const checking = live.filter((i) => !i.prepared || i.prepared.status === "pending").length;
   const confirm = useMutation({
-    mutationFn: () => vdrFetch<{ shared: number; newlyVisibleBuyers: number }>("POST", `${roomBase(dealId)}/plan`, {
+    mutationFn: () => vdrFetch<{ shared: number; newlyVisibleBuyers: number; newlyVisible?: NewlyVisible[]; itemIds?: string[] }>("POST", `${roomBase(dealId)}/plan`, {
       folders: (plan?.folders ?? []).map((f) => ({ folderId: f.folderId, levels: levels[f.folderId] === "dd" ? [DD_ACCESS_LEVEL] : [] })),
       includeFlagged: Object.entries(ticks).filter(([, v]) => v).map(([k]) => k),
-      acceptSummaries: [],
+      acceptSummaries: (plan?.summaries ?? []).filter((x) => x.status === "drafted" && x.text && !hideDraft[x.itemId]).map((x) => x.itemId),
     }),
     onSuccess: (r) => {
       invalidateRoom(dealId);
       toast({ title: r.shared ? `Shared ${r.shared} ${r.shared === 1 ? "document" : "documents"} with due diligence buyers.` : "Sharing plan saved", description: r.newlyVisibleBuyers ? `${r.newlyVisibleBuyers} ${r.newlyVisibleBuyers === 1 ? "buyer can" : "buyers can"} open them now.` : undefined });
-      onDone();
+      if ((r.newlyVisible ?? []).length > 0 && (r.itemIds ?? []).length > 0) setSaved({ newlyVisibleBuyers: r.newlyVisibleBuyers, newlyVisible: r.newlyVisible!, itemIds: r.itemIds! });
+      else onDone();
     },
     onError: (e: Error) => toast({ title: "Couldn't apply the plan", description: e.message, variant: "destructive" }),
   });
@@ -159,17 +167,49 @@ export function SharingPlan({ dealId, data, onDone }: { dealId: string; data: Br
 
       <section>
         <h3 className="text-sm font-semibold">What buyers will read about each document</h3>
-        <p className="mt-1 text-xs text-muted-foreground">Until you write or accept a description, buyers see a short basic line. You can write your own on any document.</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {plan.summaries.some((x) => x.status === "pending")
+            ? "Cimple is writing short descriptions. You can confirm the plan now; descriptions you haven't seen stay as a basic line until you accept them."
+            : "Until you write or accept a description, buyers see a short basic line. You can write your own on any document."}
+        </p>
         <div className="mt-2 overflow-hidden rounded-lg border border-border bg-card">
-          {summaries.map((s) => (
-            <div key={s.itemId} className="border-b border-border px-4 py-2.5 last:border-0">
-              <p className="text-sm font-medium">{s.title}</p>
-              <p className="text-xs text-muted-foreground">{s.status === "accepted" && s.text ? s.text : s.basic}</p>
+          {summaries.map((x) => (
+            <div key={x.itemId} className="border-b border-border px-4 py-2.5 last:border-0">
+              <div className="flex items-start gap-3">
+                <p className="min-w-0 flex-1 text-sm font-medium">{x.title}</p>
+                {x.status === "drafted" && x.text && editing?.itemId !== x.itemId && (
+                  <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"><Switch checked={!hideDraft[x.itemId]} onCheckedChange={(v) => setHideDraft((h) => ({ ...h, [x.itemId]: !v }))} /> Show to buyers</label>
+                )}
+              </div>
+              {editing?.itemId === x.itemId ? (
+                <div className="mt-1.5 space-y-2">
+                  <Textarea value={editing.text} onChange={(e) => setEditing({ itemId: x.itemId, text: e.target.value })} maxLength={600} rows={3} autoFocus />
+                  <div className="flex justify-end gap-2">
+                    <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
+                    <Button size="sm" onClick={async () => { await vdrFetch("PATCH", `${roomBase(dealId)}/items/${x.itemId}`, { buyerSummary: editing.text }).catch(() => undefined); setEditing(null); await refetch(); invalidateRoom(dealId); }}>Save</Button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {x.status === "pending" ? <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Cimple is writing it…</span> : x.status === "drafted" && x.text ? x.text : x.status === "accepted" && x.text ? x.text : x.basic}
+                  {" "}<button className="text-teal underline-offset-2 hover:underline" onClick={() => setEditing({ itemId: x.itemId, text: x.text ?? "" })}>Edit</button>
+                </p>
+              )}
             </div>
           ))}
         </div>
         {plan.summaries.length > 5 && <button className="mt-1.5 text-xs text-teal underline-offset-2 hover:underline" onClick={() => setShowAll((v) => !v)}>{showAll ? "Show fewer" : `Show all ${plan.summaries.length}`}</button>}
       </section>
+
+      <Dialog open={!!saved} onOpenChange={(o) => { if (!o) { setSaved(null); onDone(); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-base">Shared</DialogTitle>
+            <DialogDescription className="sr-only">Tell the buyers who can open the documents now.</DialogDescription>
+          </DialogHeader>
+          {saved && <LetThemKnow dealId={dealId} saved={saved} onDone={() => { setSaved(null); onDone(); }} />}
+        </DialogContent>
+      </Dialog>
 
       <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
         <Button variant="ghost" onClick={onDone}>Skip for now</Button>

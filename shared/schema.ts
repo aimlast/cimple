@@ -1662,6 +1662,10 @@ export const NOTIFICATION_ROUTING: Record<string, { teams: string[]; roles?: str
   // The seller's answer on the CIM review page (/seller/:token/review).
   cim_seller_approved: { teams: ["broker"], roles: ["lead", "associate"] },
   cim_changes_requested: { teams: ["broker"], roles: ["lead", "associate"] },
+  // vdr (founder Q21, additive — no existing event changes): "Your broker added documents to your
+  // checklist", sent only on the broker's click. To drop it, delete this line; server/vdr/emails.ts
+  // then uses seller_followup_questions (owner, representative) instead.
+  seller_document_request: { teams: ["seller"], roles: ["owner", "representative", "accountant"] },
 };
 
 // Buyer decision next-step options (shown after "interested in moving forward")

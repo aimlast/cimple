@@ -198,8 +198,8 @@ app.use("/api/view/:token/reading", rateLimit({
   message: { error: "Too many requests" },
 }));
 
-// ── vdr limiters ── the data room's buyer routes (per link) and the broker's upload (server/vdr/rate-limits.ts).
-applyVdrRateLimits(app);
+// ── vdr limiters ── the data room's buyer routes (per link), the broker's upload, emails and "Draft again" (server/vdr/rate-limits.ts).
+applyVdrRateLimits(app, aiLimiter);
 
 // Session type augmentation
 declare module "express-session" {
@@ -288,6 +288,8 @@ app.use((req, res, next) => {
       import("./documents/ingest").then((m) => m.startInterruptedReadRecovery()).catch((err) => console.error("[ingest] interrupted-read recovery failed:", err));
       // ── vdr: data-room documents a restart left unprepared go back in the (one-at-a-time) queue ──
       import("./vdr/prepare").then((m) => m.startPrepareQueue()).catch((err) => console.error("[vdr] prepare queue failed to start:", err));
+      // ── vdr: buyer descriptions waiting to be drafted (persisted queue; per-deal daily cap) ──
+      import("./vdr/buyer-summary").then((m) => m.startSummaryQueue()).catch((err) => console.error("[vdr] description queue failed to start:", err));
       // Once per volume: files earlier deletes left behind (no row points at them) leave the volume.
       if (process.env.NODE_ENV === "production") {
         // First what deleted deals left (their rows made their files look in use), then files no row points at.

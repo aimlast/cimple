@@ -29,6 +29,7 @@ import {
   type InsertVdrRoom,
   type InsertVdrShare,
   type InsertVdrView,
+  type InsertVdrRequest,
   type VdrActivity,
   type VdrBuyerSettings,
   type VdrFolder,
@@ -122,6 +123,16 @@ export interface VdrStore {
   teamMemberByTokenHash(hash: string): Promise<VdrTeamMember | null>;
   listTeamMembers(dealId: string): Promise<VdrTeamMember[]>;
   updateTeamMember(id: string, patch: Partial<VdrTeamMember>): Promise<void>;
+
+  // ── Pass 3: requests and buyer descriptions ──
+  listRequests(dealId: string): Promise<VdrRequest[]>;
+  getRequest(id: string): Promise<VdrRequest | null>;
+  insertRequests(rows: InsertVdrRequest[]): Promise<VdrRequest[]>;
+  updateRequest(id: string, patch: Partial<InsertVdrRequest>): Promise<VdrRequest | null>;
+  /** Live items (any deal) whose description waits to be drafted (`buyer_summary_status = 'pending'`), oldest first. */
+  itemsWithPendingSummaries(limit: number): Promise<VdrItem[]>;
+  /** Every log row of these actions for a deal (newest first). */
+  listActivityByActions(dealId: string, actions: string[]): Promise<VdrActivity[]>;
 }
 
 async function getDb() {
@@ -362,6 +373,40 @@ export const dbVdrStore: VdrStore = {
   async updateTeamMember(id, patch) {
     const db = await getDb();
     await db.update(vdrTeamMembers).set({ ...patch, updatedAt: new Date() }).where(eq(vdrTeamMembers.id, id));
+  },
+
+  async listRequests(dealId) {
+    const db = await getDb();
+    return db.select().from(vdrRequests).where(eq(vdrRequests.dealId, dealId)).orderBy(desc(vdrRequests.createdAt)).limit(2000);
+  },
+  async getRequest(id) {
+    const db = await getDb();
+    const [r] = await db.select().from(vdrRequests).where(eq(vdrRequests.id, id));
+    return r ?? null;
+  },
+  async insertRequests(rows) {
+    if (rows.length === 0) return [];
+    const db = await getDb();
+    return db.insert(vdrRequests).values(rows).returning();
+  },
+  async updateRequest(id, patch) {
+    const db = await getDb();
+    const [r] = await db.update(vdrRequests).set(patch).where(eq(vdrRequests.id, id)).returning();
+    return r ?? null;
+  },
+  async listActivityByActions(dealId, actions) {
+    if (actions.length === 0) return [];
+    const db = await getDb();
+    return db.select().from(vdrActivity).where(and(eq(vdrActivity.dealId, dealId), inArray(vdrActivity.action, actions))).orderBy(desc(vdrActivity.at)).limit(5000);
+  },
+  async itemsWithPendingSummaries(limit) {
+    const db = await getDb();
+    return db
+      .select()
+      .from(vdrItems)
+      .where(and(isNull(vdrItems.removedAt), eq(vdrItems.buyerSummaryStatus, "pending"), sql`${vdrItems.documentId} IS NOT NULL`))
+      .orderBy(asc(vdrItems.updatedAt))
+      .limit(limit);
   },
 };
 

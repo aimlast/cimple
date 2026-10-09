@@ -59,7 +59,7 @@ export function DataRoomTab() {
   const q = (params.get("q") ?? "").slice(0, 100);
   const filter = (["all", "shared", "not_shared", "new", "attention"].includes(params.get("filter") ?? "") ? params.get("filter") : "all") as DocFilter;
   const todo = (["waiting", "requests", "checklist"].includes(params.get("todo") ?? "") ? params.get("todo") : "waiting") as TodoSegment;
-  const activity = (params.get("activity") === "documents" ? "documents" : "buyers") as ActivitySegment;
+  const activity = (params.get("activity") === "documents" ? "documents" : params.get("activity") === "log" ? "log" : "buyers") as ActivitySegment;
   const showPlan = params.get("plan") === "1";
 
   const go = useCallback((patch: Record<string, string | null>, opts: { push?: boolean } = {}) => {
@@ -199,8 +199,8 @@ export function DataRoomTab() {
         />
       )}
       {view === "buyers" && <BuyersView dealId={dealId} focusAccessId={buyerFocus} onViewAs={(id) => go({ as: id }, { push: true })} />}
-      {view === "todo" && <TodoView dealId={dealId} data={data} segment={todo} onSegment={(s) => go({ todo: s })} onOpenItem={(id) => go({ view: "documents", item: id }, { push: true })} />}
-      {view === "activity" && <ActivityView dealId={dealId} data={data} segment={activity} onSegment={(s) => go({ activity: s })} onOpenItem={(id) => go({ view: "documents", item: id }, { push: true })} onViewAs={(id) => go({ as: id }, { push: true })} />}
+      {view === "todo" && <TodoView dealId={dealId} data={data} segment={todo} onSegment={(s) => go({ todo: s })} onOpenItem={(id) => go({ view: "documents", item: id }, { push: true })} onBuyer={(id) => go({ view: "buyers", buyer: id }, { push: true })} onDocuments={(f) => go({ view: "documents", filter: f }, { push: true })} />}
+      {view === "activity" && <ActivityView dealId={dealId} data={data} segment={activity} onSegment={(s) => go({ activity: s })} buyer={buyerFocus} onBuyer={(id) => go({ buyer: id })} onOpenItem={(id) => go({ view: "documents", item: id }, { push: true })} onViewAs={(id) => go({ as: id }, { push: true })} />}
 
       <DocumentDrawer dealId={dealId} item={drawerItem} onClose={() => go({ item: null })} onOpenViewer={(id) => go({ open: id }, { push: true })} onViewAs={() => { if (roomBuyers.length > 0) go({ as: roomBuyers[0].accessId, item: null }); else go({ view: "buyers", item: null }); }} />
       <ShareDialog dealId={dealId} target={share} open={!!share} onOpenChange={(o) => { if (!o) setShare(null); }} />

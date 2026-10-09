@@ -19,8 +19,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { DD_ACCESS_LEVEL, NAMED_ACCESS_LEVEL } from "@shared/access-levels";
-import type { BulkShareResult, RoomFolderRow, RoomItemRow, ShareAudience } from "@shared/vdr-api";
+import type { BulkShareResult, EmailDraft, NewlyVisible, RoomFolderRow, RoomItemRow, ShareAudience } from "@shared/vdr-api";
 import { invalidateRoom, roomBase, useAudience, vdrFetch } from "@/hooks/useDataRoom";
+import { EmailDialog } from "./EmailDialog";
 
 export type ShareTarget =
   | { kind: "item"; item: RoomItemRow }
@@ -53,23 +54,66 @@ function whoSees(g: Grants, audience: ShareAudience, ledger: boolean): string[] 
   return out;
 }
 
-export function ShareDialog({ dealId, target, open, onOpenChange, onSaved }: { dealId: string; target: ShareTarget | null; open: boolean; onOpenChange: (o: boolean) => void; onSaved?: (r: { newlyVisibleBuyers: number }) => void }) {
+export type ShareSaved = { newlyVisibleBuyers: number; newlyVisible: NewlyVisible[]; itemIds: string[] };
+
+export function ShareDialog({ dealId, target, open, onOpenChange, onSaved }: { dealId: string; target: ShareTarget | null; open: boolean; onOpenChange: (o: boolean) => void; onSaved?: (r: ShareSaved) => void }) {
   const items = !target ? [] : target.kind === "item" ? [target.item] : target.items;
   const title = !target ? "" : target.kind === "item" ? `Who can see "${target.item.title}"?` : target.kind === "folder" ? `Who can see everything in ${target.folder.number} ${target.folder.name} (${target.items.length})?` : `Who can see these ${target.items.length} documents?`;
+  const [saved, setSaved] = useState<ShareSaved | null>(null);
+  useEffect(() => { if (open) setSaved(null); }, [open]);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92vh] max-w-xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="pr-6 text-base leading-snug">{title}</DialogTitle>
+          <DialogTitle className="pr-6 text-base leading-snug">{saved ? "Saved" : title}</DialogTitle>
           <DialogDescription className="sr-only">Choose which buyers can open {items.length === 1 ? "this document" : "these documents"} in the data room.</DialogDescription>
         </DialogHeader>
-        {target && <ShareForm key={items.map((i) => i.id).join(",")} dealId={dealId} target={target} onDone={(r) => { onSaved?.(r); onOpenChange(false); }} onCancel={() => onOpenChange(false)} />}
+        {saved ? (
+          <LetThemKnow dealId={dealId} saved={saved} onDone={() => onOpenChange(false)} />
+        ) : target && (
+          <ShareForm
+            key={items.map((i) => i.id).join(",")}
+            dealId={dealId}
+            target={target}
+            onDone={(r) => { onSaved?.(r); if (r.newlyVisible.length > 0) setSaved(r); else onOpenChange(false); }}
+            onCancel={() => onOpenChange(false)}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
 }
 
-export function ShareForm({ dealId, target, onDone, onCancel, inline }: { dealId: string; target: ShareTarget; onDone?: (r: { newlyVisibleBuyers: number }) => void; onCancel?: () => void; inline?: boolean }) {
+/**
+ * "Let the 2 buyers know?" after a share (§5.5) — a prefilled email the
+ * broker edits and sends. Never automatic.
+ */
+export function LetThemKnow({ dealId, saved, onDone }: { dealId: string; saved: ShareSaved; onDone: () => void }) {
+  const [emailOpen, setEmailOpen] = useState(false);
+  const n = saved.newlyVisible.length;
+  const names = saved.newlyVisible.map((b) => b.label);
+  return (
+    <div className="space-y-4 text-sm" data-testid="let-them-know">
+      <p>{n === 1 ? `${names[0]} can open it now.` : `${n} buyers can open it now: ${names.slice(0, 4).join(", ")}${n > 4 ? ` and ${n - 4} more` : ""}.`}</p>
+      <div className="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-3 sm:flex-row sm:items-center">
+        <span className="flex-1">Let {n === 1 ? "them" : `the ${n} buyers`} know?</span>
+        <div className="flex gap-2">
+          <Button size="sm" variant="ghost" onClick={onDone}>Not now</Button>
+          <Button size="sm" onClick={() => setEmailOpen(true)} data-testid="let-them-know-email">Email them</Button>
+        </div>
+      </div>
+      <EmailDialog
+        open={emailOpen}
+        onOpenChange={(o) => { setEmailOpen(o); if (!o) onDone(); }}
+        title={n === 1 ? `Tell ${names[0]}` : `Tell ${n} buyers`}
+        loadDraft={() => vdrFetch<EmailDraft>("POST", `${roomBase(dealId)}/let-buyers-know/draft`, { itemIds: saved.itemIds, accessIds: saved.newlyVisible.map((b) => b.accessId) })}
+        send={(subject, message) => vdrFetch("POST", `${roomBase(dealId)}/let-buyers-know`, { itemIds: saved.itemIds, accessIds: saved.newlyVisible.map((b) => b.accessId), subject, message })}
+      />
+    </div>
+  );
+}
+
+export function ShareForm({ dealId, target, onDone, onCancel, inline }: { dealId: string; target: ShareTarget; onDone?: (r: ShareSaved) => void; onCancel?: () => void; inline?: boolean }) {
   const { toast } = useToast();
   const { data: audience, isLoading } = useAudience(dealId);
   const items = target.kind === "item" ? [target.item] : target.items;
@@ -81,6 +125,14 @@ export function ShareForm({ dealId, target, onDone, onCancel, inline }: { dealId
     if (audience && !ready) { setG(initialGrants(items, audience)); setReady(true); }
   }, [audience]); // eslint-disable-line react-hooks/exhaustive-deps
   const [downloadable, setDownloadable] = useState(single?.downloadable ?? false);
+  const [showDescription, setShowDescription] = useState(true);
+  const [saved, setSaved] = useState<ShareSaved | null>(null);
+  // A document without a description: ask Cimple to write one now (queued; buyers see the basic line until accepted).
+  useEffect(() => {
+    if (single && !single.summary.status && !single.summary.text) {
+      vdrFetch("POST", `${roomBase(dealId)}/items/${single.id}/summary/ensure`, {}).then(() => invalidateRoom(dealId)).catch(() => undefined);
+    }
+  }, [single?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [ticks, setTicks] = useState<Record<string, boolean>>({});
   const needs = items.filter((i) => i.unchecked.length > 0);
   const granting = g.levels.length > 0 || g.allow.length > 0;
@@ -89,9 +141,9 @@ export function ShareForm({ dealId, target, onDone, onCancel, inline }: { dealId
   const save = useMutation({
     mutationFn: async () => {
       if (single) {
-        const r = await vdrFetch<{ newlyVisibleBuyers: number }>("PUT", `${roomBase(dealId)}/items/${single.id}/shares`, { ...g, checkedFlags: ticks[single.id] ? single.unchecked : [] });
+        const r = await vdrFetch<{ newlyVisibleBuyers: number; newlyVisible?: NewlyVisible[] }>("PUT", `${roomBase(dealId)}/items/${single.id}/shares`, { ...g, checkedFlags: ticks[single.id] ? single.unchecked : [], acceptSummary: showDescription && single.summary.status === "drafted" });
         if (downloadable !== single.downloadable) await vdrFetch("PATCH", `${roomBase(dealId)}/items/${single.id}`, { downloadable });
-        return { newlyVisibleBuyers: r?.newlyVisibleBuyers ?? 0, skipped: [] as BulkShareResult["skipped"] };
+        return { newlyVisibleBuyers: r?.newlyVisibleBuyers ?? 0, newlyVisible: r?.newlyVisible ?? [], skipped: [] as BulkShareResult["skipped"] };
       }
       const before = initialGrants(items, audience);
       const body = {
@@ -101,7 +153,7 @@ export function ShareForm({ dealId, target, onDone, onCancel, inline }: { dealId
         checkedFlags: Object.fromEntries(needs.filter((i) => ticks[i.id]).map((i) => [i.id, i.unchecked])),
       };
       const r = await vdrFetch<BulkShareResult>("POST", `${roomBase(dealId)}/shares/bulk`, body);
-      return { newlyVisibleBuyers: r.newlyVisibleBuyers, skipped: r.skipped };
+      return { newlyVisibleBuyers: r.newlyVisibleBuyers, newlyVisible: r.newlyVisible ?? [], skipped: r.skipped };
     },
     onSuccess: (r) => {
       invalidateRoom(dealId);
@@ -110,7 +162,9 @@ export function ShareForm({ dealId, target, onDone, onCancel, inline }: { dealId
         title: single ? "Sharing saved" : `Sharing saved for ${n} ${n === 1 ? "document" : "documents"}`,
         description: r.skipped.length ? `${r.skipped.length} skipped: ${r.skipped.slice(0, 3).map((s) => `${s.title} (${s.reason})`).join("; ")}` : undefined,
       });
-      onDone?.({ newlyVisibleBuyers: r.newlyVisibleBuyers });
+      const out: ShareSaved = { newlyVisibleBuyers: r.newlyVisibleBuyers, newlyVisible: r.newlyVisible, itemIds: items.map((i) => i.id).filter((id) => !r.skipped.some((x) => x.itemId === id)) };
+      if (inline && out.newlyVisible.length > 0) setSaved(out);
+      onDone?.(out);
     },
     onError: (e: Error) => toast({ title: "Couldn't save who can see it", description: e.message, variant: "destructive" }),
   });
@@ -122,6 +176,7 @@ export function ShareForm({ dealId, target, onDone, onCancel, inline }: { dealId
   });
 
   if (isLoading || !audience || !ready) return <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading buyers…</div>;
+  if (saved) return <LetThemKnow dealId={dealId} saved={saved} onDone={() => setSaved(null)} />;
 
   const toggleLevel = (l: string, on: boolean) => setG((x) => ({ ...x, levels: on ? Array.from(new Set([...x.levels, l])) : x.levels.filter((y) => y !== l) }));
   const buyerName = (id: string) => {
@@ -207,10 +262,20 @@ export function ShareForm({ dealId, target, onDone, onCancel, inline }: { dealId
       {single && (
         <section>
           <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">What buyers will read about it</h4>
-          <p className="rounded-md border border-border bg-muted/20 px-3 py-2 text-sm text-foreground/90">
-            {single.summary.status === "accepted" && single.summary.text && !single.summary.hidden ? single.summary.text : single.summary.basic}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">Edit it on the document's notes.</p>
+          {single.summary.status === "drafted" && single.summary.text ? (
+            <>
+              <p className="rounded-md border border-dashed border-border px-3 py-2 text-sm text-foreground/90">{single.summary.text}</p>
+              <label className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+                <Checkbox checked={showDescription} onCheckedChange={(v) => setShowDescription(v === true)} /> Show this to buyers (written by Cimple; otherwise they see "{single.summary.basic}")
+              </label>
+            </>
+          ) : (
+            <p className="rounded-md border border-border bg-muted/20 px-3 py-2 text-sm text-foreground/90">
+              {single.summary.status === "accepted" && single.summary.text && !single.summary.hidden ? single.summary.text : single.summary.basic}
+            </p>
+          )}
+          {single.summary.status === "pending" && <p className="mt-1 text-xs text-muted-foreground">Cimple is writing a short description. You can share now; buyers see the basic line until you accept it.</p>}
+          <p className="mt-1 text-xs text-muted-foreground">Edit it in the document's notes.</p>
         </section>
       )}
 

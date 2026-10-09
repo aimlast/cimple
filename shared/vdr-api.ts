@@ -193,7 +193,10 @@ export type ShareAudience = {
   buyers: Array<{ accessId: string; key: string; name: string | null; company: string | null; email: string; level: string; levelLabel: string; hasRoom: boolean; dd: boolean }>;
 };
 
-export type BulkShareResult = { changed: number; skipped: Array<{ itemId: string; title: string; reason: string }>; newlyVisibleBuyers: number };
+export type BulkShareResult = { changed: number; skipped: Array<{ itemId: string; title: string; reason: string }>; newlyVisibleBuyers: number; newlyVisible?: NewlyVisible[] };
+
+/** A buyer who can open something they couldn't before a share ("Let them know?"). */
+export type NewlyVisible = { accessId: string; label: string };
 
 // ── Viewer (broker and buyer) ─────────────────────────────────────────────
 
@@ -233,6 +236,10 @@ export type BuyerRoomItem = {
 };
 
 export type BuyerRoomPayload = {
+  /** The reader's document requests (pass 3). */
+  requests?: BuyerRequestRow[];
+  /** May this reader ask for documents (not in the broker's preview). */
+  canRequest?: boolean;
   reader: {
     kind: "buyer" | "team" | "preview";
     name: string | null;
@@ -261,6 +268,38 @@ export type BuyerItemAbout = {
   folderTrail: Array<{ id: string; number: string; name: string }>;
   prevId: string | null;
   nextId: string | null;
+  /** Buyer-safe figures from this document (pass 3; absent on older payloads). */
+  keyFigures?: Array<{ label: string; value: string }>;
+  /** Due diligence only: what it was checked against (dd's checks; a counterpart the reader can't open is "another document"). */
+  checks?: Array<{ ok: boolean; text: string }>;
+  /** Memorandum pages that use its figures (none for a team member). */
+  usedIn?: Array<{ sectionId: string; title: string }>;
+  /** The reader's own questions about it, and answers the broker shared with everyone who can open it. */
+  questions?: BuyerDocQuestion[];
+  /** May this reader ask about it (not in the broker's preview). */
+  canAsk?: boolean;
+};
+
+export type BuyerDocQuestion = {
+  id: string;
+  question: string;
+  answer: string | null;
+  status: "waiting" | "answered";
+  /** Asked by this buyer or their team (else an answer the broker shared). */
+  mine: boolean;
+  page: number | null;
+  at: string;
+};
+
+/** A buyer's own document request, as they see it ("Your requests"). */
+export type BuyerRequestRow = {
+  id: string;
+  text: string;
+  status: "open" | "asked_seller" | "ready_to_share" | "shared" | "declined";
+  /** "Waiting for the broker" · "Shared: now in 1.6" · "The broker replied: '…'". */
+  statusText: string;
+  itemId: string | null;
+  at: string;
 };
 
 export type BuyerSearchHit = { itemId: string; number: string | null; title: string; page: number; label: string; snippet: Array<{ text: string; match: boolean }> };
@@ -271,3 +310,165 @@ export type ViewStart = { viewId: string; trace: string };
 export type ViewRoomDataRoom = { available: boolean; newCount: number; closed: boolean; allowDownloads: boolean; expiresAt: string | null };
 
 export type { DownloadDecision };
+
+// ── Pass 3: requests, the "Waiting on you" list, activity, Cimple's notes ──
+
+export type RequestStatus = "open" | "asked_seller" | "ready_to_share" | "shared" | "declined";
+
+/** One buyer request as the broker sees it (To do › Buyer requests). */
+export type RoomRequestRow = {
+  id: string;
+  listId: string | null;
+  kind: "document" | "room_access";
+  text: string;
+  status: RequestStatus;
+  buyer: {
+    key: string;
+    accessId: string;
+    name: string | null;
+    company: string | null;
+    email: string;
+    levelLabel: string;
+    /** The buyer can open the room right now. */
+    hasRoom: boolean;
+    rule: RoomLevelRule;
+  };
+  /** A team member asked ("Priya Shah, accountant"). */
+  askedBy: { name: string; role: string } | null;
+  /** The room document the request names (from the viewer's "Ask"), when it still exists. */
+  item: { id: string; number: string | null; title: string } | null;
+  /** The document a DD citation pointed at (broker only; never echoed to the buyer). */
+  citedDocument: { id: string; name: string } | null;
+  requirement: { id: string; name: string; status: string; neededBy: string | null; note: string | null } | null;
+  /** The seller's upload that answers it (Ready to share). */
+  ready: { documentId: string; name: string; itemId: string | null } | null;
+  brokerNote: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+};
+
+export type RoomRequestsPayload = {
+  requests: RoomRequestRow[];
+  /** Pasted lists ("Northgate sent a list of 34 requests · Oct 7"). */
+  lists: Array<{ listId: string; buyerKey: string; buyerLabel: string; count: number; open: number; createdAt: string }>;
+};
+
+export type WaitingKind =
+  | "request"
+  | "request_ready"
+  | "question"
+  | "new_version"
+  | "hinted"
+  | "flag"
+  | "dd_cited"
+  | "descriptions"
+  | "link_ending"
+  | "seller_removed";
+
+/** One "Waiting on you" row (§5.8). `text` is the plain line; the client picks the action by kind. */
+export type WaitingItem = {
+  key: string;
+  kind: WaitingKind;
+  text: string;
+  at: string | null;
+  itemId?: string | null;
+  requestId?: string | null;
+  questionId?: string | null;
+  accessId?: string | null;
+  buyerLabel?: string | null;
+  levels?: string[];
+  flags?: VdrFlag[];
+  itemIds?: string[];
+  /** For a ready request: share with this buyer (key) then "Tell the buyer". */
+  shared?: boolean;
+};
+
+export type WaitingPayload = { items: WaitingItem[] };
+
+/** The email the broker can edit and send (never sent automatically). */
+export type EmailDraft = { to: string[]; subject: string; message: string; demo: boolean };
+
+export type ActivityPerson = { memberId: string | null; name: string; role: string; activeMs: number; opens: number };
+
+export type ActivityBuyerRow = {
+  key: string;
+  accessId: string | null;
+  label: string;
+  email: string;
+  canSee: number;
+  openedDocs: number;
+  activeMs: number;
+  downloads: number;
+  lastAt: string | null;
+  newNotOpened: number;
+  top: Array<{ itemId: string; number: string | null; title: string; activeMs: number }>;
+  documents: Array<{ itemId: string; number: string | null; title: string; activeMs: number; opens: number; pages: number[]; downloads: number; fromCim: boolean; lastAt: string }>;
+  people: ActivityPerson[];
+};
+
+export type ActivityDocRow = {
+  itemId: string;
+  number: string | null;
+  title: string;
+  readers: number;
+  canSee: number;
+  activeMs: number;
+  downloads: number;
+  pageCount: number;
+  pages: Record<string, number>;
+  lastAt: string | null;
+};
+
+export type ActivityLogRow = {
+  id: string;
+  at: string;
+  action: string;
+  actorKind: string;
+  text: string;
+  buyerKey: string | null;
+  itemId: string | null;
+  person: string | null;
+};
+
+export type TraceHit = {
+  trace: string;
+  at: string;
+  buyerLabel: string;
+  email: string;
+  person: string | null;
+  itemId: string;
+  number: string | null;
+  title: string;
+};
+
+export type ActivityPayload = {
+  view: "buyers" | "documents" | "log";
+  buyers: ActivityBuyerRow[];
+  documents: ActivityDocRow[];
+  log: ActivityLogRow[];
+  logTotal: number;
+  trace: { query: string; hits: TraceHit[] } | null;
+  filters: {
+    buyers: Array<{ key: string; label: string }>;
+    people: Array<{ id: string; label: string }>;
+    items: Array<{ id: string; label: string }>;
+    actions: Array<{ key: string; label: string }>;
+  };
+};
+
+/** The broker's "Cimple's notes" on one document (§5.4, §9.6). */
+export type ItemNotesPayload = {
+  keyFigures: Array<{ key: string; label: string; value: string; inCim: boolean }>;
+  cimLinks: Array<{ sectionId: string; title: string }>;
+  ddCitedIn: Array<{ sectionId: string; title: string; page: number | null }>;
+  checks: Array<{ tone: "match" | "resolved" | "open"; text: string }>;
+  questions: Array<{ id: string; question: string; who: string; page: number | null; status: string; statusLabel: string; at: string }>;
+  summary: {
+    /** Drafts left today for this deal (the daily cap). */
+    remainingToday: number;
+    capped: boolean;
+    running: boolean;
+    /** "Cimple's draft didn't pass its checks, so a basic description is shown. …" */
+    note: string | null;
+  };
+};

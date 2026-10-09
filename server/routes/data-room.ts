@@ -35,8 +35,8 @@ import type { Express, NextFunction, Request, Response } from "express";
 import fs from "fs";
 import path from "path";
 import multer from "multer";
-import type { BuyerAccess, Deal, DealDocumentRequirement, InsertVdrActivity, VdrFolder, VdrItem } from "@shared/schema";
-import { DD_ACCESS_LEVEL, parseAccessLevelInput } from "@shared/access-levels";
+import type { BuyerAccess, BuyerQuestion, CimSection, Deal, DealDocumentRequirement, Discrepancy, InsertDealDocumentRequirement, InsertVdrActivity, VdrFolder, VdrItem, VdrRequest } from "@shared/schema";
+import { DD_ACCESS_LEVEL, parseAccessLevelInput, sameAccessLevel } from "@shared/access-levels";
 import {
   VDR_LIMITS,
   basicDescription,
@@ -51,10 +51,13 @@ import {
   watermarkFooter,
   watermarkLine,
   indexNumbers,
+  ineligibleCopy,
+  isNewForBuyer,
+  roomIneligibleReason,
   type VdrAction,
   type VdrFlagKey,
 } from "@shared/vdr";
-import type { BulkShareResult, SharingPlanPayload } from "@shared/vdr-api";
+import type { ActivityPayload, BulkShareResult, EmailDraft, ItemNotesPayload, SharingPlanPayload, WaitingPayload } from "@shared/vdr-api";
 import { requireBroker } from "../broker-auth/routes.js";
 import { vdrHealth } from "../vdr/health";
 import { dbVdrStore, logVdrQuietly, type VdrStore } from "../vdr/store";
@@ -70,20 +73,26 @@ import {
   roomPayload,
   shareAudience,
   validateShares,
+  waitingFor,
   LEDGER_DD_ONLY,
   type BrokerDeps,
   type ShareInput,
 } from "../vdr/broker-room";
-import { buyerItemAbout, buyerRoomPayload } from "../vdr/buyer-room";
+import { buyerAboutExtras, buyerItemAbout, buyerRoomPayload } from "../vdr/buyer-room";
 import { recommendedPlan } from "../vdr/auto-file";
 import { fileDocumentIntoRoom, restoreItem, setUpRoom, shareLikeReplaced, defaultSetupDeps, type SetupDeps } from "../vdr/setup";
 import { ensurePrepared, enqueuePrepare } from "../vdr/prepare";
 import { cleanCopyPath, cleanCopyRelPath, newPrivateName, removeCleanCopy, removeItemCache } from "../vdr/files";
 import { decisionFor, docHtml, docText, kickPrepare, manifestFor, pageImage, ServeError, sheetRows, defaultServeDeps, type ServeDeps } from "../vdr/serve";
-import { privateMattersByDocument } from "../vdr/analysis";
-import { ddCitedDocumentIds } from "../vdr/dd-adapter";
+import { brokerChecks, documentCimLinks, documentFacts, documentQuestions, privateMattersByDocument, sectionText } from "../vdr/analysis";
+import { ddCitedDocumentIds, ddDocumentChecks } from "../vdr/dd-adapter";
+import { askSeller, brokerRequestRows, declineRequests, markShared, parseNeededBy, type RequestDeps } from "../vdr/requests";
+import { askerLabel } from "../vdr/todo";
+import { activityByBuyer, activityByDocument, activityCsv, activityLog, findTrace, labelForKey, LOG_ACTION_FILTERS, type LogFilter, type ReportContext } from "../vdr/activity-report";
 import { newDocumentFileName, resolveDocumentPath, uploadsRoot } from "../documents/document-path";
 import { decodeUploadName } from "../documents/upload";
+import { emailSellerAboutRequests, letBuyersKnowDraft, sendBrokerEmailToBuyers, tellBuyerDraft, type BuyerEmailDeps, type SellerEmailDeps } from "../vdr/emails";
+import { defaultSummaryDeps, redraftOne, remainingToday, requestSummaries, type SummaryDeps } from "../vdr/buyer-summary";
 
 export type DataRoomRouteDeps = {
   store: VdrStore;
@@ -99,12 +108,38 @@ export type DataRoomRouteDeps = {
   now: () => Date;
   /** The real upload path (createUploadedDocument); tests may replace it. */
   createUpload?: typeof import("../documents/upload").createUploadedDocument;
+  // ── Pass 3: requests, To do, notes, emails (the broker's click only) ──
+  questionsForDeal: (dealId: string) => Promise<BuyerQuestion[]>;
+  createRequirement: (row: InsertDealDocumentRequirement) => Promise<DealDocumentRequirement>;
+  discrepanciesForDeal: (dealId: string) => Promise<Discrepancy[]>;
+  cimSectionsForDeal: (dealId: string) => Promise<CimSection[]>;
+  sellerEmail: SellerEmailDeps;
+  buyerEmail: BuyerEmailDeps;
+  summary: () => SummaryDeps;
+  /** The CIM sections a buyer is served (preview's "Used in the memorandum"); tests stub it. */
+  servedSections?: typeof import("../vdr/analysis").servedSectionsFor;
 };
 
 async function defaultDeps(): Promise<DataRoomRouteDeps> {
   const { storage } = await import("../storage");
   const { brokerageBrand } = await import("../cim/templates");
+  const notifications = await import("../notifications/service");
   return {
+    questionsForDeal: (d) => storage.getQuestionsByDeal(d),
+    createRequirement: (row) => storage.createDocumentRequirement(row),
+    discrepanciesForDeal: (d) => storage.getDiscrepanciesByDeal(d),
+    cimSectionsForDeal: (d) => storage.getCimSectionsByDeal(d),
+    sellerEmail: { notifySellerPortal: (dealId, ev, opts) => notifications.notifySellerPortal(dealId, ev, opts) },
+    buyerEmail: {
+      sendDirect: notifications.sendDirectEmail,
+      recordBuyerEmail: async (row) => (await import("../buyers/profile-data")).recordBuyerEmail(row),
+      broker: async (brokerId) => {
+        const [u, b] = await Promise.all([storage.getUser(brokerId), storage.getBrandingByBroker(brokerId).catch(() => undefined)]);
+        return { name: u?.name?.trim() || null, email: u?.email ?? null, company: (b as { companyName?: string | null } | undefined)?.companyName ?? null };
+      },
+      appUrl: () => process.env.APP_URL || "https://app.cimple.ca",
+    },
+    summary: defaultSummaryDeps,
     store: dbVdrStore,
     getDeal: (id) => storage.getDeal(id),
     accessRowsForDeal: (d) => storage.getBuyerAccessByDeal(d),
@@ -200,6 +235,7 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
     ddCitedDocumentIds: d.ddCited,
     root: d.root(),
     now: d.now,
+    questionsForDeal: d.questionsForDeal,
   });
   const by = (req: Request) => String(req.session?.brokerId ?? "broker");
   const brokerLog = (req: Request, dealId: string, action: VdrAction, extra: Partial<InsertVdrActivity> = {}): InsertVdrActivity =>
@@ -369,7 +405,7 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       const logs: InsertVdrActivity[] = [brokerLog(req, deal.id, "plan_applied", { detail: { shared: touched.size, levels: fresh.length, ticked: ticks.size } })];
       for (const [itemId, flags] of Array.from(ticks.entries())) logs.push(brokerLog(req, deal.id, "checked_by_broker", { itemId, detail: { flags } }));
       await logVdrQuietly(d.store, logs);
-      res.json({ shared: touched.size, newlyVisibleBuyers: newlyVisible.size });
+      res.json({ shared: touched.size, newlyVisibleBuyers: newlyVisible.size, newlyVisible: newlyList(ctx, newlyVisible), itemIds: Array.from(touched) });
     } catch (err) {
       send(res, err, "apply the sharing plan");
     }
@@ -782,7 +818,7 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
     dealId: string,
     ctx: Awaited<ReturnType<typeof loadBrokerContext>>,
     changes: Array<{ item: VdrItem; rows: any[]; tick: VdrFlagKey[] }>,
-  ): Promise<number> {
+  ): Promise<Set<string>> {
     const { snap, groups } = ctx;
     const newly = new Set<string>();
     const logs: InsertVdrActivity[] = [];
@@ -812,8 +848,16 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       await d.store.updateItem(c.item.id, { checkedAt: stamp, checkedBy: by(req), checkedFlags: Array.from(new Set([...prev, ...c.tick])), checkedForFile: forFile });
     }
     await logVdrQuietly(d.store, logs);
-    return newly.size;
+    return newly;
   }
+
+  /** The buyers (by key) who newly reach something, as {accessId, label} for "Let them know?". */
+  const newlyList = (ctx: Awaited<ReturnType<typeof loadBrokerContext>>, keys: Set<string>) =>
+    Array.from(keys).map((k) => {
+      const g = ctx.groups.find((x) => x.key === k);
+      const link = g?.eligible ?? g?.rows[0] ?? null;
+      return { accessId: link?.id ?? "", label: (link?.buyerCompany || link?.buyerName || link?.buyerEmail || k) as string };
+    }).filter((x) => x.accessId);
 
   app.put(`${BASE}/items/:itemId/shares`, ...guard, async (req, res) => {
     try {
@@ -835,7 +879,7 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
         await d.store.updateItem(item.id, { buyerSummaryStatus: "accepted" });
         await logVdrQuietly(d.store, brokerLog(req, deal.id, "summary_accepted", { itemId: item.id }));
       }
-      res.json({ newlyVisibleBuyers: newly });
+      res.json({ newlyVisibleBuyers: newly.size, newlyVisible: newlyList(ctx, newly) });
     } catch (err) {
       send(res, err, "save who can see it");
     }
@@ -906,8 +950,8 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
           v.rows.length === snap.shares.filter((s) => s.itemId === item.id).length;
         if (!same) changes.push({ item, rows: v.rows, tick: v.tick });
       }
-      const newly = changes.length ? await writeShares(d, req, deal.id, ctx, changes) : 0;
-      const out: BulkShareResult = { changed: changes.length, skipped, newlyVisibleBuyers: newly };
+      const newly = changes.length ? await writeShares(d, req, deal.id, ctx, changes) : new Set<string>();
+      const out: BulkShareResult = { changed: changes.length, skipped, newlyVisibleBuyers: newly.size, newlyVisible: newlyList(ctx, newly) };
       res.json(out);
     } catch (err) {
       send(res, err, "share them");
@@ -983,8 +1027,8 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
         if (!v.ok) { skipped.push({ itemId: item.id, title: item.title, reason: v.failure.body.code === "check_first" ? "Needs your check first." : String(v.failure.body.error) }); continue; }
         changes.push({ item, rows: v.rows, tick: v.tick });
       }
-      const newly = changes.length ? await writeShares(d, req, deal.id, ctx, changes) : 0;
-      res.json({ changed: changes.length, skipped, newlyVisibleBuyers: newly } satisfies BulkShareResult);
+      const newly = changes.length ? await writeShares(d, req, deal.id, ctx, changes) : new Set<string>();
+      res.json({ changed: changes.length, skipped, newlyVisibleBuyers: newly.size, newlyVisible: newlyList(ctx, newly) } satisfies BulkShareResult);
     } catch (err) {
       send(res, err, "share them");
     }
@@ -1251,13 +1295,610 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       const { gate, snap, decided } = await asBuyer(d, deal, req.params.accessId);
       const one = itemFor(decided, String(req.params.itemId), { allowNotReady: true });
       if (!one.item.prepared || one.item.prepared.status !== "ready") kickPrepare(one.item.id);
-      res.json(buyerItemAbout(gate, snap, decided, one));
+      const extras = await buyerAboutExtras({ questionsForDeal: d.questionsForDeal, servedSections: d.servedSections }, gate, snap, decided, one, { preview: true });
+      res.json({ ...buyerItemAbout(gate, snap, decided, one), ...extras });
     } catch (err) {
       send(res, err, "show what the buyer sees");
     }
   });
 
-  // One document's readers, for the drawer's Activity tab (the full Activity view comes with the To do and Activity tabs).
+  // ── Pass 3: To do, buyer requests, emails (the broker's click only) ────────
+
+  app.get(`${BASE}/todo`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      await requireRoom(d, deal.id);
+      const payload = await roomPayload(brokerDeps(d), deal);
+      const ctx = await loadBrokerContext(brokerDeps(d), deal);
+      const buyers = buildBuyers(deal.id, ctx.groups, ctx.snap, ctx.views, { root: d.root(), now: ctx.now, privateMatters: ctx.pm });
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ items: await waitingFor(brokerDeps(d), deal, ctx, payload.items, buyers.eligible, payload.folders) } satisfies WaitingPayload);
+    } catch (err) {
+      send(res, err, "load your to-do list");
+    }
+  });
+
+  // "Not now" on a new file in a shared folder, "Dismiss" on the DD-cited line.
+  app.post(`${BASE}/todo/dismiss`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const dealId = req.params.dealId;
+      const key = typeof req.body?.key === "string" ? req.body.key : "";
+      const m = /^hint:([A-Za-z0-9_-]{1,64})$/.exec(key);
+      if (m) await dealItem(d, dealId, m[1]);
+      else if (key !== "dd_cited") throw bad("Nothing to set aside.");
+      await logVdrQuietly(d.store, brokerLog(req, dealId, "todo_dismissed", { itemId: m ? m[1] : null, detail: { key } }));
+      res.json({ ok: true });
+    } catch (err) {
+      send(res, err, "set it aside");
+    }
+  });
+
+  const requestDeps = (d: DataRoomRouteDeps): RequestDeps => ({ store: d.store, now: d.now, createRequirement: d.createRequirement, requirementsForDeal: d.requirementsForDeal });
+
+  async function dealRequest(d: DataRoomRouteDeps, dealId: string, requestId: unknown): Promise<VdrRequest> {
+    if (!isId(requestId)) throw notFound();
+    const r = await d.store.getRequest(requestId);
+    if (!r || r.dealId !== dealId) throw notFound();
+    return r;
+  }
+
+  /** Requirement ids already in a "Your broker added … to your checklist" email. */
+  async function emailedRequirementIds(d: DataRoomRouteDeps, dealId: string): Promise<{ ids: Set<string>; lastAt: string | null }> {
+    const rows = await d.store.listActivityByActions(dealId, ["seller_emailed"]).catch(() => []);
+    const ids = new Set<string>();
+    for (const r of rows) for (const id of (((r.detail ?? {}) as Record<string, unknown>).requirementIds as string[] | undefined) ?? []) ids.add(id);
+    return { ids, lastAt: rows[0] ? new Date(rows[0].at).toISOString() : null };
+  }
+
+  app.get(`${BASE}/requests`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      const [ctx, requests, requirements, team, emailed] = await Promise.all([
+        loadBrokerContext(brokerDeps(d), deal),
+        d.store.listRequests(deal.id),
+        d.requirementsForDeal(deal.id).catch(() => [] as DealDocumentRequirement[]),
+        d.store.listTeamMembers(deal.id).catch(() => []),
+        emailedRequirementIds(d, deal.id),
+      ]);
+      const status = typeof req.query.status === "string" ? req.query.status : null;
+      const numbers = indexNumbers(ctx.snap.folders, ctx.snap.items);
+      const rows = brokerRequestRows({ requests: status ? requests.filter((r) => r.status === status) : requests, groups: ctx.groups, accessRows: ctx.rows, items: ctx.snap.items, numbers: numbers.items, docs: ctx.snap.docs, requirements, team });
+      const unsent = requests.filter((r) => r.status === "asked_seller" && r.requirementId && !emailed.ids.has(r.requirementId)).map((r) => r.requirementId!);
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ ...rows, sellerEmail: { lastAt: emailed.lastAt, unsent: Array.from(new Set(unsent)) } });
+    } catch (err) {
+      send(res, err, "load the requests");
+    }
+  });
+
+  /** Shares an item with the buyer who asked (their own grant), within the sharing rules. */
+  async function shareWithRequester(d: DataRoomRouteDeps, req: Request, deal: Deal, r: VdrRequest, itemId: string, opts: { turnOnRoom?: boolean; checkedFlags?: string[] }) {
+    const ctx = await loadBrokerContext(brokerDeps(d), deal);
+    const item = ctx.snap.items.find((i) => i.id === itemId && !i.removedAt);
+    if (!item) throw notFound();
+    const doc = item.documentId ? ctx.snap.docs.get(item.documentId) ?? null : null;
+    if (!doc || !isRoomMaterial(doc)) throw bad("That document can't be shared.");
+    const group = ctx.groups.find((g) => g.key === r.buyerEmail);
+    const link = group?.eligible ?? null;
+    if (!group || !link) {
+      const any = group?.rows[0] ?? ctx.rows.find((a) => a.id === r.buyerAccessId);
+      const why = any ? roomIneligibleReason(any, ctx.now) : null;
+      throw new VdrHttpError(409, { code: "not_eligible", error: why === "blind" ? "They're on the Blind CIM. Move them to Full CIM first (Buyers view)." : why ? `They can't have documents yet: ${ineligibleCopy(why).toLowerCase()}.` : "They can't have documents yet." });
+    }
+    if (!group.hasRoom) {
+      if (!opts.turnOnRoom) throw new VdrHttpError(409, { code: "no_room", error: `${link.buyerCompany || link.buyerName || link.buyerEmail} doesn't have the data room. Turn it on for them?` });
+      const rule = dataRoomLevelRule(link.accessLevel);
+      await d.store.upsertBuyerSettings(deal.id, group.key, { roomAccess: rule === "auto_on" ? "auto" : "on", updatedBy: by(req) } as any);
+      await logVdrQuietly(d.store, brokerLog(req, deal.id, "buyer_room_changed", { buyerEmail: group.key, detail: { roomAccess: "on" } }));
+    }
+    const fresh = opts.turnOnRoom ? await loadBrokerContext(brokerDeps(d), deal) : ctx;
+    const isLedger = isLedgerItemDoc(doc);
+    const cur = currentShareInput(fresh.snap.shares.filter((s) => s.itemId === item.id), fresh.groups);
+    const next = { ...cur, allow: Array.from(new Set([...cur.allow, link.id])), deny: cur.deny.filter((id) => buyerKey(fresh.rows.find((x) => x.id === id)?.buyerEmail) !== group.key) };
+    const { unchecked } = flagsFor(item, doc, { privateMatters: fresh.pm.get(doc.id) ?? [], fileMissing: false, isLedger });
+    const v = validateShares({ dealId: deal.id, item, isLedger, unchecked, checkedFlags: opts.checkedFlags ?? [], accessRows: fresh.rows, input: next, by: by(req), now: fresh.now });
+    if (!v.ok) {
+      if (v.failure.body.code === "check_first") throw new VdrHttpError(409, { ...v.failure.body, itemId: item.id });
+      throw new VdrHttpError(v.failure.status, v.failure.body);
+    }
+    await writeShares(d, req, deal.id, fresh, [{ item, rows: v.rows, tick: v.tick }]);
+    await markShared(requestDeps(d), r, item.id, by(req));
+    return { item, link };
+  }
+
+  app.patch(`${BASE}/requests/:requestId`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      const r = await dealRequest(d, deal.id, req.params.requestId);
+      const b = req.body ?? {};
+      const action = b.action;
+      if (action === "decline") {
+        await declineRequests(requestDeps(d), deal.id, [r], typeof b.note === "string" ? b.note : null, by(req));
+        return res.json({ ok: true, status: "declined" });
+      }
+      if (r.status === "shared" || r.status === "declined") throw new VdrHttpError(409, { error: "This request has already been answered." });
+      if (action === "share") {
+        if (r.kind !== "document") throw bad("Use 'Give them the data room' for an access request.");
+        await shareWithRequester(d, req, deal, r, String(b.itemId ?? ""), { turnOnRoom: b.turnOnRoom === true, checkedFlags: Array.isArray(b.checkedFlags) ? b.checkedFlags.filter((x: unknown): x is string => typeof x === "string") : [] });
+        return res.json({ ok: true, status: "shared" });
+      }
+      if (action === "grant_room") {
+        if (r.kind !== "room_access") throw bad("This is a request for a document.");
+        const ctx = await loadBrokerContext(brokerDeps(d), deal);
+        const group = ctx.groups.find((g) => g.key === r.buyerEmail);
+        const link = group?.eligible ?? null;
+        if (!link) {
+          const any = group?.rows[0] ?? ctx.rows.find((a) => a.id === r.buyerAccessId);
+          const why = any ? roomIneligibleReason(any, ctx.now) : null;
+          throw new VdrHttpError(409, { code: why === "blind" ? "blind" : "not_eligible", accessId: any?.id ?? null, error: why === "blind" ? "They're on the Blind CIM. Move them to Full CIM first, then give them the data room." : why ? `They can't have the data room yet: ${ineligibleCopy(why).toLowerCase()}.` : "They can't have the data room yet." });
+        }
+        await d.store.upsertBuyerSettings(deal.id, r.buyerEmail, { roomAccess: dataRoomLevelRule(link.accessLevel) === "auto_on" ? "auto" : "on", updatedBy: by(req) } as any);
+        await d.store.updateRequest(r.id, { status: "shared", resolvedAt: d.now(), resolvedBy: by(req) });
+        await logVdrQuietly(d.store, [
+          brokerLog(req, deal.id, "buyer_room_changed", { buyerEmail: r.buyerEmail, detail: { roomAccess: "on" } }),
+          brokerLog(req, deal.id, "request_resolved", { buyerEmail: r.buyerEmail, detail: { requestId: r.id, how: "room_access" } }),
+        ]);
+        return res.json({ ok: true, status: "shared" });
+      }
+      if (action === "ask_seller") {
+        if (r.kind !== "document") throw bad("Ask the seller is for documents.");
+        if (r.status === "asked_seller" || r.status === "ready_to_share") throw new VdrHttpError(409, { error: "The seller has already been asked for this." });
+        const needed = parseNeededBy(b.neededBy, d.now());
+        if (!needed.ok) throw bad(needed.error);
+        const name = typeof b.requirementName === "string" ? b.requirementName.replace(/\s+/g, " ").trim().slice(0, 200) : "";
+        const note = typeof b.requirementNote === "string" ? b.requirementNote : null;
+        let folderPresetKey: string | null = null;
+        if (r.itemId) {
+          const it = await d.store.getItem(r.itemId);
+          if (it && it.dealId === deal.id) folderPresetKey = (await d.store.listFolders(deal.id)).find((f) => f.id === it.folderId)?.presetKey ?? null;
+        }
+        const created = await askSeller(requestDeps(d), deal.id, [r], { name: name || null, note, neededBy: needed.at, folderPresetKey }, by(req));
+        return res.json({ ok: true, status: "asked_seller", requirementIds: created.map((c) => c.id) });
+      }
+      throw bad("Choose what to do with the request.");
+    } catch (err) {
+      send(res, err, "answer the request");
+    }
+  });
+
+  app.post(`${BASE}/requests/bulk`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      const ids = req.body?.requestIds;
+      if (!Array.isArray(ids) || ids.length === 0 || ids.length > 200) throw bad("Choose the requests.");
+      const rows: VdrRequest[] = [];
+      for (const id of Array.from(new Set(ids))) rows.push(await dealRequest(d, deal.id, id));
+      if (req.body?.action === "decline") {
+        const n = await declineRequests(requestDeps(d), deal.id, rows, typeof req.body?.note === "string" ? req.body.note : null, by(req));
+        return res.json({ ok: true, declined: n });
+      }
+      if (req.body?.action === "ask_seller") {
+        const needed = parseNeededBy(req.body?.neededBy, d.now());
+        if (!needed.ok) throw bad(needed.error);
+        const todo = rows.filter((r) => r.kind === "document" && r.status === "open");
+        const created = await askSeller(requestDeps(d), deal.id, todo, { note: typeof req.body?.note === "string" ? req.body.note : null, neededBy: needed.at }, by(req));
+        return res.json({ ok: true, asked: created.length, requirementIds: created.map((c) => c.id) });
+      }
+      throw bad("Choose what to do with the requests.");
+    } catch (err) {
+      send(res, err, "answer the requests");
+    }
+  });
+
+  // "Email the seller now" — one email for these checklist rows (and any other asks not emailed yet).
+  app.post(`${BASE}/requests/email-seller`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      const ids = req.body?.requirementIds;
+      if (!Array.isArray(ids) || ids.length === 0 || ids.length > 200) throw bad("Choose what to ask the seller for.");
+      const all = await d.requirementsForDeal(deal.id);
+      const wanted: DealDocumentRequirement[] = [];
+      for (const id of Array.from(new Set(ids))) {
+        const row = all.find((x) => x.id === id && x.dealId === deal.id);
+        if (!row) throw notFound();
+        if (row.source !== "buyer_request") throw bad("Only documents asked for from buyers' requests are emailed here.");
+        wanted.push(row);
+      }
+      const emailed = await emailedRequirementIds(d, deal.id);
+      const requests = await d.store.listRequests(deal.id);
+      const pendingIds = new Set(requests.filter((r) => r.status === "asked_seller" && r.requirementId).map((r) => r.requirementId!));
+      // Asks from the last 10 minutes that weren't emailed go in the same email.
+      const recent = all.filter((x) => x.source === "buyer_request" && x.status === "missing" && pendingIds.has(x.id) && !emailed.ids.has(x.id) && !wanted.some((w) => w.id === x.id) && d.now().getTime() - new Date(x.createdAt).getTime() <= 10 * 60_000);
+      const rows = [...wanted, ...recent];
+      const r = await emailSellerAboutRequests(d.sellerEmail, deal, rows.map((x) => ({ id: x.id, documentName: x.documentName, notes: x.notes, neededBy: x.neededBy })));
+      await logVdrQuietly(d.store, brokerLog(req, deal.id, "seller_emailed", { detail: { count: rows.length, requirementIds: rows.map((x) => x.id), recipients: r.recipients, sent: r.emailsSent, demo: r.demo, event: r.event } }));
+      res.json({ count: rows.length, recipients: r.recipients, sent: r.emailsSent, demo: r.demo });
+    } catch (err) {
+      send(res, err, "email the seller");
+    }
+  });
+
+  // "Ready to share" → one click: the buyer who asked can open it, the request closes, and the prefilled email comes back.
+  app.post(`${BASE}/requests/:requestId/share-and-tell`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      const r = await dealRequest(d, deal.id, req.params.requestId);
+      if (r.status !== "ready_to_share" || !r.readyDocumentId) throw new VdrHttpError(409, { error: "The seller hasn't uploaded it yet." });
+      const doc = await d.store.getDocument(r.readyDocumentId);
+      if (!doc || doc.dealId !== deal.id) throw notFound();
+      const item = await fileDocumentIntoRoom(deal.id, doc.id, "broker", { explicit: true }, d.setup());
+      if (!item) throw bad("That document can't go in the data room.");
+      const { link } = await shareWithRequester(d, req, deal, r, item.id, { turnOnRoom: req.body?.turnOnRoom === true, checkedFlags: Array.isArray(req.body?.checkedFlags) ? req.body.checkedFlags.filter((x: unknown): x is string => typeof x === "string") : [] });
+      const who = await d.buyerEmail.broker(by(req)).catch(() => ({ name: null, email: null, company: null }));
+      const draft = tellBuyerDraft(item.title, who.name || who.company);
+      res.json({ ok: true, itemId: item.id, draft: { to: [link.buyerCompany || link.buyerName || link.buyerEmail], subject: draft.subject, message: draft.message, demo: !!deal.demoKey } satisfies EmailDraft });
+    } catch (err) {
+      send(res, err, "share it");
+    }
+  });
+
+  app.get(`${BASE}/requests/:requestId/tell-buyer`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      const r = await dealRequest(d, deal.id, req.params.requestId);
+      const ctx = await loadBrokerContext(brokerDeps(d), deal);
+      const item = r.itemId ? ctx.snap.items.find((i) => i.id === r.itemId) ?? null : null;
+      const link = ctx.groups.find((g) => g.key === r.buyerEmail)?.eligible ?? null;
+      const who = await d.buyerEmail.broker(by(req)).catch(() => ({ name: null, email: null, company: null }));
+      const draft = tellBuyerDraft(item?.title ?? r.text, who.name || who.company);
+      res.json({ to: link ? [link.buyerCompany || link.buyerName || link.buyerEmail] : [], subject: draft.subject, message: draft.message, demo: !!deal.demoKey } satisfies EmailDraft);
+    } catch (err) {
+      send(res, err, "prepare the email");
+    }
+  });
+
+  const emailText = (b: any) => {
+    const subject = typeof b?.subject === "string" ? b.subject.replace(/\s+/g, " ").trim().slice(0, 200) : "";
+    const message = typeof b?.message === "string" ? b.message.trim().slice(0, 2000) : "";
+    if (!subject || !message) throw bad("Write a subject and a message.");
+    return { subject, message };
+  };
+
+  app.post(`${BASE}/requests/:requestId/tell-buyer`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      const r = await dealRequest(d, deal.id, req.params.requestId);
+      if (r.status !== "shared") throw new VdrHttpError(409, { error: "Share the document first." });
+      const { subject, message } = emailText(req.body);
+      const ctx = await loadBrokerContext(brokerDeps(d), deal);
+      const link = ctx.groups.find((g) => g.key === r.buyerEmail)?.eligible ?? null;
+      if (!link) throw new VdrHttpError(409, { error: "Their link has ended, so there's nothing to send them to." });
+      const out = await sendBrokerEmailToBuyers(d.buyerEmail, { deal, brokerId: by(req), to: [{ accessToken: link.accessToken, buyerEmail: link.buyerEmail, buyerUserId: (link as any).buyerUserId ?? null, itemId: r.itemId }], subject, message });
+      await logVdrQuietly(d.store, brokerLog(req, deal.id, "told_buyer", { itemId: r.itemId, buyerEmail: r.buyerEmail, detail: { requestId: r.id, sent: out.sent, demo: out.demo } }));
+      res.json(out);
+    } catch (err) {
+      send(res, err, "send the email");
+    }
+  });
+
+  // "Let them know?" after a share: the draft, then the broker's send.
+  async function digestTargets(d: DataRoomRouteDeps, deal: Deal, body: any) {
+    const itemIds = body?.itemIds;
+    const accessIds = body?.accessIds;
+    if (!Array.isArray(itemIds) || itemIds.length === 0 || itemIds.length > 200) throw bad("Choose the documents.");
+    if (!Array.isArray(accessIds) || accessIds.length === 0 || accessIds.length > 50) throw bad("Choose who to tell.");
+    const ctx = await loadBrokerContext(brokerDeps(d), deal);
+    const items: VdrItem[] = [];
+    for (const id of Array.from(new Set(itemIds))) {
+      const it = ctx.snap.items.find((i) => i.id === id && !i.removedAt);
+      if (!it) throw notFound();
+      items.push(it);
+    }
+    const links: BuyerAccess[] = [];
+    for (const id of Array.from(new Set(accessIds))) {
+      const a = ctx.rows.find((r) => r.id === id);
+      if (!a) throw notFound();
+      links.push(a);
+    }
+    // Only buyers who can open at least one of these documents right now.
+    const to: Array<{ link: BuyerAccess; itemId: string }> = [];
+    for (const a of links) {
+      const g = ctx.groups.find((x) => x.key === buyerKey(a.buyerEmail));
+      if (!g?.eligible || !g.hasRoom) continue;
+      const reader = { dealId: deal.id, accessLevel: g.eligible.accessLevel, buyerEmail: g.key, mode: (dataRoomLevelRule(g.eligible.accessLevel) === "auto_on" ? "dd" : "normal") as "dd" | "normal" };
+      const decided = decideItems(ctx.snap, { ...reader, accessLevel: parseAccessLevelInput(reader.accessLevel) ?? reader.accessLevel }, d.root(), { privateMatters: ctx.pm });
+      const visible = items.filter((it) => decided.some((x) => x.item.id === it.id && x.visibility.visible));
+      if (visible.length > 0 && !to.some((t) => t.link.id === g.eligible!.id)) to.push({ link: g.eligible, itemId: visible[0].id });
+    }
+    return { items, to };
+  }
+
+  app.post(`${BASE}/let-buyers-know/draft`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      const { items, to } = await digestTargets(d, deal, req.body);
+      const who = await d.buyerEmail.broker(by(req)).catch(() => ({ name: null, email: null, company: null }));
+      const draft = letBuyersKnowDraft(deal.businessName, items.map((i) => i.title), who.name || who.company);
+      res.json({ to: to.map((t) => t.link.buyerCompany || t.link.buyerName || t.link.buyerEmail), subject: draft.subject, message: draft.message, demo: !!deal.demoKey } satisfies EmailDraft);
+    } catch (err) {
+      send(res, err, "prepare the email");
+    }
+  });
+
+  app.post(`${BASE}/let-buyers-know`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      const { subject, message } = emailText(req.body);
+      const { items, to } = await digestTargets(d, deal, req.body);
+      if (to.length === 0) throw new VdrHttpError(409, { error: "None of them can open these documents right now." });
+      const out = await sendBrokerEmailToBuyers(d.buyerEmail, { deal, brokerId: by(req), to: to.map((t) => ({ accessToken: t.link.accessToken, buyerEmail: t.link.buyerEmail, buyerUserId: (t.link as any).buyerUserId ?? null, itemId: items.length === 1 ? t.itemId : null })), subject, message });
+      await logVdrQuietly(d.store, brokerLog(req, deal.id, "buyers_emailed", { detail: { count: to.length, items: items.length, sent: out.sent, demo: out.demo } }));
+      res.json({ ...out, recipients: to.length });
+    } catch (err) {
+      send(res, err, "send the email");
+    }
+  });
+
+  // The Q&A tab's document chips (§5.12): which document and page each data-room question is about, and who asked.
+  app.get(`${BASE}/questions`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      const [questions, items, folders, rows, team] = await Promise.all([
+        d.questionsForDeal(deal.id).catch(() => [] as BuyerQuestion[]),
+        d.store.listItems(deal.id),
+        d.store.listFolders(deal.id),
+        d.accessRowsForDeal(deal.id),
+        d.store.listTeamMembers(deal.id).catch(() => []),
+      ]);
+      const numbers = indexNumbers(folders, items).items;
+      const out = questions.filter((q) => q.vdrItemId).map((q) => {
+        const it = items.find((i) => i.id === q.vdrItemId);
+        const link = rows.find((r) => r.id === q.buyerAccessId);
+        const buyer = link ? (link.buyerCompany || link.buyerName || link.buyerEmail) : "A buyer";
+        const m = q.vdrTeamMemberId ? team.find((t) => t.id === q.vdrTeamMemberId) : null;
+        return {
+          id: q.id,
+          itemId: it && !it.removedAt ? it.id : null,
+          number: it ? numbers.get(it.id) ?? null : null,
+          title: it?.title ?? "A document no longer in the room",
+          page: q.vdrPage ?? null,
+          buyer,
+          askedBy: askerLabel(buyer, m ?? null),
+          scope: q.answerScope === "room" ? "room" : "private",
+        };
+      });
+      res.setHeader("Cache-Control", "no-store");
+      res.json(out);
+    } catch (err) {
+      send(res, err, "load the document questions");
+    }
+  });
+
+  // ── Pass 3: descriptions (V12) ─────────────────────────────────────────────
+
+  // The Share dialog opens for a document without a description: queue one (no AI call here).
+  app.post(`${BASE}/items/:itemId/summary/ensure`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const item = await dealItem(d, req.params.dealId, req.params.itemId);
+      const n = await requestSummaries(d.store, item.dealId, [item.id], d.now());
+      res.json({ queued: n > 0 });
+    } catch (err) {
+      send(res, err, "ask for a description");
+    }
+  });
+
+  // "Draft again" — the broker's click (aiLimiter + the deal's daily cap).
+  app.post(`${BASE}/items/:itemId/summary`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      await dealItem(d, deal.id, req.params.itemId);
+      const r = await redraftOne(d.summary(), deal, String(req.params.itemId));
+      res.status(r.ok ? 200 : 409).json({ ...r, error: r.ok ? undefined : r.message });
+    } catch (err) {
+      send(res, err, "draft the description");
+    }
+  });
+
+  // "Use all" (To do › Descriptions to accept).
+  app.post(`${BASE}/summaries/accept`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const dealId = req.params.dealId;
+      const ids = req.body?.itemIds;
+      if (!Array.isArray(ids) || ids.length === 0 || ids.length > 500) throw bad("Choose the descriptions.");
+      let n = 0;
+      const logs: InsertVdrActivity[] = [];
+      for (const id of Array.from(new Set(ids))) {
+        const it = await dealItem(d, dealId, id);
+        if (it.buyerSummary && it.buyerSummaryStatus === "drafted") {
+          await d.store.updateItem(it.id, { buyerSummaryStatus: "accepted" });
+          logs.push(brokerLog(req, dealId, "summary_accepted", { itemId: it.id }));
+          n++;
+        }
+      }
+      await logVdrQuietly(d.store, logs);
+      res.json({ accepted: n });
+    } catch (err) {
+      send(res, err, "accept the descriptions");
+    }
+  });
+
+  // ── Pass 3: Cimple's notes on a document (broker) ──────────────────────────
+
+  app.get(`${BASE}/items/:itemId/notes`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      const item = await dealItem(d, deal.id, req.params.itemId, { allowRemoved: true });
+      const [doc, docs, sections, discrepancies, questions, room, rows, team] = await Promise.all([
+        item.documentId ? d.store.getDocument(item.documentId) : Promise.resolve(null),
+        d.store.listDocuments(deal.id),
+        d.cimSectionsForDeal(deal.id).catch(() => [] as CimSection[]),
+        d.discrepanciesForDeal(deal.id).catch(() => [] as Discrepancy[]),
+        d.questionsForDeal(deal.id).catch(() => [] as BuyerQuestion[]),
+        d.store.getRoom(deal.id),
+        d.accessRowsForDeal(deal.id),
+        d.store.listTeamMembers(deal.id).catch(() => []),
+      ]);
+      const facts = doc ? documentFacts((deal.extractedInfo ?? {}) as Record<string, unknown>, doc.id) : [];
+      const visibleSections = sections.filter((s) => s.isVisible !== false).map((s) => sectionText(s));
+      const { links, inCim } = documentCimLinks(facts, visibleSections);
+      const rank = (f: { text: string }) => (/\$\s?\d/.test(f.text) ? 0 : /\d/.test(f.text) ? 1 : 2);
+      const keyFigures = facts.slice().sort((a, b) => rank(a) - rank(b)).slice(0, 12).map((f) => ({ key: f.key, label: f.label, value: f.text.length > 160 ? `${f.text.slice(0, 159)}…` : f.text, inCim: inCim.has(f.key) }));
+      let checks: ItemNotesPayload["checks"] = [];
+      if (doc) {
+        const dd = await ddDocumentChecks(deal.id, doc.id).catch(() => null);
+        if (dd) {
+          checks = dd.map((c) => {
+            const other = c.other ? docs.find((x) => x.id === c.other!.documentId)?.name ?? "another document" : null;
+            return c.status === "match"
+              ? { tone: "match" as const, text: `${c.label} matches ${other ?? "the other sources"}${c.thisValue ? ` (${c.thisValue})` : ""}.` }
+              : { tone: c.explanation ? ("resolved" as const) : ("open" as const), text: `${c.label}: ${c.thisValue} here${c.otherValue ? ` vs ${c.otherValue}${other ? ` in ${other}` : ""}` : ""}.${c.explanation ? ` ${c.explanation}` : " No reason recorded yet."}` };
+          });
+        } else {
+          checks = brokerChecks(doc, facts, discrepancies, docs);
+        }
+      }
+      const labelFor = (q: { buyerAccessId: string | null; vdrTeamMemberId: string | null }) => {
+        const link = rows.find((r) => r.id === q.buyerAccessId);
+        const buyer = link ? (link.buyerCompany || link.buyerName || link.buyerEmail) : "A buyer";
+        const m = q.vdrTeamMemberId ? team.find((t) => t.id === q.vdrTeamMemberId) : null;
+        return askerLabel(buyer, m ?? null);
+      };
+      const left = remainingToday(room ? { summaryBudgetDay: room.summaryBudgetDay ?? null, summaryBudgetUsed: room.summaryBudgetUsed ?? 0 } : null, d.now());
+      const note = item.buyerSummaryStatus === "failed"
+        ? item.buyerSummarySource === "unavailable"
+          ? "Cimple couldn't write a description right now, so the basic line is shown. Write your own or try Draft again later."
+          : "Cimple's draft didn't pass its checks, so a basic description is shown. Write your own or draft again."
+        : item.buyerSummaryStatus === "pending" && left === 0
+          ? "Cimple has written today's descriptions for this deal. Try again tomorrow or write your own."
+          : null;
+      const out: ItemNotesPayload = {
+        keyFigures,
+        cimLinks: links.map((l) => ({ sectionId: l.sectionId, title: l.title })),
+        ddCitedIn: [],
+        checks,
+        questions: documentQuestions(questions, item.id, labelFor),
+        summary: { remainingToday: left, capped: left === 0, running: item.buyerSummaryStatus === "pending", note },
+      };
+      res.setHeader("Cache-Control", "no-store");
+      res.json(out);
+    } catch (err) {
+      send(res, err, "load Cimple's notes");
+    }
+  });
+
+  // ── Pass 3: Activity (by buyer · by document · full log · CSV · trace) ────
+
+  async function activityContext(d: DataRoomRouteDeps, deal: Deal) {
+    const ctx = await loadBrokerContext(brokerDeps(d), deal);
+    const numbers = indexNumbers(ctx.snap.folders, ctx.snap.items);
+    const team = await d.store.listTeamMembers(deal.id).catch(() => []);
+    const canSee = new Map<string, Set<string>>();
+    const newFor = new Map<string, Set<string>>();
+    for (const g of ctx.groups) {
+      if (!g.hasRoom || !g.eligible) continue;
+      const reader = { dealId: deal.id, accessLevel: parseAccessLevelInput(g.eligible.accessLevel) ?? g.eligible.accessLevel, buyerEmail: g.key, mode: (dataRoomLevelRule(g.eligible.accessLevel) === "auto_on" ? "dd" : "normal") as "dd" | "normal" };
+      const decided = decideItems(ctx.snap, reader, d.root(), { privateMatters: ctx.pm });
+      const visible = decided.filter((x) => x.visibility.visible);
+      canSee.set(g.key, new Set(visible.map((x) => x.item.id)));
+      const prev = g.setting?.previousVisitAt ?? null;
+      const fresh = new Set<string>();
+      for (const x of visible) {
+        const grants = x.shares.filter((s) => s.effect === "allow" && ((s.audience === "buyer" && s.buyerEmail === g.key) || (s.audience === "level" && sameAccessLevel(s.accessLevel, reader.accessLevel))));
+        if (isNewForBuyer({ grants: grants.map((s) => ({ createdAt: s.createdAt })), previousVisitAt: prev, fileChangedAt: x.item.fileChangedAt ?? null, openedEarlierVersion: false }).isNew) fresh.add(x.item.id);
+      }
+      newFor.set(g.key, fresh);
+    }
+    const report: ReportContext = { items: ctx.snap.items, numbers: numbers.items, accessRows: ctx.rows, team, canSee, newFor };
+    return { ctx, report, team };
+  }
+
+  function logFilter(d: DataRoomRouteDeps, q: Request["query"], ctx: Awaited<ReturnType<typeof loadBrokerContext>>, team: ReadonlyArray<{ id: string }>): LogFilter {
+    const f: LogFilter = {};
+    if (q.buyer != null) {
+      const link = ctx.rows.find((r) => r.id === q.buyer);
+      if (!link) throw notFound();
+      f.buyer = buyerKey(link.buyerEmail);
+    }
+    if (q.person != null) {
+      if (q.person !== "principal" && !team.some((t) => t.id === q.person)) throw notFound();
+      f.person = String(q.person);
+    }
+    if (q.item != null) {
+      if (!ctx.snap.items.some((i) => i.id === q.item)) throw notFound();
+      f.item = String(q.item);
+    }
+    if (typeof q.action === "string" && q.action) f.action = q.action.slice(0, 40);
+    const date = (v: unknown, end: boolean) => {
+      if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+      return new Date(`${v}T${end ? "23:59:59" : "00:00:00"}Z`);
+    };
+    f.from = date(q.from, false);
+    f.to = date(q.to, true);
+    return f;
+  }
+
+  app.get(`${BASE}/activity`, ...guard, async (req, res, next) => {
+    if (req.query.view == null) return next();
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      const view = req.query.view === "documents" ? "documents" : req.query.view === "log" ? "log" : "buyers";
+      const { ctx, report, team } = await activityContext(d, deal);
+      const f = logFilter(d, req.query, ctx, team);
+      const views = ctx.views;
+      let log: ActivityPayload["log"] = [];
+      let logTotal = 0;
+      if (view === "log") {
+        const rows = await d.store.listActivity(deal.id, 5000);
+        const all = activityLog(rows, report, f);
+        logTotal = all.length;
+        log = all.slice(0, 500);
+      }
+      const traceQ = typeof req.query.trace === "string" ? req.query.trace.slice(0, 20) : "";
+      const out: ActivityPayload = {
+        view,
+        buyers: view === "buyers" ? activityByBuyer(f.buyer ? views.filter((v) => v.buyerEmail === f.buyer) : views, report).filter((b) => !f.buyer || b.key === f.buyer) : [],
+        documents: view === "documents" ? activityByDocument(views, report) : [],
+        log,
+        logTotal,
+        trace: traceQ ? { query: traceQ, hits: findTrace(views, traceQ, report) } : null,
+        filters: {
+          buyers: ctx.groups.filter((g) => g.hasRoom || views.some((v) => v.buyerEmail === g.key)).map((g) => ({ key: (g.eligible ?? g.rows[0]).id, label: labelForKey(g.key, ctx.rows) })),
+          people: [{ id: "principal", label: "The buyer themselves" }, ...team.filter((t) => t.status === "active" || t.status === "removed").map((t) => ({ id: t.id, label: `${t.name} (${t.role})` }))],
+          items: ctx.snap.items.filter((i) => !i.removedAt).map((i) => ({ id: i.id, label: `${report.numbers.get(i.id) ?? ""} ${i.title}`.trim() })).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })),
+          actions: LOG_ACTION_FILTERS.slice(),
+        },
+      };
+      res.setHeader("Cache-Control", "no-store");
+      res.json(out);
+    } catch (err) {
+      send(res, err, "load the activity");
+    }
+  });
+
+  app.get(`${BASE}/activity.csv`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      const { ctx, report, team } = await activityContext(d, deal);
+      const f = logFilter(d, req.query, ctx, team);
+      const rows = activityLog(await d.store.listActivity(deal.id, 20000), report, f);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="data-room-activity.csv"`);
+      res.send(activityCsv(rows, report));
+    } catch (err) {
+      send(res, err, "export the activity");
+    }
+  });
+
+  // One document's readers, for the drawer's Activity tab.
   app.get(`${BASE}/activity`, ...guard, async (req, res) => {
     try {
       const d = await deps();

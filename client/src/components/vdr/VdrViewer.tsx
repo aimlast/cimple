@@ -58,6 +58,8 @@ export type VdrViewerProps = {
   onPageChange?: (page: number) => void;
   /** A buyer's view started (its id goes on the download link, so the copy carries the same trace). */
   onView?: (viewId: string) => void;
+  /** Buyer: "Ask" on the can't-show screen (a prefilled request for a copy). */
+  onAsk?: () => void;
   /** Where the page bar sticks (Tailwind top-* classes), under the host's own sticky bars. */
   barTop?: string;
 };
@@ -122,6 +124,9 @@ export function VdrViewer(props: VdrViewerProps) {
             <Button variant="outline" size="sm" className="mt-3" onClick={props.onRetry}>
               <RotateCw className="mr-1.5 h-3.5 w-3.5" /> Try again
             </Button>
+          )}
+          {props.onAsk && (
+            <Button variant="outline" size="sm" className="mt-3" onClick={props.onAsk} data-testid="vdr-viewer-ask">Ask</Button>
           )}
         </Centered>
       </ViewerFrame>

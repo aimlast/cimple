@@ -97,6 +97,14 @@ registerDataRoomRoutes(app as any, {
   serve: () => ({ pool: fakePool as any, root }),
   root: () => root,
   now: () => now,
+  questionsForDeal: async () => [],
+  createRequirement: async (row: any) => ({ id: `req-${Math.random()}`, createdAt: now, ...row }),
+  discrepanciesForDeal: async () => [],
+  cimSectionsForDeal: async () => [],
+  sellerEmail: { notifySellerPortal: async () => ({ recipients: 0, emailsSent: 0 }) },
+  buyerEmail: { sendDirect: async () => true, broker: async () => ({ name: "Morgan", email: null, company: null }), appUrl: () => "https://app.example.invalid" },
+  summary: () => ({ store: f.store, getDeal, now: () => now }),
+  servedSections: async () => [],
 });
 registerDataRoomBuyerRoutes(app as any, {
   store: f.store,
@@ -107,6 +115,10 @@ registerDataRoomBuyerRoutes(app as any, {
   root,
   serve: { pool: fakePool as any, root },
   brand: async () => ({ firmName: "Brassline", logoUrl: null }),
+  questionsForDeal: async () => [],
+  createQuestion: async (row: any) => ({ id: `q-${Math.random()}`, createdAt: now, ...row }),
+  notifyBroker: async () => undefined,
+  servedSections: async () => [],
 });
 const server = app.listen(0, "127.0.0.1");
 await new Promise((r) => server.once("listening", r));
@@ -298,6 +310,49 @@ await check("revoking the link stops every route", async () => {
   a.revokedAt = now;
   assert.equal((await call("GET", `${V("tok-dd-aaaaaaaaaaaa")}/items/${t2A}`)).status, 403);
   a.revokedAt = null;
+});
+
+// ── Pass 3: requests, To do, notes, descriptions, emails, activity ──────
+await check("pass 3 broker routes: another brokerage's deal → 404 everywhere", async () => {
+  for (const [m, p] of [["GET", "todo"], ["GET", "requests"], ["GET", "questions"], ["GET", `items/${t2A}/notes`], ["GET", "activity?view=log"], ["GET", "activity.csv"]] as const) {
+    assert.equal((await call(m, `${A}/${p}`, undefined, "b2")).status, 404, p);
+  }
+  assert.equal((await call("POST", `${A}/summaries/accept`, { itemIds: [t2A] }, "b2")).status, 404);
+  assert.equal((await call("POST", `${A}/requests/email-seller`, { requirementIds: ["x"] }, "b2")).status, 404);
+});
+await check("pass 3: another deal's request, item, link or folder in a path, query or body → 404", async () => {
+  const bReq = (await f.store.insertRequests([{ dealId: "B", buyerAccessId: "acc-B", buyerEmail: "x@b.invalid", kind: "document", text: "x", status: "open" }]))[0];
+  assert.equal((await call("PATCH", `${A}/requests/${bReq.id}`, { action: "decline" }, "b1")).status, 404);
+  assert.equal((await call("POST", `${A}/requests/${bReq.id}/share-and-tell`, {}, "b1")).status, 404);
+  assert.equal((await call("POST", `${A}/requests/${bReq.id}/tell-buyer`, { subject: "s", message: "m" }, "b1")).status, 404);
+  assert.equal((await call("POST", `${A}/requests/bulk`, { action: "decline", requestIds: [bReq.id] }, "b1")).status, 404);
+  const aReq = (await f.store.insertRequests([{ dealId: "A", buyerAccessId: "acc-dd", buyerEmail: "jane@northgate.invalid", kind: "document", text: "y", status: "open" }]))[0];
+  assert.equal((await call("PATCH", `${A}/requests/${aReq.id}`, { action: "share", itemId: t2B }, "b1")).status, 404, "sharing another deal's item");
+  assert.equal((await call("GET", `${A}/items/${t2B}/notes`, undefined, "b1")).status, 404);
+  assert.equal((await call("POST", `${A}/items/${t2B}/summary`, {}, "b1")).status, 404);
+  assert.equal((await call("POST", `${A}/items/${t2B}/summary/ensure`, {}, "b1")).status, 404);
+  assert.equal((await call("POST", `${A}/summaries/accept`, { itemIds: [t2B] }, "b1")).status, 404);
+  assert.equal((await call("POST", `${A}/let-buyers-know/draft`, { itemIds: [t2A], accessIds: ["acc-B"] }, "b1")).status, 404);
+  assert.equal((await call("POST", `${A}/let-buyers-know/draft`, { itemIds: [t2B], accessIds: ["acc-dd"] }, "b1")).status, 404);
+  assert.equal((await call("POST", `${A}/todo/dismiss`, { key: `hint:${t2B}` }, "b1")).status, 404);
+  assert.equal((await call("GET", `${A}/activity?view=log&buyer=acc-B`, undefined, "b1")).status, 404);
+  assert.equal((await call("GET", `${A}/activity?view=buyers&item=${t2B}`, undefined, "b1")).status, 404);
+});
+await check("pass 3 buyer routes: a link asks only in its own room; hidden items → 404", async () => {
+  // A request naming another deal's item, or an item not shared with them.
+  assert.equal((await call("POST", `${V("tok-dd-aaaaaaaaaaaa")}/requests`, { text: "x", itemId: t2B })).status, 404);
+  assert.equal((await call("POST", `${V("tok-dd-aaaaaaaaaaaa")}/requests`, { text: "x", itemId: leaseA })).status, 404);
+  assert.equal((await call("POST", `${V("tok-dd-aaaaaaaaaaaa")}/requests`, { text: "x", documentId: "B-t2" })).status, 404);
+  // A question about another deal's item / an unshared one.
+  assert.equal((await call("POST", `${V("tok-dd-aaaaaaaaaaaa")}/items/${t2B}/questions`, { question: "x" })).status, 404);
+  assert.equal((await call("POST", `${V("tok-dd-aaaaaaaaaaaa")}/items/${leaseA}/questions`, { question: "x" })).status, 404);
+  // Blind / no-NDA links can't ask for documents; a team link that was never activated can't ask anything.
+  assert.equal((await call("POST", `${V("tok-blind-aaaaaaaaa")}/requests`, { text: "x" })).status, 403);
+  assert.equal((await call("POST", `${V("team-requested-token")}/requests`, { text: "x" })).status, 404);
+  // The room payload lists only this buyer's own requests.
+  await f.store.insertRequests([{ dealId: "A", buyerAccessId: "acc-full", buyerEmail: "sam@full.invalid", kind: "document", text: "Sam's own request", status: "open" }]);
+  const room = await call("GET", V("tok-dd-aaaaaaaaaaaa"));
+  assert.ok(!JSON.stringify(room.json.requests ?? []).includes("Sam's own request"), "never another buyer's request");
 });
 
 server.close();

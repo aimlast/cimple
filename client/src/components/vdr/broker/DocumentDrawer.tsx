@@ -8,14 +8,16 @@
  * controls inline. Activity: who opened it, for how long, which pages.
  */
 import { useState } from "react";
-import { AlertTriangle, Eye, FileText, Loader2, Lock } from "lucide-react";
+import { Link } from "wouter";
+import { AlertTriangle, Check, CheckCircle2, CircleAlert, Eye, FileText, Loader2, Lock, MessageSquare, RefreshCw, Triangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import type { RoomItemRow } from "@shared/vdr-api";
-import { durationLabel, shortDate, useItemActivity } from "@/hooks/useDataRoom";
+import { durationLabel, invalidateRoom, roomBase, shortDate, useItemActivity, useItemNotes, vdrFetch } from "@/hooks/useDataRoom";
+import { useToast } from "@/hooks/use-toast";
 import { FlagChip, ItemMeta, SharingChip } from "./parts";
 import { ShareForm } from "./ShareDialog";
 import { useRoomActions } from "./actions";
@@ -61,8 +63,24 @@ export function DocumentDrawer({ dealId, item, onClose, onOpenViewer, onViewAs }
 
 function Notes({ dealId, item }: { dealId: string; item: RoomItemRow }) {
   const actions = useRoomActions(dealId);
+  const notesQ = useItemNotes(dealId, item.id);
+  const { toast } = useToast();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState("");
+  const [drafting, setDrafting] = useState(false);
+  const draftAgain = async () => {
+    setDrafting(true);
+    try {
+      const r = await vdrFetch<{ ok: boolean; message: string }>("POST", `${roomBase(dealId)}/items/${item.id}/summary`, {});
+      toast({ title: r.message });
+    } catch (e: any) {
+      toast({ title: "No new description", description: e?.message, variant: "destructive" });
+    } finally {
+      setDrafting(false);
+      invalidateRoom(dealId);
+    }
+  };
+  const n = notesQ.data;
   const what = [
     item.doc?.typeLabel,
     item.doc?.periodLabel ? `period ending ${item.doc.periodLabel}` : null,
@@ -71,7 +89,7 @@ function Notes({ dealId, item }: { dealId: string; item: RoomItemRow }) {
   ].filter(Boolean).join(" · ");
   const s = item.summary;
   const showing = s.status === "accepted" && s.text && !s.hidden ? s.text : s.basic;
-  const chip = s.status === "drafted" ? "Written by Cimple · not shown to buyers yet" : s.status === "accepted" && s.source === "broker" && s.text ? "Written by you" : s.status === "accepted" && s.source === "ai" ? "Written by Cimple · accepted" : "Basic description";
+  const chip = s.status === "pending" ? "Cimple is writing it…" : s.status === "drafted" ? "Written by Cimple · not shown to buyers yet" : s.status === "accepted" && s.source === "broker" && s.text ? "Written by you" : s.status === "accepted" && s.source === "ai" ? "Written by Cimple · accepted" : "Basic description";
   const look = item.flags.filter((f) => f.look);
   const notes = item.flags.filter((f) => !f.look && f.key !== "private_notes");
   return (
@@ -103,15 +121,25 @@ function Notes({ dealId, item }: { dealId: string; item: RoomItemRow }) {
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {s.status === "drafted" && s.text && <Button size="sm" variant="outline" onClick={() => actions.acceptSummary(item.id)}>Use this</Button>}
               <Button size="sm" variant="outline" onClick={() => { setText(s.status === "accepted" && s.text ? s.text : ""); setEditing(true); }}>Edit</Button>
+              {!item.removed && (
+                <Button size="sm" variant="ghost" onClick={draftAgain} disabled={drafting || s.status === "pending" || !!n?.summary.capped} title={n?.summary.capped ? "Cimple has written today's descriptions for this deal. Try again tomorrow or write your own." : undefined} data-testid="drawer-draft-again">
+                  {drafting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />} Draft again
+                </Button>
+              )}
               {s.status === "accepted" && s.text && (
                 <label className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
                   <Switch checked={!s.hidden} onCheckedChange={(v) => actions.hideSummary(item.id, !v)} /> Show to buyers
                 </label>
               )}
             </div>
+            {s.status === "pending" && <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Cimple is writing a short description. Buyers see the basic line until you accept one.</p>}
+            {!s.status && !s.text && <p className="mt-2 text-xs text-muted-foreground">Cimple writes this when you first plan sharing for the document.</p>}
+            {n?.summary.note && <p className="mt-2 text-xs text-muted-foreground" data-testid="drawer-summary-note">{n.summary.note}</p>}
           </>
         )}
       </section>
+
+      <NotesBody dealId={dealId} loading={notesQ.isLoading} error={!!notesQ.error} onRetry={() => notesQ.refetch()} n={n ?? null} />
 
       <section className="rounded-lg border border-border bg-muted/20 p-4">
         <h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Lock className="h-3.5 w-3.5" /> Only you see this</h4>
@@ -139,6 +167,80 @@ function Notes({ dealId, item }: { dealId: string; item: RoomItemRow }) {
         )}
       </section>
     </div>
+  );
+}
+
+const TONE = {
+  match: { icon: CheckCircle2, cls: "text-emerald-500" },
+  resolved: { icon: Triangle, cls: "text-teal" },
+  open: { icon: CircleAlert, cls: "text-teal" },
+} as const;
+
+/** Key figures · Used in the CIM · Checked against other documents · Questions about this document (§5.4). */
+function NotesBody({ dealId, n, loading, error, onRetry }: { dealId: string; n: import("@shared/vdr-api").ItemNotesPayload | null; loading: boolean; error: boolean; onRetry: () => void }) {
+  if (loading) return <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading what Cimple knows about it…</div>;
+  if (error || !n) return <p className="text-xs text-muted-foreground">Couldn't load Cimple's notes. <button className="underline" onClick={onRetry}>Try again</button></p>;
+  return (
+    <>
+      <section data-testid="drawer-key-figures">
+        <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Key figures from this document</h4>
+        {n.keyFigures.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No facts on file come from this document yet.</p>
+        ) : (
+          <dl className="divide-y divide-border rounded-md border border-border">
+            {n.keyFigures.map((f) => (
+              <div key={f.key} className="flex items-start gap-3 px-3 py-1.5">
+                <dt className="w-[42%] shrink-0 text-xs text-muted-foreground">{f.label}</dt>
+                <dd className="min-w-0 flex-1 text-xs text-foreground/90">{f.value}{f.inCim && <span className="ml-1.5 inline-flex items-center gap-0.5 whitespace-nowrap text-[11px] text-teal"><Check className="h-3 w-3" />In the CIM</span>}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+      </section>
+
+      <section>
+        <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Used in the CIM</h4>
+        {n.cimLinks.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No CIM page prints its figures.</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {n.cimLinks.map((l) => <Link key={l.sectionId} href={`/deal/${dealId}/cim?section=${encodeURIComponent(l.sectionId)}`} className="rounded-full border border-border px-2.5 py-0.5 text-xs hover:border-teal/50 hover:text-teal">{l.title}</Link>)}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Checked against other documents</h4>
+        {n.checks.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Nothing to compare it with yet.</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {n.checks.map((c, i) => {
+              const t = TONE[c.tone];
+              const Icon = t.icon;
+              return <li key={i} className="flex items-start gap-2 text-xs"><Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${t.cls}`} /><span className="text-foreground/90">{c.text}</span></li>;
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section>
+        <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Questions about this document</h4>
+        {n.questions.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No buyer has asked about it.</p>
+        ) : (
+          <ul className="space-y-2">
+            {n.questions.map((q) => (
+              <li key={q.id} className="rounded-md border border-border px-3 py-2 text-xs">
+                <p className="text-foreground/90">"{q.question}"</p>
+                <p className="mt-0.5 text-muted-foreground">{q.who}{q.page ? ` · page ${q.page}` : ""} · {shortDate(q.at)} · {q.statusLabel}</p>
+              </li>
+            ))}
+            <li><Link href={`/deal/${dealId}/qa`} className="inline-flex items-center gap-1 text-xs text-teal hover:underline"><MessageSquare className="h-3 w-3" /> Open the Q&amp;A tab</Link></li>
+          </ul>
+        )}
+      </section>
+    </>
   );
 }
 

@@ -28,9 +28,25 @@ import { enqueuePrepare } from "./prepare";
 import { removeCleanCopy, removeItemCache } from "./files";
 import { isGlDocument } from "./gl-adapter";
 
-export type SetupDeps = { store: VdrStore; enqueue: (itemId: string) => void; now: () => Date };
+export type SetupDeps = {
+  store: VdrStore;
+  enqueue: (itemId: string) => void;
+  now: () => Date;
+  /** Asks for buyer-description drafts for newly placed items (§9.8; persisted queue). Absent = none (tests). */
+  summaries?: (dealId: string, itemIds: string[]) => void;
+};
 export function defaultSetupDeps(): SetupDeps {
-  return { store: dbVdrStore, enqueue: enqueuePrepare, now: () => new Date() };
+  return {
+    store: dbVdrStore,
+    enqueue: enqueuePrepare,
+    now: () => new Date(),
+    summaries: (dealId, itemIds) => {
+      if (itemIds.length === 0) return;
+      import("./buyer-summary")
+        .then((m) => m.requestSummaries(dbVdrStore, dealId, itemIds))
+        .catch((err) => console.warn(`[vdr] couldn't queue descriptions for deal ${dealId}:`, err?.message ?? err));
+    },
+  };
 }
 
 function logRow(dealId: string, action: VdrAction, extra: Partial<InsertVdrActivity> = {}): InsertVdrActivity {
@@ -104,6 +120,7 @@ export async function setUpRoom(dealId: string, by: string, mode: "auto" | "empt
   for (const it of placed) logs.push(logRow(dealId, "item_added", { itemId: it.id, folderId: it.folderId, detail: { addedBy: it.addedBy } }));
   await logVdrQuietly(deps.store, logs);
   for (const it of placed) deps.enqueue(it.id);
+  deps.summaries?.(dealId, placed.map((it) => it.id));
   return { room, folders, placed };
 }
 
@@ -159,6 +176,7 @@ export async function fileDocumentIntoRoom(
   if (inserted) {
     await logVdrQuietly(deps.store, logRow(dealId, "item_added", { itemId: inserted.id, folderId, detail: { addedBy } }));
     deps.enqueue(inserted.id);
+    deps.summaries?.(dealId, [inserted.id]);
   }
   return item;
 }
@@ -208,7 +226,10 @@ export async function markReplacement(previousDocumentId: string, newDocumentId:
         addedBy: "seller",
         replacesItemId: prev.id,
       });
-      if (next) deps.enqueue(next.id);
+      if (next) {
+        deps.enqueue(next.id);
+        deps.summaries?.(prev.dealId, [next.id]);
+      }
     }
     if (!next) return null;
     await deps.store.updateItem(prev.id, { replacedByItemId: next.id });

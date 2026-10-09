@@ -150,6 +150,22 @@ export function fakeVdrStore(seed: { documents?: any[] } = {}) {
     async teamMemberByTokenHash(hash) { return team.find((t) => t.tokenHash === hash) ?? null; },
     async listTeamMembers(dealId) { return team.filter((t) => t.dealId === dealId); },
     async updateTeamMember(id, patch) { const t = team.find((x) => x.id === id); if (t) Object.assign(t, patch); },
+    async listRequests(dealId) { return requests.filter((r) => r.dealId === dealId).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); },
+    async getRequest(id) { return requests.find((r) => r.id === id) ?? null; },
+    async insertRequests(rows) {
+      const out: any[] = [];
+      for (const r of rows) {
+        const row = { id: randomUUID(), teamMemberId: null, listId: null, itemId: null, documentId: null, status: "open", requirementId: null, readyDocumentId: null, brokerNote: null, resolvedAt: null, resolvedBy: null, createdAt: now(), ...r };
+        requests.push(row);
+        out.push(row);
+      }
+      return out;
+    },
+    async updateRequest(id, patch) { const r = requests.find((x) => x.id === id); if (!r) return null; Object.assign(r, structuredClone(patch)); return r; },
+    async listActivityByActions(dealId, actions) { return activity.filter((a) => a.dealId === dealId && actions.includes(a.action)).slice().reverse(); },
+    async itemsWithPendingSummaries(limit) {
+      return items.filter((i) => !i.removedAt && i.documentId && i.buyerSummaryStatus === "pending").sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime()).slice(0, limit);
+    },
   };
   return { store, rooms, folders, items, shares, pageText, activity, requests, documents, settings, views, team };
 }

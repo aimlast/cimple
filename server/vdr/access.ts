@@ -238,6 +238,26 @@ export async function visibleItemIdsForReader(store: VdrStore, deal: Deal, reade
   return new Set(decideItems(snap, reader, root, { privateMatters: pm }).filter((d) => d.visibility.visible).map((d) => d.item.id));
 }
 
+/**
+ * Room items one buyer link can open right now — the full gate (link live,
+ * NDA, room open, the buyer's room access) and the one rule per item. Empty
+ * when the gate refuses (a teaser or Blind CIM link, no room, closed…).
+ * Used by the Q&A's document scope (§9.9). Never throws.
+ */
+export async function itemIdsVisibleToLink(
+  deal: Deal,
+  link: BuyerAccess,
+  deps: Pick<GateDeps, "store" | "now" | "root"> = { store: dbVdrStore, now: () => new Date(), root: uploadsRoot() },
+): Promise<Set<string>> {
+  try {
+    const gate = await gateForLink(deps, { access: link, member: null, deal });
+    const { decided } = await decideForGate(deps, gate);
+    return new Set(decided.filter((d) => d.visibility.visible).map((d) => d.item.id));
+  } catch {
+    return new Set();
+  }
+}
+
 /** Everything a reader may see, decided once per request. */
 export async function decideForGate(deps: Pick<GateDeps, "store" | "root">, gate: VdrGate, fileExists?: (p: string) => boolean): Promise<{ snap: RoomSnapshot; decided: ReaderItem[] }> {
   const snap = await loadRoom(deps.store, gate.deal.id);

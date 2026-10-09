@@ -16,11 +16,16 @@ import {
   rollVisitStamps,
   visibleTree,
 } from "@shared/vdr";
-import type { BuyerItemAbout, BuyerRoomFolder, BuyerRoomItem, BuyerRoomPayload } from "@shared/vdr-api";
+import type { BuyerQuestion } from "@shared/schema";
+import { approvedForSharing } from "@shared/buyer-qa-scope";
+import type { BuyerDocQuestion, BuyerItemAbout, BuyerRoomFolder, BuyerRoomItem, BuyerRoomPayload } from "@shared/vdr-api";
 import { logVdrQuietly, type VdrStore } from "./store";
 import { listedItems, type ReaderItem, type RoomSnapshot, type VdrGate } from "./access";
 import { decisionFor, manifestFor } from "./serve";
 import { buyerLog } from "./activity";
+import { buyerRequestRows } from "./requests";
+import { buyerKeyFigures, documentCimLinks, documentFacts, servedSectionsFor } from "./analysis";
+import { ddDocumentChecks } from "./dd-adapter";
 
 export type BuyerRoomDeps = {
   store: VdrStore;
@@ -115,8 +120,9 @@ export async function buyerRoomPayload(
     previousVisitAt = r.previousVisitAt;
     if (r.rolled) await logVdrQuietly(deps.store, buyerLog(gate, "buyer_opened_room", { ipHash: opts.ipHash ?? null }));
   }
-  const views = await deps.store.listViews(gate.deal.id);
+  const [views, requests] = await Promise.all([deps.store.listViews(gate.deal.id), deps.store.listRequests(gate.deal.id).catch(() => [])]);
   const items = buyerItems(gate, snap, decided, views, previousVisitAt);
+  const visibleNumbers = new Map(items.map((i) => [i.id, i.number]));
   const folders = buyerFolders(snap, items);
   const brand = await deps.brand(gate.deal.brokerId ?? null).catch(() => ({ firmName: null, logoUrl: null }));
   const exp = gate.access.expiresAt ? new Date(gate.access.expiresAt).getTime() : null;
@@ -135,7 +141,67 @@ export async function buyerRoomPayload(
     endsInDays: exp == null ? null : Math.max(0, Math.ceil((exp - now.getTime()) / 86_400_000)),
     newCount: items.filter((i) => i.isNew || i.isUpdated).length,
     allowDownloads: !!gate.setting?.allowDownloads,
+    requests: buyerRequestRows(requests, { buyerEmail: gate.reader.buyerEmail, teamMemberId: gate.viewer.teamMemberId }, (id) => visibleNumbers.get(id) ?? null),
+    canRequest: !opts.preview,
   };
+}
+
+/**
+ * The About panel's extras (§6.3): buyer-safe key figures, the memorandum
+ * pages that use them (not for a team member — they don't read the
+ * memorandum), checks (due diligence only; a counterpart the reader can't
+ * open is "another document"), and the reader's questions about it plus
+ * answers the broker shared with the document's readers.
+ */
+export async function buyerAboutExtras(
+  deps: { questionsForDeal: (dealId: string) => Promise<BuyerQuestion[]>; servedSections?: typeof servedSectionsFor },
+  gate: VdrGate,
+  snap: RoomSnapshot,
+  decided: ReadonlyArray<ReaderItem>,
+  one: ReaderItem,
+  opts: { preview: boolean },
+): Promise<Pick<BuyerItemAbout, "keyFigures" | "checks" | "usedIn" | "questions" | "canAsk">> {
+  const doc = one.doc;
+  const brokerOnly = new Set(Array.from(snap.docs.values()).filter((d) => d.visibility === "broker_only").map((d) => d.id));
+  const keyFigures = doc ? buyerKeyFigures(gate.deal, doc.id, brokerOnly) : [];
+  let usedIn: Array<{ sectionId: string; title: string }> = [];
+  if (doc && !gate.member) {
+    const sections = await (deps.servedSections ?? servedSectionsFor)(gate.deal, gate.access.accessLevel);
+    // Only the figures a buyer may see link a page.
+    const facts = documentFacts((gate.deal.extractedInfo ?? {}) as Record<string, unknown>, doc.id).filter((f) => keyFigures.some((k) => k.label === f.label));
+    usedIn = documentCimLinks(facts, sections).links.map((l) => ({ sectionId: l.sectionId, title: l.title }));
+  }
+  let checks: Array<{ ok: boolean; text: string }> = [];
+  if (doc && gate.mode === "dd") {
+    const dd = await ddDocumentChecks(gate.deal.id, doc.id).catch(() => null);
+    if (dd) {
+      const visibleDocs = new Map(decided.filter((x) => x.visibility.visible && x.item.documentId).map((x) => [x.item.documentId!, x.item.title]));
+      checks = dd.map((c) => {
+        const other = c.other ? visibleDocs.get(c.other.documentId) ?? "another document" : "the other sources";
+        return c.status === "match"
+          ? { ok: true, text: `${c.label} matches ${other}.` }
+          : { ok: false, text: `${c.label}: ${c.thisValue} here${c.otherValue ? `, ${c.otherValue} in ${other}` : ""}.${c.explanation ? ` ${c.explanation}` : ""}` };
+      });
+    }
+  }
+  const all = await deps.questionsForDeal(gate.deal.id).catch(() => [] as BuyerQuestion[]);
+  const ownLinks = new Set([gate.access.id]);
+  const questions: BuyerDocQuestion[] = all
+    .filter((q) => q.vdrItemId === one.item.id)
+    .filter((q) => {
+      const mine = !!q.buyerAccessId && ownLinks.has(q.buyerAccessId) && (gate.member ? q.vdrTeamMemberId === gate.member.id : true);
+      if (mine) return true;
+      // Another reader's answer the broker showed to everyone who can open this document (they can: it's open).
+      return q.status === "published" && !!q.isPublished && q.answerScope === "room" && approvedForSharing(q);
+    })
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    .slice(-30)
+    .map((q) => {
+      const mine = !!q.buyerAccessId && ownLinks.has(q.buyerAccessId);
+      const answered = q.status === "published" && !!(q.publishedAnswer || q.brokerDraft);
+      return { id: q.id, question: q.question, answer: answered ? (q.publishedAnswer || q.brokerDraft || null) : null, status: answered ? "answered" : "waiting", mine, page: q.vdrPage ?? null, at: new Date(q.createdAt).toISOString() };
+    });
+  return { keyFigures, checks, usedIn, questions, canAsk: !opts.preview };
 }
 
 /** The About card + manifest for one item (the viewer's side panel). */

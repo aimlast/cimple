@@ -708,6 +708,8 @@ export const VDR_ACTIONS = [
   "team_requested", "team_added", "team_link_sent", "team_removed", "team_acknowledged",
   "buyer_opened_room", "buyer_opened_item", "buyer_downloaded", "buyer_searched", "buyer_requested",
   "buyer_asked", "buyer_denied", "index_downloaded",
+  // Pass 3: the broker set a "Waiting on you" item aside ("Not now" / "Dismiss").
+  "todo_dismissed",
 ] as const;
 export type VdrAction = (typeof VDR_ACTIONS)[number];
 

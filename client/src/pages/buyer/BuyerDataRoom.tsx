@@ -23,8 +23,9 @@ import { cn } from "@/lib/utils";
 import type { BuyerItemAbout, BuyerRoomPayload, BuyerSearchHit } from "@shared/vdr-api";
 import { useBuyerRoom, useItemAbout, vdrFetch, vdrUrls, sourceKey, VdrRequestError, type VdrSource } from "@/hooks/useDataRoom";
 import { RoomSwitch } from "@/components/vdr/RoomSwitch";
-import { RoomList, RoomRail, SearchBox, SearchResults, type RoomPlace } from "@/components/vdr/buyer/RoomBrowser";
+import { RoomList, RoomRail, SearchBox, SearchResults, YourRequests, type RoomPlace } from "@/components/vdr/buyer/RoomBrowser";
 import { AboutPanel } from "@/components/vdr/buyer/AboutPanel";
+import { RequestDialog, type RequestPrefill } from "@/components/vdr/buyer/RequestDialog";
 import { DownloadControl, PrevNext, VdrViewer } from "@/components/vdr/VdrViewer";
 import { BuyerChatbot } from "@/components/buyer/BuyerChatbot";
 
@@ -71,6 +72,7 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
   }, [nav, source.kind, setLocation, location]);
 
   const room = useBuyerRoom(source);
+  const [asking, setAsking] = useState<RequestPrefill | false>(false);
   const [qInput, setQInput] = useState(nav.q);
   useEffect(() => setQInput(nav.q), [nav.q]);
   useEffect(() => {
@@ -91,6 +93,9 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
 
   const token = source.kind === "buyer" ? source.token : null;
   const isTeam = data.reader.kind === "team";
+  const canRequest = !!data.canRequest && source.kind === "buyer";
+  const openAsk = canRequest ? (prefill: RequestPrefill = null) => setAsking(prefill) : null;
+  const askDialog = canRequest ? <RequestDialog source={source} open={asking !== false} onOpenChange={(o) => { if (!o) setAsking(false); }} prefill={asking || null} /> : null;
   const header = (
     <RoomHeader data={data} token={token} isTeam={isTeam} embedded={embedded} onIndex={canSearch ? vdrUrls(source).index : null} />
   );
@@ -109,7 +114,10 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
           initialPage={nav.page}
           onBack={() => go({ doc: null, page: null })}
           onOpen={(id) => go({ doc: id, page: null })}
+          onAsk={openAsk}
+          memoHref={token && !isTeam ? (sectionId) => `/view/${encodeURIComponent(token)}#section-${encodeURIComponent(sectionId)}` : undefined}
         />
+        {askDialog}
       </div>
     );
   }
@@ -126,7 +134,7 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
       <div className="mx-auto flex max-w-6xl gap-8 px-4 py-6 sm:px-6">
         <aside className="hidden w-[250px] shrink-0 lg:block">
           <div className="sticky top-20">
-            <RoomRail folders={data.folders} items={data.items} place={nav.place} onPlace={(p) => go({ place: p, q: "" })} query={qInput} onQuery={setQInput} canSearch={canSearch} />
+            <RoomRail folders={data.folders} items={data.items} place={nav.place} onPlace={(p) => go({ place: p, q: "" })} query={qInput} onQuery={setQInput} canSearch={canSearch} requests={data.requests ?? []} onAsk={openAsk ? () => openAsk(null) : null} />
           </div>
         </aside>
         <main className="min-w-0 flex-1">
@@ -159,6 +167,7 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
             <div className="rounded-lg border border-dashed border-border px-6 py-14 text-center" data-testid="room-empty">
               <p className="text-sm font-medium">Nothing has been shared with you yet.</p>
               <p className="mt-1 text-sm text-muted-foreground">Your broker will add documents here.</p>
+              {openAsk && <Button size="sm" variant="outline" className="mt-4" onClick={() => openAsk(null)}>Ask for a document</Button>}
             </div>
           ) : nav.q.length >= 2 && canSearch ? (
             <SearchResults q={nav.q} hits={hits.data?.hits} loading={hits.isLoading} error={!!hits.error} onOpen={(id, page) => go({ doc: id, page })} />
@@ -174,8 +183,13 @@ export function BuyerDataRoom({ source, embedded }: { source: VdrSource; embedde
           )}
           {/* Phones: the top folders as rows under "All documents". */}
           {!empty && !nav.q && nav.place.kind === "all" && <PhoneFolders data={data} onPlace={(p) => go({ place: p })} />}
+          {/* Phones: your requests and "Ask for a document". */}
+          {(openAsk || (data.requests?.length ?? 0) > 0) && !(empty && (data.requests?.length ?? 0) === 0) && (
+            <div className="mt-6 lg:hidden"><YourRequests requests={data.requests ?? []} onAsk={openAsk ? () => openAsk(null) : null} /></div>
+          )}
         </main>
       </div>
+      {askDialog}
       {!embedded && token && !isTeam && <RoomChatbot token={token} qc={qc} />}
       {!embedded && (
         <footer className="border-t border-border py-6 text-center text-xs text-muted-foreground/70">
@@ -259,10 +273,11 @@ function PhoneFolders({ data, onPlace }: { data: BuyerRoomPayload; onPlace: (p: 
   );
 }
 
-function DocumentScreen({ source, data, itemId, initialPage, onBack, onOpen, embedded }: { source: VdrSource; data: BuyerRoomPayload; itemId: string; initialPage: number | null; onBack: () => void; onOpen: (id: string) => void; embedded?: boolean }) {
+function DocumentScreen({ source, data, itemId, initialPage, onBack, onOpen, embedded, onAsk, memoHref }: { source: VdrSource; data: BuyerRoomPayload; itemId: string; initialPage: number | null; onBack: () => void; onOpen: (id: string) => void; embedded?: boolean; onAsk: ((p: RequestPrefill) => void) | null; memoHref?: (sectionId: string) => string }) {
   const about = useItemAbout(source, itemId);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [viewId, setViewId] = useState<string | null>(null);
+  const [page, setPage] = useState<number | null>(initialPage);
   const a = about.data as BuyerItemAbout | undefined;
   const item = data.items.find((i) => i.id === itemId);
   if (about.error) {
@@ -296,10 +311,10 @@ function DocumentScreen({ source, data, itemId, initialPage, onBack, onOpen, emb
       </div>
       <div className="mx-auto flex w-full max-w-[1400px] flex-1 gap-0 lg:gap-6 lg:px-6 lg:py-4">
         <div className="min-w-0 flex-1">
-          <ViewerWithView source={source} itemId={itemId} about={a ?? null} loading={about.isLoading} reader={{ name: data.reader.name, email: data.reader.email }} initialPage={initialPage} onView={setViewId} barTop={embedded ? "top-[94px]" : "top-[49px] lg:top-[106px]"} />
+          <ViewerWithView source={source} itemId={itemId} about={a ?? null} loading={about.isLoading} reader={{ name: data.reader.name, email: data.reader.email }} initialPage={initialPage} onView={setViewId} onPage={setPage} onAsk={onAsk ? () => onAsk({ text: `A copy of '${title}'`, itemId }) : undefined} barTop={embedded ? "top-[94px]" : "top-[49px] lg:top-[106px]"} />
         </div>
         <aside className="hidden w-[320px] shrink-0 lg:block">
-          <div className={cn("sticky rounded-lg border border-border bg-card p-4", embedded ? "top-[110px]" : "top-[122px]")}>{a ? <AboutPanel about={a} /> : <Skeleton className="h-32 w-full" />}</div>
+          <div className={cn("sticky max-h-[calc(100vh-140px)] overflow-y-auto rounded-lg border border-border bg-card p-4", embedded ? "top-[110px]" : "top-[122px]")}>{a ? <AboutPanel about={a} source={source} page={page} memoHref={memoHref} /> : <Skeleton className="h-32 w-full" />}</div>
         </aside>
       </div>
       <p className="px-4 py-3 text-center text-[11px] text-muted-foreground/80">
@@ -313,7 +328,7 @@ function DocumentScreen({ source, data, itemId, initialPage, onBack, onOpen, emb
       <Sheet open={aboutOpen} onOpenChange={setAboutOpen}>
         <SheetContent side="bottom" className="max-h-[80vh] overflow-y-auto">
           <SheetHeader><SheetTitle className="sr-only">About this document</SheetTitle></SheetHeader>
-          {a && <AboutPanel about={a} />}
+          {a && <AboutPanel about={a} source={source} page={page} memoHref={memoHref} />}
         </SheetContent>
       </Sheet>
     </div>
@@ -321,11 +336,13 @@ function DocumentScreen({ source, data, itemId, initialPage, onBack, onOpen, emb
 }
 
 /** The viewer, plus the download link once the buyer's view exists (its trace goes on the download). */
-function ViewerWithView({ source, itemId, about, loading, reader, initialPage, onView, barTop }: { source: VdrSource; itemId: string; about: BuyerItemAbout | null; loading: boolean; reader: { name: string | null; email: string }; initialPage: number | null; onView: (id: string) => void; barTop: string }) {
+function ViewerWithView({ source, itemId, about, loading, reader, initialPage, onView, onPage, onAsk, barTop }: { source: VdrSource; itemId: string; about: BuyerItemAbout | null; loading: boolean; reader: { name: string | null; email: string }; initialPage: number | null; onView: (id: string) => void; onPage: (n: number) => void; onAsk?: () => void; barTop: string }) {
   return (
     <VdrViewer
       barTop={barTop}
       onView={onView}
+      onPageChange={onPage}
+      onAsk={onAsk}
       source={source}
       itemId={itemId}
       manifest={about?.manifest ?? null}
@@ -376,7 +393,13 @@ function RoomError({ error, source, embedded, onRetry }: { error: VdrRequestErro
   if (code === "no_room_access" || code === "room_none") {
     title = "The data room isn't open to you yet.";
     body = "Your broker shares documents with buyers as the process moves forward.";
-    if (back) action = <Button asChild variant="outline" size="sm"><Link href={back}>{error?.body?.teaser ? "Back to the summary" : "Back to the memorandum"}</Link></Button>;
+    // A teaser link never asks for the room (C23): it goes back to the summary, where "Ask for the CIM" lives.
+    if (back) action = (
+      <div className="flex flex-wrap justify-center gap-2">
+        {token && !error?.body?.teaser && <AskForAccess token={token} />}
+        <Button asChild variant="outline" size="sm"><Link href={back}>{error?.body?.teaser ? "Back to the summary" : "Back to the memorandum"}</Link></Button>
+      </div>
+    );
   } else if (code === "room_closed") {
     title = "The data room is closed.";
     body = "Contact your broker if you need anything.";
@@ -404,5 +427,34 @@ function RoomError({ error, source, embedded, onRetry }: { error: VdrRequestErro
         {action && <div className="pt-1">{action}</div>}
       </div>
     </div>
+  );
+}
+
+/** "Ask for access" (§6.5) — a room-access request to the broker (Blind CIM or Full CIM links; never a teaser link). */
+function AskForAccess({ token }: { token: string }) {
+  const [state, setState] = useState<"idle" | "busy" | "sent" | "error">("idle");
+  const [message, setMessage] = useState<string | null>(null);
+  if (state === "sent") return <p className="w-full text-sm text-teal" data-testid="room-access-sent">Sent. Your broker will let you know.</p>;
+  return (
+    <>
+      <Button
+        size="sm"
+        onClick={async () => {
+          setState("busy");
+          try {
+            await vdrFetch("POST", `/api/view/${encodeURIComponent(token)}/data-room/requests`, { kind: "room_access" });
+            setState("sent");
+          } catch (e: any) {
+            setMessage(e?.message ?? "That didn't work.");
+            setState("error");
+          }
+        }}
+        disabled={state === "busy"}
+        data-testid="room-ask-access"
+      >
+        Ask for access
+      </Button>
+      {state === "error" && message && <p className="w-full text-xs text-destructive">{message}</p>}
+    </>
   );
 }

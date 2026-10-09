@@ -7,13 +7,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import type {
+  ActivityPayload,
   BrokerRoomPayload,
   BuyerItemAbout,
   BuyerRoomPayload,
+  ItemNotesPayload,
   RoomBuyersPayload,
+  RoomRequestsPayload,
   ShareAudience,
   SharingPlanPayload,
   VdrManifest,
+  WaitingPayload,
 } from "@shared/vdr-api";
 
 export class VdrRequestError extends Error {
@@ -80,6 +84,38 @@ export function useItemActivity(dealId: string, itemId: string | null) {
     queryFn: () => vdrFetch("GET", `${roomBase(dealId)}/activity?item=${encodeURIComponent(itemId!)}`),
     enabled: !!itemId,
   });
+}
+
+// ── Pass 3: To do, requests, notes, activity ──
+
+export function useTodo(dealId: string, enabled = true) {
+  return useQuery<WaitingPayload>({ queryKey: [...roomKey(dealId), "todo"], queryFn: () => vdrFetch("GET", `${roomBase(dealId)}/todo`), enabled });
+}
+
+export type RequestsPayload = RoomRequestsPayload & { sellerEmail: { lastAt: string | null; unsent: string[] } };
+export function useRequests(dealId: string, enabled = true) {
+  return useQuery<RequestsPayload>({ queryKey: [...roomKey(dealId), "requests"], queryFn: () => vdrFetch("GET", `${roomBase(dealId)}/requests`), enabled });
+}
+
+export function useItemNotes(dealId: string, itemId: string | null) {
+  return useQuery<ItemNotesPayload>({
+    queryKey: [...roomKey(dealId), "notes", itemId],
+    queryFn: () => vdrFetch("GET", `${roomBase(dealId)}/items/${encodeURIComponent(itemId!)}/notes`),
+    enabled: !!itemId,
+    // While Cimple writes the description, look again now and then.
+    refetchInterval: (q) => ((q.state.data as ItemNotesPayload | undefined)?.summary.running ? 5000 : false),
+  });
+}
+
+export type ActivityParams = { view: "buyers" | "documents" | "log"; buyer?: string | null; person?: string | null; item?: string | null; action?: string | null; from?: string | null; to?: string | null; trace?: string | null };
+export function activityQuery(p: Partial<ActivityParams>): string {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(p)) if (v) q.set(k, String(v));
+  return q.toString();
+}
+export function useActivityReport(dealId: string, p: ActivityParams) {
+  const qs = activityQuery(p);
+  return useQuery<ActivityPayload>({ queryKey: [...roomKey(dealId), "activity-report", qs], queryFn: () => vdrFetch("GET", `${roomBase(dealId)}/activity?${qs}`) });
 }
 
 // ── Where a viewer reads from: the buyer's link, or the broker (optionally as one buyer) ──

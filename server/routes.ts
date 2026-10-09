@@ -7557,10 +7557,18 @@ Return JSON only.`,
       if (status !== undefined) updates.status = status;
       if (publishedAnswer !== undefined) updates.publishedAnswer = publishedAnswer;
       if (isPublished !== undefined) updates.isPublished = isPublished;
+      // Data room (vdr spec §9.9): a question about a document stays with the
+      // buyer who asked ("private") unless the broker shows it to the
+      // document's other readers ("room") — never "all".
+      const vdrShare = typeof req.body?.shareWithDocumentReaders === "boolean" ? req.body.shareWithDocumentReaders : undefined;
+      if (existingQ.vdrItemId) {
+        const { vdrAnswerScope } = await import("@shared/buyer-qa-scope");
+        updates.answerScope = vdrAnswerScope(existingQ.answerScope, vdrShare);
+      }
       // Published by the broker on purpose → for every buyer (a Blind buyer
       // still never sees it if it names the business — buyer-qa-scope.ts).
       if (isPublished === true) {
-        updates.answerScope = "all";
+        updates.answerScope = existingQ.vdrItemId ? updates.answerScope : "all";
         // Sharing an AI answer makes it the broker's answer: recorded as
         // their draft, which is what lets other buyers read it
         // (approvedForSharing in shared/buyer-qa-scope.ts) — and it no
@@ -7574,7 +7582,10 @@ Return JSON only.`,
         const effectiveStatus = typeof status === "string" ? status : existingQ.status;
         if (effectiveStatus === "published" && !existingQ.brokerDraft && brokerDraft === undefined) updates.brokerDraft = adopted;
         if (!existingQ.publishedAnswer && publishedAnswer === undefined) updates.publishedAnswer = adopted;
-        updates.addedToKnowledgeBase = true;
+        // A data-room answer feeds the knowledge base only when shown to the document's readers.
+        updates.addedToKnowledgeBase = existingQ.vdrItemId ? updates.answerScope === "room" : true;
+      } else if (existingQ.vdrItemId) {
+        updates.addedToKnowledgeBase = updates.answerScope === "room" && !!existingQ.isPublished && isPublished !== false;
       }
 
       // Generate approval token when sending to seller
@@ -7656,14 +7667,15 @@ Return JSON only.`,
 
       if (approved) {
         const publishedAnswer = revision || question.brokerDraft || question.aiAnswer || "";
+        // A data-room question keeps the scope the broker chose ("private" / "room", vdr §9.9).
+        const { approvalScope } = await import("@shared/buyer-qa-scope");
         const published = await storage.updateBuyerQuestion(question.id, {
           sellerApproved: true,
           sellerApprovedAt: new Date(),
           status: "published",
           isPublished: true,
           publishedAnswer,
-          addedToKnowledgeBase: true,
-          answerScope: "all",
+          ...approvalScope(question),
         } as any);
         if (answerNoticeDue(question, published)) {
           void notifyBuyerQuestionAnswered(published!, process.env.APP_URL || `${req.protocol}://${req.get("host")}`);
@@ -7706,14 +7718,15 @@ Return JSON only.`,
       const { approved, revision } = req.body;
 
       if (approved) {
+        // A data-room question keeps the scope the broker chose ("private" / "room", vdr §9.9).
+        const { approvalScope } = await import("@shared/buyer-qa-scope");
         const question = await storage.updateBuyerQuestion(questionId, {
           sellerApproved: true,
           sellerApprovedAt: new Date(),
           status: "published",
           isPublished: true,
           publishedAnswer: revision || undefined,
-          addedToKnowledgeBase: true,
-          answerScope: "all",
+          ...approvalScope(existingQ),
         } as any);
 
         if (!question) return res.status(404).json({ error: "Question not found" });
