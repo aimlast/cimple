@@ -99,6 +99,45 @@ export interface FollowUpNotice {
 }
 
 /**
+ * The follow-up email's words (pure): the one follow-up email every path
+ * sends (the Overview, Numbers & sources, Interview together's end-of-sitting
+ * list), and the preview Interview together shows before it is sent.
+ */
+export function followUpNoticeText(waiting: number, documents: number): { title: string; body: string } {
+  return {
+    title: `Your broker has ${waiting === 1 ? "a follow-up question" : "a few follow-up questions"} for you`,
+    body:
+      "Your broker went through what you shared and would like to check " +
+      (waiting === 1 ? "one thing" : `${waiting} things`) +
+      " with you. It's a short conversation that picks up where you left off — nothing you already answered is asked again." +
+      (documents > 0 ? ` They'd also like ${documents === 1 ? "one document" : `${documents} documents`} from you; your Documents page lists ${documents === 1 ? "it" : "them"}.` : ""),
+  };
+}
+
+/**
+ * How many things the follow-up email counts (the seller's page lists the
+ * same): routed rows under the follow-up rules (+ the never-asked ones being
+ * sent), questions about the figures with the seller (+ those being sent), and
+ * extra items. Never throws (a failed read counts 0).
+ */
+export async function followUpWaiting(
+  dealId: string,
+  alsoSending: readonly string[] = [],
+  extra: { figureQuestionIds?: readonly string[]; items?: number } = {},
+): Promise<number> {
+  try {
+    const { storage } = await import("../storage");
+    const { routedToSellerAt } = await import("@shared/discrepancy-gate");
+    const routed = (await storage.getDiscrepanciesByDeal(dealId))
+      .filter((d) => d.status === "ask_seller" && (!!routedToSellerAt(d) || alsoSending.includes(d.id))).length;
+    const figures = await figureQuestionsWithSeller(dealId, extra.figureQuestionIds ?? []);
+    return routed + figures + Math.max(0, extra.items ?? 0);
+  } catch {
+    return Math.max(0, extra.items ?? 0);
+  }
+}
+
+/**
  * Called after a row is routed to the seller. When the interview is still
  * running, the interview raises it — nothing to do. Never throws.
  */
@@ -125,13 +164,10 @@ export async function notifySellerOfFollowUps(
     const lastActive = await lastInterviewActivity(dealId).catch(() => null);
     if (!shouldEmailFollowUp(recent, Date.now(), lastActive)) return { interviewFinished: true, waiting, emailed: 0, addressed: 0, recentlyEmailed: true };
     const { notifySellerPortal } = await import("../notifications/service");
+    const words = followUpNoticeText(waiting, documents);
     const r = await notifySellerPortal(dealId, "seller_followup_questions", {
-      title: `Your broker has ${waiting === 1 ? "a follow-up question" : "a few follow-up questions"} for you`,
-      body:
-        "Your broker went through what you shared and would like to check " +
-        (waiting === 1 ? "one thing" : `${waiting} things`) +
-        " with you. It's a short conversation that picks up where you left off — nothing you already answered is asked again." +
-        (documents > 0 ? ` They'd also like ${documents === 1 ? "one document" : `${documents} documents`} from you; your Documents page lists ${documents === 1 ? "it" : "them"}.` : ""),
+      title: words.title,
+      body: words.body,
       path: "interview?followup=1",
       businessName: deal.businessName,
       metadata: { waiting, ...(figures > 0 ? { figureQuestions: figures } : {}), ...(documents > 0 ? { documents } : {}) },

@@ -7,15 +7,21 @@
  *                           "Fix first" line, and the way into Numbers & sources
  *   FigureNotesWaitingLine  the "Needs attention" row: "6 figure notes wait
  *                           for your OK · Review" (never blocks publishing)
- * INTEGRATOR: teaser's CimTab dashboard takes these through its tile,
- * Versions-card and attention slots, and registers NumbersWorkspace as the
- * `numbers` view in CIM_TAB_VIEWS (badge = notes waiting).
+ *   useFigureTileLines      the "What each buyer sees" tiles' lines (≤ 1 per
+ *                           tile, before the data room's): Blind / Full "+ notes
+ *                           on {n} figures"; DD "+ figure checks · {k}
+ *                           differences shown" or "(not shown yet)"
+ *   useFigureAttention      the "Needs attention" row's counts
+ * Teaser's CimTab dashboard takes these through its slots
+ * (cim-tab-slots.tsx: tile lines, Versions-card extras, attention groups) and
+ * shows NumbersWorkspace as its `numbers` view (badge = notes waiting).
  */
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Calculator } from "lucide-react";
 import { nothingServedLine, publishTarget, type FiguresWorkspace } from "@shared/figure-workspace";
+import { BLIND_ACCESS_LEVEL, DD_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, type AccessLevel } from "@shared/access-levels";
 import { figuresKey, figuresRequest, type FiguresStatus } from "./useFigures";
 import { ReviewSheet } from "./ReviewSheet";
 
@@ -34,6 +40,53 @@ function useFigureCounts(dealId: string) {
 /** The badge count (notes waiting for the broker's OK), cheap. */
 export function useFigureNotesWaiting(dealId: string): number {
   return useFigureCounts(dealId).data?.counts?.notesWaiting ?? 0;
+}
+
+/** The "Needs attention" row's counts: notes waiting for the broker's OK, notes the owner asked to change. */
+export function useFigureAttention(dealId: string): { waiting: number; flagged: number } {
+  const counts = useFigureCounts(dealId).data?.counts;
+  return { waiting: counts?.notesWaiting ?? 0, flagged: counts?.ownerFlagged ?? 0 };
+}
+
+/** A tile line (INTEGRATION §2.8 `extraLines` shape). */
+export interface FigureTileLine { key: string; text: string; tone?: "muted" | "amber"; href?: string }
+
+/**
+ * The "What each buyer sees" tiles' figure lines, read from what each version
+ * serves now (or once published, while nothing is served): Blind CIM and Full
+ * CIM "+ notes on {n} figures"; Due diligence "+ figure checks · {k}
+ * differences shown", or "(not shown yet)" until the broker shows the checks.
+ */
+export function useFigureTileLines(dealId: string): Partial<Record<AccessLevel, FigureTileLine[]>> {
+  return figureTileLinesOf(useWorkspace(dealId).data, dealId);
+}
+
+/** The tile lines from a workspace payload (pure; useFigureTileLines reads the payload). */
+export function figureTileLinesOf(d: FiguresWorkspace | null | undefined, dealId: string): Partial<Record<AccessLevel, FigureTileLine[]>> {
+  if (!d || !d.status.hasCim || d.status.noFigures || !d.served) return {};
+  const sv = d.served;
+  const later = sv.notLive || sv.held;
+  const href = (tab: string) => `/deal/${dealId}/cim?view=numbers&tab=${tab}`;
+  const notes = (key: string, v: { notes: number; afterPublish: number }): FigureTileLine[] => {
+    const n = later ? v.afterPublish : v.notes;
+    if (n <= 0) return [];
+    return [{ key, text: `+ notes on ${n} ${n === 1 ? "figure" : "figures"}${later ? " once published" : ""}`, tone: "muted", href: href("moves") }];
+  };
+  const out: Partial<Record<AccessLevel, FigureTileLine[]>> = {
+    [BLIND_ACCESS_LEVEL]: notes("dd-notes-blind", sv.blind),
+    [NAMED_ACCESS_LEVEL]: notes("dd-notes-named", sv.normal),
+  };
+  if (d.status.hasOtherRecords) {
+    const s = sv.dd.summary;
+    const k = s ? s.regrouped + s.differing : 0;
+    out[DD_ACCESS_LEVEL] = [{
+      key: "dd-checks",
+      text: !s ? "+ figure checks (not shown yet)" : k === 0 ? "+ figure checks · no differences" : `+ figure checks · ${k} ${k === 1 ? "difference" : "differences"} shown`,
+      tone: "muted",
+      href: href("checks"),
+    }];
+  }
+  return out;
 }
 
 export function FigureVersionLines({ dealId, mode }: { dealId: string; mode: "normal" | "blind" | "dd" }) {

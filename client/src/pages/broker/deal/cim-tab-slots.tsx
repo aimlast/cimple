@@ -10,6 +10,10 @@
  *                          tiles — at most 2 per tile, dd first, then vdr
  *   VERSION_CARD_EXTRAS    extra content on the Versions cards (dd, gl)
  *   ATTENTION_GROUPS       extra rows in "Needs attention" (dd)
+ *
+ * Filled: dd (numbers view, tile lines, Versions lines, attention row) at
+ * merge step 8; vdr (tile lines, publish note) at step 6; gl (DD hold
+ * notice) at step 7.
  *   CIM_PUBLISH_NOTES      lines beside "Review and publish" (vdr; never blocks)
  *
  * Every entry's hook is called on every render, in registry order, so the
@@ -20,6 +24,10 @@ import type { AccessLevel } from "@shared/access-levels";
 import { VdrPublishNote, useVdrTileLines, vdrTileTooltips } from "@/components/vdr/cim-slots";
 import { useRoom } from "@/hooks/useDataRoom";
 import { GlGenerationNotice } from "@/components/gl/GlGenerationNotice";
+import { NumbersWorkspace } from "./figures/NumbersWorkspace";
+import {
+  FigureNotesWaitingLine, FigureVersionLines, useFigureAttention, useFigureNotesWaiting, useFigureTileLines,
+} from "./figures/CimTabLines";
 
 export interface CimTabViewProps {
   dealId: string;
@@ -37,8 +45,18 @@ export interface CimTabView {
   Component: ComponentType<CimTabViewProps>;
 }
 
+/** "Numbers & sources" inside the dashboard (the dashboard carries the header, tiles and tabs). */
+function NumbersView(_props: CimTabViewProps) {
+  return <NumbersWorkspace embedded />;
+}
+
 /** Extra views other streams register (dd: "numbers"). Teaser's four are built into CimTab. */
-export const EXTRA_CIM_TAB_VIEWS: CimTabView[] = [];
+export const EXTRA_CIM_TAB_VIEWS: CimTabView[] = [
+  // dd (merge step 8, C12): the fifth tab, "Numbers & sources" — why the CIM's figures moved, how they
+  // compare with the tax returns, questions for the seller. Badge = notes waiting for the broker's OK.
+  // Its own params (tab, note, filter, group, all) pass through the URL (PASS_THROUGH in CimTab).
+  { key: "numbers", label: "Numbers & sources", useBadge: useFigureNotesWaiting, Component: NumbersView },
+];
 /** The same registry under its INTEGRATION §2.8 name (dd registers `numbers` here): one array, two names. */
 export const CIM_TAB_VIEWS = EXTRA_CIM_TAB_VIEWS;
 
@@ -63,7 +81,9 @@ export interface AccessTileLineSource {
   useTooltips?: (dealId: string) => Partial<Record<AccessLevel, string>>;
 }
 export const ACCESS_TILE_LINES: AccessTileLineSource[] = [
-  // (dd's source goes FIRST at the dd merge: "dd first, then vdr".)
+  // Figures (dd, merge step 8) — FIRST ("dd first, then vdr"): Blind CIM and Full CIM "+ notes on {n} figures";
+  // Due diligence "+ figure checks · {k} differences shown" (or "(not shown yet)").
+  { key: "dd", useLines: (dealId) => useFigureTileLines(dealId) },
   // The data room (vdr, merge step 6): Due diligence "+ data room · {k} documents shared" (or "{n} the DD
   // CIM points to aren't shared · Share them"); Full CIM "+ data room for {n} buyers you chose"; Teaser and
   // Blind CIM say "No data room" in the tooltip (C13).
@@ -76,7 +96,16 @@ export interface VersionCardExtraSource {
   useExtras: (dealId: string) => Partial<Record<VersionCardKey, ReactNode>>;
 }
 export const VERSION_CARD_EXTRAS: VersionCardExtraSource[] = [
-  // (dd's source goes FIRST at the dd merge: the Full and Blind lines, the DD summary + "Review and show to buyers".)
+  // Figures (dd, merge step 8) — FIRST: the Full and Blind lines ("9 figures have notes · 3 wait for your OK"),
+  // the DD summary + "Review and show to buyers" + broker-only "Fix first" + the way into Numbers & sources.
+  {
+    key: "dd",
+    useExtras: (dealId) => ({
+      blind: <FigureVersionLines key="dd-blind" dealId={dealId} mode="blind" />,
+      named: <FigureVersionLines key="dd-named" dealId={dealId} mode="normal" />,
+      dd: <FigureVersionLines key="dd-dd" dealId={dealId} mode="dd" />,
+    }),
+  },
   // Add-backs in the books (gl, merge step 7): the DD card's hold notice — "Waiting for 'Add-backs in the
   // books' (3 of 7 to go)" + See add-backs + "Go ahead without the ledger…" (or the whole-CIM hold switch's
   // notice). Renders nothing when nothing holds the DD CIM; CimTab hides the DD Generate/Refresh while held.
@@ -94,7 +123,17 @@ export interface AttentionGroupSource {
   key: string;
   useGroup: (dealId: string) => AttentionGroupView | null;
 }
-export const ATTENTION_GROUPS: AttentionGroupSource[] = [];
+export const ATTENTION_GROUPS: AttentionGroupSource[] = [
+  // Figures (dd, merge step 8): "{n} figure notes wait for your OK · Review" and the owner's "Change this"
+  // requests — one row, counted in "Needs attention (n)". Never blocks publishing.
+  {
+    key: "dd",
+    useGroup: (dealId) => {
+      const a = useFigureAttention(dealId);
+      return a.waiting + a.flagged > 0 ? { key: "dd-figures", node: <FigureNotesWaitingLine dealId={dealId} />, counts: true } : null;
+    },
+  },
+];
 
 export interface PublishNoteSource {
   key: string;

@@ -220,7 +220,7 @@ await test("Engagement tab: the Data room view is registered after the Teaser vi
 await test("CIM tab slots: vdr's tile lines (≤ 2 a tile, dd first at its merge) and tooltips, and the publish note", async () => {
   const slots = await import("../../client/src/pages/broker/deal/cim-tab-slots");
   const { vdrTileLines, vdrTileTooltips } = await import("../../client/src/components/vdr/cim-slots");
-  assert.deepEqual(slots.ACCESS_TILE_LINES.map((s) => s.key), ["vdr"]);
+  assert.deepEqual(slots.ACCESS_TILE_LINES.map((s) => s.key), ["dd", "vdr"], "dd first, then vdr (C13; dd merged at step 8)");
   assert.deepEqual(slots.CIM_PUBLISH_NOTES.map((s) => s.key), ["vdr"]);
   const kpis = { sharedByLevel: { [DD_ACCESS_LEVEL]: 6 }, roomBuyersByLevel: { [NAMED_ACCESS_LEVEL]: 2 }, ddCitedNotShared: 0 };
   const lines = vdrTileLines("dP", { room: {} as never, kpis: kpis as never });

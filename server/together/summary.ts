@@ -405,10 +405,42 @@ function appBase(): string {
 }
 
 /**
+ * The one follow-up email path once the interview is finished (dd's
+ * `sendSellerFollowUps`, INTEGRATION §2.11 / C15): the asks and documents go
+ * out in the same batch as any questions about the figures or routed
+ * conflicts, one email per batch inside its one-hour window — so a seller gets
+ * one follow-up email, not two. A seam for tests.
+ */
+export interface FollowUpPath {
+  /** The email's words for this batch (the same counts the send uses). */
+  words(dealId: string, extra: { items: number; documents: number }): Promise<{ title: string; body: string }>;
+  send(dealId: string, opts: { extraItems: string[]; documents: string[] }): Promise<{ interviewFinished: boolean; emailed: number; addressed: number; recentlyEmailed?: boolean }>;
+}
+
+const defaultFollowUpPath: FollowUpPath = {
+  async words(dealId, extra) {
+    const { followUpNoticeText, followUpWaiting } = await import("../interview/seller-followups");
+    return followUpNoticeText(await followUpWaiting(dealId, [], { items: extra.items }), extra.documents);
+  },
+  async send(dealId, opts) {
+    const { sendSellerFollowUps } = await import("../interview/seller-followups");
+    return sendSellerFollowUps(dealId, { extraItems: opts.extraItems, documents: opts.documents });
+  },
+};
+let followUpPath: FollowUpPath = defaultFollowUpPath;
+export function _setFollowUpPathForTests(p: FollowUpPath | null): void {
+  followUpPath = p ?? defaultFollowUpPath;
+}
+
+/**
  * Preview (default) or send the follow-up email — only on the broker's
- * click, only to the seller invite address on the deal. Demo deals record
- * the send on the sitting and never email. Until dd's one follow-up email
- * path merges, this is together's own (the integrator switches the call).
+ * click. Demo deals record the send on the sitting and never email.
+ *   - The interview is finished: dd's one follow-up email path (C15) — the
+ *     preview shows that email's own words; the asks become the follow-up
+ *     conversation the link opens (they are already on the interview outline).
+ *   - Still running: dd's path never emails then (the interview raises its
+ *     questions itself), so this sitting's own email to the seller invite
+ *     address lists the asks and documents — still one email.
  */
 export async function sendFollowUpEmail(args: {
   deal: Deal;
@@ -420,7 +452,7 @@ export async function sendFollowUpEmail(args: {
   preview: boolean;
   brokerId: string;
   send?: (to: string, subject: string, html: string, opts: { replyTo?: string | null; fromName?: string | null }) => Promise<boolean>;
-}): Promise<FollowUpEmail & { sent: boolean; recorded: boolean }> {
+}): Promise<FollowUpEmail & { sent: boolean; recorded: boolean; alreadyEmailed?: boolean }> {
   const { deal, sitting } = args;
   const audience = sitting.sellerSeesScreen ? "screen" : "broker";
   const board = await hooks.loadBoard(deal, audience);
@@ -444,36 +476,53 @@ export async function sendFollowUpEmail(args: {
   }
   if (asks.length === 0 && docNames.length === 0) throw new BoardActionError("Pick at least one question or document to send.", 400, "empty");
 
+  const docIds = args.documentIds.slice(0, 50).filter((id) => board.documents.some((x) => x.requirementId === id));
+
   const invites = await storage.getSellerInvitesByDealId(deal.id);
   const invite = invites.find((i) => i.status === "accepted" && i.sellerEmail) ?? invites.find((i) => i.status === "sent" && i.sellerEmail) ?? invites.find((i) => i.sellerEmail);
   const broker = await storage.getUser(args.brokerId).catch(() => undefined);
   const brokerName = (broker as { name?: string | null } | undefined)?.name ?? null;
-  const email = followUpEmail({
-    businessName: deal.businessName,
-    sellerName: invite?.sellerName ?? null,
-    brokerName,
-    asks,
-    documents: docNames,
-    interviewLink: invite ? `${appBase()}/seller/${invite.token}/interview` : null,
-    documentsLink: invite ? `${appBase()}/seller/${invite.token}/documents` : null,
-  });
+  const oneEmailPath = !!deal.interviewCompleted;
+  let email: Omit<FollowUpEmail, "to">;
+  if (oneEmailPath) {
+    const words = await followUpPath.words(deal.id, { items: asks.length, documents: docIds.length });
+    const { buildEmailHtml } = await import("../notifications/service");
+    const html = buildEmailHtml({ title: words.title, body: words.body, actionUrl: invite ? `/seller/${invite.token}/interview?followup=1` : "", businessName: deal.businessName });
+    email = { subject: words.title, html, text: `${words.title}\n\n${words.body}`, asks, documents: docNames };
+  } else {
+    email = followUpEmail({
+      businessName: deal.businessName,
+      sellerName: invite?.sellerName ?? null,
+      brokerName,
+      asks,
+      documents: docNames,
+      interviewLink: invite ? `${appBase()}/seller/${invite.token}/interview` : null,
+      documentsLink: invite ? `${appBase()}/seller/${invite.token}/documents` : null,
+    });
+  }
   const to = invite?.sellerEmail ?? null;
   if (args.preview) return { ...email, to, sent: false, recorded: false };
   if (!to) throw new BoardActionError("There's no email address for the seller on this deal — invite them from the Overview first.", 409, "no_seller_email");
 
   let sent = false;
   let recorded = false;
+  let alreadyEmailed = false;
   if ((deal as { demoKey?: string | null }).demoKey) {
     // Demo and QA deals never email anyone: the send is recorded only.
     recorded = true;
+  } else if (oneEmailPath) {
+    // INTEGRATION §2.11 / C15: one follow-up email per batch, whatever asked for it.
+    const r = await followUpPath.send(deal.id, { extraItems: asks, documents: docIds });
+    sent = r.emailed > 0;
+    alreadyEmailed = !sent && !!r.recentlyEmailed;
   } else {
     const send = args.send ?? (async (t, subj, html, opts) => (await import("../notifications/service")).sendDirectEmail(t, subj, html, undefined, opts));
     sent = await send(to, email.subject, email.html, { replyTo: (broker as { email?: string | null } | undefined)?.email ?? null, fromName: brokerName ? `${brokerName} via Cimple` : null });
   }
   const summary = (sitting.summary ?? null) as SittingSummary | null;
-  if (summary) {
+  if (summary && (sent || recorded || alreadyEmailed)) {
     const row = await togetherStore().updateSitting(sitting.id, { summary: { ...summary, emailedAt: new Date().toISOString() } });
     if (row) hub.publish(sitting.id, { type: "sitting", sitting: sittingView(row) });
   }
-  return { ...email, to, sent, recorded };
+  return { ...email, to, sent, recorded, ...(alreadyEmailed ? { alreadyEmailed: true } : {}) };
 }

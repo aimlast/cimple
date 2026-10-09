@@ -54,6 +54,7 @@ import { TeaserPanel } from "@/components/teaser/TeaserPanel";
 import { useTeaserSummary } from "@/components/teaser/useTeaserSummary";
 import { shortDay, type TeaserSummary } from "@/components/teaser/api";
 import type { CimSection } from "@shared/schema";
+import { DD_VERSION_DETAIL } from "@shared/figure-copy";
 import {
   ACCESS_TILE_LINES, ATTENTION_GROUPS, CIM_PUBLISH_NOTES, EXTRA_CIM_TAB_VIEWS, VERSION_CARD_EXTRAS, tileLinesFor, useViewBadge,
   type CimTabViewProps, type TileLine,
@@ -73,8 +74,8 @@ const BASE_VIEWS: Array<{ key: BaseView; label: string }> = [
   { key: "teaser", label: "Teaser" },
   { key: "design", label: "Design" },
 ];
-/** View params a view may keep in the URL (dd's Numbers & sources: tab, note). */
-const PASS_THROUGH = ["tab", "note"];
+/** View params a view may keep in the URL (dd's Numbers & sources: tab, note, filter, group, all). */
+const PASS_THROUGH = ["tab", "note", "filter", "group", "all"];
 
 interface HeldPrivateLite {
   showing?: unknown[];
@@ -456,7 +457,7 @@ export function CimTab() {
                       : (data.dd.outOfDate ?? 0) > 0
                         ? <span className="text-blue-400">{data.dd.outOfDate} section{data.dd.outOfDate === 1 ? "" : "s"} out of date</span>
                         : <span className="text-success">Ready</span>}
-                  detail="The Full CIM plus customer names and verification notes."
+                  detail={DD_VERSION_DETAIL}
                   extra={(
                     <>
                       {!ddRun.busy && data.dd.lastRun && (data.dd.lastRun.error || data.dd.lastRun.warnings.length > 0) ? (

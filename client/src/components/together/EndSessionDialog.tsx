@@ -22,7 +22,7 @@ import { quoted } from "@shared/coverage-board";
 
 const DOCS_SHOWN = 6;
 
-interface EmailPreview { to: string | null; subject: string; html: string; text: string; asks: string[]; documents: string[]; sent: boolean; recorded: boolean }
+interface EmailPreview { to: string | null; subject: string; html: string; text: string; asks: string[]; documents: string[]; sent: boolean; recorded: boolean; alreadyEmailed?: boolean }
 
 export function EndSessionDialog({
   open,
@@ -141,7 +141,11 @@ export function EndSessionDialog({
       if (!send) setPreview(d as EmailPreview);
       else {
         setPreview(null);
-        toast(d.recorded ? { title: "Recorded", description: "This is a demo deal — nothing was emailed." } : d.sent ? { title: "Sent", description: `Emailed to ${d.to}.` } : { title: "The email didn't send", description: "Try again in a moment.", variant: "destructive" });
+        toast(d.recorded ? { title: "Recorded", description: "This is a demo deal — nothing was emailed." }
+          : d.sent ? { title: "Sent", description: `Emailed to ${d.to}.` }
+          // One follow-up email an hour: the seller's link from the last one already opens these.
+          : d.alreadyEmailed ? { title: "Added to the seller's follow-up", description: "The seller got a follow-up email in the last hour — the same link now covers these too." }
+          : { title: "The email didn't send", description: "Try again in a moment.", variant: "destructive" });
       }
     } catch (e) {
       toast({ title: "Email", description: (e as Error).message, variant: "destructive" });

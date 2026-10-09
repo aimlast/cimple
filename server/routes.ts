@@ -64,6 +64,7 @@ import { questionWaitingOn } from "@shared/analytics-dashboard";
 import { registerTeaserRoutes } from "./routes/teaser.js";
 import { registerTogetherRoutes } from "./routes/together.js";
 import { registerFigureRoutes } from "./routes/figures.js";
+import { registerDdTogetherWiring } from "./routes/dd-together-wiring.js";
 import { figureQuestionsWithSeller } from "./interview/seller-followups";
 import { buyerCimExtras } from "./cim/buyer-extras.js";
 import { registerDataRoomRoutes } from "./routes/data-room.js";
@@ -8309,6 +8310,8 @@ Return JSON only.`,
   await registerGlDataRoomWiring();
   // Notes on the CIM's figures + the due-diligence checks (dd).
   registerFigureRoutes(app);
+  // dd × Interview together: the board's "Numbers" items and the end-of-sitting hand-back (INTEGRATION §2.5/§2.11).
+  registerDdTogetherWiring();
 
   const httpServer = createServer(app);
   return httpServer;

@@ -712,9 +712,11 @@ export function vdrBuyerHref(i: { token: string; itemId?: string | null; documen
 }
 
 /** The broker's Data room tab URL. */
-export function vdrBrokerHref(dealId: string, i: { view?: "documents" | "buyers" | "todo" | "activity"; itemId?: string | null; folderId?: string | null; buyer?: string | null } = {}): string {
+export function vdrBrokerHref(dealId: string, i: { view?: "documents" | "buyers" | "todo" | "activity"; itemId?: string | null; folderId?: string | null; buyer?: string | null; filter?: "dd_cited" | null } = {}): string {
   const q = new URLSearchParams();
   if (i.view && i.view !== "documents") q.set("view", i.view);
+  // The Documents view's filter (dd's "Documents cited" KPI opens "In the DD CIM").
+  if (i.filter && (!i.view || i.view === "documents")) q.set("filter", i.filter);
   if (i.folderId) q.set("folder", i.folderId);
   if (i.itemId) q.set("item", i.itemId);
   if (i.buyer) q.set("buyer", i.buyer);

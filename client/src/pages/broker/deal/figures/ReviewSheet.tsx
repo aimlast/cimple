@@ -18,6 +18,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { reviewItems, type FiguresWorkspace } from "@shared/figure-workspace";
 import { figuresErrorText, figuresKey, figuresRequest, useFigureActions } from "./useFigures";
+import { useRoom } from "@/hooks/useDataRoom";
+import { DdCitedDialog } from "@/components/vdr/broker/DdCitedDialog";
 
 function Row({ checked, onChange, label, sub, disabled, testId }: { checked: boolean; onChange?: (v: boolean) => void; label: string; sub?: string | null; disabled?: boolean; testId?: string }) {
   return (
@@ -135,7 +137,8 @@ export function ReviewSheet({ dealId, open, onOpenChange }: { dealId: string; op
                   ))}
                 </Group>
               )}
-              {/* The data-room line ("Share them in the data room") arrives with the data room (vdr contract §11.1); hidden until then. */}
+              {/* The data room (vdr contract §11.1): documents the DD CIM points to that due-diligence buyers can't open yet. */}
+              <ReviewRoomLine dealId={dealId} />
               {nothing && <p className="px-2 text-sm text-muted-foreground">Nothing is waiting. New notes and differences appear here as Cimple finds them.</p>}
             </>
           )}
@@ -155,5 +158,27 @@ export function ReviewSheet({ dealId, open, onOpenChange }: { dealId: string; op
         </SheetFooter>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/**
+ * "{n} documents the DD CIM points to aren't shared with due-diligence buyers ·
+ * Share them in the data room" — the data room's own count and dialog (vdr's
+ * GET/POST …/data-room/dd-cited). Mounted only while the sheet is open.
+ * Nothing when the room isn't set up or everything cited is shared.
+ */
+function ReviewRoomLine({ dealId }: { dealId: string }) {
+  const room = useRoom(dealId);
+  const [open, setOpen] = useState(false);
+  const n = room.data?.room ? room.data.kpis.ddCitedNotShared : 0;
+  if (!n || n <= 0) return null;
+  return (
+    <>
+      <p className="px-2 text-xs text-amber-500" data-testid="review-room-line">
+        {n === 1 ? "1 document" : `${n} documents`} the DD CIM points to {n === 1 ? "isn't" : "aren't"} shared with due-diligence buyers.{" "}
+        <button type="button" className="text-teal hover:underline" onClick={() => setOpen(true)}>Share them in the data room</button>
+      </p>
+      <DdCitedDialog dealId={dealId} open={open} onOpenChange={setOpen} />
+    </>
   );
 }

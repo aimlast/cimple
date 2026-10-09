@@ -22,6 +22,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { moveCounts, nothingServedLine, publishTarget, type CheckGroup, type MoveFilter, type WorkspaceCheck, type WorkspaceMove, type WorkspaceQuestion } from "@shared/figure-workspace";
 import { useDeal } from "@/contexts/DealContext";
+import { vdrBrokerHref } from "@shared/vdr";
 import { figuresErrorText, useFigureActions, useFiguresWorkspace, FiguresError } from "./useFigures";
 import { StatusPill } from "./StatusPill";
 import { FixFirst } from "./FixFirst";
@@ -68,7 +69,13 @@ function defaultCheckGroup(checks: Array<{ group: CheckGroup }>): CheckGroup {
   return "difference";
 }
 
-export function NumbersWorkspace() {
+/**
+ * `embedded`: shown as the CIM tab dashboard's "Numbers & sources" view
+ * (INTEGRATION §2.8/C12) — the dashboard already carries the page header, the
+ * buyer tiles and the tab bar, so this drops its own back link, title and
+ * page padding. Standalone (no prop) it is a full page, as before.
+ */
+export function NumbersWorkspace({ embedded = false }: { embedded?: boolean } = {}) {
   const { dealId, deal } = useDeal();
   const [, navigate] = useLocation();
   const search = useSearch();
@@ -112,12 +119,14 @@ export function NumbersWorkspace() {
 
   const header = (
     <div className="space-y-1">
-      <button type="button" onClick={back} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" data-testid="button-back-to-cim">
-        <ArrowLeft className="h-3.5 w-3.5" /> CIM
-      </button>
+      {!embedded && (
+        <button type="button" onClick={back} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" data-testid="button-back-to-cim">
+          <ArrowLeft className="h-3.5 w-3.5" /> CIM
+        </button>
+      )}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">Numbers &amp; sources</h2>
+          {!embedded && <h2 className="text-lg font-semibold tracking-tight">Numbers &amp; sources</h2>}
           <p className="text-sm text-muted-foreground">What buyers read about the CIM's figures: why they moved, and how they compare with the tax returns.</p>
         </div>
         {ws.data && ws.data.status.hasCim && !ws.data.status.noFigures && (
@@ -135,7 +144,7 @@ export function NumbersWorkspace() {
   );
 
   const shell = (body: React.ReactNode) => (
-    <div className="mx-auto max-w-6xl space-y-4 px-4 py-6 sm:px-6" data-testid="numbers-workspace">
+    <div className={embedded ? "space-y-4" : "mx-auto max-w-6xl space-y-4 px-4 py-6 sm:px-6"} data-testid="numbers-workspace">
       {header}
       {body}
     </div>
@@ -273,7 +282,7 @@ export function NumbersWorkspace() {
         />
         <Kpi label="Waiting for your OK" value={`${k.waiting}`} onClick={() => setParams({ tab: "moves", filter: "waiting", note: null })} testId="kpi-waiting" />
         <Kpi label="With the seller" value={`${k.withSeller}`} onClick={() => setParams({ tab: "questions", note: null })} testId="kpi-seller" />
-        <Kpi label="Documents cited ↗" value={`${k.documentsCited}`} sub={k.documentsShared === null ? undefined : `${k.documentsShared} shared`} onClick={() => navigate(`/deal/${dealId}/information`)} testId="kpi-documents" className="col-span-2 sm:col-span-1" />
+        <Kpi label="Documents cited ↗" value={`${k.documentsCited}`} sub={k.documentsShared === null ? undefined : `${k.documentsShared} shared`} onClick={() => navigate(vdrBrokerHref(dealId, { view: "documents", filter: "dd_cited" }))} testId="kpi-documents" className="col-span-2 sm:col-span-1" />
       </div>
 
       {nothingServedLine(data.served) && (
