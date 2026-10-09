@@ -211,7 +211,7 @@ export function TeaserPages(props: TeaserPagesProps) {
         data-teaser-block={id}
         className={cn(
           "relative cursor-pointer rounded-[6px] outline-none transition-shadow",
-          "before:absolute before:-inset-2 before:rounded-[8px] before:pointer-events-none before:content-['']",
+          "before:absolute before:-inset-x-2 before:-inset-y-1 before:rounded-[8px] before:pointer-events-none before:content-['']",
           selected ? "before:ring-2 before:ring-[#9E752E]" : "hover:before:ring-1 hover:before:ring-[#9E752E]/40 focus-visible:before:ring-2 focus-visible:before:ring-[#9E752E]/60",
           deco?.tone === "held" && "before:ring-2 before:ring-red-500/70 before:bg-red-500/[0.04]",
           deco?.tone === "placeholder" && "before:border before:border-dashed before:border-amber-600/70",

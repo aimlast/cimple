@@ -366,7 +366,7 @@ export function CimTab() {
                 sections={sections}
                 grouped
                 publishNotes={publishNotes}
-                onReviewPublish={reviewingUpdate(deal) ? () => navigate(`/deal/${dealId}/overview`) : undefined}
+                onReviewPublish={() => navigate(`/deal/${dealId}/overview`)}
                 onNotesDismissed={() => setDismissTick((n) => n + 1)}
                 onOpenSection={(id) => navigate(`/deal/${dealId}/design?section=${id}`)}
               />

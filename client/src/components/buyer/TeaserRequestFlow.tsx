@@ -17,6 +17,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { NdaBuyerProfileGate } from "./NdaBuyerProfileGate";
 import { EmailCodeStep } from "./EmailCodeStep";
 
+const capFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 type Step = "email" | "profile" | "retrying" | "sent" | "in" | "error";
 
 export interface TeaserRequestFlowProps {
@@ -130,7 +132,7 @@ export function TeaserRequestFlow(p: TeaserRequestFlowProps) {
                 <div>
                   <h2 className="text-base font-semibold">Request sent</h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Thanks{firstName ? `, ${firstName}` : ""}. {p.firm} will review your request and email you at <span className="text-foreground">{p.buyerEmail}</span>.
+                    Thanks{firstName ? `, ${firstName}` : ""}. {capFirst(p.firm)} will review your request and email you at <span className="text-foreground">{p.buyerEmail}</span>.
                   </p>
                 </div>
               </div>
@@ -156,7 +158,7 @@ export function TeaserRequestFlow(p: TeaserRequestFlowProps) {
             <div className="space-y-4 text-center" data-testid="teaser-request-in">
               <CheckCircle2 className="mx-auto h-8 w-8 text-success" />
               <h2 className="text-base font-semibold">You're in</h2>
-              <p className="text-sm text-muted-foreground">{p.firm} shares the CIM with everyone who signs the NDA.</p>
+              <p className="text-sm text-muted-foreground">{capFirst(p.firm)} shares the CIM with everyone who signs the NDA.</p>
               <Button className="w-full bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => window.location.reload()} data-testid="button-open-the-cim">Open the CIM</Button>
             </div>
           )}

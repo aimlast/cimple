@@ -50,7 +50,11 @@ export function describeLeak(leak: string, terms: BlindTerm[]): string {
 /** The broker's sentence for a held block. */
 export function heldReason(result: TeaserGuardResult, terms: BlindTerm[]): string | null {
   if (result.ok) return null;
-  if (result.leaks.length > 0) return `it names ${result.leaks.slice(0, 2).map((l) => describeLeak(l, terms)).join(" and ")}`;
+  if (result.leaks.length > 0) {
+    // "Lakeshore Home Comfort" already says "Lakeshore": name each thing once.
+    const leaks = result.leaks.filter((l, i, all) => !all.some((o, j) => j !== i && o.length > l.length && o.toLowerCase().includes(l.toLowerCase())));
+    return `it names ${leaks.slice(0, 2).map((l) => describeLeak(l, terms)).join(" and ")}`;
+  }
   return `it still has a stand-in where a word should be (${result.placeholders.slice(0, 2).join(", ")})`;
 }
 

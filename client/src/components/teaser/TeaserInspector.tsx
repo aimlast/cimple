@@ -390,7 +390,8 @@ function CellRow({ api, blockId, cell, disabled }: { api: TeaserApi; blockId: st
         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLInputElement).blur(); } if (e.key === "Escape") setValue(shown); }}
         maxLength={limit}
         disabled={disabled}
-        placeholder={token ? (cell.key === "askingPrice" ? "Your listed asking price, in the teaser's number style" : "Filled in for each buyer") : undefined}
+        placeholder={token ? (cell.key === "askingPrice" ? "Your listed asking price" : "Filled in for each buyer") : undefined}
+        title={token && cell.key === "askingPrice" ? "Buyers see your listed asking price in the teaser's number style. Type here to show something else." : undefined}
         className={cn("h-8 text-xs", cell.edited && "border-teal/50")}
         aria-label={cell.label}
         data-testid={`input-teaser-cell-${cell.key}`}

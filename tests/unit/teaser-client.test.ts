@@ -128,6 +128,7 @@ test("request banners (buyers see 'summary', the firm by name)", () => {
   assert.match(requestBanner({ state: "requested", at: "2026-10-09T12:00:00Z" }, "Brassline")!.text, /^You asked for the CIM on Oct 9\. Brassline will review your request and email you\. The CIM will open on this same page\.$/);
   assert.equal(requestBanner({ state: "approved_waiting", at: null }, "B")!.text, "Your request was approved. The CIM opens here as soon as it's ready.");
   assert.equal(requestBanner({ state: "declined", at: null }, "Brassline")!.text, "Brassline isn't sharing more on this opportunity right now. Thank you for your interest.");
+  assert.match(requestBanner({ state: "requested", at: "2026-10-09T12:00:00Z" }, "the broker")!.text, /Oct 9\. The broker will review/);
 });
 
 const eb = (over: Record<string, unknown> = {}) => ({

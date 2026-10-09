@@ -53,8 +53,12 @@ function day(v: string | null): string {
   return new Date(v).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+/** "the broker" → "The broker" at the start of a sentence. */
+export const capFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 /** The banner above the side card / the sheet for where the request stands. */
-export function requestBanner(state: TeaserViewData["cimRequest"], firm: string): { tone: "info" | "ok" | "muted"; text: string } | null {
+export function requestBanner(state: TeaserViewData["cimRequest"], firmName: string): { tone: "info" | "ok" | "muted"; text: string } | null {
+  const firm = capFirst(firmName);
   switch (state.state) {
     case "requested": return { tone: "info", text: `You asked for the CIM on ${day(state.at)}. ${firm} will review your request and email you. The CIM will open on this same page.` };
     case "approved_waiting": return { tone: "ok", text: "Your request was approved. The CIM opens here as soon as it's ready." };
@@ -189,7 +193,7 @@ export function TeaserView({ token, data, onChanged }: { token: string; data: Te
           <p className="text-xs text-muted-foreground/80">
             This summary doesn't name the business. Please don't contact the business, its staff, customers or suppliers — all questions go to {firm}.
           </p>
-          <p className="text-xs text-muted-foreground/60" data-testid="teaser-reading-notice">{firm} can see that you opened this summary and how long you read it.</p>
+          <p className="text-xs text-muted-foreground/60" data-testid="teaser-reading-notice">{capFirst(firm)} can see that you opened this summary and how long you read it.</p>
         </footer>
       </div>
 
