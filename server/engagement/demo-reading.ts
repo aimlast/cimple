@@ -29,6 +29,7 @@
  * fictional example deal owned by broker_demo or qa_cimgen.
  */
 import { createHash } from "crypto";
+import { sql, type SQL } from "drizzle-orm";
 import type { CimMode, RenditionBlock, RenditionPage } from "@shared/analytics-v2";
 import { chartOfPoint } from "@shared/cim-blocks";
 import { cimModeForAccessLevel } from "@shared/cim-layouts";
@@ -586,6 +587,38 @@ export function planRemoval(dealId: string, tag: string): RemovalStatements {
       { op: "versions", dealId, tag },
     ],
   };
+}
+
+/**
+ * The SQL of one removal step — every statement is scoped to the step's deal.
+ * `serving`: version ids the deal serves at some level right now (a running
+ * server may hold them; they are kept with the tag cleared).
+ */
+export function removalSql(step: RemovalStep, serving: ReadonlyArray<string> = []): SQL {
+  const sampleVisits = sql`SELECT v.id FROM buyer_visits v WHERE v.deal_id = ${step.dealId} AND v.demo_seed = ${step.tag}`;
+  switch (step.op) {
+    case "delete_events":
+      return sql`DELETE FROM analytics_events WHERE deal_id = ${step.dealId} AND visit_id IN (${sampleVisits})`;
+    case "delete_rollups":
+      return sql`DELETE FROM reading_rollups WHERE deal_id = ${step.dealId} AND visit_id IN (${sampleVisits})`;
+    case "delete_visits":
+      return sql`DELETE FROM buyer_visits WHERE deal_id = ${step.dealId} AND demo_seed = ${step.tag}`;
+    case "unhide_visits":
+      return sql`UPDATE buyer_visits SET superseded_by = NULL WHERE deal_id = ${step.dealId} AND superseded_by = ${step.tag}`;
+    case "versions": {
+      const keep = sql`(
+        EXISTS (SELECT 1 FROM buyer_visits v WHERE v.deal_id = ${step.dealId} AND v.rendition_id = c.id)
+        OR EXISTS (SELECT 1 FROM analytics_events e WHERE e.deal_id = ${step.dealId} AND e.rendition_id = c.id)
+        OR EXISTS (SELECT 1 FROM buyer_questions q WHERE q.deal_id = ${step.dealId} AND q.rendition_id = c.id)
+        OR c.id = ANY(string_to_array(${serving.join(",")}, ',')))`;
+      // Versions only the sample used go; the rest stay, no longer tagged.
+      return sql`WITH gone AS (
+          DELETE FROM cim_renditions c WHERE c.deal_id = ${step.dealId} AND c.demo_seed = ${step.tag} AND NOT ${keep} RETURNING c.id),
+        kept AS (
+          UPDATE cim_renditions c SET demo_seed = NULL WHERE c.deal_id = ${step.dealId} AND c.demo_seed = ${step.tag} AND ${keep} RETURNING c.id)
+        SELECT 'deleted' AS what, id FROM gone UNION ALL SELECT 'kept' AS what, id FROM kept`;
+    }
+  }
 }
 
 /** The reading tables as the removal sees them (tests; the script runs the SQL). */
