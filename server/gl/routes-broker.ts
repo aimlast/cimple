@@ -19,7 +19,7 @@ import { normaliseFiscalYearEnd } from "@shared/fiscal-year";
 import { glStore } from "./store";
 import { withGlLock } from "./lock";
 import { loadGlContext } from "./context";
-import { changeFiscalYearEnd } from "./service";
+import { changeFiscalYearEnd, refreshGl } from "./service";
 import { glRecipients } from "./broker-view";
 import { proposeForTraces, proposeUnlocked, recomputeTraces } from "./match-run";
 import { parseLinkWrite, writeLinks, confirmSummary } from "./links";
@@ -141,7 +141,18 @@ export function registerGlBrokerRoutes(app: Express): void {
 
   // The workflow surfaces' small summary (Overview checklist, next step).
   app.get("/api/deals/:dealId/gl/progress", ...auth, async (req, res) => {
-    res.json({ glTracing: await glProgressForDeal(dealIdOf(req)) });
+    const dealId = dealIdOf(req);
+    let gate = null;
+    try {
+      // Synced with the analysis first (skipped when nothing changed) — the Overview and the CIM tab read this.
+      await refreshGl(dealId);
+      const store = glStore();
+      const [tracing, traces, links] = await Promise.all([store.getTracing(dealId), store.listTraces(dealId), store.linksOfDeal(dealId)]);
+      gate = gateFrom(tracing, traces, { confirmedLinks: links.filter((k) => k.state === "confirmed").length });
+    } catch {
+      gate = null;
+    }
+    res.json({ glTracing: await glProgressForDeal(dealId), gate });
   });
 
   app.patch("/api/deals/:dealId/gl/settings", ...auth, async (req, res) => {
@@ -386,6 +397,31 @@ export function registerGlBrokerRoutes(app: Express): void {
       res.json({ ok: true });
     } catch (err) {
       fail(res, "send the question")(err);
+    }
+  });
+
+  // "Use what the ledger shows" (§6.10): ?dryRun=1 → the impact; else saved through the analysis PATCH's own code.
+  app.post("/api/deals/:dealId/gl/traces/:traceId/apply-ledger-amount", ...auth, async (req, res) => {
+    try {
+      const bad = refuseUnknownKeys(req.body, ["fy"]);
+      if (bad) return res.status(400).json({ error: bad });
+      const t = await ownedTrace(req, res);
+      if (!t) return;
+      const fy = typeof req.body?.fy === "string" && /^\d{4}$/.test(req.body.fy) ? req.body.fy : "";
+      if (!fy) return res.status(400).json({ error: "Pick the year." });
+      const { ledgerAmountImpact, saveBrokerAnalysisEdit, LedgerAmountError } = await import("./analysis-edit");
+      try {
+        const r = await ledgerAmountImpact(t.dealId, t, fy);
+        if (req.query.dryRun === "1") return res.json(r.impact);
+        await saveBrokerAnalysisEdit(r.analysis, { normalization: r.normalization });
+        await refreshGl(t.dealId);
+        res.json({ ok: true, ...r.impact });
+      } catch (err) {
+        if (err instanceof LedgerAmountError) return res.status(err.status).json({ error: err.message });
+        throw err;
+      }
+    } catch (err) {
+      fail(res, "change the add-back")(err);
     }
   });
 

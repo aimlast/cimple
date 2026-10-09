@@ -28,11 +28,10 @@
 import { createHash } from "node:crypto";
 import type { GlAddbackTrace, InsertGlAddbackTrace } from "@shared/schema";
 import { fiscalYearKey } from "@shared/fiscal-year";
-import { normalizeLabel } from "./text";
 import { isDistributionLine } from "../financial/normalization-rules";
 import { personsIn } from "./match";
 import { screenForBuyers } from "./screen";
-import { payDocWords, type PayCountry } from "@shared/gl-copy";
+import { addbackKeyFor, payDocWords, type PayCountry } from "@shared/gl-copy";
 
 /** The analysis add-back as traces read it (server/financial/shape.ts UiAddback). */
 export interface NormAddback {
@@ -55,7 +54,8 @@ export interface NormLike {
 export type GlProof = "ledger" | "payroll" | "one_off" | "statement";
 
 const baseLabel = (label: string) => label.replace(/\s+—\s+market salary$/i, "").trim();
-export const addbackKeyOf = (label: string) => normalizeLabel(baseLabel(label));
+/** One rule with the client (shared/gl-copy addbackKeyFor). */
+export const addbackKeyOf = (label: string) => addbackKeyFor(label);
 
 export const INTERIM_LEFT_OUT_REASON = "Year-to-date figures can't be matched to a full year of the ledger";
 export const REOPENED_AMOUNT = "Your broker updated this amount — please check the entries still fit.";

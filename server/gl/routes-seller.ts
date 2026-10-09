@@ -338,7 +338,7 @@ export function registerGlSellerRoutes(app: Express, opts: { supportGate: (req: 
         const store = glStore();
         for (const y of parsed.years) {
           await store.upsertDocLink({
-            traceId: found.trace.id, dealId: caller.deal.id, fiscalYear: y.year, documentId: doc.id, amountCents: y.cents, docAmountCheck: "unreadable",
+            traceId: found.trace.id, dealId: caller.deal.id, fiscalYear: y.year, documentId: doc.id, amountCents: y.cents, docAmountCheck: null,
             state: "confirmed", proposedBy: "seller_document", decidedBy: "seller", decidedByMember: caller.memberId, decidedAt: new Date(),
           } as any);
         }

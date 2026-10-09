@@ -34,6 +34,7 @@ import { useBuilderState } from "@/components/cim-builder/CimSummaryCard";
 import { useAiGate } from "@/components/cim-builder/useAiGate";
 import { builderRequest, errorText } from "@/components/cim-builder/api";
 import { useDdRun } from "@/components/cim-builder/useDdRun";
+import { GlGenerationNotice, useGlDdHeld } from "@/components/gl/GlGenerationNotice";
 import { CimReviewPanel } from "@/components/cim-builder/CimReviewPanel";
 import { HeldPrivateCard } from "@/components/cim-builder/HeldPrivateCard";
 import { regenerateBuyerImpact, reviewingUpdate } from "@shared/cim-generation-warnings";
@@ -86,6 +87,8 @@ export function CimTab() {
   // The DD version is written in the background; its real outcome is
   // announced when this run's result arrives (useDdRun), never "ready" up front.
   const ddRun = useDdRun(dealId, { dd: data?.dd, fetchedAt: dataUpdatedAt, refetch });
+  // The DD version waits for "Add-backs in the books" (gl spec §6.9; the server refuses too).
+  const ddHeld = useGlDdHeld(dealId);
   // Held-back blind sections: clear their back-off and redo them now.
   const retryBlind = useMutation({
     mutationFn: () => builderRequest("POST", `/api/deals/${dealId}/cim-blind/refresh`),
@@ -233,7 +236,7 @@ export function CimTab() {
                       ? <span className="text-blue-400">{data.dd.outOfDate} section{data.dd.outOfDate === 1 ? "" : "s"} out of date</span>
                       : <span className="text-success">Ready</span>}
                 detail="The named CIM plus customer names and verification notes."
-                extra={!ddRun.busy && data.dd.lastRun && (data.dd.lastRun.error || data.dd.lastRun.warnings.length > 0) ? (
+                extra={ddHeld ? <GlGenerationNotice dealId={dealId} kind="dd" compact /> : !ddRun.busy && data.dd.lastRun && (data.dd.lastRun.error || data.dd.lastRun.warnings.length > 0) ? (
                   <div className="text-[11px] text-amber-500 leading-snug space-y-1" role="status" data-testid="dd-last-run">
                     {data.dd.lastRun.error
                       ? <p className="flex items-start gap-1"><AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" /><span>{data.dd.lastRun.error}</span></p>
@@ -244,7 +247,7 @@ export function CimTab() {
                   </div>
                 ) : undefined}
                 onPreview={() => openBuilder("due_diligence")}
-                action={{
+                action={ddHeld ? undefined : {
                   label: data.dd.generated ? "Refresh" : "Generate",
                   busy: ddRun.busy,
                   onClick: ddRun.start,

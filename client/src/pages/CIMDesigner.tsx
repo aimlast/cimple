@@ -52,6 +52,7 @@ import { AddSectionDialog } from "@/components/cim-builder/AddSectionDialog";
 import { ChangeLayoutDialog } from "@/components/cim-builder/ChangeLayoutDialog";
 import { builderRequest, errorText, type BuilderSection } from "@/components/cim-builder/api";
 import { useDdRun } from "@/components/cim-builder/useDdRun";
+import { GlGenerationNotice, useGlDdHeld, useGlGenerationConfirm } from "@/components/gl/GlGenerationNotice";
 import { useDealDesign } from "@/components/cim-design/api";
 import { DesignPanel } from "@/components/cim-design/DesignPanel";
 import { cimModeForAccessLevel, hasSampleData } from "@shared/cim-layouts";
@@ -195,6 +196,9 @@ export default function CIMDesigner() {
   // The DD version is written in the background (202): stay busy while it
   // runs and announce its real outcome (useDdRun) — never "ready" up front.
   const ddRun = useDdRun(dealId, { dd: state?.dd, fetchedAt: builder.query.dataUpdatedAt, refetch: builder.query.refetch });
+  // "Add-backs in the books": the DD version waits for it; "Regenerate all" asks first while it's unfinished.
+  const ddHeld = useGlDdHeld(dealId);
+  const glConfirm = useGlGenerationConfirm(dealId);
 
   const generating = generation.isRunning || generateAll.isPending;
 
@@ -332,11 +336,14 @@ export default function CIMDesigner() {
             busy={generateVersion.isPending}
             ddBusy={ddRun.busy}
             ddLastError={state?.dd.lastRun?.error ?? null}
-            onGenerate={(m) => (m === "dd" ? ddRun.start() : generateVersion.mutate())}
+            onGenerate={(m) => (m === "dd" ? (ddHeld ? undefined : ddRun.start()) : generateVersion.mutate())}
             onRetryBlind={() => builder.refreshBlind.mutate(undefined as never)}
             onBackToEditing={() => setPreviewAs("editor")}
           />
         )}
+        {/* The DD version waits for "Add-backs in the books" (gl spec §6.9). */}
+        {previewAs === "due_diligence" && <GlGenerationNotice dealId={dealId} kind="dd" className="mx-3 mt-2 sm:mx-4" />}
+        {glConfirm.dialog}
         <CimMediaProvider value={{ assets: media.assets }}>
         {sections.length === 0 ? (
           <EmptyCim
@@ -344,7 +351,7 @@ export default function CIMDesigner() {
             blockedReason={gate.blockedReason}
             infoGate={infoGate}
             interviewCompleted={!!deal.interviewCompleted}
-            onGenerate={() => generateAll.mutate()}
+            onGenerate={() => glConfirm.run(() => generateAll.mutate())}
             onAddBlank={() => openAdd(undefined)}
             generationView={generation}
           />
@@ -694,7 +701,7 @@ export default function CIMDesigner() {
             <AlertDialogCancel>Keep my CIM</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => { setRegenAllOpen(false); generateAll.mutate(); }}
+              onClick={() => { setRegenAllOpen(false); glConfirm.run(() => generateAll.mutate()); }}
             >
               Discard and regenerate
             </AlertDialogAction>

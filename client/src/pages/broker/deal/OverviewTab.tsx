@@ -25,6 +25,9 @@ import { sellerIntakeState } from "@shared/seller-portal";
 import { discrepancyBlocksCim, routedButNeverAsked } from "@shared/discrepancy-gate";
 import { discrepancyFieldLabel } from "@shared/discrepancy-sides";
 import { NeverAskedFollowUpsNotice } from "@/components/deal/NeverAskedFollowUps";
+import { GlTraceCard } from "@/components/gl/GlTraceCard";
+import { GlGenerationNotice, useGlGenerationConfirm } from "@/components/gl/GlGenerationNotice";
+import { useGlProgress } from "@/hooks/useGlStatus";
 import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
 import { ChecklistStepTitle } from "@/components/deal/ChecklistStepTitle";
 import { AddSourceDialog, type AddSourcePreset } from "@/components/information/AddSourceDialog";
@@ -1655,6 +1658,10 @@ function Phase3Center() {
     },
   });
 
+  // "Add-backs in the books" (gl spec §3.5): writing the CIM while the step is
+  // unfinished asks first; the hold switch (server-enforced) shows its notice.
+  const glConfirm = useGlGenerationConfirm(dealId);
+
   const approve = useMutation({
     mutationFn: (role: "broker" | "seller") =>
       apiJson(
@@ -1748,6 +1755,8 @@ function Phase3Center() {
           </div>
         )}
 
+        <GlTraceCard dealId={dealId} />
+        <GlGenerationNotice dealId={dealId} kind="cim" />
         <NeverAskedFollowUpsNotice dealId={dealId} rows={neverAsked} onResolve={setFocusDiscrepancy} />
 
         {discrepanciesError ? (
@@ -1788,8 +1797,8 @@ function Phase3Center() {
               )}
               <Button
                 className="bg-teal text-teal-foreground hover:bg-teal/90"
-                onClick={() => generate.mutate()}
-                disabled={generate.isPending || generationBlocked || !infoGate.allowed}
+                onClick={() => glConfirm.run(() => generate.mutate())}
+                disabled={generate.isPending || generationBlocked || !infoGate.allowed || glConfirm.blocked}
                 title={blockReason ?? infoBlockReason ?? undefined}
                 data-testid="button-generate-content"
               >
@@ -1808,6 +1817,7 @@ function Phase3Center() {
             </>
           )}
         </div>
+        {glConfirm.dialog}
       </div>
     );
   }
@@ -1933,7 +1943,7 @@ function Phase3Center() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => {
                 setRegenConfirmOpen(false);
-                generate.mutate();
+                glConfirm.run(() => generate.mutate());
               }}
               data-testid="button-regenerate-confirm"
             >
@@ -1947,6 +1957,10 @@ function Phase3Center() {
           broker the panel to resolve them (or take one back from the seller)
           right here instead of sending them hunting for it. */}
       {/* Also after a run stopped to show new conflicts — the broker reviews them right here. */}
+      {/* "Add-backs in the books" (gl): where it stands, the hold notice, and the write-now confirmation. */}
+      <GlTraceCard dealId={dealId} />
+      <GlGenerationNotice dealId={dealId} kind="cim" />
+      {glConfirm.dialog}
       {/* Questions routed before follow-up emails existed: the broker emails the seller or resolves them. */}
       <NeverAskedFollowUpsNotice dealId={dealId} rows={neverAsked} onResolve={setFocusDiscrepancy} />
       {(generationBlocked || focusDiscrepancy || (!generation.isRunning && generation.job?.stoppedBy === "discrepancies")) && (
@@ -2487,6 +2501,8 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
     },
   });
   const checklistGeneration = useCimGeneration(dealId);
+  // "Add-backs in the books" rows on the Phase 3 checklist (shared/deal-progress glChecklistItems).
+  const checklistGl = useGlProgress(dealId, { enabled: deal.phase === "phase3_content_creation" || deal.phase === "phase4_design_finalization" });
 
   const phaseComponents: Record<string, React.ReactNode> = {
     phase1_info_collection: <Phase1Center />,
@@ -2513,6 +2529,7 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
           hasCimSections: checklistSections ? checklistSections.length > 0 : undefined,
           sectionsAwaitingApproval: checklistSections ? sectionsAwaitingApproval(checklistSections, deal).length : undefined,
           cimGenerating: checklistGeneration.isRunning,
+          glTracing: checklistGl.data?.glTracing ?? null,
         });
         const required = items.filter((i) => !i.optional);
         const doneCount = required.filter((i) => i.done).length;

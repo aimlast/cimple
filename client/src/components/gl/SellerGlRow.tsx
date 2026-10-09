@@ -15,6 +15,7 @@ import { queryClient } from "@/lib/queryClient";
 import { getJson, glKeys, type SellerGlData } from "@/lib/gl-api";
 import { ExportHelp } from "./ExportHelp";
 import { LedgerUpload } from "./LedgerUpload";
+import { CantGetLedgerSheet } from "./CantGetLedgerSheet";
 import { exportRange } from "./export-help";
 import { formatCount, formatPeriod } from "@shared/gl-copy";
 
@@ -22,6 +23,7 @@ export function SellerGlRow({ token, name, isRequired }: { token: string; name: 
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const [showAdjustments, setShowAdjustments] = useState(false);
+  const [cantOpen, setCantOpen] = useState(false);
   const { data, error, isLoading } = useQuery<SellerGlData, Error & { status?: number }>({
     queryKey: glKeys.seller(token),
     queryFn: () => getJson<SellerGlData>(`/api/seller/${token}/gl`),
@@ -124,10 +126,16 @@ export function SellerGlRow({ token, name, isRequired }: { token: string; name: 
             <button className="text-xs text-teal hover:underline flex items-center gap-1 min-h-8" onClick={() => setOpen(true)} data-testid="button-upload-gl">
               <Upload className="h-3 w-3" /> {ready.length ? "Add another file" : "Upload"}
             </button>
+            {!ready.length && (
+              <button className="text-xs text-muted-foreground hover:text-foreground hover:underline min-h-8" onClick={() => setCantOpen(true)} data-testid="button-gl-cant-get">
+                I don't have this
+              </button>
+            )}
           </div>
         )}
       </div>
       <span className="sr-only">{name}</span>
+      <CantGetLedgerSheet token={token} open={cantOpen} onOpenChange={setCantOpen} preview={!!data?.preview} onDone={invalidate} />
 
       {isMobile ? (
         <Sheet open={open} onOpenChange={setOpen}>

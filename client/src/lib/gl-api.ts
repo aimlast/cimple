@@ -3,13 +3,69 @@
  * query keys, fetchers and an upload with progress (XHR — fetch has no
  * upload progress).
  */
-import type { GlLayout, GlLedgerView } from "@shared/gl-types";
+import type { GlCostSummary, GlLayout, GlLedgerView, GlSellerSuggestion, GlTieOutYear, GlTraceComputed, GlYearStatus } from "@shared/gl-types";
+import type { GlTracingProgress } from "@shared/deal-progress";
 
 export const glKeys = {
   broker: (dealId: string) => ["/api/deals", dealId, "gl"] as const,
+  progress: (dealId: string) => ["/api/deals", dealId, "gl", "progress"] as const,
   rows: (dealId: string, ledgerId: string, q: Record<string, unknown>) => ["/api/deals", dealId, "gl", "ledgers", ledgerId, "rows", q] as const,
+  brokerEntries: (dealId: string, traceId: string) => ["/api/deals", dealId, "gl", "traces", traceId, "entries"] as const,
   seller: (token: string) => ["/api/seller", token, "gl"] as const,
+  sellerEntries: (token: string, traceId: string) => ["/api/seller", token, "gl", "entries", traceId] as const,
 };
+
+export type GlProofKind = "ledger" | "payroll" | "one_off" | "statement";
+export type GlGateState = "not_needed" | "waived" | "done" | "not_requested" | "with_seller" | "with_broker";
+
+export interface GlGate {
+  state: GlGateState;
+  toGo: number;
+  total: number;
+  holdsDd: boolean;
+  holdsCim: boolean;
+  holdAll: boolean;
+  message: string | null;
+}
+
+export interface BrokerTrace {
+  id: string;
+  addbackKey: string;
+  label: string;
+  category: string | null;
+  proof: GlProofKind;
+  proofLabel: string;
+  proofByBroker: boolean;
+  sharePct: number | null;
+  shareBasis: string | null;
+  shareBasisDoc: string | null;
+  claims: Record<string, number>;
+  yearLabels: Record<string, string>;
+  sellerLabel: string;
+  sellerHint: string | null;
+  privateEvidence: boolean;
+  sentAt: string | null;
+  sellerStatus: string;
+  reopenedNote: string | null;
+  sellerNote: string | null;
+  sellerNoteShown: boolean;
+  notInLedger: { reason: string; at: string; years?: string[] } | null;
+  question: { text: string; askedAt: string; answer?: string; answeredAt?: string } | null;
+  brokerVerdict: "found" | "partly_found" | "not_found" | null;
+  reviewedAt: string | null;
+  brokerNote: string | null;
+  brokerNoteShown: boolean;
+  buyerReason: string | null;
+  leftOut: { years: string[]; reason: string } | null;
+  includeInCim: boolean;
+  computed: GlTraceComputed | null;
+  cells: Record<string, { words: string; status: string; tone: "good" | "close" | "warn" | "muted" }>;
+  proposedYears: string[];
+}
+
+export interface GlRecipient { id: string; name: string | null; email: string; role: string; via: "members" | "seller_invite"; muted: boolean }
+
+export interface PossibleAddback { accountKey: string; account: string; years: Record<string, number>; totalCents: number; why: string }
 
 export interface BrokerGlData {
   fiscalYearEnd: string | null;
@@ -17,6 +73,72 @@ export interface BrokerGlData {
   requestedYears: string[];
   ledgers: GlLedgerView[];
   unread: Array<{ documentId: string; name: string; reason: "not_read" | "pdf" }>;
+  /** The add-backs couldn't load (the ledgers still show). */
+  tracesError?: boolean;
+  analysis?: { present: boolean };
+  tracing?: {
+    fiscalYearEnd: string;
+    requestedAt: string | null;
+    recipients: Array<{ memberId: string | null; inviteId: string | null; role: string }>;
+    sellerMessage: string | null;
+    lastRemindedAt: string | null;
+    withdrawnAt: string | null;
+    sellerDoneAt: string | null;
+    sellerConfirmation: { role: "owner" | "accountant"; memberId: string | null; name: string | null; at: string } | null;
+    cantGetLedger: { reason: string; note?: string; at: string } | null;
+    accountantRequest: { memberId: string; name: string; email: string; at: string; sentAt?: string; declinedAt?: string } | null;
+    waived: { reason: string; at: string; by: string } | null;
+    reviewedAt: string | null;
+    requireBeforeCim: boolean;
+    publishedAt: string | null;
+  };
+  traces?: BrokerTrace[];
+  tieOut?: { years: Array<{ year: string; state: GlTieOutYear["state"]; words: string; accepted: { note: string; at: string } | null; data: GlTieOutYear }>; summary: { tone: "good" | "warn" | "muted"; text: string } };
+  gate?: GlGate;
+  seller?: { name: string | null; email: string | null } | null;
+  sellerLastActiveAt?: string | null;
+  recipients?: GlRecipient[];
+  suggestions?: GlSellerSuggestion[];
+  possible?: PossibleAddback[];
+  payDoc?: { slips: string; short: string; box: string | null };
+  demo?: boolean;
+}
+
+export interface GlProgressData { glTracing: GlTracingProgress | null; gate?: GlGate | null }
+
+export interface BrokerEntry {
+  id: string; ledgerId: string; rowNo: number; fiscalYear: string; date: string | null; account: string | null; name: string | null; memo: string | null;
+  amountCents: number; state: "proposed" | "confirmed" | "rejected" | "orphaned"; proposedBy: string | null; confidence: string | null; reason: string | null;
+  decidedBy: string | null; showDetails: boolean | null; privateLedger: boolean;
+}
+export interface BrokerEntriesData {
+  entries: BrokerEntry[];
+  documents: Array<{ id: string; documentId: string; fiscalYear: string; amountCents: number; check: string | null; name: string; fileUrl: string | null }>;
+}
+
+/** One cost on the seller's page (server/gl/seller-view.ts — a whitelist). */
+export interface SellerCost {
+  id: string;
+  sellerLabel: string;
+  sellerHint: string | null;
+  proof: "ledger" | "payroll" | "one_off";
+  shareWords: string | null;
+  years: Array<{ year: string; yearLabel: string; claimedCents: number; targetCents: number; status: GlYearStatus; foundCents: number; documentCents: number; diffCents: number; chip: string; inLedger: boolean }>;
+  summary: GlCostSummary | null;
+  sellerStatus: string;
+  reopenedNote: string | null;
+  question: { text: string; askedAt: string; answer: string | null } | null;
+  note: string | null;
+  notInLedger: string | null;
+}
+
+export interface SellerEntry {
+  ledgerId: string; rowNo: number; fiscalYear: string; date: string; account: string; name: string | null; memo: string | null; amountCents: number;
+  state?: "proposed" | "confirmed" | "rejected"; reason?: string | null; confidence?: string | null; mine?: boolean;
+}
+export interface SellerEntriesData {
+  entries: SellerEntry[];
+  documents: Array<{ documentId: string; fiscalYear: string; amountCents: number; check: string | null; name: string }>;
 }
 
 /** What the seller's link sees about their ledgers. */
@@ -34,12 +156,24 @@ export interface SellerLedgerView {
   failure: string | null;
 }
 
+export type SellerGlState = "not_requested" | "requested" | "in_progress" | "question" | "reopened" | "waiting_for_accountant" | "waiting_for_broker" | "withdrawn" | "done";
+
 export interface SellerGlData {
-  state: "not_requested";
+  state: SellerGlState;
   fiscalYearEnd: string;
   requestedYears: string[];
   preview: boolean;
   ledgers: SellerLedgerView[];
+  businessName?: string | null;
+  total?: number;
+  done?: number;
+  message?: string | null;
+  costs?: SellerCost[];
+  confirmation?: { at: string; name: string | null } | null;
+  accountant?: { name: string; status: "pending" | "sent" | "declined" } | null;
+  cantGetLedger?: { reason: string } | null;
+  otherCosts?: Array<{ id: string; text: string; at: string; entries: number }>;
+  payDoc?: { slips: string; short: string; box: string | null };
 }
 
 export interface LedgerRowsResponse {

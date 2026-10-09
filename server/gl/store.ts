@@ -756,7 +756,7 @@ export function memoryStore(data: MemoryStoreData = { tracing: [], ledgers: [], 
         Object.assign(existing, { amountCents: row.amountCents, docAmountCheck: row.docAmountCheck ?? null, state: row.state ?? "confirmed", decidedBy: row.decidedBy ?? null, decidedByMember: row.decidedByMember ?? null, decidedAt: row.decidedAt ?? null, updatedAt: now() });
         return existing;
       }
-      const created = memLink({ state: "confirmed", proposedBy: "seller_document", ...row });
+      const created = memLink({ proposedBy: "seller_document", ...row, state: row.state ?? "confirmed" });
       data.links.push(created);
       return created;
     },

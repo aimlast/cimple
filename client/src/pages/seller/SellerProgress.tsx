@@ -7,6 +7,7 @@
  */
 import { useState } from "react";
 import { useParams, Link, useLocation } from "wouter";
+import { GlProgressCard, type SellerGlProgress } from "@/components/gl/GlProgressCard";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -67,6 +68,8 @@ interface SellerProgressData {
   todo?: Array<{ id: string; kind: "document" | "follow_up"; title: string }>;
   /** Questions the broker sent back after the conversation ended. */
   followUpQuestions?: number;
+  /** "Show us where a few costs are in your books" (gl) — only on the owner's / accountant's link. */
+  glTracing?: SellerGlProgress | null;
   /** The CIM waiting for their review (shared/seller-portal sellerReviewStage). */
   cimReview?: { stage: "not_ready" | "content" | "design" | "waiting" | "approved"; canApprove?: boolean };
   pendingApprovals: number;
@@ -217,6 +220,7 @@ export default function SellerProgress() {
           testId="cta-follow-up-questions"
         />
       )}
+      <GlProgressCard token={token!} gl={data.glTracing} />
       {(data.pendingApprovalItems?.length ?? 0) > 0 && (
         <div className="rounded-lg border border-teal/30 bg-teal/5 p-5" data-testid="card-pending-approvals">
           <div className="flex items-start gap-3">

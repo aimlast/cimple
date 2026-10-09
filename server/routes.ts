@@ -3663,10 +3663,9 @@ Return JSON only.`,
       // Broker decisions marked for re-runs, EBITDA/SDE recomputed, and
       // everything computed from an edited table computed again (working
       // capital from the balance sheet; notes and insights from the add-backs).
-      const { applyBrokerAnalysisEdit } = await import("./financial/broker-edit");
-      const updates = applyBrokerAnalysisEdit(existing as Record<string, any>, req.body ?? {}, new Date());
-
-      const updated = await storage.updateFinancialAnalysis(req.params.id, updates);
+      // (Factored out unchanged — "Use what the ledger shows" saves through it too.)
+      const { saveBrokerAnalysisEdit } = await import("./gl/analysis-edit");
+      const updated = await saveBrokerAnalysisEdit(existing, req.body ?? {});
       res.json(updated);
     } catch (error: any) {
       console.error("Error updating financial analysis:", error);

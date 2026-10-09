@@ -486,6 +486,10 @@ export async function ingestLedger(ledgerId: string): Promise<void> {
           } as Partial<Document>);
           await d.syncRequirement(ledger!.dealId);
           emitGlLedgerStatusChanged(doc.id);
+          // A seller's upload: the broker hears it needs a quick check (gl spec §6.12); they see it on the panel anyway.
+          if (ledger!.uploadedBy === "seller") {
+            void import("./notify").then((m) => m.notifyBroker(ledger!.dealId, "needs_columns")).catch(() => undefined);
+          }
           return;
         }
       }

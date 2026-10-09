@@ -51,6 +51,7 @@ import { InsightsPanel } from "@/components/financial/InsightsPanel";
 import type { InsightsData } from "@/components/financial/InsightsPanel";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { BrokerGlPanel } from "@/components/gl/BrokerGlPanel";
+import { useGlProgress } from "@/hooks/useGlStatus";
 
 import {
   DollarSign, Loader2, RefreshCw, Zap, BarChart3,
@@ -117,6 +118,10 @@ const STATUS_BADGE: Record<string, { label: string; color: string }> = {
 export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCenterProps) {
   const { toast } = useToast();
   const [tab, setTab] = useFinTab();
+  // "Add-backs in the books": how many need the broker (the review, a ledger's columns, the accountant's link).
+  const glProgress = useGlProgress(dealId);
+  const glNow = glProgress.data?.glTracing;
+  const booksBadge = glNow ? (glNow.state === "with_broker" ? glNow.toGo : 0) + (glNow.needsColumns ? 1 : 0) + (glNow.accountantPending ? 1 : 0) : 0;
   // Re-run needs an explicit confirmation — it starts a new version.
   const [rerunOpen, setRerunOpen] = useState(false);
   // A specific earlier version the broker chose to view (null = latest).
@@ -723,6 +728,7 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
                   {t.label}
                   {t.key === "discrepancies" && unrouted.length > 0 ? ` (${unrouted.length})` : ""}
                   {t.key === "questions" && pendingQuestionCount > 0 ? ` (${pendingQuestionCount})` : ""}
+                  {t.key === "books" && booksBadge > 0 ? ` (${booksBadge})` : ""}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -767,6 +773,11 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
           </TabsTrigger>
           <TabsTrigger value="books" className="text-xs gap-1.5 data-[state=active]:bg-background" data-testid="fin-tab-books">
             <BookCheck className="h-3 w-3" /> Add-backs in the books
+            {booksBadge > 0 && (
+              <span className="ml-1 h-4 min-w-[1rem] rounded-full bg-teal/20 text-teal text-2xs font-medium flex items-center justify-center px-1">
+                {booksBadge}
+              </span>
+            )}
           </TabsTrigger>
         </TabsList>
 
@@ -798,6 +809,7 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
           <NormalizationPanel
             data={normData}
             onUpdate={handleNormUpdate}
+            dealId={dealId}
           />
         </TabsContent>
 
