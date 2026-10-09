@@ -77,6 +77,19 @@ assert.equal(row("old").readingInRange, 0);
 
 assert.equal(teaserCounts([accessOf("x", { id: "p", name: "P" })]), null);
 
+// No pages to draw on (old reading on a CIM that can't be rebuilt): "—", never "0 of 0".
+{
+  const i = inputsOf([LIVE]);
+  i.items[0].facts = { ...i.items[0].facts, pages: [] };
+  const r = dealRows(i, "all", NOW)[0];
+  assert.equal(r.contentPages, 0);
+  assert.equal(r.medianPagesReached, null);
+  const { buyerRows } = await import("../../server/analytics-dashboard/buyers");
+  const b = buyerRows(i, NOW).find((x) => x.accessId === "a")!;
+  assert.equal(b.pagesRead, null);
+  assert.equal(b.contentPages, null);
+}
+
 // A deal whose facts failed is left out (and reported as partial by the route).
 const failed = dealRows(inputsOf([LIVE, OLD], { failed: [{ dealId: "old", dealName: "Old Tracker Deal" }], noFacts: ["old"] }), "all", NOW);
 assert.deepEqual(failed.map((r) => r.dealId), ["live"]);

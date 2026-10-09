@@ -97,7 +97,8 @@ export function dealRows(inputs: BrokerInputs, range: DashboardRange, now: Date)
       opened: kpiValue(all, "opened"),
       readingInRange: kpiValue(inRange, "reading"),
       medianReadingMs: median(readers.map((b) => b.visits.reduce((s, v) => s + v.activeMs, 0))),
-      medianPagesReached: facts ? median(readers.map((b) => readingSummary(b, facts.pages).pagesReached)) : null,
+      // No pages to draw on (e.g. old reading on a CIM that can't be rebuilt): "—", never "0 of 0".
+      medianPagesReached: facts && contentPageCount(facts) > 0 ? median(readers.map((b) => readingSummary(b, facts.pages).pagesReached)) : null,
       contentPages: facts ? contentPageCount(facts) : 0,
       ndaSigned: access.filter((a) => !!a.ndaSignedAt).length,
       interested: facts ? facts.buyers.filter((b) => b.decision === "interested").length : 0,

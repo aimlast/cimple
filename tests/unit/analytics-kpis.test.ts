@@ -123,6 +123,8 @@ assert.equal(kpi(d30, "interested").who.find((w) => w.accessId === "g1")?.note, 
     visits: [{ id: "mv", access: "m1", daysAgo: 3, activeMs: 100_000 }, { id: "mw", access: "m2", daysAgo: 3, activeMs: 100_000 }] };
   const i = inputsOf([MT], { decisions: [{ dealId: "mt", accessId: "m2", decision: "need_more_time", nextStep: null, at: ago(1) }] });
   assert.equal(kpi(computeKpis(i, { range: "7d", now: NOW, scope: "broker" }).kpis, "interested").sub, "1 asked for more time");
+  const later = inputsOf([{ ...MT, links: [MT.links[0], { ...MT.links[1], decision: "not_interested", decisionDaysAgo: 0.5 }] }], { decisions: i.decisions });
+  assert.equal(kpi(computeKpis(later, { range: "7d", now: NOW, scope: "broker" }).kpis, "interested").sub, "1 more than the 7 days before", "a later final answer supersedes 'asked for more time' (the delta shows instead)");
 }
 
 // ── Worth a call ──

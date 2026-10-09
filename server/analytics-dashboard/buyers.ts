@@ -69,8 +69,9 @@ export function buyerRows(inputs: BrokerInputs, now: Date): BuyerDashboardRow[] 
         statusLabel: insight.statusLabel,
         readingMs: b.visits.reduce((s, v) => s + v.activeMs, 0),
         visits: b.visits.length,
-        pagesRead: sum.pagesRead,
-        contentPages: sum.contentPages,
+        // No pages to draw on: "—", never "0 of 0".
+        pagesRead: sum.contentPages > 0 ? sum.pagesRead : null,
+        contentPages: sum.contentPages > 0 ? sum.contentPages : null,
         firstSeenAt: firstSeen,
         lastSeenAt: lastSeen,
         grantedAt: b.grantedAt,

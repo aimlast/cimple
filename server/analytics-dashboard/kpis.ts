@@ -411,9 +411,10 @@ export function computeKpis(inputs: BrokerInputs, opts: KpiOptions): { kpis: Kpi
     const prev = since == null ? null : interested.filter(({ b }) => inPrev(at(b))).length;
     const lastBefore = since == null ? 0 : latest(interested.map(({ b }) => at(b)).filter(before));
     const inDd = buyers.filter(({ b }) => accessLevelRank(b.accessLevel) === 3 && !b.revokedAt).length;
-    const listed = new Set(buyers.map(({ b }) => b.accessId));
+    // Still deciding after asking for more time (a later final answer supersedes it).
+    const deciding = new Set(buyers.filter(({ b }) => !FINAL.has(b.decision)).map(({ b }) => b.accessId));
     const moreTime = new Set(inputs.decisions
-      .filter((d) => d.decision === "need_more_time" && listed.has(d.accessId) && inCur(d.at.getTime()))
+      .filter((d) => d.decision === "need_more_time" && deciding.has(d.accessId) && inCur(d.at.getTime()))
       .map((d) => d.accessId)).size;
     const accessById = new Map(inputs.access.map((a) => [a.id, a]));
     let sub: string | null;
