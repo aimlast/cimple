@@ -8,6 +8,7 @@
  */
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { CimpleWordmark } from "@/components/brand/CimpleLogo";
 
 interface BrokerLoginProps {
   /**
@@ -79,22 +80,7 @@ export default function BrokerLogin({ notice }: BrokerLoginProps = {}) {
     <div className="min-h-screen w-full flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-6">
-          <div
-            role="img"
-            aria-label="Cimple"
-            className="h-6 w-24"
-            style={{
-              backgroundColor: "hsl(42, 26%, 92%)",
-              WebkitMaskImage: "url('/cimple-text.png')",
-              WebkitMaskSize: "contain",
-              WebkitMaskRepeat: "no-repeat",
-              WebkitMaskPosition: "center",
-              maskImage: "url('/cimple-text.png')",
-              maskSize: "contain",
-              maskRepeat: "no-repeat",
-              maskPosition: "center",
-            }}
-          />
+          <CimpleWordmark className="h-6" />
           <p className="text-xs text-muted-foreground mt-2">
             CIM workspace for business brokers
           </p>
