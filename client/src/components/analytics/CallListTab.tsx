@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils";
 import { analyticsSearch } from "./url";
 import { DealChips, LinkRanOutChip, whenText } from "./parts";
 import { TabEmpty } from "./EmptyStates";
-import { useMinWidth } from "./media";
+import { useMinWidth, useScrollSelectedIntoView } from "./media";
 
 const CALL_LIST_SIZE = 15;
 
@@ -59,6 +59,8 @@ export function CallListTab({
   const flags: DealFlags = useMemo(() => new Map((data?.deals ?? []).map((d) => [d.dealId, { live: d.live, demo: d.demo }])), [data]);
   const ranOut: LinkRanOut = data?.linkRanOut ?? {};
   const current = entries.find((e) => e.accessId === selected) ?? (wide ? entries[0] : undefined) ?? null;
+  // A `?buyer=` link: scroll the list to the highlighted row next to its card (wide screens; a phone opens the sheet).
+  useScrollSelectedIntoView(listRef, wide ? current?.accessId : null, entries.length > 0);
 
   if (isLoading) {
     return (

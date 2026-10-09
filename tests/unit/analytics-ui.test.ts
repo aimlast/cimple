@@ -13,6 +13,7 @@
  */
 import "./react-global";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Router } from "wouter";
@@ -43,7 +44,8 @@ const { DashboardTabBar } = await import("../../client/src/components/analytics/
 const { AttentionPanels, ATTENTION_COPY } = await import("../../client/src/components/analytics/AttentionTab");
 const HeadsUpMod = await import("../../client/src/components/analytics/HeadsUp");
 const { HeadsUp } = HeadsUpMod;
-const { BuyerList, defaultSelection } = await import("../../client/src/components/engagement/buyers/BuyerList");
+const { BuyerList, defaultSelection, foldedByDefault } = await import("../../client/src/components/engagement/buyers/BuyerList");
+const { scrollRowIntoView } = await import("../../client/src/components/analytics/media");
 const { BuyerListHead, OLDER_VISITS_CHIP } = await import("../../client/src/components/engagement/buyers/BuyersView");
 const { PulseTop, pulseStats } = await import("../../client/src/components/engagement/BuyerPulseCard");
 const { analyticsKeys } = await import("../../client/src/hooks/useAnalyticsDashboard");
@@ -455,6 +457,40 @@ await test("the default selection is the best lead, never a folded row; empty gr
   assert.match(html, /data-testid="list-row-a5"/, "with nobody reading in the period, the quiet group opens");
   assert.doesNotMatch(text(html), /Not opened yet/, "an empty Not opened group is hidden");
   assert.match(text(html), /Last read 12 Sept/);
+});
+
+await test("a ?buyer= link scrolls its row into view and opens the group it's in (checker AN2-3)", () => {
+  // The helper both lists use: only as far as needed, and only the matching row.
+  const calls: unknown[] = [];
+  const row = { scrollIntoView: (o: unknown) => calls.push(o) };
+  const seen: string[] = [];
+  const root = { querySelector: (sel: string) => { seen.push(sel); return sel === '[data-access="a12"]' ? row : null; } } as unknown as ParentNode;
+  assert.equal(scrollRowIntoView(root, "a12"), true);
+  assert.deepEqual(calls, [{ block: "nearest" }], "block: nearest (a row already on screen doesn't move)");
+  assert.equal(scrollRowIntoView(root, "nobody"), false, "no row, no scroll");
+  assert.equal(scrollRowIntoView(root, null), false);
+  assert.equal(scrollRowIntoView(null, "a12"), false);
+  assert.equal(calls.length, 1);
+  // Wired into both master–detail lists (effects don't run in a server render, so check the source).
+  for (const f of ["client/src/components/analytics/CallListTab.tsx", "client/src/components/engagement/buyers/BuyerList.tsx"]) {
+    assert.match(readFileSync(new URL(`../../${f}`, import.meta.url), "utf8"), /useScrollSelectedIntoView\(/, `${f}: keeps the selected row in view`);
+  }
+  // A link to a buyer in a folded group (said no) opens that group, so the highlighted row is there to scroll to.
+  const groups: BuyerGroups = {
+    worthACall: [grow("a1", "Gurdeep Randhawa")], reading: [], quietInRange: [],
+    declined: [grow("a3", "Declan No")], revoked: [grow("a6", "Removed Rita")], notOpened: [],
+  };
+  const props = {
+    groups, cards: new Map([["a1", card("a1", "Gurdeep Randhawa")], ["a3", card("a3", "Declan No")]]), range: "all" as const,
+    onSelect() {}, maxMs: 1, titles: new Map(), blindTitles: new Map(), live: true, nudgeMode: () => null, onNudge() {},
+  };
+  const linked = render(h(BuyerList, { ...props, selected: "a3" }));
+  assert.match(linked, /data-testid="list-row-a3"/, "the selected buyer's group opens");
+  assert.match(linked, /aria-current="true"[^>]*data-access="a3"/, "…and the row is highlighted");
+  assert.doesNotMatch(linked, /data-testid="list-row-a6"/, "other folded groups stay folded");
+  assert.doesNotMatch(render(h(BuyerList, { ...props, selected: "a1" })), /data-testid="list-row-a3"/, "folded when someone else is selected");
+  assert.equal(foldedByDefault("declined", groups, "a3"), false);
+  assert.equal(foldedByDefault("declined", groups, null), true);
 });
 
 console.log("Tab bar");

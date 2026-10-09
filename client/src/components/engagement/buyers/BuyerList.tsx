@@ -7,7 +7,7 @@
  * A row: rank, name, company, reading time · last seen, status, which CIM
  * version, and a small page strip. ↑ and ↓ move the selection.
  */
-import { useState, type KeyboardEvent, type ReactNode } from "react";
+import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ChevronDown, Copy, Mail } from "lucide-react";
 import { formatReadingTime, type BuyerEngagementCard, type EngagementRange } from "@shared/analytics-v2";
 import { dayMonth, rangeLabel, type BuyerGroups, type GroupRow, type LinkRanOut } from "@shared/analytics-dashboard";
@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { PageStrip, StatusChip } from "./parts";
 import { LinkRanOutChip, whenText } from "@/components/analytics/parts";
+import { useScrollSelectedIntoView } from "@/components/analytics/media";
 
 export type GroupKey = keyof BuyerGroups;
 
@@ -45,8 +46,13 @@ export function defaultSelection(groups: BuyerGroups): GroupRow | null {
   return groups.worthACall[0] ?? groups.reading[0] ?? null;
 }
 
-/** Whether a group starts folded: the quiet group opens when nobody read in the period. */
-function foldedByDefault(key: GroupKey, groups: BuyerGroups): boolean {
+/**
+ * Whether a group starts folded: the quiet group opens when nobody read in
+ * the period, and the group holding the selected buyer (a `?buyer=` link to
+ * someone who said no) always opens, so the selected row is on screen.
+ */
+export function foldedByDefault(key: GroupKey, groups: BuyerGroups, selected: string | null = null): boolean {
+  if (selected && groups[key].some((r) => r.accessId === selected)) return false;
   if (key === "quietInRange") return groups.worthACall.length + groups.reading.length > 0;
   return FOLDED[key];
 }
@@ -74,7 +80,10 @@ export interface BuyerListProps {
 export function BuyerList(props: BuyerListProps) {
   const { groups, range } = props;
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const rootRef = useRef<HTMLDivElement>(null);
   const order = listOrder(groups, range);
+  // A `?buyer=` link: scroll to the highlighted row beside its card.
+  useScrollSelectedIntoView(rootRef, props.selected, order.length > 0);
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
@@ -87,14 +96,14 @@ export function BuyerList(props: BuyerListProps) {
   };
   let rank = 0;
   return (
-    <div className="min-w-0 space-y-3" onKeyDown={onKey} data-testid="buyer-list">
+    <div ref={rootRef} className="min-w-0 space-y-3" onKeyDown={onKey} data-testid="buyer-list">
       {props.head}
       {GROUP_ORDER.map((key) => {
         const rows = groups[key];
         if (key === "quietInRange" && range === "all") return null;
         if (rows.length === 0 && key !== "worthACall") return null;
         if (rows.length === 0 && key === "worthACall" && order.length === 0) return null;
-        const folded = open[key] === undefined ? foldedByDefault(key, groups) : !open[key];
+        const folded = open[key] === undefined ? foldedByDefault(key, groups, props.selected) : !open[key];
         const ranked = key === "worthACall" || key === "reading";
         return (
           <section key={key} data-testid={`group-${key}`}>
