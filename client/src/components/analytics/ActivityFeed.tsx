@@ -84,12 +84,15 @@ function TitleWithName({ title, name }: { title: string; name: string | null }) 
   );
 }
 
+/** The zone label's tooltip (it speaks to the broker, who is the one reading it). */
+export const ZONE_TIP = "Times are Toronto time. Hover a time to see it on your own clock.";
+
 /**
  * The list itself (presentational; exported for tests). Times are Toronto's;
- * when the viewer's own clock differs, each day header says "Toronto time"
- * (sticky, so the label stays beside the times) and each time's tooltip
- * gives the viewer's own clock. `zoneLabel` is for tests (default: worked
- * out from this browser).
+ * when the viewer's own clock differs, the FIRST day header says "Toronto
+ * time" once (not every day: it would repeat down the screen) and each
+ * time's tooltip gives the viewer's own clock. `zoneLabel` is for tests
+ * (default: worked out from this browser).
  */
 export function ActivityList({ items, showDeal, compact, now, zoneLabel }: {
   items: ActivityItem[];
@@ -102,12 +105,12 @@ export function ActivityList({ items, showDeal, compact, now, zoneLabel }: {
   const zone = zoneLabel !== undefined ? zoneLabel : brokerZoneLabel(now);
   return (
     <div className="space-y-4" data-testid="activity-list">
-      {days.map((d) => (
+      {days.map((d, di) => (
         <section key={d.key}>
           <h3 className={cn("z-10 flex items-baseline gap-2 bg-background/95 py-1 font-mono text-2xs uppercase tracking-[0.14em] text-muted-foreground backdrop-blur", !compact && "sticky top-0")} data-testid="activity-day">
             <span>{d.heading}</span>
-            {zone && (
-              <span className="ml-auto font-sans text-[11px] normal-case tracking-normal text-muted-foreground/80" title="Times are on the broker's calendar (Toronto). Hover a time to see it on your own clock." data-testid="activity-zone">
+            {zone && di === 0 && (
+              <span className="ml-auto font-sans text-[11px] normal-case tracking-normal text-muted-foreground/80" title={ZONE_TIP} data-testid="activity-zone">
                 {zone}
               </span>
             )}

@@ -442,9 +442,20 @@ await test("one date and time rule: Toronto, '23 Sept' and '3:12 pm', labelled w
   assert.equal(brokerZoneLabel(now, "Asia/Tokyo"), "Toronto time");
   assert.equal(brokerZoneLabel(now, "America/Vancouver"), "Toronto time");
   assert.equal(brokerZoneLabel(now, ""), null);
-  // The feed: the label on each day header (sticky beside the times), the viewer's own clock in each time's tooltip.
-  const labelled = render(h(ActivityList, { items: [item({ id: "v:9", at })], showDeal: false, now, zoneLabel: "Toronto time" }));
-  assert.match(labelled, /data-testid="activity-zone"[^>]*>Toronto time</);
+  // The feed: the label ONCE, on the first day header (checker AN2-6: it repeated on every day), in words
+  // spoken to the broker; the viewer's own clock in each time's tooltip.
+  const days = [
+    item({ id: "v:9", at }),
+    item({ id: "v:8", at: "2026-10-08T15:00:00Z" }),
+    item({ id: "v:7", at: "2026-10-06T15:00:00Z" }),
+    item({ id: "v:6", at: "2026-10-04T15:00:00Z" }),
+  ];
+  const labelled = render(h(ActivityList, { items: days, showDeal: false, now, zoneLabel: "Toronto time" }));
+  assert.equal((labelled.match(/data-testid="activity-day"/g) ?? []).length, 4, "four day headers");
+  assert.equal((labelled.match(/data-testid="activity-zone"/g) ?? []).length, 1, "…and the zone label once");
+  assert.match(labelled, /data-testid="activity-day"[^>]*><span>[^<]+<\/span><span[^>]*data-testid="activity-zone"[^>]*>Toronto time</, "on the first header");
+  assert.match(labelled, /title="Times are Toronto time. Hover a time to see it on your own clock."/);
+  assert.doesNotMatch(labelled, /broker&#x27;s calendar|broker's calendar/, "never the broker in the third person");
   assert.match(labelled, /title="[^"]+ your time"[^>]*>8:25 pm</);
   const plain = render(h(ActivityList, { items: [item({ id: "v:9", at })], showDeal: false, now, zoneLabel: null }));
   assert.doesNotMatch(plain, /activity-zone|your time/);
