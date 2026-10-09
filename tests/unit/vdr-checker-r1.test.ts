@@ -24,7 +24,7 @@ process.env.DISABLE_SCHEDULERS = "1";
 process.env.ANTHROPIC_API_KEY = "disabled";
 
 const { hasPages, questionPage, shownQuestionPage, figureLines } = await import("../../shared/vdr");
-const { factLabel, presentKeyFigures, buyerKeyFigures, documentFacts } = await import("../../server/vdr/analysis");
+const { factLabel, presentKeyFigures, buyerKeyFigures, documentFacts, keyFigureRank } = await import("../../server/vdr/analysis");
 const { roomAndWaiting, memoFileExists } = await import("../../server/vdr/broker-room");
 const { vdrTestApp } = await import("./vdr-app-harness");
 const { setUpRoom } = await import("../../server/vdr/setup");
@@ -111,6 +111,132 @@ assert.equal(byLabel.get("Self-pay share")?.text, "11.2% of dispensary revenue")
 assert.ok(byLabel.has("Share capital"), "a real name that starts with 'share' is kept");
 assert.ok(byLabel.has("Shareholder loans (2023)"));
 ok("F3: labels without 'by year', the year in the label, duplicates folded, no money 'share'");
+
+// ── Checker r2 (R2-1): two DIFFERENT lines never fold because their amounts agree ──
+/** One document's facts, every one sourced to "doc" (by-year maps year by year). */
+const docInfo = (facts: Record<string, unknown>): any => {
+  const info: any = { ...facts, _fieldSources: {} };
+  for (const [k, v] of Object.entries(facts)) {
+    info._fieldSources[k] = v && typeof v === "object"
+      ? { source: "document", documentId: "doc", years: Object.fromEntries(Object.keys(v as object).map((y) => [y, { source: "document", documentId: "doc" }])) }
+      : { source: "document", documentId: "doc" };
+  }
+  return info;
+};
+const rowsOf = (facts: Record<string, unknown>) => presentKeyFigures(documentFacts(docInfo(facts), "doc"));
+const rowFor = (rows: ReturnType<typeof rowsOf>, key: string) => rows.find((r) => r.keys.includes(key));
+const separate = (rows: ReturnType<typeof rowsOf>, a: string, b: string, why: string) => {
+  const ra = rowFor(rows, a), rb = rowFor(rows, b);
+  assert.ok(ra && rb, `${why}: both shown (${rows.map((r) => `${r.label}[${r.keys}]`).join(" | ")})`);
+  assert.notEqual(ra, rb, `${why}: ${a} and ${b} are different lines, never one row`);
+};
+const together = (rows: ReturnType<typeof rowsOf>, a: string, b: string, why: string) => {
+  const ra = rowFor(rows, a);
+  assert.ok(ra && ra.keys.includes(b), `${why}: ${a} and ${b} are one row (${rows.map((r) => `${r.label}[${r.keys}]`).join(" | ")})`);
+};
+
+// Pacific FY2024 statements (QA OCT copy's real facts).
+let rr = rowsOf({
+  accountsPayableAndAccruedLiabilitiesByYear: { "2023": "$2,420,000", "2024": "$2,640,000" },
+  currentPortionLongTermDebt: "$2,420,000",
+  purchaseOfPropertyAndEquipment: "$2,860,000",
+  directOperatingCostsBreakdown: JSON.stringify({ "2023": { "Driver wages & benefits": "$7,122,900", "Purchased transportation (owner-operators & brokered loads)": "$2,860,000", Fuel: "$4,760,000" } }),
+});
+separate(rr, "accountsPayableAndAccruedLiabilitiesByYear", "currentPortionLongTermDebt", "Pacific FY2024: AP 2023 = current portion of LTD");
+separate(rr, "directOperatingCostsBreakdown", "purchaseOfPropertyAndEquipment", "Pacific FY2024: a figure inside a breakdown");
+assert.equal(rr.length, 4, rr.map((r) => r.label).join(" | "));
+// Pacific FY2022 statements.
+rr = rowsOf({
+  amortizationByYear: { "2021": "$1,610,000", "2022": "$1,720,000" },
+  maintenanceRepairsByYear: { "2022": "$1,720,000 (fleet repairs, maintenance & tires including shop wages)" },
+});
+separate(rr, "amortizationByYear", "maintenanceRepairsByYear", "Pacific FY2022: amortization 2022 = maintenance & repairs 2022");
+// Beacon T2 2024 (summary copy).
+rr = rowsOf({
+  taxesPayableByYear: { "2023": "$15,600", "2024": "$22,300" },
+  otherExpensesByYear: { "2024": "$22,300 (donations, training, miscellaneous)" },
+  taxBalanceOwingByYear: { "2024": "$22,300" },
+  taxesPayable: "$22,300",
+  otherExpenses: "$22,300 (donations, training, miscellaneous)",
+  commonSharesByYear: { "2023": "$100", "2024": "$100" },
+  commonShares: "$100",
+});
+separate(rr, "taxesPayableByYear", "otherExpensesByYear", "Beacon T2 2024: taxes payable vs other expenses");
+assert.ok(rr.some((r) => /^Other expenses/.test(r.label)), `"Other expenses" is shown: ${rr.map((r) => r.label).join(" | ")}`);
+together(rr, "taxesPayableByYear", "taxesPayable", "the same fact's headline");
+together(rr, "otherExpensesByYear", "otherExpenses", "the same fact's headline");
+together(rr, "commonSharesByYear", "commonShares", "a tiny same-fact duplicate ($100)");
+assert.equal(rr.filter((r) => /^Common shares/.test(r.label)).length, 1, "one Common shares row");
+separate(rr, "taxesPayableByYear", "taxBalanceOwingByYear", "taxes payable vs tax balance owing (different names)");
+// Lakeshore: rent inside the opex breakdown, vehicles vs their amortization, reviews vs acquisition.
+rr = rowsOf({
+  operatingExpensesBreakdown: "Salaries & wages - office, sales & management: $712,000 (2024), $668,000 (2023); Rent - base: $175,000 (2024), $161,000 (2023); Occupancy costs: $96,000 (2024), $90,000 (2023)",
+  annualRent: "$175,000",
+});
+separate(rr, "operatingExpensesBreakdown", "annualRent", "Lakeshore: annual rent inside the opex breakdown");
+rr = rowsOf({ motorVehicles: "$1,590,000 (net $722,000 after accumulated amortization of $868,000)", accumulatedAmortizationVehicles: "$868,000" });
+separate(rr, "motorVehicles", "accumulatedAmortizationVehicles", "Lakeshore T2 2024: vehicles vs their accumulated amortization");
+rr = rowsOf({ onlineReviews: "1,450 reviews, 4.9 star rating", customerAcquisition: "Half from existing members/repeat customers, Google and website (1,450 reviews at 4.9 stars), referrals" });
+separate(rr, "onlineReviews", "customerAcquisition", "Lakeshore video call: online reviews vs customer acquisition");
+// Synthetic: lines that are equal in a given business are still different lines.
+rr = rowsOf({ revenueByYear: { "2023": "$1,240,000", "2024": "$1,380,000" }, grossProfitByYear: { "2023": "$1,240,000", "2024": "$1,380,000" } });
+separate(rr, "revenueByYear", "grossProfitByYear", "a service business: gross profit = revenue");
+rr = rowsOf({ totalAssets: "$2,974,394", totalLiabilitiesAndEquity: "$2,974,394" });
+separate(rr, "totalAssets", "totalLiabilitiesAndEquity", "total liabilities & equity = total assets");
+rr = rowsOf({ rent: "$15,000", rentDeposit: "$15,000", loans: "$150,000", shareholderLoans: "$150,000", incomeTaxes: "$52,826", incomeTaxesPayable: "$52,826", totalAssetsByYear: { "2024": "$910,000" }, totalCurrentAssetsByYear: { "2024": "$910,000" } });
+separate(rr, "rent", "rentDeposit", "rent vs rent deposit");
+separate(rr, "loans", "shareholderLoans", "loans vs shareholder loans");
+separate(rr, "incomeTaxes", "incomeTaxesPayable", "income taxes vs income taxes payable");
+separate(rr, "totalAssetsByYear", "totalCurrentAssetsByYear", "total assets vs total current assets");
+// A year-less figure of another fact never matches an older year.
+rr = rowsOf({ cashAndDepositsByYear: { "2023": "$297,642", "2024": "$341,010" }, cash: "$297,642" });
+separate(rr, "cashAndDepositsByYear", "cash", "a year-less cash figure vs 2023 (not the newest year)");
+// The same thing under another name still folds.
+rr = rowsOf({
+  inventoriesByYear: { "2022": "$694,200", "2023": "$718,900" }, inventoryByYear: { "2023": "$718,900" },
+  kmTravelledByYear: { "2023": "8,610,000", "2024": "8,930,000" }, kilometersTravelledByYear: { "2023": "8,610,000", "2024": "8,930,000" },
+  advertising: "221,000", advertisingAndPromotion: "221,000",
+  capitalCostAllowance: "$224,000", capitalCostAllowanceClaimed: "$224,000",
+  totalShareholdersEquityByYear: { "2021": "$1,210,100", "2022": "$1,346,274" }, shareholderEquityByYear: { "2021": "$1,210,100", "2022": "$1,346,274" },
+  incomeTaxesCurrentByYear: { "2021": "$44,286", "2022": "$52,826" }, incomeTaxesByYear: { "2022": "$52,826" },
+});
+together(rr, "inventoriesByYear", "inventoryByYear", "Inventories / Inventory");
+together(rr, "kmTravelledByYear", "kilometersTravelledByYear", "Km / Kilometers travelled");
+assert.ok(rowFor(rr, "advertising")?.keys.includes("advertisingAndPromotion") || rowFor(rr, "advertisingAndPromotion")?.keys.includes("advertising"), "Advertising ⊂ Advertising and promotion");
+together(rr, "capitalCostAllowance", "capitalCostAllowanceClaimed", "CCA / CCA claimed");
+together(rr, "totalShareholdersEquityByYear", "shareholderEquityByYear", "Total shareholders equity / Shareholder equity");
+together(rr, "incomeTaxesCurrentByYear", "incomeTaxesByYear", "Income taxes ⊂ Income taxes current");
+rr = rowsOf({ revenueByYear: { "2023": "$6,900,000", "2024": "$7,412,000" }, annualRevenue: "$7,412,000" });
+together(rr, "revenueByYear", "annualRevenue", "a headline is the newest year of the same thing");
+// A date's day never stops a headline folding ("as at December 31, 2024").
+rr = rowsOf({ inventory: "$742,600 (as at December 31, 2024). Valued at lower of cost and net realizable value.", inventoryByYear: { "2023": "$718,900", "2024": "$742,600" } });
+together(rr, "inventoryByYear", "inventory", "a headline with a date folds into its by-year row");
+// Two rows of one name that say different things: the breakdown says so.
+rr = rowsOf({ accountsReceivableByYear: { "2023": "$462,500", "2024": "$486,300" }, accountsReceivable: "$486,300 total: Ontario Drug Benefit $212,400, private plans $118,700, LTC homes $131,900, patients $23,300" });
+assert.deepEqual(rr.map((r) => r.label).sort(), ["Accounts receivable", "Accounts receivable (breakdown)"]);
+// A value with two years keeps them both (never "Bad debt expense (2023)  $9,000 (2024), $7,000").
+rr = rowsOf({ badDebtExpense: "$9,000 (2024), $7,000 (2023)" });
+assert.deepEqual([rr[0].label, rr[0].text], ["Bad debt expense", "$9,000 (2024), $7,000 (2023)"]);
+ok("R2-1: different lines never fold on equal amounts; the same thing under another name still does");
+
+// ── Checker r2 (R2-5): a statement reads in its own order ──
+rr = rowsOf({
+  costOfSalesByYear: { "2022": "$5,487,500", "2023": "$5,823,500" },
+  dispensarySalesByYear: { "2022": "$7,133,000", "2023": "$7,646,600" },
+  frontStoreSalesByYear: { "2022": "$648,500", "2023": "$648,000" },
+  netIncomeByYear: { "2022": "$358,236", "2023": "$414,656" },
+  grossProfitByYear: { "2022": "$2,618,100", "2023": "$2,816,700" },
+  retainedEarningsByYear: { "2022": "$762,236", "2023": "$796,892" },
+  deferredRevenueByYear: { "2023": "$136,000" },
+  badDebtExpense: "$9,000",
+  longTermDebtByYear: { "2023": "$170,000" },
+  ebitdaByYear: { "2023": "$690,000" },
+});
+const order = rr.slice().sort((a, b) => keyFigureRank(a) - keyFigureRank(b)).map((r) => r.label.replace(/ \(\d{4}\)$/, ""));
+assert.deepEqual(order.slice(0, 7), ["Dispensary sales", "Front store sales", "Cost of sales", "Gross profit", "EBITDA", "Net income", "Retained earnings"], order.join(" | "));
+assert.ok(order.indexOf("Long-term debt") > order.indexOf("Retained earnings"), "balance-sheet lines after the income statement");
+assert.ok(order.indexOf("Deferred revenue") > order.indexOf("Long-term debt") && order.indexOf("Bad debt expense") > order.indexOf("Long-term debt"), `deferred revenue is not a sales line; bad debt is not debt: ${order.join(" | ")}`);
+ok("R2-5: sales lines, cost of sales, gross profit, EBITDA, net income, then the balance sheet");
 
 // The buyer's About panel: the same rows, at most 6, headline figures first, nothing repeated.
 const deal: any = { id: "D", brokerId: "b1", businessName: "Beacon Test", isLive: false, demoKey: "t", extractedInfo: beaconInfo };

@@ -176,10 +176,30 @@ function significantDigits(v: number): number {
   return String(Math.round(Math.abs(v))).replace(/0+$/, "").length;
 }
 
-const HEADLINE = [/revenue|sales/i, /net income|net earnings|profit/i, /ebitda|sde|earnings/i, /gross (profit|margin)/i, /taxable income/i, /total assets|equity/i, /cash/i, /debt|loan/i];
-/** Headline figures first (revenue, net income, EBITDA…), then other money, then counts, then the rest. */
+/**
+ * The order a buyer reads a statement in (checker r2 R2-5): sales lines,
+ * then cost of sales, gross profit, EBITDA/SDE, operating income, net
+ * income, taxable income, then the balance sheet (equity, cash, debt).
+ * Tested on the key's words ("costOfSalesByYear" → "cost of sales by year").
+ */
+const HEADLINE: Array<(words: string) => boolean> = [
+  (w) => /\b(revenues?|sales|turnover)\b/.test(w) && !/\b(cost|costs|expenses?|tax|taxes|returns?|commissions?|deferred|unearned|receivables?)\b/.test(w),
+  (w) => /\bcost of (sales|goods|revenue)\b|\bcogs\b|\bcost of goods sold\b|\bdirect (operating )?costs?\b/.test(w),
+  (w) => /\bgross (profit|margin)\b/.test(w),
+  (w) => /\bebitda\b|\bsde\b|\bdiscretionary earnings\b|\badjusted earnings\b/.test(w),
+  (w) => /\boperating (income|profit)\b/.test(w),
+  (w) => /\bnet (income|earnings|profit)\b/.test(w),
+  (w) => /\btaxable income\b/.test(w),
+  (w) => /\btotal assets\b|\bequity\b|\bretained earnings\b/.test(w),
+  (w) => /\bcash\b/.test(w),
+  (w) => /\bdebt\b|\bloans?\b/.test(w) && !/\bbad debts?\b/.test(w),
+];
+/** Headline figures first, in statement order (above), then other money, then counts, then the rest. */
 export function keyFigureRank(f: { key: string; text: string }): number {
-  const h = HEADLINE.findIndex((re) => re.test(f.key.replace(/([a-z])([A-Z])/g, "$1 $2")));
+  const words = f.key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_\-.]+/g, " ").toLowerCase();
+  // A breakdown written as data ({"2023": {…}}) is never a headline figure.
+  if (/^\s*[[{]/.test(f.text)) return 45;
+  const h = HEADLINE.findIndex((test) => test(words));
   const money = /\$\s?\d/.test(f.text);
   if (h >= 0 && money) return h;
   if (money) return 20;
@@ -194,13 +214,113 @@ const figureRank = keyFigureRank;
 /** A key-figure row: what it shows, and every fact key it stands for (a duplicate folded into it). */
 export type KeyFigureRow = DocFact & { keys: string[] };
 
-type Token = { year: string | null; value: number };
-type Shown = { f: DocFact; label: string; text: string; tokens: Token[]; years: number; base: string; order: number };
+type Token = { year: string | null; value: number; percent: boolean };
+type Shown = {
+  f: DocFact; label: string; text: string; tokens: Token[]; years: number; base: string; order: number;
+  /** The label's meaningful words (plurals, "total", "annual"… set aside). */
+  words: LabelWords;
+  /** A breakdown, not one line: a JSON-ish value, more than 3 figures in one value, or a year with several figures. */
+  blob: boolean;
+};
 
 const YEAR_KEY = /^(?:19|20)\d{2}$/;
 const isYearMap = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v) && Object.keys(v as object).length > 0 && Object.keys(v as object).every((k) => YEAR_KEY.test(k));
 const money = (text: string) => /\$\s?\d/.test(text) && !/\d\s?%/.test(text);
+
+const MONTH = "(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?";
+const DATES = [
+  new RegExp(`\\b${MONTH}\\s+\\d{1,2}(?:st|nd|rd|th)?\\b`, "gi"),
+  new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH}`, "gi"),
+  /\b\d{4}-\d{1,2}-\d{1,2}\b/g,
+  /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g,
+];
+
+/**
+ * The figures that say what a value is, for folding: its amounts and
+ * percentages ("$742,600"), or — when it has none — its small figures too
+ * ("Common shares $100", "12"). Never a bare year or a date's day
+ * ("as at December 31, 2024").
+ */
+function foldFigures(text: string): Figure[] {
+  let t = text;
+  for (const re of DATES) t = t.replace(re, " ");
+  const all = parseFigures(t).filter((f) => !(f.kind === "plain" && Number.isInteger(f.value) && f.value >= 1900 && f.value <= 2100 && !f.text.includes(",")));
+  const strong = all.filter((f) => (f.kind === "percent" ? f.value !== 0 : Math.abs(f.value) >= 1000));
+  return strong.length > 0 ? strong : all;
+}
+
+// ── Do two labels name the same thing? (checker r2 R2-1) ──
+/** Words that never decide what a line is. */
+const FILLER = new Set(["total", "totals", "annual", "yearly", "the", "and", "of", "for", "in", "on", "at", "a", "an", "from", "amount", "value", "figure", "detail", "details"]);
+/** Phrases that say the same thing in other words ("cash on hand" is cash; "km" is kilometres). */
+const SAME_WORDS: Array<[RegExp, string]> = [
+  [/&/g, " and "], [/\bon hand\b/g, " "], [/\bin (the )?bank\b/g, " "],
+  [/\bkms?\b/g, "kilometer"], [/\bkilometres?\b/g, "kilometer"], [/\blabour\b/g, "labor"],
+];
+/** A word that makes a different line when one label adds it ("Income taxes" vs "Income taxes payable", "Retained earnings" vs "… beginning"). */
+const CHANGERS = new Set([
+  "net", "gross", "accumulated", "other", "deferred", "non", "excluding", "before", "after", "less", "minus", "plus",
+  "payable", "receivable", "paid", "owing", "unpaid", "owed", "prior", "previous", "change", "increase", "decrease", "growth",
+  "margin", "percent", "percentage", "ratio", "average", "per", "share", "adjusted", "normalized", "normalised", "reduced",
+  "restated", "recast", "pro", "forma", "budget", "budgeted", "forecast", "projected", "target", "ytd", "ttm", "monthly",
+  "weekly", "daily", "quarterly", "opening", "closing", "beginning", "ending", "cost", "costs", "portion", "limit", "cap",
+  "deposit", "reserve", "provision", "refund", "credit", "rate",
+  // Whose it is: "Shareholder loans" is not every loan.
+  "shareholder", "owner", "director", "officer", "related", "intercompany", "bank",
+]);
+/** A word that changes a balance-sheet line ("Total assets" vs "Total current assets", "Debt" vs "Long-term debt"). */
+const TERM_WORDS = new Set(["current", "long-term", "short-term", "non-current", "noncurrent"]);
+const BALANCE_WORDS = new Set(["asset", "liability", "debt", "loan", "lease", "obligation"]);
+
+function singular(w: string): string {
+  if (w.length <= 3 || /ss$/.test(w) || /(us|is)$/.test(w)) return w;
+  if (/ies$/.test(w)) return `${w.slice(0, -3)}y`;
+  if (/(x|ch|sh)es$/.test(w)) return w.slice(0, -2);
+  return w.endsWith("s") ? w.slice(0, -1) : w;
+}
+
+/** A label's meaningful words, and those after an "and" (a second item: "Cash and deposits"). */
+export type LabelWords = { words: Set<string>; joined: Set<string> };
+
+/** "Total shareholders equity" → {shareholder, equity}; "Cash on hand" → {cash}; "Cash and deposits" → {cash, deposit} (deposit joined). */
+export function labelWords(key: string): LabelWords {
+  let t = factLabel(key).toLowerCase();
+  for (const [re, to] of SAME_WORDS) t = t.replace(re, to);
+  const words = new Set<string>();
+  const joined = new Set<string>();
+  let afterAnd = false;
+  for (const raw of t.split(/\s+/)) {
+    if (raw === "and") { afterAnd = true; continue; }
+    const w = singular(raw.replace(/[^a-z0-9-]/g, ""));
+    if (!w || FILLER.has(w)) continue;
+    words.add(w);
+    if (afterAnd) joined.add(w);
+  }
+  return { words, joined };
+}
+
+/**
+ * "equal": the same name once plurals and "total/annual…" are set aside
+ * ("Inventories" / "Inventory", "Total current assets" / "Current assets").
+ * "contains": one name is the other plus words that don't change what it is
+ * ("Cash" ⊂ "Cash and deposits", "Advertising" ⊂ "Advertising and
+ * promotion", "Income taxes" ⊂ "Income taxes current"). null otherwise —
+ * "Gross profit" vs "Revenue", "Taxes payable" vs "Other expenses",
+ * "Income taxes" vs "Income taxes payable", "Assets" vs "Current assets",
+ * "Rent" vs "Rent deposit".
+ */
+export function sameThing(a: LabelWords, b: LabelWords): "equal" | "contains" | null {
+  if (a.words.size === 0 || b.words.size === 0) return null;
+  const [small, big] = a.words.size <= b.words.size ? [a, b] : [b, a];
+  for (const w of Array.from(small.words)) if (!big.words.has(w)) return null;
+  const extra = Array.from(big.words).filter((w) => !small.words.has(w));
+  if (extra.length === 0) return "equal";
+  // A changing word counts unless it only names a second item ("Cash and deposits" is still cash).
+  if (extra.some((w) => CHANGERS.has(w) && !big.joined.has(w))) return null;
+  if (extra.some((w) => TERM_WORDS.has(w)) && Array.from(small.words).some((w) => BALANCE_WORDS.has(w))) return null;
+  return "contains";
+}
 
 /** One fact as a row: "Taxable income (2023)  $459,201", never "Taxable income by year  2023: $459,201". */
 function shownFact(f: DocFact, order: number): Shown {
@@ -208,45 +328,78 @@ function shownFact(f: DocFact, order: number): Shown {
   let text = f.text;
   let tokens: Token[] = [];
   let years = 0;
+  let blob = /^\s*[[{]/.test(f.text);
   if (isYearMap(f.value)) {
     const ys = Object.keys(f.value).sort((a, b) => Number(b) - Number(a));
     years = ys.length;
-    for (const y of ys) for (const g of strongFigures(valueText(f.value[y]))) tokens.push({ year: y, value: g.value });
+    for (const y of ys) {
+      const figs = foldFigures(valueText(f.value[y]));
+      if (figs.length > 1 || /^\s*[[{]/.test(valueText(f.value[y]))) blob = true;
+      for (const g of figs) tokens.push({ year: y, value: g.value, percent: g.kind === "percent" });
+    }
     if (ys.length === 1) {
       label = `${label} (${ys[0]})`;
       text = valueText(f.value[ys[0]]);
     }
   } else {
     // "$820,800 (2024)" / "$464,201 (FY2023)": the year goes to the label.
+    // Only when it is the value's one year ("$9,000 (2024), $7,000 (2023)" keeps both years in the value).
     const m = /^(.*\S)\s*\((?:FY\s?)?((?:19|20)\d{2})\)$/i.exec(text);
-    const year = m && !/\(\d{4}\)$/.test(label) ? m[2] : null;
+    const year = m && !/\(\d{4}\)$/.test(label) && !/\b(?:19|20)\d{2}\b/.test(m[1]) ? m[2] : null;
     if (m && year) {
       label = `${label} (${year})`;
       text = m[1];
     }
-    tokens = strongFigures(text).map((g) => ({ year, value: g.value }));
+    tokens = foldFigures(text).map((g) => ({ year, value: g.value, percent: g.kind === "percent" }));
+    if (tokens.length > 3) blob = true;
   }
   // A dollar amount is never a "share" ("Compounding revenue share  $820,800" → "Compounding revenue").
   // Only a trailing "share" ("Share capital" and "Shareholder loans" are real names).
   const SHARE_TAIL = /\s+share(?=(?:\s+\((?:19|20)\d{2}\))?$)/i;
   if (money(text) && SHARE_TAIL.test(label)) label = label.replace(SHARE_TAIL, "");
-  return { f, label, text, tokens, years, base: baseFactKey(f.key), order };
+  return { f, label, text, tokens, years, base: baseFactKey(f.key), order, words: labelWords(f.key), blob };
 }
 
-/** Every figure of `b` is in `a` (same amount; same year unless `b` names none). */
-function covers(a: Shown, b: Shown): boolean {
-  return b.tokens.length > 0 && b.tokens.every((t) => a.tokens.some((u) => u.value === t.value && (t.year === null || u.year === t.year)));
+/**
+ * Every figure of `b` is in `a`. A year-less figure of `b` matches any year
+ * of `a` only for the same fact (`anyYear`); across two facts it matches
+ * only `a`'s newest year (a headline is the latest year) or a year-less one.
+ */
+function covers(a: Shown, b: Shown, anyYear: boolean): boolean {
+  const newest = a.tokens.reduce<string | null>((m, t) => (t.year && (!m || t.year > m) ? t.year : m), null);
+  return b.tokens.length > 0 && b.tokens.every((t) => a.tokens.some((u) =>
+    u.value === t.value && u.percent === t.percent &&
+    (t.year === null ? anyYear || u.year === null || u.year === newest : u.year === t.year)));
+}
+
+/** `s` says nothing `k` doesn't (checker r2 R2-1). */
+function foldsInto(k: Shown, s: Shown): boolean {
+  // The same name saying the very same words ("Incorporation date" / "Date of incorporation": June 3, 1998).
+  const plain = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
+  if ((k.base === s.base || sameThing(k.words, s.words) === "equal") && plain(k.text) === plain(s.text)) return true;
+  // Never into a breakdown: a figure that happens to sit in one is its own line.
+  if (k.blob) return false;
+  // The same fact ("revenue" and "revenueByYear"): its headline folds into the by-year row, small amounts too.
+  if (k.base === s.base) return covers(k, s, true);
+  const same = sameThing(k.words, s.words);
+  if (same === "equal") return covers(k, s, false);
+  // A name that contains the other's ("Cash" in "Cash and deposits"): distinctive amounts only — two
+  // different $30,000 lines stay — and never a percentage.
+  if (same === "contains") return covers(k, s, false) && s.tokens.every((t) => !t.percent && significantDigits(t.value) >= 3);
+  return false;
 }
 
 /**
  * A document's facts as key-figure rows a buyer can read at a glance (F3):
  * by-year labels as "Taxable income (2023)", a year printed after a figure
- * moved to its label, a money value never called a "share", and a row whose
- * every figure another row already shows dropped ("Net income for tax
- * purposes" beside "Net income for tax purposes by year 2023: …", or "Cash"
- * beside "Cash and deposits" with the same amounts). Across different facts
- * only distinctive amounts fold (≥ 3 significant digits) — two different
- * $30,000 lines stay. Keeps the input's order.
+ * moved to its label, a money value never called a "share", and a row that
+ * repeats another row of the SAME thing dropped ("Net income for tax
+ * purposes" beside its by-year map, "Cash" beside "Cash and deposits" with
+ * the same amounts, "Common shares $100" beside "Common shares 2024: $100").
+ * Two different lines are never folded because their amounts agree
+ * (checker r2 R2-1: "Current portion long-term debt $2,420,000" is not
+ * "Accounts payable 2023: $2,420,000"; "Gross profit" is not "Revenue"),
+ * and nothing folds into a breakdown. Keeps the input's order.
  */
 export function presentKeyFigures(facts: ReadonlyArray<DocFact>): KeyFigureRow[] {
   const shown = facts.map((f, i) => shownFact(f, i));
@@ -254,10 +407,14 @@ export function presentKeyFigures(facts: ReadonlyArray<DocFact>): KeyFigureRow[]
   const byFullness = shown.slice().sort((a, b) => b.years - a.years || b.tokens.length - a.tokens.length || a.order - b.order);
   const kept: Array<Shown & { keys: string[] }> = [];
   for (const s of byFullness) {
-    const into = kept.find((k) => covers(k, s) && (k.base === s.base || s.tokens.every((t) => significantDigits(t.value) >= 3)));
+    const into = kept.find((k) => foldsInto(k, s));
     if (into) { into.keys.push(s.f.key); continue; }
     kept.push({ ...s, keys: [s.f.key] });
   }
+  // Two rows of one name that say different things: the breakdown says so ("Accounts receivable (breakdown)").
+  const named = new Map<string, number>();
+  for (const k of kept) named.set(k.label, (named.get(k.label) ?? 0) + 1);
+  for (const k of kept) if (k.blob && (named.get(k.label) ?? 0) > 1) k.label = `${k.label} (breakdown)`;
   return kept
     .sort((a, b) => a.order - b.order)
     .map((k) => ({ key: k.f.key, label: k.label, value: k.f.value, text: k.text, keys: k.keys }));

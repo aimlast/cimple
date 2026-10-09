@@ -39,8 +39,9 @@ export function AboutPanel({ about, source, page, memoHref }: { about: BuyerItem
           <dl className="space-y-1">
             {about.keyFigures!.map((f, i) => (
               <div key={i} className="flex items-start justify-between gap-3 text-xs">
-                <dt className="text-muted-foreground">{f.label}</dt>
-                <dd className="text-right text-foreground/90">{figureLines(f.value).map((l, j, all) => <span key={j} className={all.length > 1 ? "block whitespace-nowrap" : "block"}>{l}</span>)}</dd>
+                {/* The label keeps at least 40% of the row; a long value wraps under itself (checker r2 R2-5). */}
+                <dt className="min-w-[40%] max-w-[60%] shrink-0 text-muted-foreground">{f.label}</dt>
+                <dd className="min-w-0 flex-1 break-words text-right text-foreground/90">{figureLines(f.value).map((l, j, all) => <span key={j} className={all.length > 1 ? "block whitespace-nowrap" : "block"}>{l}</span>)}</dd>
               </div>
             ))}
           </dl>
