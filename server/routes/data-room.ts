@@ -797,6 +797,12 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       if (was.label !== now.label) logs.push(brokerLog(req, dealId, now.shared || !was.shared ? "shared" : "unshared", { itemId: c.item.id, detail: { from: was.label, to: now.label } }));
       if (c.tick.length) logs.push(brokerLog(req, dealId, "checked_by_broker", { itemId: c.item.id, detail: { flags: c.tick } }));
     }
+    // A grant that stays keeps its date: "New since your last visit" must not light up on every save.
+    const keyOf = (r: { audience: string; accessLevel?: string | null; buyerEmail?: string | null; effect?: string | null }) => `${r.audience}|${r.accessLevel ?? ""}|${r.buyerEmail ?? ""}|${r.effect ?? "allow"}`;
+    for (const c of changes) {
+      const before = new Map(snap.shares.filter((s) => s.itemId === c.item.id).map((s) => [keyOf(s), s.createdAt]));
+      for (const r of c.rows) { const at = before.get(keyOf(r)); if (at) r.createdAt = at; }
+    }
     await d.store.replaceShares(changes.map((c) => ({ itemId: c.item.id, rows: c.rows })));
     const stamp = d.now();
     for (const c of changes) {

@@ -6,6 +6,7 @@
  * (Blind CIM buyers get "Move to Full CIM").
  */
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Eye, Loader2, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string
   const { data, isLoading, error, refetch } = useRoomBuyers(dealId);
   const actions = useRoomActions(dealId);
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [showOthers, setShowOthers] = useState(false);
   const [moving, setMoving] = useState<NotEligibleBuyerRow | null>(null);
 
@@ -73,7 +75,7 @@ export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string
       <DropdownMenuTrigger asChild><Button size="icon" variant="ghost" className="h-7 w-7" aria-label={`More for ${b.company || b.name || b.email}`}><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem onClick={() => onViewAs(b.accessId)}>View as this buyer</DropdownMenuItem>
-        <DropdownMenuItem asChild><a href={`/deal/${dealId}/buyers`}>Open the Buyers tab</a></DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setLocation(`/deal/${dealId}/buyers`)}>Open the Buyers tab</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

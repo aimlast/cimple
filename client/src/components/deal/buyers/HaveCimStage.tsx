@@ -28,6 +28,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Clock, ThumbsUp, ThumbsDown, Timer, MoreHorizontal, Link2, CalendarPlus, Ban, UserPlus, Send, Lock, Target,
   ChevronDown, ChevronRight,
+  FolderLock,
 } from "lucide-react";
 import type { AccessFit } from "@shared/buyer-fit";
 import { invalidateBuyerPipeline } from "@/lib/buyer-pipeline";
@@ -286,6 +287,10 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => setFitFor(r.buyer)}>
           <Target className="h-3.5 w-3.5 mr-2" /> Why this fit?
+        </DropdownMenuItem>
+        {/* Data room (vdr §5.12): this buyer's room access, downloads and what they can see. */}
+        <DropdownMenuItem onClick={() => setLocation(`/deal/${dealId}/data-room?view=buyers&buyer=${encodeURIComponent(r.buyer.id)}`)} data-testid={`menu-data-room-${r.buyer.id}${testIdSuffix}`}>
+          <FolderLock className="h-3.5 w-3.5 mr-2" /> Data room access…
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem className="text-red-500 focus:text-red-500" onClick={() => setRevokeTarget(r.buyer)}>

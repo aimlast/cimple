@@ -155,6 +155,11 @@ assert.ok(bulk.json.skipped.some((s: any) => s.itemId === itemOf("gl").id && s.r
 const folder = await h.call("POST", `${R}/shares/bulk`, { folderId: tax.id, add: { allow: ["named"] } }, "b1");
 assert.equal(folder.status, 200);
 assert.ok(h.f.shares.some((s) => s.itemId === itemOf("t2").id && s.audience === "buyer" && s.buyerEmail === "sam@f.invalid"));
+// Re-saving keeps each grant's date (so buyers don't see "New" again).
+const t2Level = h.f.shares.find((s) => s.itemId === itemOf("t2").id && s.audience === "level" && s.accessLevel === "due_diligence")!;
+const t2LevelAt = t2Level.createdAt;
+await h.call("PUT", `${R}/items/${itemOf("t2").id}/shares`, { levels: ["due_diligence", "named"], allow: ["named"], deny: [] }, "b1");
+assert.equal(h.f.shares.find((s) => s.itemId === itemOf("t2").id && s.audience === "level" && s.accessLevel === "due_diligence")!.createdAt.getTime(), new Date(t2LevelAt).getTime());
 // Remove levels in bulk (Stop sharing).
 await h.call("POST", `${R}/shares/bulk`, { itemIds: [itemOf("lease").id], remove: { levels: ["due_diligence", "named"] } }, "b1");
 assert.deepEqual(levelsOf("lease"), []);
