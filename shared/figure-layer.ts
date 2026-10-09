@@ -445,13 +445,20 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
         const own = inputs.statementsByYear?.[fig.year];
         if (own) view.citations = [own];
       }
-      for (const c of view.checks ?? []) if (!c.preview) servedChecks.push(c);
+      // The summary counts what buyers get; the broker's preview counts every check (D21).
+      for (const c of view.checks ?? []) if (broker || !c.preview) servedChecks.push(c);
     }
     if (broker) {
       view.figureKey = key;
       if (mismatch.has(key)) view.cimMismatch = true;
       const hasApproved = (notesBy.get(key) ?? []).some((n) => n.status === "approved" && (n.kind === "movement" || n.kind === "context"));
-      if (!hasApproved) {
+      // "No reason on file" only where a reason is expected: a change of 8%
+      // or more from the year before, or a difference nothing explains.
+      const prev = registry[figureKey(fig.line, String(Number(fig.year) - 1))];
+      const moved = !!prev && Math.abs(Math.abs(fig.value) - Math.abs(prev.value)) >= 2500 && Math.abs(prev.value) > 0
+        && Math.abs(Math.abs(fig.value) - Math.abs(prev.value)) / Math.abs(prev.value) >= 0.08;
+      const unexplained = (view.checks ?? []).some((c) => c.state === "ask");
+      if (!hasApproved && (moved || unexplained)) {
         view.noReason = true;
         const hint = inputs.hints?.[key];
         if (hint) view.hint = hint;

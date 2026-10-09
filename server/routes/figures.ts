@@ -50,8 +50,10 @@ export function registerFigureRoutes(app: Express): void {
         refreshFingerprint(deal.id),
       ]);
       const figures = figureInputsFor(raw, { audience: "broker", mode });
+      // The level as the client sent it (validated above): legacy keys
+      // ("loi", "full") and new ones read the same through the registry.
       const view = buildBuyerCim({
-        deal, accessLevel: level, sections: sections as CimSection[], overrides, media, askingPrice: listedAskingPrice(deal), figures,
+        deal, accessLevel: String(req.query.level), sections: sections as CimSection[], overrides, media, askingPrice: listedAskingPrice(deal), figures,
       });
       const stale = state?.refreshedFingerprint !== fingerprint;
       // Never a write in a GET: a stale deal is refreshed in the background.

@@ -62,7 +62,9 @@ export function FigureTrigger({ fig, block, children, className, showState = tru
   const recorded = useRef(false);
   const mode = ctx?.layer.mode ?? "normal";
   const state = mode === "dd" ? figureState(fig) : null;
-  const hasNote = !!fig.why || (ctx?.layer.audience === "broker" && (fig.noReason || !!fig.hint));
+  const hasNote = !!fig.why;
+  // Broker preview: a figure that needs a reason gets a fainter mark (never shown to buyers).
+  const needsReason = !hasNote && ctx?.layer.audience === "broker" && (fig.noReason || !!fig.hint);
 
   const record = useCallback(() => {
     if (recorded.current) return;
@@ -88,7 +90,7 @@ export function FigureTrigger({ fig, block, children, className, showState = tru
     >
       <span
         className="cursor-help"
-        style={hasNote ? { textDecorationLine: "underline", textDecorationStyle: "dotted", textDecorationColor: NOTE_UNDERLINE, textUnderlineOffset: 3, textDecorationThickness: 1 } : undefined}
+        style={hasNote || needsReason ? { textDecorationLine: "underline", textDecorationStyle: "dotted", textDecorationColor: hasNote ? NOTE_UNDERLINE : "#D2CBBA", textUnderlineOffset: 3, textDecorationThickness: 1 } : undefined}
       >
         {children}
       </span>

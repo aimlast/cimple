@@ -53,13 +53,23 @@ function rowDiffers(figs: Array<FigureView | null>): boolean {
   return figs.some((f) => (f?.checks ?? []).some((c) => c.state === "explained" || c.state === "ask"));
 }
 
-function OtherCell({ fig, check, compact }: { fig: FigureView; check: FigureCheckView; compact?: boolean }) {
+/** "T2", "Form 1120", "Mgmt" — the other record's short name (medium layout, under the CIM figure). */
+function shortOther(kindLabel: string): string {
+  const m = kindLabel.match(/\((T2)\)/);
+  if (m) return m[1];
+  if (/^Form /.test(kindLabel)) return kindLabel;
+  if (/^Management/.test(kindLabel)) return "Mgmt";
+  return "Tax";
+}
+
+function OtherCell({ fig, check, compact, prefix }: { fig: FigureView; check: FigureCheckView; compact?: boolean; prefix?: boolean }) {
   const paint = STATE_PAINT[check.state];
   const differs = check.state === "explained" || check.state === "ask";
   return (
     <FigureTrigger fig={fig} showState={false}>
       <span className={cn("inline-flex flex-col items-end", compact && "items-end")}>
         <span className="inline-flex items-center gap-1 tabular-nums">
+          {prefix && <span className="text-[10px] text-[hsl(var(--cim-ink-faint))]">{shortOther(check.kindLabel)}</span>}
           {check.value.replace(/^\$/, "")}
           <StateIcon state={check.state} />
         </span>
@@ -236,7 +246,7 @@ export function DdCompareTable({ table, labelHeader, lookup, onlyDifferences, on
                           <CimCell fig={fig} text={val} />
                           {fig && check && (
                             <span className="mt-0.5 block text-[11px] text-[hsl(var(--cim-ink-muted))]">
-                              <OtherCell fig={fig} check={check} />
+                              <OtherCell fig={fig} check={check} prefix />
                             </span>
                           )}
                         </td>

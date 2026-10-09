@@ -46,14 +46,34 @@ export function analysisNoteSentences(analysis: { reclassifiedPnl?: unknown; nor
   return out;
 }
 
-function mentions(sentence: string, words: string[]): boolean {
+function hits(sentence: string, words: string[]): number {
   const s = sentence.toLowerCase();
-  return words.some((w) => {
+  return words.filter((w) => {
     const word = w.toLowerCase().trim();
     if (!word) return false;
     const re = new RegExp(`(?:^|[^a-z])${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:s|es)?(?:[^a-z]|$)`, "i");
     return re.test(s);
-  });
+  }).length;
+}
+
+const STOP = new Set(["expenses", "expense", "costs", "cost", "other", "total", "general", "including", "incl", "benefits", "with", "from", "into", "and", "net", "of", "the"]);
+/** The line's own meaningful words ("Facility rent — warehouse" → facility, rent, warehouse). */
+function ownWords(label: string): string[] {
+  return String(label).toLowerCase().replace(/\([^)]*\)/g, " ").split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !STOP.has(w));
+}
+
+/**
+ * Does a sentence name this line? Two of its own words (one when it has only
+ * one), or one own word plus a synonym — "HVAC" alone never makes a sentence
+ * about "HVAC equipment replacement & installation".
+ */
+function mentions(sentence: string, label: string, synonyms: string[]): boolean {
+  const own = Array.from(new Set(ownWords(label)));
+  if (own.length === 0) return hits(sentence, synonyms) > 0;
+  const ownHits = hits(sentence, own);
+  if (ownHits >= Math.min(2, own.length)) return true;
+  const extra = synonyms.filter((w) => !own.includes(w.toLowerCase()));
+  return ownHits >= 1 && hits(sentence, extra) >= 1;
 }
 
 /**
@@ -70,8 +90,9 @@ export function hintsFor(figureKeys: Iterable<string>, registry: FigureRegistry,
     if (words.length === 0) continue;
     const prev = String(Number(parsed.year) - 1);
     const isMovement = opts.movement ? opts.movement(key) : true;
-    const hit = sentences.find((s) => mentions(s, words) && s.includes(parsed.year) && (!isMovement || s.includes(prev)))
-      ?? sentences.find((s) => mentions(s, words) && s.includes(parsed.year));
+    const about = (s: string) => mentions(s, fig.lineLabel, words);
+    const hit = sentences.find((s) => about(s) && s.includes(parsed.year) && (!isMovement || s.includes(prev)))
+      ?? (isMovement ? undefined : sentences.find((s) => about(s) && s.includes(parsed.year)));
     if (hit) out[key] = hit.length > 400 ? `${hit.slice(0, 397)}…` : hit;
   }
   return out;

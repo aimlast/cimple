@@ -162,11 +162,19 @@ export interface FigureBodyProps {
   onClose?: () => void;
 }
 
+/** A note that starts by restating the change ("Up $660,000 (11%) from FY2022, mostly …") reads from its reason on. */
+export function withoutChange(note: FigureNoteView, changeLine: string | undefined): FigureNoteView {
+  if (!changeLine || !note.text.startsWith(changeLine)) return note;
+  const rest = note.text.slice(changeLine.length).replace(/^[,.;:]\s*/, "").trim();
+  return rest ? { ...note, text: rest.charAt(0).toUpperCase() + rest.slice(1) } : note;
+}
+
 export function FigureBody({ fig, mode, audience, broker, buyer, onClose }: FigureBodyProps) {
   const isBroker = audience === "broker";
   const checks = mode === "dd" ? fig.checks ?? [] : [];
   const title = mode === "blind" || !fig.label ? `FY${fig.year}` : `${fig.label} · FY${fig.year}`;
   const key = fig.figureKey ?? "";
+  const why = fig.why ? withoutChange(fig.why, fig.change?.line) : null;
   return (
     <div className="space-y-2.5 text-left" style={{ color: INK }}>
       <div className="flex items-start justify-between gap-3">
@@ -189,11 +197,11 @@ export function FigureBody({ fig, mode, audience, broker, buyer, onClose }: Figu
       {fig.change && (
         <p className="text-[12px] tabular-nums" style={{ color: SOFT }}>{fig.change.line}</p>
       )}
-      {fig.why && (
+      {why && (
         <div>
-          {checks.length > 0 && <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: MUTED }}>Why</p>}
+          <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ color: MUTED }}>Why</p>
           <NoteBlock
-            note={fig.why}
+            note={why}
             broker={isBroker}
             onApprove={broker?.onApprove ? () => broker.onApprove!(fig.why!.id) : undefined}
             onEdit={broker?.onOpenNote ? () => broker.onOpenNote!(key, { noteId: fig.why!.id }) : undefined}

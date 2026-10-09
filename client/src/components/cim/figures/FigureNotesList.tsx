@@ -6,8 +6,9 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { NOTES_LIST_TITLE } from "@shared/figure-copy";
-import type { FigureView } from "@shared/figure-layer";
+import { DD_SOURCE_CHECK_PAGE_ID, type FigureView } from "@shared/figure-layer";
 import { useFigureLayer, usePageFigures } from "./FigureLayerContext";
+import { withoutChange } from "./FigureBody";
 
 function lineFor(f: FigureView, blind: boolean): string {
   const parts = [`FY${f.year}`];
@@ -20,7 +21,8 @@ export function FigureNotesList({ pageId }: { pageId: string }) {
   const ctx = useFigureLayer();
   const figures = usePageFigures(pageId).filter((f) => !!f.why);
   const [open, setOpen] = useState(false);
-  if (!ctx || figures.length === 0) return null;
+  // The check page lists figures shown elsewhere: their notes are listed there, not twice.
+  if (!ctx || figures.length === 0 || pageId === DD_SOURCE_CHECK_PAGE_ID) return null;
   const blind = ctx.layer.mode === "blind";
   const go = (id: string) => {
     const el = document.querySelector<HTMLElement>(`[data-cim-page="${CSS.escape(pageId)}"] [data-fig="${CSS.escape(id)}"], #section-${CSS.escape(pageId)} [data-fig="${CSS.escape(id)}"]`);
@@ -44,7 +46,7 @@ export function FigureNotesList({ pageId }: { pageId: string }) {
         {figures.map((f) => (
           <li key={f.id} className="text-xs leading-snug text-[hsl(var(--cim-ink-soft))]">
             <button type="button" className="text-left hover:underline print:no-underline" onClick={() => go(f.id)}>
-              <span className="font-medium text-[hsl(var(--cim-ink))]">{lineFor(f, blind)}:</span> {f.why!.text}
+              <span className="font-medium text-[hsl(var(--cim-ink))]">{lineFor(f, blind)}:</span> {withoutChange(f.why!, f.change?.line).text}
               <span className="text-[hsl(var(--cim-ink-muted))]"> {f.why!.basisLabel}</span>
             </button>
           </li>
