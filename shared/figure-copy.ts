@@ -10,6 +10,13 @@ import { dollars, percentOf, signedDollars } from "./figure-compare";
 // ── Buyer copy ───────────────────────────────────────────────────────────
 
 export const DD_BADGE = "Due-diligence version";
+/**
+ * The DD version's one-line description for brokers (CIM tab Versions card,
+ * "What each buyer sees"). D15 removed "verification notes" from the DD CIM.
+ * INTEGRATOR: teaser's CimTab DD card ("…customer names and verification
+ * notes.") takes this line (checker r1 F8).
+ */
+export const DD_VERSION_DETAIL = "The Full CIM plus figure checks against the tax returns, the documents behind them and customer names.";
 export const DD_BANNER_TITLE = "Due-diligence version.";
 export const DD_BANNER_POINTER = "Figures are checked against the company's tax returns and other records. Hover or click a figure to see how it compares and why.";
 export const DD_BANNER_TOUCH = "Figures are checked against the company's tax returns and other records. Tap a figure to see how it compares and why.";
