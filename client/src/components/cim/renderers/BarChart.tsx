@@ -12,6 +12,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
+import { useRef } from "react";
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import { useCimTheme } from "../CimDesignContext";
@@ -22,6 +23,9 @@ import { chartSeriesRows, parseChartNumber, unitScale } from "@shared/cim-chart-
 import { BlockTitle } from "./BlockTitle";
 import { NotCharted } from "./NotCharted";
 import { useBlockAttrs, useChartPointReporter } from "../blocks";
+// dd: notes on the chart's figures (tooltip line, click/tap → popover).
+import type { FigureView } from "@shared/figure-layer";
+import { ChartFigurePopover, FigureTooltipLine, useChartFigure, useChartPick } from "../figures/ChartFigures";
 
 interface BarDataPoint {
   name: string;
@@ -52,10 +56,13 @@ interface CustomTooltipProps {
   payload?: Array<{ value: number; name: string; color: string }>;
   label?: string;
   unit?: string;
+  /** dd: the figure a bar is (null without a figure layer). */
+  figFor?: (datum: unknown) => FigureView | null;
 }
 
-function CustomTooltip({ active, payload, label, unit }: CustomTooltipProps) {
+function CustomTooltip({ active, payload, label, unit, figFor }: CustomTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
+  const fig = figFor ? figFor((payload[0] as { payload?: unknown }).payload) : null;
   return (
     <div className="bg-card border border-card-border rounded-md shadow-md px-3 py-2 text-xs">
       <p className="font-semibold text-foreground mb-1">{label}</p>
@@ -68,6 +75,7 @@ function CustomTooltip({ active, payload, label, unit }: CustomTooltipProps) {
           </span>
         </div>
       ))}
+      <FigureTooltipLine fig={fig} />
     </div>
   );
 }
@@ -76,6 +84,14 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
   const theme = useCimTheme();
   const ba = useBlockAttrs();
   const point = useChartPointReporter();
+  const figAt = useChartFigure();
+  // The drawn bars keep their datum's index (srcIndex): the anchors' chart/point:i, series 0 = the value.
+  const drawn = useRef<Array<{ srcIndex?: number }>>([]);
+  const figOf = (datum: unknown) => {
+    const src = (datum as { srcIndex?: unknown } | null)?.srcIndex;
+    return typeof src === "number" ? figAt(src, 0) : null;
+  };
+  const { pick, setPick, onChartClick } = useChartPick((i) => (i == null ? null : figOf(drawn.current[i])));
   const data: BarChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const chartData = data.data || [];
 
@@ -110,6 +126,8 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
     );
   }
 
+  drawn.current = normalized;
+
   const yAxisWidth = axisWidthFor(
     normalized.flatMap((d) =>
       data.stacked ? [(d.value || 0) + (d.secondaryValue || 0)] : [d.value, d.secondaryValue],
@@ -126,11 +144,13 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
         // column collides with the tick numbers (worst on phones).
         <p className="text-2xs font-medium text-muted-foreground mb-1.5">{data.yLabel}</p>
       )}
+      <div className="relative">
       <ResponsiveContainer width="100%" height={280}>
         <BarChart data={normalized} margin={{ top: 4, right: 16, left: 4, bottom: data.xLabel ? 24 : 8 }}
           barCategoryGap="30%"
           onMouseMove={(s) => point(s?.activeTooltipIndex == null ? null : normalized[Number(s.activeTooltipIndex)]?.srcIndex)}
-          onMouseLeave={() => point(null)}>
+          onMouseLeave={() => point(null)}
+          onClick={(s) => onChartClick(s)}>
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
             strokeDasharray="3 3"
@@ -152,7 +172,7 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
             tickFormatter={(v) => formatAxisTick(v, data.unit)}
           />
           <Tooltip
-            content={<CustomTooltip unit={data.unit} />}
+            content={<CustomTooltip unit={data.unit} figFor={figOf} />}
             cursor={{ fill: theme.stripe, fillOpacity: 0.6 }}
           />
           {hasSecondary && (
@@ -195,6 +215,8 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
           )}
         </BarChart>
       </ResponsiveContainer>
+      <ChartFigurePopover pick={pick} onClose={() => setPick(null)} block="chart" />
+      </div>
       <NotCharted items={series.unreadable} />
       </div>
     </div>

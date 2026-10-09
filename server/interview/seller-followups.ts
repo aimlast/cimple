@@ -102,15 +102,24 @@ export interface FollowUpNotice {
  * Called after a row is routed to the seller. When the interview is still
  * running, the interview raises it — nothing to do. Never throws.
  */
-export async function notifySellerOfFollowUps(dealId: string, alsoSending: readonly string[] = []): Promise<FollowUpNotice> {
+export async function notifySellerOfFollowUps(
+  dealId: string,
+  alsoSending: readonly string[] = [],
+  extra: { figureQuestionIds?: readonly string[]; items?: number; documents?: number } = {},
+): Promise<FollowUpNotice> {
   const { storage } = await import("../storage");
   const { routedToSellerAt } = await import("@shared/discrepancy-gate");
   const deal = await storage.getDeal(dealId);
   if (!deal?.interviewCompleted) return { interviewFinished: false, waiting: 0, emailed: 0, addressed: 0 };
   // What the seller's page lists: routings under the follow-up rules, plus the
-  // never-asked ones the broker is sending now (emailNeverAskedFollowUps).
-  const waiting = (await storage.getDiscrepanciesByDeal(dealId))
+  // never-asked ones the broker is sending now (sendSellerFollowUps), plus the
+  // questions about the figures with the seller or being sent now, plus any
+  // extra items the broker lists (Interview together's end-of-sitting list).
+  const routed = (await storage.getDiscrepanciesByDeal(dealId))
     .filter((d) => d.status === "ask_seller" && (!!routedToSellerAt(d) || alsoSending.includes(d.id))).length;
+  const figures = await figureQuestionsWithSeller(dealId, extra.figureQuestionIds ?? []);
+  const waiting = routed + figures + Math.max(0, extra.items ?? 0);
+  const documents = Math.max(0, extra.documents ?? 0);
   try {
     const recent = await storage.getNotificationsByDeal(dealId);
     const lastActive = await lastInterviewActivity(dealId).catch(() => null);
@@ -121,10 +130,11 @@ export async function notifySellerOfFollowUps(dealId: string, alsoSending: reado
       body:
         "Your broker went through what you shared and would like to check " +
         (waiting === 1 ? "one thing" : `${waiting} things`) +
-        " with you. It's a short conversation that picks up where you left off — nothing you already answered is asked again.",
+        " with you. It's a short conversation that picks up where you left off — nothing you already answered is asked again." +
+        (documents > 0 ? ` They'd also like ${documents === 1 ? "one document" : `${documents} documents`} from you; your Documents page lists ${documents === 1 ? "it" : "them"}.` : ""),
       path: "interview?followup=1",
       businessName: deal.businessName,
-      metadata: { waiting },
+      metadata: { waiting, ...(figures > 0 ? { figureQuestions: figures } : {}), ...(documents > 0 ? { documents } : {}) },
     });
     return { interviewFinished: true, waiting, emailed: r.emailsSent, addressed: r.recipients, ...(r.optedOut ? { optedOut: r.optedOut } : {}) };
   } catch (err) {
@@ -133,34 +143,140 @@ export async function notifySellerOfFollowUps(dealId: string, alsoSending: reado
   }
 }
 
+/** Questions about the figures with the seller now (status ask_seller), plus those being sent (`sending`). Never throws. */
+export async function figureQuestionsWithSeller(dealId: string, sending: readonly string[] = []): Promise<number> {
+  try {
+    const { listQuestions } = await import("../cim/figures/store");
+    const qs = await listQuestions(dealId);
+    return qs.filter((q) => q.status === "ask_seller" || (sending.includes(q.id) && (q.status === "suggested" || q.status === "asked"))).length;
+  } catch {
+    return 0;
+  }
+}
+
+/** One line of the confirmation ("This emails … one link with 3 questions: …"). */
+export interface FollowUpListed {
+  kind: "figure" | "discrepancy" | "item" | "document";
+  label: string;
+}
+
+export interface SendFollowUpsResult extends FollowUpNotice {
+  listed: FollowUpListed[];
+  /** Never-asked routed conflicts in this batch / stamped as sent. */
+  neverAsked: number;
+  stamped: number;
+  /** Questions about the figures in this batch / now with the seller. */
+  figureQuestions: number;
+  figuresRouted: number;
+  /** A preview: nothing was sent or stamped. */
+  preview?: boolean;
+}
+
+/**
+ * THE one path for follow-up questions to a seller (spec §9.7; INTEGRATION
+ * §2.11): the Overview's "Email the seller", the Numbers & sources
+ * "Ask the seller" and Interview together's end-of-sitting list. One email
+ * per batch (notifySellerOfFollowUps, with its one-hour window), then — once
+ * a seller was addressed (or emailed in the last hour) — every item is
+ * stamped: figure questions → ask_seller (routed by the broker), never-asked
+ * conflicts → routed. While the interview is still running nothing is
+ * emailed: the interview raises the figure questions itself. Demo deals
+ * record and never email. Only ever called from the broker's click. Never throws.
+ */
+export async function sendSellerFollowUps(
+  dealId: string,
+  opts: { questionIds?: readonly string[]; includeNeverAsked?: boolean; extraItems?: readonly string[]; documents?: readonly string[]; preview?: boolean } = {},
+): Promise<SendFollowUpsResult> {
+  const empty = (interviewFinished: boolean): SendFollowUpsResult => ({
+    interviewFinished, waiting: 0, emailed: 0, addressed: 0, listed: [], neverAsked: 0, stamped: 0, figureQuestions: 0, figuresRouted: 0, ...(opts.preview ? { preview: true } : {}),
+  });
+  try {
+    const { storage } = await import("../storage");
+    const { routedButNeverAsked, withRoutedStamp } = await import("@shared/discrepancy-gate");
+    const { discrepancyFieldLabel } = await import("@shared/discrepancy-sides");
+    const { listQuestions, updateQuestionIf } = await import("../cim/figures/store");
+    const deal = await storage.getDeal(dealId);
+    if (!deal) return empty(false);
+    const finished = !!deal.interviewCompleted;
+    const wanted = new Set(opts.questionIds ?? []);
+    const figureRows = wanted.size > 0
+      ? (await listQuestions(dealId)).filter((q) => wanted.has(q.id) && (q.status === "suggested" || q.status === "asked"))
+      : [];
+    const discRows = opts.includeNeverAsked
+      ? (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => routedButNeverAsked(d, finished))
+      : [];
+    const extraItems = (opts.extraItems ?? []).map((s) => String(s).trim()).filter(Boolean).slice(0, 30);
+    const documents = (opts.documents ?? []).filter(Boolean).slice(0, 30);
+    const figureLabel = (q: { figureKey: string; valuesShown: unknown }) => {
+      const line = String((q.valuesShown as Record<string, unknown>)?.line ?? "").trim();
+      const year = q.figureKey.split("|")[1] ?? "";
+      return [line || "a figure", year].filter(Boolean).join(" ");
+    };
+    const listed: FollowUpListed[] = [
+      ...figureRows.map((q) => ({ kind: "figure" as const, label: figureLabel(q) })),
+      ...discRows.map((d) => ({ kind: "discrepancy" as const, label: discrepancyFieldLabel(d) })),
+      ...extraItems.map((label) => ({ kind: "item" as const, label })),
+      ...(documents.length > 0 ? [{ kind: "document" as const, label: documents.length === 1 ? "1 document" : `${documents.length} documents` }] : []),
+    ];
+    const base = { ...empty(finished), listed, neverAsked: discRows.length, figureQuestions: figureRows.length };
+    if (opts.preview || listed.length === 0) return { ...base, ...(opts.preview ? { preview: true } : {}) };
+
+    const stampFigures = async (): Promise<number> => {
+      let n = 0;
+      const at = new Date();
+      for (const q of figureRows) {
+        try {
+          if (await updateQuestionIf(dealId, q.id, ["suggested", "asked"], { status: "ask_seller", routedAt: at, routedBy: "broker" })) n++;
+        } catch (err) {
+          console.warn(`[followups] couldn't mark figure question ${q.id} as sent on deal ${dealId}:`, err);
+        }
+      }
+      if (n > 0) {
+        const { invalidateFigureRaw } = await import("../cim/figures/serve");
+        invalidateFigureRaw(dealId);
+      }
+      return n;
+    };
+
+    // The interview is still running: it raises the figure questions itself — nothing to email.
+    if (!finished) return { ...base, figuresRouted: await stampFigures() };
+
+    const notice = await notifySellerOfFollowUps(dealId, discRows.map((d) => d.id), {
+      figureQuestionIds: figureRows.map((q) => q.id),
+      items: extraItems.length,
+      documents: documents.length,
+    });
+    if (notice.addressed === 0 && !notice.recentlyEmailed) return { ...base, ...notice };
+    const { updateDiscrepancyIfStill } = await import("../cim/discrepancy-cas");
+    let stamped = 0;
+    for (const d of discRows) {
+      try {
+        if (await updateDiscrepancyIfStill(storage, d.id, ["ask_seller"], { sideSources: withRoutedStamp(d.sideSources) as any })) stamped++;
+      } catch (err) {
+        console.warn(`[followups] couldn't mark question ${d.id} as sent on deal ${dealId}:`, err);
+      }
+    }
+    return { ...base, ...notice, stamped, figuresRouted: await stampFigures() };
+  } catch (err) {
+    console.warn(`[followups] couldn't send the follow-ups on deal ${dealId}:`, err);
+    return empty(false);
+  }
+}
+
 /**
  * The broker's "Email the seller" for questions routed before follow-up
  * emails existed (release review DEP-4): they were never put to the seller,
  * so they don't lock the CIM (discrepancy-gate.ts routedButNeverAsked).
- * Sends the follow-up link like a routing does now, and — once a seller was
- * addressed (or emailed in the last hour already) — stamps each row as routed,
- * so from then on a critical one locks the CIM until the seller answers.
- * With nobody to send to, nothing is stamped (the broker is told). Only ever
- * called from the broker's click. Never throws.
+ * A thin wrapper of sendSellerFollowUps (the one follow-up path): sends the
+ * link like a routing does now and — once a seller was addressed (or emailed
+ * in the last hour already) — stamps each row as routed, so from then on a
+ * critical one locks the CIM until the seller answers. With nobody to send
+ * to, nothing is stamped (the broker is told). Never throws.
  */
 export async function emailNeverAskedFollowUps(dealId: string): Promise<FollowUpNotice & { neverAsked: number; stamped: number }> {
-  const { storage } = await import("../storage");
-  const { routedButNeverAsked, withRoutedStamp } = await import("@shared/discrepancy-gate");
-  const deal = await storage.getDeal(dealId);
-  const rows = (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => routedButNeverAsked(d, deal?.interviewCompleted));
-  if (!deal || rows.length === 0) return { interviewFinished: !!deal?.interviewCompleted, waiting: 0, emailed: 0, addressed: 0, neverAsked: 0, stamped: 0 };
-  const notice = await notifySellerOfFollowUps(dealId, rows.map((d) => d.id));
-  if (notice.addressed === 0 && !notice.recentlyEmailed) return { ...notice, neverAsked: rows.length, stamped: 0 };
-  const { updateDiscrepancyIfStill } = await import("../cim/discrepancy-cas");
-  let stamped = 0;
-  for (const d of rows) {
-    try {
-      if (await updateDiscrepancyIfStill(storage, d.id, ["ask_seller"], { sideSources: withRoutedStamp(d.sideSources) as any })) stamped++;
-    } catch (err) {
-      console.warn(`[followups] couldn't mark question ${d.id} as sent on deal ${dealId}:`, err);
-    }
-  }
-  return { ...notice, neverAsked: rows.length, stamped };
+  const r = await sendSellerFollowUps(dealId, { includeNeverAsked: true });
+  const { listed: _l, figureQuestions: _f, figuresRouted: _r, preview: _p, ...rest } = r;
+  return rest;
 }
 
 /**

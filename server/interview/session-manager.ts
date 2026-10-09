@@ -158,6 +158,8 @@ import { ensureSectionImportance } from "./section-importance";
 import { ensureInterviewPlan } from "./interview-plan";
 import { ensureDealDocumentRequirements } from "../documents/requirements";
 import { turnFloorFor, notifyBrokerFollowUpsAnswered } from "./seller-followups";
+import { explainRequestsFor, markExplainQuestionsRaised, planExplainQuestions } from "../cim/figures/requests";
+import { scheduleFigureBuild } from "../cim/figures/build";
 import { generateSellerProfile, sellerProfileRetryDue, noteSellerProfileFailure, clearSellerProfileFailure } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
 import { isInterviewHiddenFact } from "../information/deal-mirror";
@@ -963,6 +965,10 @@ async function startOrResumeSessionOnce(
   // opening's basis (reusableOpening).
   const openingMode: ConductedBy = mode;
   kb.conductedBy = openingMode;
+  // dd: questions about the numbers — plan in the background (never blocks
+  // the opener), and hand the interview the ones already routed (optional block).
+  void planExplainQuestions(dealId);
+  kb.explainRequests = await explainRequestsFor(dealId, openingMode);
 
   // The prior session's ledger (carried over — see below) and the items the
   // sources put on the agenda (conflicts, flagged risks), so the opening can
@@ -1366,6 +1372,8 @@ async function processTurnLocked(
     ...(kb.priorExchanges ?? []).map((x) => ({ question: x.question, answer: x.answer })),
     ...thisSessionQA,
   ];
+  // dd: the routed questions about the numbers (optional — never a blocker).
+  kb.explainRequests = await explainRequestsFor(dealId, conductedBy);
   kb.wrapUpBlockers = completionBlockers({
     sectionCoverage: kb.sectionCoverage,
     criticalSections: criticalSectionSet(kb),
@@ -3618,6 +3626,10 @@ async function processTurnLocked(
     // A follow-up on a finished interview sends no "interview finished"
     // email — the broker is told what came of their questions instead.
     if (deal.interviewCompleted && handedBack.handedBack > 0) void notifyBrokerFollowUpsAnswered(dealId, handedBack);
+    // dd: questions about the numbers come back too (answered / asked; an
+    // auto-routed one never raised goes back to "suggested"); answers feed the next build.
+    const explained = await markExplainQuestionsRaised(dealId, sessionId, updatedMessages, { completedInterview: true });
+    if (explained.answered > 0) scheduleFigureBuild(dealId, "interview_answers");
 
     // What this session answered counts as on file for the next one — built
     // now, in the background, so a returning seller's opening already has it.
@@ -4223,7 +4235,12 @@ export async function endSessionManually(
   if (completes) {
     // (The announce site is in completeDealInterview.)
     const byDealBroker = opts.byDealBroker;
-    await completeDealInterview(dealId, { mode, messages: (session.messages as ConversationMessage[]) ?? [], byDealBroker });
+    const messages = (session.messages as ConversationMessage[]) ?? [];
+    await completeDealInterview(dealId, { mode, messages, byDealBroker });
+    // dd: the questions about the numbers, as when the AI ends it (after the
+    // routed discrepancies are handed back inside completeDealInterview).
+    const explained = await markExplainQuestionsRaised(dealId, sessionId, messages, { completedInterview: true });
+    if (explained.answered > 0) scheduleFigureBuild(dealId, "interview_answers");
   }
 
   // The next session reads what this one answered as on file (background).

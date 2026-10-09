@@ -45,6 +45,9 @@ import { LockedSectionBody }          from "./renderers/LockedSection";
 import { GlEvidenceBlock }            from "./gl/GlEvidenceBlock";
 import { GlMark }                     from "./gl/GlMark";
 import { glNoteOf }                   from "@shared/gl-evidence";
+import { DdSourceCheckRenderer }      from "./renderers/DdSourceCheck";
+import { FigureNotesList }            from "./figures/FigureNotesList";
+import { DdKeyTerms, DdSectionSources } from "./figures/DdPageExtras";
 import { ProseFallback, sanitizeLayoutData } from "./richText";
 
 interface CimSectionRendererProps {
@@ -84,6 +87,7 @@ const RENDERERS = {
   video: VideoRenderer,
   location_map: LocationMapRenderer,
   gl_evidence: GlEvidenceBlock,
+  dd_source_check: DdSourceCheckRenderer,
 } satisfies Record<CimLayoutKey, ComponentType<any>>;
 
 /** Layouts without their own heading (they are headings themselves). */
@@ -190,6 +194,15 @@ export function CimSectionRenderer({ section, branding, brokerMode = false, hide
       <CimBlockScope pageId={section.id}>
         {inner}
         {glNote && <GlMark variant="footnote" note={glNote} preview={glNote.preview} />}
+        {/* Notes on this page's figures, and (due diligence) the documents
+            behind it — drawn only inside a figure-layer host. */}
+        {!locked && (
+          <>
+            <FigureNotesList pageId={section.id} />
+            <DdKeyTerms pageId={section.id} />
+            <DdSectionSources pageId={section.id} layoutType={section.layoutType} />
+          </>
+        )}
       </CimBlockScope>
     </div>
   );

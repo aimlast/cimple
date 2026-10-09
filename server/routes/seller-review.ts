@@ -99,11 +99,15 @@ export function registerSellerReviewRoutes(app: Express) {
       const openRequests = (await storage.getTasksByDeal(deal.id)).filter(
         (t) => t.createdBy === SELLER_REVIEW_TASK_CREATOR && isOpenTask(t),
       );
+      // dd: what buyers read about the figures in the owner's words (D22).
+      const { sellerFigureNotes } = await import("../cim/figures/seller");
+      const figureNotes = await sellerFigureNotes(deal, cim.sections);
       res.json({
         ...base,
         sections: cim.sections,
         design,
         changesRequested: openRequests.map((t) => ({ id: t.id, note: t.description ?? "", at: t.createdAt })),
+        figureNotes,
       });
     } catch (err) {
       console.error("[seller-review] load failed:", err);
@@ -206,6 +210,49 @@ export function registerSellerReviewRoutes(app: Express) {
       res.json({ ok: true, taskId: task.id });
     } catch (err) {
       console.error("[seller-review] request-changes failed:", err);
+      res.status(500).json({ error: "Couldn't send your note" });
+    }
+  });
+
+  // ── Seller (owner): "Change this" on a note about the figures (dd, D22) ──
+  app.post("/api/seller/:token/cim-review/figure-notes/:noteId/flag", sellerReviewLimiter, async (req: Request, res: Response) => {
+    try {
+      const found = await sellerDeal(req.params.token);
+      if (!found) return res.status(404).json({ error: "This link isn't valid any more — ask your broker for a new one." });
+      const { deal, sellerName, rights } = found;
+      if (await isOwningBroker(req, deal)) {
+        return res.status(403).json({ error: "You're signed in as the deal's broker — this is the seller's button.", code: "broker_preview" });
+      }
+      if (!rights.canApproveCim) {
+        return res.status(403).json({ error: OWNER_SIGNS_OFF_MESSAGE, code: "not_owner" });
+      }
+      const comment = typeof req.body?.comment === "string" ? req.body.comment.trim() : "";
+      if (comment.length < 1) return res.status(400).json({ error: "Tell your broker what should change." });
+      if (comment.length > 500) return res.status(400).json({ error: "Please keep it to 500 characters." });
+      // Only a note this link can see (approved, quoting the owner, served on
+      // the CIM the seller reviews) — another deal's or a hidden note is a 404.
+      if (sellerReviewStage(deal) === "not_ready" || cimHeldFromBuyers(deal)) {
+        return res.status(404).json({ error: "That note isn't shown any more." });
+      }
+      const sections = await storage.getCimSectionsByDeal(deal.id);
+      const { levelServing } = await import("../cim/figures/served");
+      const cim = buildBuyerCim({ deal, accessLevel: levelServing("normal"), sections, overrides: [], media: [], askingPrice: listedAskingPrice(deal) });
+      const { flagSellerFigureNote } = await import("../cim/figures/seller");
+      const note = await flagSellerFigureNote(deal, cim.sections, String(req.params.noteId), comment);
+      if (!note) return res.status(404).json({ error: "That note isn't shown any more." });
+      const who = sellerName?.trim() || "The owner";
+      const { notify } = await import("../notifications/service");
+      const { escapeHtml } = await import("../notifications/email-escape");
+      notify(deal.id, "cim_changes_requested", {
+        title: `The owner asked for a change to a note on the CIM's figures — ${deal.businessName}`,
+        body: `${escapeHtml(who)} wrote about ${escapeHtml(note.label)}: “${escapeHtml(comment)}”. Buyers don't see that note until you look at it.`,
+        actionUrl: `/deal/${deal.id}/cim?view=numbers&tab=moves&filter=look&note=${encodeURIComponent(note.id)}`,
+        businessName: deal.businessName,
+        metadata: { kind: "figure_note", noteId: note.id },
+      }).catch((e) => console.warn("[seller-review] broker notice failed:", e));
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[seller-review] figure note flag failed:", err);
       res.status(500).json({ error: "Couldn't send your note" });
     }
   });

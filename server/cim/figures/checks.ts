@@ -1,0 +1,298 @@
+/**
+ * checks — the due-diligence checks: each CIM figure beside the company's
+ * other records (spec D4–D6, D9a, D11). Pure: registry + sources + stored
+ * located results + the broker's decisions in, checks out.
+ *
+ *   cim_statements  the CIM's figure vs the statements as issued. Agreeing →
+ *                   no check. Worked out by the analysis's one-time lines (D6)
+ *                   → `regrouped` ("Financial statements as issued: …").
+ *                   Anything else → D9a: a broker-only warning; no check and
+ *                   no movement note on that figure reaches buyers.
+ *   tax_return /    the other record vs the statements as issued (else the
+ *   management      CIM's figure): match / regrouped (D6 families first) /
+ *                   differs. A line tax forms group differently (operating
+ *                   expenses, EBITDA) is only compared when the difference is
+ *                   worked out; otherwise its cell is blank ("Grouped
+ *                   differently on the tax return").
+ *   restated        next year's statements' comparative vs this year's
+ *                   statements (no reason claimed).
+ *
+ * The broker's decisions: `left_out` always applies (tightening); `shown` and
+ * `corrected` apply only while the values are the ones decided on (D10).
+ */
+import type { FigureRegistry, RegistryFigure } from "@shared/figure-anchors";
+import { agrees, differenceOf, reconcileByComponents, sizeOf, type ComponentLine, type Reconciliation } from "@shared/figure-compare";
+import { cimMismatchWarning, cimVsStatementsText, differenceComponentsText, groupingOpexText, otherRecordLabel, restatedText } from "@shared/figure-copy";
+import type { FigureCheckInput } from "@shared/figure-layer";
+import { figureKey, standardLine, standardLineOf, type StandardLineId } from "@shared/figure-lines";
+import type { FigureLocatedEntry } from "@shared/schema";
+import { locatedEntry } from "./locate";
+import { ownValue, sourceFor, sourceRef, type FinancialSource } from "./sources";
+import { revenueOf } from "./registry";
+
+export interface CheckDecision {
+  checkKey: string;
+  state: "shown" | "left_out" | "corrected";
+  correctedValue: number | null;
+  valuesSnapshot: { base: number; other: number };
+}
+
+export interface MismatchWarning {
+  year: string;
+  items: Array<{ figureKey: string; line: StandardLineId; lineWord: string; cim: number; statements: number; documentId: string }>;
+}
+
+export interface NotLocated {
+  checkKey: string;
+  figureKey: string;
+  documentId: string;
+  value: number;
+  /** "tax return" / "financial statements". */
+  docWord: string;
+  /** The broker's own figure ("Cimple read it wrong"), sought on this line of the document. */
+  lineWord?: string;
+}
+
+export interface ChecksResult {
+  checks: FigureCheckInput[];
+  /** D9a, grouped by year (the workspace's "Fix first"). */
+  mismatches: MismatchWarning[];
+  /** D11 failures (the workspace's "Needs checking"). */
+  notLocated: NotLocated[];
+  /** What needs locating (the refresh locates these, then calls buildChecks again). */
+  toLocate: Array<{ documentId: string; updatedAt: string; value: number; line?: string }>;
+}
+
+/** The same figure (an expense as an amount; a `signed` line with its sign). */
+const near = (a: number, b: number, signed = false) => Math.abs(differenceOf(a, b, signed)) <= 0.5;
+/** A loss on one side and a profit on the other: never explained by regrouping lines. */
+const signsDiffer = (a: number, b: number) => (a < 0 && b > 0) || (a > 0 && b < 0);
+
+function atomicLinesOf(reg: FigureRegistry, year: string): RegistryFigure[] {
+  return Object.values(reg).filter((f) => f.year === year && f.line.startsWith("line:"));
+}
+
+const comp = (f: RegistryFigure): ComponentLine => ({ id: f.key, label: f.lineLabel, value: Math.abs(f.value) });
+
+/** D6 families, per line (tried before the general 1–2 line search). */
+function familyFor(line: StandardLineId, kind: "tax_return" | "management" | "cim_statements", reg: FigureRegistry, year: string, statements: FinancialSource | null): ComponentLine[] {
+  const atomic = atomicLinesOf(reg, year);
+  if (kind === "cim_statements") return atomic.filter((f) => f.category === "Non-Recurring").map(comp);
+  switch (line) {
+    case "interest":
+      return atomic.filter((f) => /\bbank\b|merchant|card (?:fees|processing)|service charges|credit card/i.test(f.lineLabel)).map(comp);
+    case "operatingExpenses": {
+      // A tax form's operating expenses also carry amortization and interest.
+      const amort = ownValue(statements, "amortization") ?? reg[figureKey("amortization", year)]?.value;
+      const interest = ownValue(statements, "interest") ?? reg[figureKey("interest", year)]?.value;
+      const out: ComponentLine[] = [];
+      if (typeof amort === "number" && amort) out.push({ id: "amortization", label: "amortization", value: Math.abs(amort) });
+      if (typeof interest === "number" && interest) out.push({ id: "interest", label: "interest", value: Math.abs(interest) });
+      return out;
+    }
+    case "costOfSales":
+      return atomic.filter((f) => f.category === "COGS" && /amorti[sz]|depreci/i.test(f.lineLabel)).map(comp);
+    case "revenue": {
+      const other = reg[figureKey("otherIncome", year)];
+      return [
+        ...(other ? [{ id: other.key, label: "other income", value: Math.abs(other.value) }] : []),
+        ...atomic.filter((f) => f.category === "Other Income").map(comp),
+      ];
+    }
+    default:
+      return [];
+  }
+}
+
+function explanationText(line: StandardLineId, rec: Reconciliation): string {
+  const ids = rec.components.map((c) => c.id).sort().join(",");
+  if (line === "operatingExpenses" && rec.family && /^(amortization,interest|amortization|interest)$/.test(ids)) {
+    return groupingOpexText({
+      amortization: rec.components.find((c) => c.id === "amortization")?.value ?? null,
+      interest: rec.components.find((c) => c.id === "interest")?.value ?? null,
+    });
+  }
+  const word = standardLine(line)?.blindWord ?? line;
+  return differenceComponentsText({ lineWord: word, components: rec.components.map((c) => ({ label: c.label, value: c.value })) });
+}
+
+export interface BuildChecksInput {
+  registry: FigureRegistry;
+  sources: FinancialSource[];
+  located: Record<string, FigureLocatedEntry>;
+  decisions: CheckDecision[];
+  /** Only these figures (the ones the CIM shows); omitted = every standard-line figure. */
+  figureKeys?: Iterable<string>;
+}
+
+export function buildChecks(input: BuildChecksInput): ChecksResult {
+  const { registry: reg, sources, located } = input;
+  const decisions = new Map(input.decisions.map((d) => [d.checkKey, d]));
+  const keys = input.figureKeys ? new Set(input.figureKeys) : null;
+  const checks: FigureCheckInput[] = [];
+  const mismatchByYear = new Map<string, MismatchWarning>();
+  const notLocated: NotLocated[] = [];
+  const toLocate: ChecksResult["toLocate"] = [];
+
+  /** Where a value is printed in a source; `line`: only on the document's own line for it (a figure the broker typed). */
+  const find = (src: FinancialSource, value: number, line?: string) => {
+    toLocate.push({ documentId: src.documentId, updatedAt: src.updatedAt, value, ...(line ? { line } : {}) });
+    return locatedEntry(located, src.documentId, src.updatedAt, value, line);
+  };
+
+  for (const fig of Object.values(reg)) {
+    if (keys && !keys.has(fig.key)) continue;
+    const line = standardLineOf(fig.line);
+    if (!line) continue;
+    // Revenue, profits, net income, other income, EBITDA keep their sign (checker r2 R2-7).
+    const signed = !line.expense;
+    const year = fig.year;
+    const st = sourceFor(sources, "statements", year);
+    const sValue = ownValue(st, line.id);
+    const revenue = revenueOf(reg, year);
+    let base = fig.value;
+    let baseIsStatements = false;
+    let cimMismatch = false;
+
+    // 1. This CIM vs the statements as issued.
+    if (st && typeof sValue === "number") {
+      const size = sizeOf(fig.value, sValue, revenue, { signed });
+      const sLoc = find(st, sValue);
+      // The other records are compared with the statements as issued in every case.
+      base = sValue;
+      baseIsStatements = true;
+      if (agrees(size)) {
+        base = sValue;
+        baseIsStatements = true;
+      } else {
+        const diff = differenceOf(fig.value, sValue, signed);
+        const rec = signed && signsDiffer(fig.value, sValue) ? null : reconcileByComponents(diff, [], familyFor(line.id, "cim_statements", reg, year, st));
+        const compareKey = `cim_statements:${st.documentId}`;
+        const key = `${fig.key}~${compareKey}`;
+        if (rec) {
+          base = sValue;
+          baseIsStatements = true;
+          const items = rec.components.map((c) => c.label);
+          checks.push({
+            key, figureKey: fig.key, compareKey, kind: "cim_statements", otherLabel: otherRecordLabel("statements"),
+            base: fig.value, other: sValue, sourceLabel: sLoc?.sourceLabel ?? null, size, regrouped: true, ...(signed ? { signed: true as const } : {}),
+            regroupedText: cimVsStatementsText({ asIssued: sValue, items, total: rec.components.reduce((s, c) => s + c.value, 0), count: rec.components.length }),
+            cimMismatch: false, located: !!sLoc, decision: null,
+            asIssuedText: cimVsStatementsText({ asIssued: sValue, items, total: rec.components.reduce((s, c) => s + c.value, 0), count: rec.components.length }),
+            baseCitation: null, otherCitation: sourceRef(st, { page: sLoc?.page ?? null, value: sValue }),
+          });
+        } else {
+          cimMismatch = true;
+          checks.push({
+            key, figureKey: fig.key, compareKey, kind: "cim_statements", otherLabel: otherRecordLabel("statements"),
+            base: fig.value, other: sValue, sourceLabel: sLoc?.sourceLabel ?? null, size, regrouped: false, regroupedText: null, ...(signed ? { signed: true as const } : {}),
+            cimMismatch: true, located: !!sLoc, decision: null,
+            baseCitation: null, otherCitation: sourceRef(st, { page: sLoc?.page ?? null, value: sValue }),
+          });
+          const w = mismatchByYear.get(year) ?? { year, items: [] };
+          w.items.push({ figureKey: fig.key, line: line.id, lineWord: line.blindWord, cim: fig.value, statements: sValue, documentId: st.documentId });
+          mismatchByYear.set(year, w);
+        }
+      }
+    }
+    const baseLoc = baseIsStatements && st ? locatedEntry(located, st.documentId, st.updatedAt, base) : null;
+    const baseCitation = baseIsStatements && st ? sourceRef(st, { page: baseLoc?.page ?? null, value: base }) : null;
+
+    // 2. The tax return / management accounts vs the statements as issued (else this CIM).
+    for (const kind of ["tax_return", "management"] as const) {
+      if (line.comparable === "none") continue;
+      if (kind === "management" && line.comparable !== "direct") continue;
+      const other = sourceFor(sources, kind, year);
+      const raw = ownValue(other, line.id);
+      if (!other || typeof raw !== "number") continue;
+      const compareKey = `${kind}:${other.documentId}`;
+      const key = `${fig.key}~${compareKey}`;
+      const decision = decisions.get(key) ?? null;
+      // "Cimple read it wrong": the broker's figure replaces the one read — kept through a later
+      // "Show" (the same row) while the statements' figure it was entered against still stands.
+      const corrected = decision && decision.state !== "left_out" && decision.correctedValue !== null && near(decision.valuesSnapshot.base, base, signed) ? decision.correctedValue : null;
+      const value = corrected ?? raw;
+      const size = sizeOf(base, value, revenue, { signed });
+      // The broker's figure is never "found in the tax return" unless the tax return prints it on its
+      // own line for this figure ("Interest and bank charges" — not "Inventories", where the same
+      // number may also be printed): else it needs checking and can't be shown (D11; checker r2 R2-1).
+      const oLoc = corrected !== null ? find(other, value, line.id) : find(other, value);
+      const located = !!oLoc && (!baseIsStatements || !!baseLoc);
+      let regrouped = false;
+      let regroupedText: string | null = null;
+      if (!agrees(size)) {
+        const diff = differenceOf(base, value, signed);
+        const pool = atomicLinesOf(reg, year).map(comp);
+        const rec = signed && signsDiffer(base, value) ? null : reconcileByComponents(diff, pool, familyFor(line.id, kind, reg, year, st));
+        if (rec) {
+          regrouped = true;
+          regroupedText = explanationText(line.id, rec);
+        } else if (line.comparable === "grouping") {
+          // Not like for like on a tax form and not worked out: no comparison (blank cell).
+          checks.push({
+            key, figureKey: fig.key, compareKey, kind, otherLabel: otherRecordLabel(kind, other.taxForm),
+            base, other: value, sourceLabel: null, size, regrouped: false, regroupedText: null, cimMismatch, located, blank: "grouped", ...(signed ? { signed: true as const } : {}),
+            decision: null, ...(corrected !== null ? { corrected: true } : {}), baseCitation, otherCitation: sourceRef(other, { page: oLoc?.page ?? null, value }),
+          });
+          continue;
+        }
+      }
+      // A correction is not a decision to show: a corrected figure that still differs needs its own
+      // "Show to buyers" (D9) — only matches and worked-out groupings show once the checks are on.
+      const decided = !decision ? null
+        : decision.state === "left_out" ? "left_out"
+        : decision.state === "corrected" ? (corrected !== null ? "corrected" : null)
+        : near(decision.valuesSnapshot.base, base, signed) && near(decision.valuesSnapshot.other, value, signed) ? "shown" : null;
+      checks.push({
+        key, figureKey: fig.key, compareKey, kind, otherLabel: otherRecordLabel(kind, other.taxForm),
+        base, other: value, sourceLabel: oLoc?.sourceLabel ?? null, size, regrouped, regroupedText, cimMismatch, located, ...(signed ? { signed: true as const } : {}),
+        decision: decided, ...(corrected !== null ? { corrected: true } : {}), baseCitation, otherCitation: sourceRef(other, { page: oLoc?.page ?? null, value }),
+      });
+      // A correction that isn't on its line needs checking whatever its size: it would otherwise read
+      // as a match the document doesn't support (checker r2 R2-1).
+      if ((!agrees(size) || corrected !== null) && !located && !cimMismatch) {
+        const docWord = kind === "tax_return" ? "tax return" : "management accounts";
+        notLocated.push(!oLoc
+          ? { checkKey: key, figureKey: fig.key, documentId: other.documentId, value, docWord, ...(corrected !== null ? { lineWord: line.blindWord } : {}) }
+          : { checkKey: key, figureKey: fig.key, documentId: st!.documentId, value: base, docWord: "financial statements" });
+      }
+    }
+
+    // 3. Restated comparative: next year's statements show this year differently.
+    if (st && typeof sValue === "number" && line.comparable !== "none") {
+      const next = sourceFor(sources, "statements", String(Number(year) + 1));
+      const comparative = next?.values[line.id]?.[year];
+      if (next && typeof comparative === "number" && !agrees(sizeOf(sValue, comparative, revenue, { signed }))) {
+        const compareKey = `restated:${next.documentId}`;
+        const key = `${fig.key}~${compareKey}`;
+        const decision = decisions.get(key) ?? null;
+        const cLoc = find(next, comparative);
+        checks.push({
+          key, figureKey: fig.key, compareKey, kind: "restated", otherLabel: `Financial statements FY${next.year} (comparative)`,
+          base: sValue, other: comparative, sourceLabel: cLoc?.sourceLabel ?? null, size: sizeOf(sValue, comparative, revenue, { signed }), ...(signed ? { signed: true as const } : {}),
+          regrouped: false, regroupedText: null, cimMismatch, located: !!cLoc && !!locatedEntry(located, st.documentId, st.updatedAt, sValue),
+          decision: decision?.state === "left_out" ? "left_out" : decision && near(decision.valuesSnapshot.base, sValue, signed) && near(decision.valuesSnapshot.other, comparative, signed) ? (decision.state === "corrected" ? null : "shown") : null,
+          asIssuedText: restatedText({ year, lineWord: line.blindWord, earlier: sValue, later: comparative }),
+          baseCitation: sourceRef(st, { value: sValue }), otherCitation: sourceRef(next, { page: cLoc?.page ?? null, value: comparative }),
+        });
+      }
+    }
+  }
+  const mismatches = Array.from(mismatchByYear.values()).sort((a, b) => a.year.localeCompare(b.year));
+  return { checks, mismatches, notLocated, toLocate };
+}
+
+/** Lines a mismatch follows from (listed only when nothing more basic disagrees). */
+const DERIVED_LINES = new Set<StandardLineId>(["grossProfit", "ebitda", "incomeBeforeTax", "netIncome"]);
+
+/**
+ * The broker-only "Fix first" warning for a year (D9a): "Your CIM shows FY2022
+ * cost of sales of $20,384,000 and operating expenses of $4,127,000. The FY2022
+ * statements say $20,948,200 and $4,282,000. Fix FY2022 on the Financials tab,
+ * or explain the difference, before buyers see checks on these figures."
+ */
+export function mismatchMessage(w: MismatchWarning): string {
+  const basic = w.items.filter((i) => !DERIVED_LINES.has(i.line));
+  const items = (basic.length > 0 ? basic : w.items).map((i) => ({ lineWord: i.lineWord, cim: i.cim, statements: i.statements }));
+  return cimMismatchWarning({ year: w.year, items });
+}

@@ -30,6 +30,8 @@ import { CimContactPage, CimDisclaimerPage, withBrokeragePages } from "@/compone
 import { TeaserPages } from "@/components/teaser/TeaserPages";
 import type { TeaserPageSize } from "@shared/teaser";
 import type { BuyerSection } from "@shared/cim-buyer-view";
+// dd: what buyers read about the figures, in the owner's words (D22).
+import { FigureNotesReview, type SellerFigureNoteRow } from "./review/FigureNotesReview";
 
 type Stage = "not_ready" | "content" | "design" | "waiting" | "approved";
 
@@ -44,6 +46,8 @@ interface ReviewData {
   sections: CimSection[];
   design: CimDesignPayload | null;
   changesRequested?: { id: string; note: string; at: string }[];
+  /** dd: approved notes on the figures that quote the owner. */
+  figureNotes?: SellerFigureNoteRow[];
 }
 
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -259,6 +263,8 @@ function SellerCimReview() {
             <p className="text-xs text-muted-foreground mt-2">They'll update the CIM and let you know. You can still approve it as it is.</p>
           </div>
         )}
+
+        <FigureNotesReview token={token!} notes={data.figureNotes ?? []} canChange={!readOnly && !data.previewByBroker} onChanged={refresh} />
 
         <CimMediaProvider value={{ sellerToken: token }}>
           <CimDesignProvider design={design} sections={data.sections}>

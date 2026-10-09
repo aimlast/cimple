@@ -67,6 +67,8 @@ export async function restampSourceVisibility(dealId: string, documentId: string
   // the room at once; shared again, it is offered back, never re-shared.
   const { onSourceVisibilityChanged } = await import("../vdr/setup");
   await onSourceVisibilityChanged(documentId, brokerOnly);
+  // dd (INTEGRATION §2.17 step 3, last): a document made broker-only stops being cited at once.
+  void import("../cim/figures/refresh").then((m) => m.invalidateAndRefreshFigures(dealId, "documents")).catch(() => {});
 }
 
 /** What Cimple recorded about reading a source — kept when the broker edits its details. */

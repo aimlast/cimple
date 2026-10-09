@@ -549,6 +549,29 @@ const LAYOUTS = [
     aiUse: "— Never chosen: the system adds it for due-diligence buyers.",
     defaultData: () => ({ mode: "dd", pageId: "", summary: { total: 0, found: 0, partly: 0, notFound: 0, document: 0, statement: 0 }, note: null, lines: [] }),
   },
+
+  // ── Due diligence (stream "dd") ────────────────────────────────────────
+  {
+    // "How the figures check out": the CIM's figures beside the tax returns
+    // and other records, inserted for due-diligence buyers by buildBuyerCim
+    // (shared/figure-layer.ts withDdSourceCheck). Its layoutData is structure
+    // only ({ v, lines, years }); the values come from the figure layer.
+    key: "dd_source_check",
+    label: "How the figures check out",
+    description: "Due diligence only: each figure compared with the tax returns and other records.",
+    category: "tables",
+    content: "structured",
+    editor: "data",
+    blind: "exclude",
+    family: "dd_source_check",
+    planner: false,
+    aiWrite: false,
+    aiRewrite: false,
+    synthetic: true,
+    aiSpec: "dd_source_check: { v: 1, lines: string[], years: string[] }",
+    aiUse: "— Never chosen: the system adds it for due-diligence buyers.",
+    defaultData: () => ({ v: 1, lines: [], years: [] }),
+  },
 ] as const satisfies readonly CimLayoutDef[];
 
 export type CimLayoutKey = (typeof LAYOUTS)[number]["key"];

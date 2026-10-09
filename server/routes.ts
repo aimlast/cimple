@@ -63,6 +63,9 @@ import { registerAnalyticsExtraSources } from "./routes/analytics-extra-sources.
 import { questionWaitingOn } from "@shared/analytics-dashboard";
 import { registerTeaserRoutes } from "./routes/teaser.js";
 import { registerTogetherRoutes } from "./routes/together.js";
+import { registerFigureRoutes } from "./routes/figures.js";
+import { figureQuestionsWithSeller } from "./interview/seller-followups";
+import { buyerCimExtras } from "./cim/buyer-extras.js";
 import { registerDataRoomRoutes } from "./routes/data-room.js";
 import { registerDataRoomBuyerRoutes } from "./routes/data-room-buyer.js";
 import { registerGlRoutes } from "./routes/gl.js";
@@ -4648,7 +4651,11 @@ Return JSON only.`,
       const boardItemStatus = new Map(sellerBoard.sections.flatMap((s) => s.items.map((i) => [i.id, i.status] as const)));
       const followUpItemsOpen = openFollowUpItems(outlineOf(deal)).filter((f) => boardItemStatus.get(f.itemId) !== "on_file").length;
       const followUpQuestions = interviewCompleted
-        ? allDiscrepanciesForProgress.filter((d) => d.status === "ask_seller" && !!routedToSellerAt(d)).length + followUpItemsOpen
+        // INTEGRATION §2.11 (C16): routed discrepancies + dd's figure questions
+        // with the seller + together's open follow-up data points, each counted once.
+        ? allDiscrepanciesForProgress.filter((d) => d.status === "ask_seller" && !!routedToSellerAt(d)).length
+          + (await figureQuestionsWithSeller(deal.id)) // dd: questions about the figures with the seller
+          + followUpItemsOpen
         : 0;
 
       // Step status. Intake is complete when the last intake page (Key
@@ -5060,10 +5067,14 @@ Return JSON only.`,
       // — [] after a failed read, so nothing unapproved is served). The kept
       // copy of an update under review is already what buyers were served
       // (published: null).
-      // What gl (and dd, at its merge) add on top of the sections — one helper for every buyer path.
-      const { buyerCimExtras } = await import("./cim/buyer-extras");
+      // The extra layers (gl's add-back evidence; dd's figure notes / checks)
+      // come only through buyerCimExtras — the same helper servedCimFor uses.
       const extras = await buyerCimExtras(servedDeal, access.accessLevel, access.id);
       const buyerCim = buildBuyerCim({ deal: servedDeal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published, ...extras });
+      // A Blind CIM figure layer that still named something is dropped (fail
+      // closed) — logged for the broker, never treated as a leaked section
+      // (that would schedule a paid re-redaction on every view).
+      if (buyerCim.figureLayerDropped) console.warn(`[view] figure notes withheld on deal ${deal.id}: ${buyerCim.figureLayerDropped}`);
       if (buyerCim.preparing) {
         // No redacted version exists yet. Do NOT serve the real, un-redacted
         // sections — that would leak identity to the first viewer. Serve a
@@ -5119,6 +5130,7 @@ Return JSON only.`,
         cimMode,
         ...(reading ? { reading } : {}),
         ...(dataRoom ? { dataRoom } : {}),
+        figureLayer: buyerCim.figureLayer,
       });
     } catch (error: any) {
       console.error("Error fetching buyer access:", error);
@@ -7795,6 +7807,12 @@ Return JSON only.`,
       let held = cimHeldFromBuyers(deal);
       let chatBaseSections: Array<{ updatedAt?: Date | string | null }> = [];
       let chatSections: ReturnType<typeof buildBuyerCim>["sections"] = [];
+      // A question asked from a figure's note (dd, D18): the figure's opaque
+      // id, resolved below against this buyer's own version — a blind buyer
+      // can't probe the named figures. It goes straight to the broker.
+      const { figureIdOf, figureQuestionText } = await import("./cim/figures/ask");
+      const figureId = figureIdOf(req.body);
+      let chatLayer: ReturnType<typeof buildBuyerCim>["figureLayer"] = null;
       if (!held) {
         const { buyerCimRows, servedBlindCodename } = await import("./cim/published-snapshot");
         const [chatRows, chatMedia, chatCodename] = await Promise.all([
@@ -7806,10 +7824,36 @@ Return JSON only.`,
           held = true;
         } else {
           chatBaseSections = chatRows.sections;
-          const { buyerCimExtras } = await import("./cim/buyer-extras");
-          const chatExtras = await buyerCimExtras(deal, access.accessLevel, access.id);
-          chatSections = buildBuyerCim({ deal: chatCodename ? { ...deal, blindCodename: chatCodename } : deal, accessLevel: access.accessLevel, sections: chatRows.sections, overrides: chatRows.overrides, media: chatMedia, askingPrice: listedAskingPrice(deal), published: chatRows.published, ...chatExtras }).sections;
+          const chatDeal = chatCodename ? { ...deal, blindCodename: chatCodename } : deal;
+          // One extras helper for every buyer path (INTEGRATION §2.2): gl's add-back evidence, and
+          // dd's figure layer — a question about a figure resolves against this buyer's own layer,
+          // and its approved notes join the answer context (so answers agree with the notes; P2).
+          // A failure leaves the extras out; the CIM still answers.
+          const chatExtras = await buyerCimExtras(chatDeal, access.accessLevel, access.id).catch(() => null);
+          const chatCim = buildBuyerCim({ deal: chatDeal, accessLevel: access.accessLevel, sections: chatRows.sections, overrides: chatRows.overrides, media: chatMedia, askingPrice: listedAskingPrice(deal), published: chatRows.published, ...(chatExtras ?? {}) });
+          chatSections = chatCim.sections.filter((s) => s.layoutType !== "dd_source_check");
+          chatLayer = chatCim.figureLayer;
         }
+      }
+      const figureText = figureQuestionText(chatLayer, chatSections, figureId, question, MAX_BUYER_QUESTION_CHARS);
+      if (figureText) {
+        // No AI: the broker answers, privately to this buyer (as today).
+        const text = figureText;
+        const saved = await storage.createBuyerQuestion({
+          dealId, buyerAccessId, question: text, aiAnswer: null, status: "pending_broker", isPublished: false,
+          publishedAnswer: null, addedToKnowledgeBase: false, answerScope: scope, ...askedOn,
+        } as any);
+        storage.createAnalyticsEvent({
+          dealId, buyerAccessId, eventType: "question_asked", sectionKey: null, pageId: askedOn.sectionId,
+          eventData: { question: text.slice(0, 200), figure: true },
+        } as any).catch(() => {});
+        notify(dealId, "buyer_question", {
+          title: "New buyer question needs your response",
+          body: `A buyer asked: &ldquo;${escapeHtml(text.slice(0, 100))}${text.length > 100 ? "..." : ""}&rdquo;`,
+          actionUrl: `/deal/${dealId}`,
+          businessName: deal.businessName,
+        }).catch(() => {});
+        return res.json({ id: saved.id, answer: null, status: "pending_broker", message: "Sent to the broker. The answer will appear in Questions." });
       }
       const answerSections: AnswerSection[] = chatSections
         .filter(s => !s.locked)
@@ -7820,7 +7864,8 @@ Return JSON only.`,
           layoutData: s.layoutData,
         }));
       // DD overrides carry [[dd]] highlight sentinels for the renderer — plain text for the model.
-      const cimText = stripDdMarkers(buildAnswerContext(answerSections));
+      const { figureNotesContext } = await import("./cim/figures/qa-context");
+      const cimText = stripDdMarkers(buildAnswerContext(answerSections)) + figureNotesContext(chatLayer, chatSections);
       const changedAt = chatBaseSections.reduce<Date | null>((m, s) => (s.updatedAt && (!m || new Date(s.updatedAt) > m) ? new Date(s.updatedAt) : m), null);
 
       // 1. a published answer this buyer may read (scope + identity check —
@@ -8262,6 +8307,8 @@ Return JSON only.`,
   registerGlRoutes(app);
   // gl × the data room: ledger status changes re-prepare room items; the room's per-buyer deny reaches gl's DD page.
   await registerGlDataRoomWiring();
+  // Notes on the CIM's figures + the due-diligence checks (dd).
+  registerFigureRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;

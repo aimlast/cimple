@@ -531,6 +531,8 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
     // The data room (INTEGRATION §2.17, finally step 2): a new room document is
     // filed into its folder, unshared, when the room adds new documents.
     void import("../vdr/setup").then((m) => m.autoFileIfRoom(doc.id)).catch(() => undefined);
+    // dd (INTEGRATION §2.17, finally step 3 — last): the figure checks re-read the deal's documents.
+    void import("../cim/figures/refresh").then((m) => m.invalidateAndRefreshFigures(doc.dealId, "documents")).catch(() => {});
   }
 }
 

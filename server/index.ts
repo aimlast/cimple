@@ -199,6 +199,8 @@ app.use("/api/deals/:dealId/engagement/buyers/:accessId/brief", aiLimiter);
 applyTeaserRateLimits(app, aiLimiter);
 // ── together limiters ── (Interview together + the coverage board: server/together/limits.ts)
 applyTogetherRateLimits(app, aiLimiter);
+// ── dd limiters ── (figure notes: the AI pass that reads for reasons)
+app.use("/api/deals/:dealId/figures/build", aiLimiter);
 app.use("/api/view/:token/reading", rateLimit({
   windowMs: 60 * 1000,
   limit: 120,

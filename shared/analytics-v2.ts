@@ -85,6 +85,8 @@ export const READING_INTERACTIONS = [
   "copy", "print_attempt", "download_attempt",
   "chat_open",
   "vdr_open",         // detail: "doc:<itemId>" — opened a data-room document from the CIM (the tracker is paused meanwhile)
+  "figure_note",      // detail: the opaque figure id (a note on a figure opened)
+  "figure_compare",   // detail: "side_by_side" | "cim_only" (the DD compare switch)
 ] as const;
 export type ReadingInteractionType = (typeof READING_INTERACTIONS)[number];
 
