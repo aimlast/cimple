@@ -134,7 +134,8 @@ async function main() {
     assert.deepEqual(started, { started: true });
     return (await gen.waitForTeaser(dealId))!;
   };
-  const textOf = (row: Awaited<ReturnType<typeof run>>) => JSON.stringify(row.draft);
+  // The words buyers could read (block ids are random uuids — "…62112c" once tripped the "112" check).
+  const textOf = (row: Awaited<ReturnType<typeof run>>) => JSON.stringify(row.draft, (k, v) => (k === "id" ? undefined : v));
 
   await check("(a) a clean output: the One-page doc, fixed blocks from code, basis blind_cim", async () => {
     replies = [written];

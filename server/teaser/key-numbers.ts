@@ -13,6 +13,7 @@
  *    number style (shared/deal-bands.ts). Headcount and years are always
  *    ranges. The price is the serve-time token {price}.
  */
+import { carriesPrivateDetail, getSellerKeepOut } from "../interview/seller-keep-out";
 import type { Deal } from "@shared/schema";
 import {
   customerRange,
@@ -57,6 +58,19 @@ export interface TeaserFigures {
   inventory: { value: number | null; included: "included" | "extra" } | null;
   /** Fact keys each figure came from (staleness). */
   sources: Record<string, string[]>;
+  /**
+   * Short deal phrases read from the facts by code, from a fixed wording only
+   * (never the facts' own words): the template start and the fallback when
+   * the AI didn't write one. Null when the facts don't say it plainly.
+   */
+  phrases?: FactPhrases;
+}
+
+export interface FactPhrases {
+  reasonForSale: string | null;
+  transition: string | null;
+  financing: string | null;
+  supportTraining: string | null;
 }
 
 type Info = Record<string, unknown>;
@@ -191,6 +205,82 @@ export interface FiguresInput {
 }
 
 /** Pure: the teaser's figures from the facts and the earnings canon. */
+// ── Deal phrases from the facts (fixed wording only) ────────────────────────
+
+const REASON_KEYS = ["reasonForSale", "reasonForSelling", "saleReason", "sellerMotivation", "reasonForExit"];
+const TRANSITION_KEYS = ["transitionPlan", "ownerTransition", "transition", "trainingPeriod", "transitionPeriod", "supportTraining", "trainingAndSupport", "postSaleSupport"];
+const FINANCING_KEYS = ["sellerFinancing", "vendorFinancing", "vendorTakeBack", "financing", "financingAvailable", "dealStructure", "saleType", "transactionStructure", "proposedStructure"];
+
+/** Reasons a teaser never states on its own (the broker decides): health, family, disputes, money trouble. */
+const SENSITIVE_REASON = /\b(?:health|ill(?:ness)?|sick|cancer|diagnos|surgery|medical|stroke|heart|divorc|separat|death|died|passed away|estate of|bereave|widow|disput|lawsuit|litigat|partner(?:ship)? (?:split|break)|fall(?:ing)?[- ]out|bankrupt|insolven|debt|creditor|financial (?:difficult|trouble|pressure)|cash[- ]?flow (?:problem|issue)|burn(?:ed|t)?[- ]?out|stress|exhaust|lost (?:the|a|its) (?:contract|customer|lease))/i;
+
+/** Why the owner is selling, in one of a few plain phrases — or null. */
+export function reasonForSalePhrase(t: string | null | undefined): string | null {
+  const s = (t ?? "").trim();
+  if (!s || SENSITIVE_REASON.test(s)) return null;
+  if (/\bretir/i.test(s)) return "Owner retiring";
+  if (/\b(?:no (?:family )?successor|succession|no one (?:in the family )?to take over|children (?:are|aren't|are not) (?:not )?interested)/i.test(s)) return "Owner succession";
+  if (/\b(?:relocat|moving (?:to|away|abroad|out of)|leaving the (?:province|state|country|area))/i.test(s)) return "Owner relocating";
+  if (/\b(?:other (?:business(?:es)?|ventures?|interests|opportunit\w*|projects?)|new (?:venture|business|opportunit\w*)|focus(?:ing)? on (?:another|other|a new)|pursu\w* other)/i.test(s)) return "Owner pursuing other interests";
+  return null;
+}
+
+const SHORT_SPAN = /\b(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?[\s-]+(week|month)s?\b/i;
+
+/** The owner's handover, in plain words ("6-month handover", "Handover available") — or null. Labelled "Owner transition" / "Support & training". */
+export function transitionPhrase(t: string | null | undefined): string | null {
+  const s = (t ?? "").trim();
+  if (!s || /\b(?:no (?:transition|training|handover|support)|not available|won't|will not|unavailable)\b/i.test(s)) return null;
+  const about = /\b(?:handover|hand-over|hand over|transition|training|train|support|stay(?:s|ing)? on|available|consult|introduc|shadow)/i.test(s);
+  if (!about) return null;
+  // The owner's own span: the duration next to the handover/transition/training words.
+  const owner = /\b(?:owner|seller|vendor|founder|principal|i|he|she|they)\b[^.;]*?/i.exec(s);
+  const scope = owner ? s.slice(owner.index) : s;
+  const m = SHORT_SPAN.exec(scope);
+  if (m && Number(m[2] ?? m[1]) <= 24) {
+    const span = m[2] ? `${m[1]}–${m[2]}` : m[1];
+    return `${span}-${m[3].toLowerCase()} handover`;
+  }
+  return "Handover available";
+}
+
+/** Vendor financing, when the facts say it is offered — or null. */
+export function financingPhrase(t: string | null | undefined): string | null {
+  const s = (t ?? "").trim();
+  if (!s) return null;
+  if (!/\b(?:vendor (?:take[- ]?back|financ\w*|note|loan)|seller (?:financ\w*|note|carry|take[- ]?back)|owner financ\w*|\bVTB\b|seller carry)/i.test(s)) return null;
+  if (/\b(?:no|not|won't|will not|unwilling|isn't|is not|without)\b[^.;]{0,30}\b(?:vendor|seller|owner|VTB)/i.test(s)) return null;
+  return "Vendor financing available";
+}
+
+/** The first fact (in key order) the reader can turn into a phrase — never one carrying a detail the seller asked to keep out. */
+function firstPhrase(info: Info, keys: readonly string[], read: (t: string) => string | null): string | null {
+  const keepOut = getSellerKeepOut(info);
+  for (const k of keys) {
+    const t = text(info[k]).trim();
+    if (!t || keepOut.some((e) => carriesPrivateDetail(t, e))) continue;
+    const v = read(t);
+    if (v) return v;
+  }
+  return null;
+}
+
+/** The deal phrases from the facts (fixed wording; nothing of the facts' own words travels). */
+export function factPhrases(info: Info): FactPhrases {
+  const transition = firstPhrase(info, TRANSITION_KEYS, transitionPhrase);
+  return {
+    reasonForSale: firstPhrase(info, REASON_KEYS, reasonForSalePhrase),
+    transition,
+    financing: firstPhrase(info, FINANCING_KEYS, financingPhrase),
+    supportTraining: transition,
+  };
+}
+
+/** The AI's phrase when it wrote one, else the facts' fixed phrase. */
+export function phraseOr(ai: string | null | undefined, fromFacts: string | null | undefined): string | null {
+  return ai && ai.trim() ? ai : fromFacts ?? null;
+}
+
 export function figuresFrom(input: FiguresInput): TeaserFigures {
   const { info, canon } = input;
   const now = input.now ?? new Date();
@@ -316,6 +406,7 @@ export function figuresFrom(input: FiguresInput): TeaserFigures {
     ffe: ffeOf(info),
     inventory: inventoryOf(info),
     sources,
+    phrases: factPhrases(info),
   };
 }
 

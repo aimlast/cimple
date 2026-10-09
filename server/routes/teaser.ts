@@ -50,6 +50,8 @@ import {
   freshCellsFor,
   patchBlock,
   patchCell,
+  addCellLine,
+  removeCellLine,
   patchHeader,
   publishProblems,
   publishedSnapshot,
@@ -438,6 +440,30 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
       res.json(await stateOf(deal, row));
     } catch (err) {
       await sendError(res, err, deal, "Couldn't save the key number");
+    }
+  });
+
+  /** "Add a line" to a "Deal at a glance" column (the broker's own label and value). */
+  app.post("/api/deals/:dealId/teaser/blocks/:blockId/cells", ...broker, async (req, res) => {
+    const deal = dealOf(res);
+    try {
+      const body = z.object({ rev, label: z.string().max(200), value: z.string().max(400) }).strict().parse(req.body ?? {});
+      const row = await saveDraft(deal.id, body.rev, (doc) => ({ doc: addCellLine(doc, req.params.blockId, body.label, body.value).doc, reason: "Added a line" }), [req.params.blockId]);
+      res.json(await stateOf(deal, row));
+    } catch (err) {
+      await sendError(res, err, deal, "Couldn't add the line");
+    }
+  });
+
+  /** Take a line off a "Deal at a glance" column (a fact line comes back with Reset from the facts). */
+  app.delete("/api/deals/:dealId/teaser/blocks/:blockId/cells/:key", ...broker, async (req, res) => {
+    const deal = dealOf(res);
+    try {
+      const r = z.coerce.number().int().nonnegative().parse(req.query.rev);
+      const row = await saveDraft(deal.id, r, (doc) => ({ doc: removeCellLine(doc, req.params.blockId, req.params.key), reason: "Took a line off" }), [req.params.blockId]);
+      res.json(await stateOf(deal, row));
+    } catch (err) {
+      await sendError(res, err, deal, "Couldn't take the line off");
     }
   });
 

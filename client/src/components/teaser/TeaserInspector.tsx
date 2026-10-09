@@ -6,7 +6,8 @@
  *    block…", amber "“…” may let someone recognise the business", or the
  *    check line "✓ No names, places or contacts found"); the content —
  *    key-number cells typed over inline ("Edited by you · Reset from the
- *    facts"), prose, or the structured editor; "Rewrite with AI" for the
+ *    facts"), "Deal at a glance" lines the broker can add and take off,
+ *    prose, or the structured editor; "Rewrite with AI" for the
  *    blocks the AI writes (a proposal the broker applies or discards);
  *    hide / duplicate / delete.
  *
@@ -26,7 +27,7 @@ import { StructuredDataEditor } from "@/components/cim/StructuredDataEditor";
 import { LayoutIcon } from "@/components/cim-builder/LayoutGallery";
 import { TONES } from "@/components/cim-builder/AiWriterPanel";
 import { layoutLabel } from "@shared/cim-layouts";
-import { TEASER_LIMITS, blockCells, cellLimit, type KeyCell, type TeaserBlock } from "@shared/teaser";
+import { MAX_DEAL_LINES, TEASER_LIMITS, blockCells, cellLimit, shownCells, type KeyCell, type TeaserBlock } from "@shared/teaser";
 import { cn } from "@/lib/utils";
 import type { TeaserState } from "./api";
 import type { BlockProposal, TeaserApi } from "./useTeaser";
@@ -219,8 +220,11 @@ function BlockEditor({
   const check = checkFor(state.teaser.checks, block.id);
   const held = block.hidden && !block.placeholder ? null : heldSentence(check);
   const fixed = isFixedBlock(block);
-  const cells = blockCells(block);
+  const allCells = blockCells(block);
+  const cells = shownCells(allCells);
   const isKeyNumbers = block.slot === "key_numbers" || block.slot === "listing_facts";
+  // "Deal at a glance" / "The deal": a two-column block whose right column is drawn from lines.
+  const dealLines = block.layoutType === "two_column" && Array.isArray(block.layoutData?.cells);
   const rewritable = !fixed && REWRITABLE.has(block.layoutType);
 
   const [title, setTitle] = useState(block.title);
@@ -275,7 +279,9 @@ function BlockEditor({
         )}
       </div>
 
-      {cells.length > 0 && (
+      {dealLines ? (
+        <DealLinesEditor api={api} block={block} cells={allCells} disabled={writing} />
+      ) : cells.length > 0 && (
         <CellsEditor api={api} state={state} block={block} cells={cells} isKeyNumbers={isKeyNumbers} disabled={writing} />
       )}
 
@@ -287,7 +293,7 @@ function BlockEditor({
       )}
       {showData && (
         <div className="space-y-1.5">
-          <Label className="text-xs">{cells.length > 0 ? "The rest of the block" : "Content"}</Label>
+          <Label className="text-xs">{cells.length > 0 || dealLines ? "The rest of the block" : "Content"}</Label>
           <StructuredDataEditor value={data} onChange={(next) => setData(next as Json)} compact />
         </div>
       )}
@@ -355,6 +361,89 @@ function CellsEditor({ api, state, block, cells, isKeyNumbers, disabled }: { api
   );
 }
 
+/**
+ * "Deal at a glance": each line typed over inline (a facts line says "Edited
+ * by you · Reset"), taken off with ×, and "Add a line" for the broker's own.
+ * A facts line taken off is listed under "Taken off" with "Show again".
+ */
+function DealLinesEditor({ api, block, cells, disabled }: { api: TeaserApi; block: TeaserBlock; cells: KeyCell[]; disabled: boolean }) {
+  const shown = cells.filter((c) => !c.removed);
+  const off = cells.filter((c) => c.removed);
+  const [adding, setAdding] = useState(false);
+  const [label, setLabel] = useState("");
+  const [value, setValue] = useState("");
+  const full = shown.length >= MAX_DEAL_LINES;
+  const columnTitle = typeof (block.layoutData?.right as { title?: unknown } | undefined)?.title === "string" && (block.layoutData.right as { title: string }).title.trim()
+    ? (block.layoutData.right as { title: string }).title
+    : "Deal at a glance";
+  const add = () => {
+    const l = label.replace(/\s+/g, " ").trim();
+    const v = value.replace(/\s+/g, " ").trim();
+    if (!l || !v) return;
+    api.addLine.mutate({ id: block.id, label: l, value: v }, { onSuccess: () => { setLabel(""); setValue(""); setAdding(false); } });
+  };
+  return (
+    <div className="space-y-2" data-testid="teaser-deal-lines">
+      <Label className="text-xs">{columnTitle}</Label>
+      {shown.length === 0 && !adding && (
+        <p className="rounded-md border border-dashed border-border px-3 py-2 text-[11px] text-muted-foreground">
+          No lines yet — the deal's information doesn't say the sale type, the reason or the handover plainly. Add the ones you want buyers to see.
+        </p>
+      )}
+      <div className="space-y-2">
+        {shown.map((c) => (
+          <div key={c.key} className="flex items-end gap-1.5">
+            <div className="min-w-0 flex-1"><CellRow api={api} blockId={block.id} cell={c} disabled={disabled} /></div>
+            <Button
+              type="button" size="icon" variant="ghost" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-red-500"
+              aria-label={`Take “${c.label}” off`} title="Take this line off"
+              disabled={disabled || api.removeLine.isPending}
+              onClick={() => api.removeLine.mutate({ id: block.id, key: c.key })}
+              data-testid={`button-teaser-line-remove-${c.key}`}
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        ))}
+      </div>
+      {adding ? (
+        <div className="space-y-1.5 rounded-md border border-border p-2.5" data-testid="teaser-line-add-form">
+          <Input value={label} onChange={(e) => setLabel(e.target.value.replace(/:/g, ""))} maxLength={40} placeholder="Label, e.g. Training" className="h-8 text-xs" aria-label="Line label" autoFocus data-testid="input-teaser-line-label" />
+          <Input
+            value={value} onChange={(e) => setValue(e.target.value)} maxLength={TEASER_LIMITS.phraseCell} placeholder="What buyers read, e.g. Four weeks on site"
+            className="h-8 text-xs" aria-label="Line value"
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } if (e.key === "Escape") setAdding(false); }}
+            data-testid="input-teaser-line-value"
+          />
+          <div className="flex gap-2">
+            <Button size="sm" className="h-7 flex-1 gap-1 bg-teal text-xs text-teal-foreground hover:bg-teal/90" disabled={!label.trim() || !value.trim() || api.addLine.isPending || disabled} onClick={add} data-testid="button-teaser-line-save">
+              {api.addLine.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Add the line
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setAdding(false); setLabel(""); setValue(""); }}>Cancel</Button>
+          </div>
+        </div>
+      ) : (
+        <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={disabled || full} onClick={() => setAdding(true)} title={full ? `Up to ${MAX_DEAL_LINES} lines` : undefined} data-testid="button-teaser-line-add">
+          <Plus className="h-3 w-3" /> Add a line
+        </Button>
+      )}
+      {off.length > 0 && (
+        <div className="space-y-1 text-[11px] text-muted-foreground" data-testid="teaser-lines-off">
+          <p>Taken off (buyers don't see these):</p>
+          {off.map((c) => (
+            <p key={c.key} className="flex items-center justify-between gap-2">
+              <span className="truncate">{c.label}</span>
+              <button type="button" className="shrink-0 text-teal underline-offset-2 hover:underline" disabled={disabled || api.patchCell.isPending} onClick={() => api.patchCell.mutate({ id: block.id, key: c.key, reset: true })}>
+                Show again
+              </button>
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CellRow({ api, blockId, cell, disabled }: { api: TeaserApi; blockId: string; cell: KeyCell; disabled: boolean }) {
   // {price} / {contact}: filled for each buyer from your listing and brand — the box stays empty until you type over it.
   const token = /\{(price|contact|firm)\}/.test(cell.value);
@@ -374,7 +463,9 @@ function CellRow({ api, blockId, cell, disabled }: { api: TeaserApi; blockId: st
     <div className="space-y-1">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-[11px] text-muted-foreground">{cell.label}</span>
-        {cell.edited && (
+        {cell.added ? (
+          <span className="text-[10px] text-teal">Your line</span>
+        ) : cell.edited && (
           <span className="text-[10px] text-teal">
             Edited by you ·{" "}
             <button type="button" className="underline-offset-2 hover:underline" onClick={() => api.patchCell.mutate({ id: blockId, key: cell.key, reset: true })} disabled={disabled}>

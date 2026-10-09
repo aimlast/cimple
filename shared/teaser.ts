@@ -48,6 +48,20 @@ export interface KeyCell {
   value: string;
   edited?: boolean;
   editedAt?: string;
+  /** A line the broker added ("Deal at a glance"): key `line_…`, theirs entirely. */
+  added?: boolean;
+  /** A line from the facts the broker took off: kept (empty) so a refresh from the facts doesn't bring it back. */
+  removed?: boolean;
+}
+
+/** Keys of lines the broker adds. */
+export const LINE_KEY_PREFIX = "line_";
+/** At most this many lines in a two-column "Deal at a glance" list. */
+export const MAX_DEAL_LINES = 8;
+
+/** The cells a buyer sees (a line the broker took off is not drawn). */
+export function shownCells(cells: KeyCell[]): KeyCell[] {
+  return cells.filter((c) => !c.removed);
 }
 
 export interface TeaserBlock {
@@ -81,7 +95,7 @@ export const EMPTY_TEASER_DOC: TeaserDoc = { header: null, blocks: [] };
 export const TEASER_LIMITS = { blocks: 30, title: 120, text: 4000, tagline: 140, chips: 5, cell: 40, phraseCell: 80 } as const;
 
 /** Cells that hold a short phrase rather than a figure ("Owner transition", "Support & training"). */
-const PHRASE_CELLS = /^(?:reasonForSale|transition|financing|supportTraining|saleType|realEstate|note\d*|inventory|ffe)$/;
+const PHRASE_CELLS = /^(?:reasonForSale|transition|financing|supportTraining|saleType|realEstate|note\d*|inventory|ffe|line_[\w-]+)$/;
 /** How long a key-number cell may be: 40 characters for a figure, 80 for a phrase. */
 export function cellLimit(key: string): number {
   return PHRASE_CELLS.test(key) ? TEASER_LIMITS.phraseCell : TEASER_LIMITS.cell;
@@ -309,7 +323,7 @@ export function blockCells(block: Pick<TeaserBlock, "layoutData">): KeyCell[] {
  * lines. Cells are the source of truth; this keeps the drawn data in step.
  */
 export function withCellsApplied(block: TeaserBlock): TeaserBlock {
-  const cells = blockCells(block);
+  const cells = shownCells(blockCells(block));
   if (cells.length === 0 && !Array.isArray((block.layoutData as Record<string, unknown>)?.cells)) return block;
   const data = { ...block.layoutData };
   if (block.layoutType === "metric_grid") data.metrics = cells.map((c) => ({ label: c.label, value: c.value }));

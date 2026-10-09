@@ -5,6 +5,10 @@
  *    financial_table column refused; a line chart without `indexed` refused;
  *  - the undo stack is ≤ 20;
  *  - key-number edit, reset, and recompute skipping edited cells;
+ *  - "Deal at a glance": what the broker types in the column is kept (applied
+ *    to the lines, never redrawn over); lines can be added and taken off and
+ *    survive a refresh from the facts; the template start fills the lines the
+ *    facts say plainly (sale type, reason, handover, financing) in fixed words;
  *  - the publish problems list (incl. the confidentiality review state);
  *  - the staleness diff;
  *  - a codename rename carries into the draft, the published doc and the
@@ -108,6 +112,97 @@ async function main() {
     cells = d.blocks.find((b) => b.id === key)!.layoutData.cells as typeof cells;
     assert.equal(cells.find((c) => c.key === "revenue")!.value, "$9M–$10M");
     assert.ok(!cells.find((c) => c.key === "revenue")!.edited);
+  });
+
+  await check("Deal at a glance: the broker's column edit is kept (applied to the lines), never silently redrawn", () => {
+    const opp = base.blocks.find((b) => b.slot === "opportunity")!;
+    const right = (opp.layoutData.right as { content: string }).content;
+    assert.ok(right.includes("Sale type: Share sale"), right);
+    // The checker's case: typed into the right column → 200 and then thrown away. Now it's kept.
+    const typed = "Sale type: Share sale\nReason for sale: Owner retiring after a long career\nTraining: Two weeks on site";
+    const d = ops.patchBlock(base, opp.id, { layoutData: { ...opp.layoutData, right: { title: "Deal at a glance", layoutType: "metric", content: typed } } });
+    const b = d.blocks.find((x) => x.id === opp.id)!;
+    assert.equal((b.layoutData.right as { content: string }).content, "Sale type: Share sale\nReason for sale: Owner retiring after a long career\nTraining: Two weeks on site");
+    const cells = b.layoutData.cells as Array<{ key: string; label: string; value: string; edited?: boolean; added?: boolean; removed?: boolean }>;
+    assert.equal(cells.find((c) => c.key === "reasonForSale")!.edited, true);
+    const added = cells.find((c) => c.label === "Training")!;
+    assert.ok(added.key.startsWith("line_") && added.added && added.edited);
+    const transition = cells.find((c) => c.key === "transition")!;
+    assert.deepEqual([transition.removed, transition.value], [true, ""], "a fact line left out of the typed column is taken off");
+    // A refresh from the facts keeps all of it (edited, added and taken-off lines).
+    const re = ops.recomputeFixed(d, "one_page", f, s);
+    assert.equal(((re.doc.blocks.find((x) => x.id === opp.id)!.layoutData.right) as { content: string }).content, (b.layoutData.right as { content: string }).content);
+    // Not "Label: value": refused in plain words, never accepted and dropped.
+    assert.throws(() => ops.patchBlock(base, opp.id, { layoutData: { ...opp.layoutData, right: { title: "Deal at a glance", layoutType: "metric", content: "Share sale. Owner retiring." } } }), /Label: value/);
+    // An edit of the left column alone leaves the lines exactly as they were.
+    const left = ops.patchBlock(base, opp.id, { layoutData: { ...opp.layoutData, left: { title: "Who it suits", layoutType: "list", content: "A regional pharmacy group" } } });
+    assert.deepEqual(left.blocks.find((x) => x.id === opp.id)!.layoutData.cells, opp.layoutData.cells);
+  });
+
+  await check("Deal at a glance: add a line, take one off (a fact line comes back with Reset), limits", () => {
+    const opp = base.blocks.find((b) => b.slot === "opportunity")!;
+    const a = ops.addCellLine(base, opp.id, "Training", "Four weeks, plus phone support");
+    let b = a.doc.blocks.find((x) => x.id === opp.id)!;
+    assert.ok((b.layoutData.right as { content: string }).content.endsWith("Training: Four weeks, plus phone support"));
+    assert.throws(() => ops.addCellLine(base, opp.id, "", "x"), /label and a value/);
+    assert.throws(() => ops.addCellLine(base, opp.id, "Note: x", "y"), /colon/);
+    assert.throws(() => ops.addCellLine(base, id("overview"), "Training", "x"), /Deal at a glance/);
+    // Take off the broker's line: gone. Take off a fact line: hidden, and a refresh doesn't bring it back.
+    let d = ops.removeCellLine(a.doc, opp.id, a.key);
+    b = d.blocks.find((x) => x.id === opp.id)!;
+    assert.ok(!(b.layoutData.cells as Array<{ key: string }>).some((c) => c.key === a.key));
+    d = ops.removeCellLine(d, opp.id, "saleType");
+    b = d.blocks.find((x) => x.id === opp.id)!;
+    assert.ok(!(b.layoutData.right as { content: string }).content.includes("Sale type"));
+    const re = ops.recomputeFixed(d, "one_page", f, s);
+    assert.ok(!((re.doc.blocks.find((x) => x.id === opp.id)!.layoutData.right) as { content: string }).content.includes("Sale type"), "a refresh doesn't bring it back");
+    const fresh = ops.freshCellsFor("opportunity", "one_page", f, s, b)!;
+    const back = ops.patchCell(d, opp.id, "saleType", null, fresh);
+    assert.ok(((back.blocks.find((x) => x.id === opp.id)!.layoutData.right) as { content: string }).content.includes("Sale type: Share sale"), "Reset from the facts brings it back");
+    // At most 8 lines.
+    let many = base;
+    for (let i = 0; i < 8; i++) { try { many = ops.addCellLine(many, opp.id, `Line ${i}`, "x").doc; } catch { /* full */ } }
+    assert.throws(() => ops.addCellLine(many, opp.id, "One more", "x"), /8 lines/);
+  });
+
+  await check("template start (no AI): the facts' lines in fixed words, and an empty column can be given lines", () => {
+    const facts = kn.figuresFrom({
+      deal: { industry: "HVAC services" },
+      info: {
+        annualRevenue: "$4,800,000", sde: "$1,312,000", locationSite: "Barrie, Ontario",
+        reasonForSale: "Owner Gord Ellison is retiring after 22 years",
+        transitionPlan: "Gord will stay on for a 6-month handover; the service manager stays",
+        sellerFinancing: "Vendor take-back of up to 20% considered",
+      },
+      canon: null,
+      askingPrice: "$4,800,000",
+    });
+    assert.deepEqual(facts.phrases, { reasonForSale: "Owner retiring", transition: "6-month handover", financing: "Vendor financing available", supportTraining: "6-month handover" });
+    const doc = assembleTeaserDoc({ def: TEASER_TEMPLATES.one_page, figures: facts, numbers: "ranges", showAskingPrice: true, wording: {}, written: null });
+    const opp = doc.blocks.find((b) => b.slot === "opportunity")!;
+    assert.equal(opp.hidden, false);
+    assert.equal((opp.layoutData.right as { content: string }).content, "Reason for sale: Owner retiring\nOwner transition: 6-month handover");
+    assert.ok(!JSON.stringify(opp).includes("Gord"), "never the facts' own words");
+    const listing = assembleTeaserDoc({ def: TEASER_TEMPLATES.listing, figures: facts, numbers: "rounded", showAskingPrice: true, wording: {}, written: null });
+    const rows = (listing.blocks.find((b) => b.slot === "listing_facts")!.layoutData.cells as Array<{ key: string; value: string }>);
+    assert.equal(rows.find((r) => r.key === "financing")!.value, "Vendor financing available");
+    assert.equal(rows.find((r) => r.key === "reasonForSale")!.value, "Owner retiring");
+    assert.equal(rows.find((r) => r.key === "supportTraining")!.value, "6-month handover");
+    const inv = assembleTeaserDoc({ def: TEASER_TEMPLATES.investor, figures: facts, numbers: "ranges", showAskingPrice: true, wording: {}, written: null });
+    assert.equal(((inv.blocks.find((b) => b.slot === "deal_structure")!.layoutData.left) as { content: string }).content, "Owner transition: 6-month handover. Reason for sale: Owner retiring");
+    // Sensitive reasons are never stated; nothing plain → no line, and the broker adds one.
+    assert.equal(kn.reasonForSalePhrase("Owner's health — a recent diagnosis; retiring early"), null);
+    assert.equal(kn.reasonForSalePhrase("Partners in a dispute"), null);
+    assert.equal(kn.financingPhrase("No vendor financing"), null);
+    assert.equal(kn.transitionPhrase("Owner will not stay on"), null);
+    const bare = kn.figuresFrom({ deal: { industry: "HVAC services" }, info: { annualRevenue: "$4,800,000" }, canon: null, askingPrice: null });
+    const empty = assembleTeaserDoc({ def: TEASER_TEMPLATES.one_page, figures: bare, numbers: "ranges", showAskingPrice: true, wording: {}, written: null });
+    const eo = empty.blocks.find((b) => b.slot === "opportunity")!;
+    assert.equal(eo.hidden, true, "nothing to show yet");
+    const added = ops.addCellLine(empty, eo.id, "Sale type", "Asset sale").doc.blocks.find((b) => b.id === eo.id)!;
+    assert.equal(added.hidden, false, "shown once it has a line");
+    assert.ok(!added.placeholder);
+    assert.equal((added.layoutData.right as { content: string }).content, "Sale type: Asset sale");
   });
 
   await check("header patch: limits on the tagline and chips", () => {

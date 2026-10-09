@@ -43,6 +43,8 @@ async function main() {
       ["POST", "/api/deals/D-PAC/teaser/blocks", { rev: row.draftRev, layoutType: "prose_highlight", title: "x", mode: "blank" }],
       ["PATCH", `/api/deals/D-PAC/teaser/blocks/${blockId}`, { rev: row.draftRev, title: "x" }],
       ["PATCH", `/api/deals/D-PAC/teaser/blocks/${blockId}/cells/revenue`, { rev: row.draftRev, value: "x" }],
+      ["POST", `/api/deals/D-PAC/teaser/blocks/${blockId}/cells`, { rev: row.draftRev, label: "Sale type", value: "Asset sale" }],
+      ["DELETE", `/api/deals/D-PAC/teaser/blocks/${blockId}/cells/saleType?rev=${row.draftRev}`],
       ["DELETE", `/api/deals/D-PAC/teaser/blocks/${blockId}?rev=${row.draftRev}`],
       ["POST", `/api/deals/D-PAC/teaser/blocks/${blockId}/duplicate`, { rev: row.draftRev }],
       ["POST", "/api/deals/D-PAC/teaser/reorder", { rev: row.draftRev, ids: [] }],

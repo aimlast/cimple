@@ -141,6 +141,8 @@ export function useTeaser(dealId: string) {
     "Couldn't save the key number",
     ({ id, key, value, reset }) => teaserRequest("PATCH", `${base}/blocks/${id}/cells/${encodeURIComponent(key)}`, reset ? { rev, reset: true } : { rev, value }),
   );
+  const addLine = stateMutation<{ id: string; label: string; value: string }>("Couldn't add the line", ({ id, label, value }) => teaserRequest("POST", `${base}/blocks/${id}/cells`, { rev, label, value }));
+  const removeLine = stateMutation<{ id: string; key: string }>("Couldn't take the line off", ({ id, key }) => teaserRequest("DELETE", `${base}/blocks/${id}/cells/${encodeURIComponent(key)}?rev=${rev}`));
   const removeBlock = stateMutation<string>("Couldn't delete the block", (id) => teaserRequest("DELETE", `${base}/blocks/${id}?rev=${rev}`));
   const duplicate = stateMutation<string>("Couldn't duplicate the block", (id) => teaserRequest("POST", `${base}/blocks/${id}/duplicate`, { rev }));
   const reorder = useMutation<TeaserState, unknown, string[], { previous?: TeaserRead }>({
@@ -213,8 +215,13 @@ export function useTeaser(dealId: string) {
     },
     onError: fail("Couldn't delete the teaser"),
   });
-  const sellerCheck = stateMutation<void>("Couldn't send the teaser to the seller", () => teaserRequest("POST", `${base}/seller-check`, { rev }), () =>
-    toast({ title: "Sent to the seller", description: "They'll see it on their review page. Nothing goes to buyers until you publish." }),
+  const sellerCheck = stateMutation<void>("Couldn't send the teaser to the seller", () => teaserRequest("POST", `${base}/seller-check`, { rev }), (s) =>
+    toast({
+      title: "Sent to the seller",
+      description: s.summary?.status === "published"
+        ? "They'll see it on their review page. Buyers with a link keep reading the published version until you publish changes."
+        : "They'll see it on their review page. Nothing goes to buyers until you publish.",
+    }),
   );
   const saveTemplate = useMutation<{ template: SavedTemplateItem; leftOut?: string[] }, unknown, { name: string; makeDefault?: boolean }>({
     mutationFn: (v) => teaserRequest("POST", `${base}/save-template`, v),
@@ -244,6 +251,8 @@ export function useTeaser(dealId: string) {
     addBlock,
     patchBlock,
     patchCell,
+    addLine,
+    removeLine,
     removeBlock,
     duplicate,
     reorder,

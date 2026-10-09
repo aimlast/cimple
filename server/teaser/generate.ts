@@ -52,6 +52,7 @@ import {
   listingRowsFor,
   operationsCells,
   trendLayoutData,
+  phraseOr,
   type TeaserFigures,
 } from "./key-numbers";
 import { getDealTeaser, saveOwnedBlocks, setGeneration, teaserStore, type TeaserRow } from "./store";
@@ -463,7 +464,10 @@ export function assembleTeaserDoc(input: AssembleInput): TeaserDoc {
         break;
       }
       case "listing_facts": {
-        const cells = listingRowsFor(figures, cs, w?.listingPhrases ?? {});
+        // The AI's phrases, else the facts' fixed phrases (the template start fills what the facts say plainly).
+        const fp = figures.phrases;
+        const lp = w?.listingPhrases;
+        const cells = listingRowsFor(figures, cs, { financing: phraseOr(lp?.financing, fp?.financing), supportTraining: phraseOr(lp?.supportTraining, fp?.supportTraining), reasonForSale: phraseOr(lp?.reasonForSale, fp?.reasonForSale) });
         blocks.push(block(slot, { cells, columns: 3 }, { at, id, facts: Object.values(figures.sources).flat() }));
         break;
       }
@@ -484,7 +488,8 @@ export function assembleTeaserDoc(input: AssembleInput): TeaserDoc {
       }
       case "opportunity": {
         const who = (w?.whoItSuits ?? []).slice(0, 3);
-        const cells = dealCells(figures, { reasonForSale: aiOk("reasonForSale") ? w?.reasonForSale : null, transition: aiOk("transition") ? w?.transition : null, financing: w?.listingPhrases.financing }, def.key === "two_page");
+        const fp = figures.phrases;
+        const cells = dealCells(figures, { reasonForSale: phraseOr(aiOk("reasonForSale") ? w?.reasonForSale : null, fp?.reasonForSale), transition: phraseOr(aiOk("transition") ? w?.transition : null, fp?.transition), financing: phraseOr(w?.listingPhrases.financing, fp?.financing) }, def.key === "two_page");
         blocks.push(block(slot, {
           left: { title: "Who it suits", layoutType: "list", content: lines(who) },
           right: { title: "Deal at a glance", layoutType: "metric", content: "" },
@@ -493,8 +498,12 @@ export function assembleTeaserDoc(input: AssembleInput): TeaserDoc {
         break;
       }
       case "deal_structure": {
-        const transition = [aiOk("transition") ? w?.transition : null, aiOk("reasonForSale") && w?.reasonForSale ? `Reason for sale: ${w.reasonForSale}` : null].filter(Boolean).join(" ");
-        const cells = dealCells(figures, { financing: w?.listingPhrases.financing }, true).filter((c) => c.key !== "reasonForSale" && c.key !== "transition");
+        const fp = figures.phrases;
+        const aiHandover = aiOk("transition") && w?.transition?.trim() ? w.transition.trim() : null;
+        const handover = aiHandover ?? (fp?.transition ? `Owner transition: ${fp.transition}` : null);
+        const reason = phraseOr(aiOk("reasonForSale") ? w?.reasonForSale : null, fp?.reasonForSale);
+        const transition = [handover ? (/[.!?]$/.test(handover) ? handover : `${handover}.`) : null, reason ? `Reason for sale: ${reason}` : null].filter(Boolean).join(" ");
+        const cells = dealCells(figures, { financing: phraseOr(w?.listingPhrases.financing, fp?.financing) }, true).filter((c) => c.key !== "reasonForSale" && c.key !== "transition");
         blocks.push(block(slot, {
           left: { title: "Transition", layoutType: "prose", content: transition },
           right: { title: "The deal", layoutType: "metric", content: "" },

@@ -13,6 +13,8 @@ import { randomUUID } from "node:crypto";
 import { collectStrings } from "@shared/blind-guard";
 import { defaultLayoutData, sameLayoutFamily } from "@shared/cim-layouts";
 import {
+  LINE_KEY_PREFIX,
+  MAX_DEAL_LINES,
   TEASER_LIMITS,
   blockCells,
   cellLimit,
@@ -97,8 +99,14 @@ export function patchBlock(doc: TeaserDoc, id: string, patch: BlockPatch): Tease
   if (patch.title !== undefined) b.title = String(patch.title).replace(/\s+/g, " ").trim();
   if (patch.layoutData !== undefined) {
     if (!patch.layoutData || typeof patch.layoutData !== "object" || Array.isArray(patch.layoutData)) throw new TeaserOpError(400, "That block data isn't readable.");
-    // Cells are edited through patchCell; a layoutData edit keeps them.
-    b.layoutData = Array.isArray(b.layoutData.cells) ? { ...patch.layoutData, cells: b.layoutData.cells } : { ...patch.layoutData };
+    // Cells are the source of what's drawn from them (the key numbers, the
+    // "Deal at a glance" column). An edit of the drawn data is applied TO the
+    // cells — never accepted and then redrawn over (that lost the broker's words).
+    const layoutProblem = validateTeaserLayout({ ...b, layoutData: patch.layoutData as Record<string, unknown> });
+    if (layoutProblem) throw new TeaserOpError(400, layoutProblem);
+    b.layoutData = Array.isArray(b.layoutData.cells)
+      ? { ...patch.layoutData, cells: cellsAfterDrawnEdit(b, patch.layoutData as Record<string, unknown>) }
+      : { ...patch.layoutData };
     if (b.layoutType === "prose_highlight" && typeof patch.layoutData.body === "string" && patch.body === undefined) b.body = patch.layoutData.body as string;
   }
   if (patch.body !== undefined) b.body = patch.body === null ? null : String(patch.body);
@@ -133,8 +141,116 @@ export function patchCell(doc: TeaserDoc, blockId: string, key: string, value: s
     if (!v) throw new TeaserOpError(400, "Type a value, or use Reset from the facts.");
     if (v.length > cellLimit(key)) throw new TeaserOpError(400, `Keep each key number under ${cellLimit(key)} characters.`);
     if (i < 0) throw new TeaserOpError(404, "That key number isn't in this block.");
-    cells[i] = { ...cells[i], value: v, edited: true, editedAt: nowIso() };
+    const { removed: _r, ...cell } = cells[i];
+    void _r;
+    cells[i] = { ...cell, value: v, edited: true, editedAt: nowIso() };
   }
+  const updated = withCellsApplied({ ...b, layoutData: { ...b.layoutData, cells }, updatedAt: nowIso() });
+  next.blocks = next.blocks.map((x) => (x.id === blockId ? updated : x));
+  return next;
+}
+
+// ── Lines drawn from cells ("Deal at a glance", key numbers) ───────────────
+
+const fold = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+const newLineKey = () => `${LINE_KEY_PREFIX}${randomUUID().slice(0, 8)}`;
+
+/** The "Label: value" pairs a block draws from its cells, as the renderer gets them. */
+function drawnPairs(layoutType: string, data: Record<string, unknown>): Array<{ label: string; value: string }> | null {
+  const asPairs = (v: unknown) => (Array.isArray(v) ? v.map((x) => ({ label: String((x as { label?: unknown })?.label ?? ""), value: String((x as { value?: unknown })?.value ?? "") })) : null);
+  if (layoutType === "metric_grid") return asPairs(data.metrics);
+  if (layoutType === "icon_stat_row") return asPairs(data.stats);
+  if (layoutType === "two_column") {
+    const right = data.right && typeof data.right === "object" ? (data.right as Record<string, unknown>) : null;
+    if (!right || typeof right.content !== "string") return null;
+    const pairs: Array<{ label: string; value: string }> = [];
+    for (const line of right.content.split("\n").map((l) => l.trim()).filter(Boolean)) {
+      const m = /^([^:]{1,40}):\s*(.+)$/.exec(line);
+      if (!m) throw new TeaserOpError(400, "Write each “Deal at a glance” line as “Label: value” — or use “Add a line”.");
+      pairs.push({ label: m[1].trim(), value: m[2].trim() });
+    }
+    return pairs;
+  }
+  return null;
+}
+
+/**
+ * The cells after an edit of what's drawn from them: a changed value is the
+ * broker's (edited), a new line is added (theirs), a line taken off is
+ * removed (a fact line is kept empty and marked, so a refresh from the facts
+ * doesn't bring it back). An unchanged drawing leaves the cells as they are.
+ */
+function cellsAfterDrawnEdit(b: TeaserBlock, patched: Record<string, unknown>): KeyCell[] {
+  const cells = blockCells(b);
+  const before = drawnPairs(b.layoutType, withCellsApplied(b).layoutData);
+  const after = drawnPairs(b.layoutType, patched);
+  if (!after || !before || JSON.stringify(after) === JSON.stringify(before)) return cells;
+  if (after.length > Math.max(MAX_DEAL_LINES, cells.length)) throw new TeaserOpError(400, `Keep it to ${MAX_DEAL_LINES} lines.`);
+  const at = nowIso();
+  const used = new Set<string>();
+  const out: KeyCell[] = [];
+  for (const p of after) {
+    if (!p.label.trim()) throw new TeaserOpError(400, "Give each line a label.");
+    const match = cells.find((c) => !used.has(c.key) && !c.removed && fold(c.label) === fold(p.label)) ?? cells.find((c) => !used.has(c.key) && fold(c.label) === fold(p.label));
+    if (match) {
+      used.add(match.key);
+      if (match.value === p.value && !match.removed) out.push(match);
+      else {
+        const { removed: _r, ...rest } = match;
+        void _r;
+        out.push({ ...rest, value: p.value, edited: true, editedAt: at });
+      }
+    } else {
+      out.push({ key: newLineKey(), label: p.label.slice(0, 40), value: p.value, edited: true, added: true, editedAt: at });
+    }
+  }
+  for (const c of cells) {
+    if (used.has(c.key) || c.added) continue;
+    out.push(c.removed ? c : { ...c, value: "", removed: true, edited: true, editedAt: at });
+  }
+  return out;
+}
+
+function linesBlock(doc: TeaserDoc, blockId: string): TeaserBlock {
+  const b = findBlock(doc, blockId);
+  if (b.layoutType !== "two_column" || !Array.isArray(b.layoutData.cells)) throw new TeaserOpError(400, "Lines can be added to the “Deal at a glance” column only.");
+  return b;
+}
+
+/** "Add a line" to a two-column block's "Deal at a glance" column. */
+export function addCellLine(doc: TeaserDoc, blockId: string, label: string, value: string): { doc: TeaserDoc; key: string } {
+  const next = clone(doc);
+  const b = linesBlock(next, blockId);
+  const l = label.replace(/\s+/g, " ").trim();
+  const v = value.replace(/\s+/g, " ").trim();
+  if (!l || !v) throw new TeaserOpError(400, "Type a label and a value for the line.");
+  if (l.length > 40) throw new TeaserOpError(400, "Keep the label under 40 characters.");
+  if (l.includes(":")) throw new TeaserOpError(400, "Leave the colon out of the label.");
+  if (v.length > TEASER_LIMITS.phraseCell) throw new TeaserOpError(400, `Keep the line under ${TEASER_LIMITS.phraseCell} characters.`);
+  const cells = blockCells(b);
+  if (cells.filter((c) => !c.removed).length >= MAX_DEAL_LINES) throw new TeaserOpError(400, `Keep it to ${MAX_DEAL_LINES} lines.`);
+  const key = newLineKey();
+  cells.push({ key, label: l, value: v, edited: true, added: true, editedAt: nowIso() });
+  let updated = withCellsApplied({ ...b, layoutData: { ...b.layoutData, cells }, origin: "broker", updatedAt: nowIso() });
+  // A "Deal at a glance" left empty by the template start is shown once it has a line.
+  if (updated.placeholder) {
+    const { placeholder: _p, ...rest } = updated;
+    void _p;
+    updated = { ...rest, hidden: false };
+  }
+  next.blocks = next.blocks.map((x) => (x.id === blockId ? updated : x));
+  return { doc: next, key };
+}
+
+/** Take a line off: a line the broker added goes; a line from the facts is kept empty and marked (Reset from the facts brings it back). */
+export function removeCellLine(doc: TeaserDoc, blockId: string, key: string): TeaserDoc {
+  const next = clone(doc);
+  const b = linesBlock(next, blockId);
+  const cells = blockCells(b);
+  const i = cells.findIndex((c) => c.key === key);
+  if (i < 0) throw new TeaserOpError(404, "That line isn't in this block any more.");
+  if (cells[i].added) cells.splice(i, 1);
+  else cells[i] = { ...cells[i], value: "", removed: true, edited: true, editedAt: nowIso() };
   const updated = withCellsApplied({ ...b, layoutData: { ...b.layoutData, cells }, updatedAt: nowIso() });
   next.blocks = next.blocks.map((x) => (x.id === blockId ? updated : x));
   return next;
@@ -262,7 +378,8 @@ export function freshCellsFor(slot: string, templateKey: string, f: TeaserFigure
     case "listing_facts": {
       // The AI phrases stay as written (they aren't facts).
       const cur = current ? blockCells(current) : [];
-      const phrase = (k: string) => cur.find((c) => c.key === k)?.value ?? null;
+      // The phrases on the block stay as written; a missing one comes from the facts' fixed phrases.
+      const phrase = (k: "financing" | "supportTraining" | "reasonForSale") => cur.find((c) => c.key === k)?.value ?? f.phrases?.[k] ?? null;
       return listingRowsFor(f, s, { financing: phrase("financing"), supportTraining: phrase("supportTraining"), reasonForSale: phrase("reasonForSale") });
     }
     case "operations": {
@@ -274,8 +391,9 @@ export function freshCellsFor(slot: string, templateKey: string, f: TeaserFigure
     case "opportunity":
     case "deal_structure": {
       const cur = current ? blockCells(current) : [];
-      const phrase = (k: string) => cur.find((c) => c.key === k && !c.edited)?.value ?? cur.find((c) => c.key === k)?.value ?? null;
+      const phrase = (k: "reasonForSale" | "transition" | "financing") => cur.find((c) => c.key === k && !c.edited)?.value ?? cur.find((c) => c.key === k)?.value ?? f.phrases?.[k] ?? null;
       const cells = dealCells(f, { reasonForSale: phrase("reasonForSale"), transition: phrase("transition"), financing: phrase("financing") }, slot === "deal_structure" || cur.some((c) => c.key === "financing"));
+      // Lines the broker added stay (mergeCells keeps every edited line).
       return slot === "deal_structure" ? cells.filter((c) => c.key !== "reasonForSale" && c.key !== "transition") : cells;
     }
     default:
