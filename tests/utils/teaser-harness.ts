@@ -105,7 +105,7 @@ export async function startHarness(): Promise<Harness> {
   setReadingStore(reading);
   serve._setTeaserRenditionWriterForTests({
     async insert(row) {
-      reading.renditions.set(row.id, { id: row.id, dealId: row.dealId, mode: row.mode, variant: row.variant, pageIndex: row.pageIndex, createdAt: new Date(now - 60_000) } as never);
+      reading.renditions.set(row.id, { id: row.id, dealId: row.dealId, mode: row.mode, variant: row.variant, pageIndex: row.pageIndex, createdAt: new Date(Date.now() - 3_600_000) } as never);
     },
   });
   // Teaser reading from the memory store.
