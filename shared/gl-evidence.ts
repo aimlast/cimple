@@ -325,17 +325,24 @@ const NOT_ANCHOR_RE = /transaction|deal (?:structure|terms|overview)|asking pric
 const CLOSING_RE = /contact|closing|next steps|disclaimer|confidential/i;
 
 /**
- * The section the DD page follows and the Full/Blind note is attached to,
- * and whether it is an earnings bridge. In order: a waterfall about the
- * earnings; a section about normalisation / add-backs; any waterfall; a
- * section about adjusted EBITDA / SDE; the last financial section; the
- * section before a contact/closing page; the last. Never a transaction,
- * price or closing section, a summary page or the cover (a closing "Asking
- * price & SDE multiple" never takes the page away from the bridge). The last
- * of each kind wins. -1 for none.
+ * What the anchor is: "bridge" — the earnings bridge (it lists the
+ * add-backs); "earnings" — a section about adjusted EBITDA / SDE (it may or
+ * may not list them); "other" — a financial or closing fallback.
  */
-export function glEvidenceAnchorInfo(sections: ReadonlyArray<AnchorSection>): { index: number; bridge: boolean } {
-  if (sections.length === 0) return { index: -1, bridge: false };
+export type GlAnchorKind = "bridge" | "earnings" | "other";
+
+/**
+ * The section the DD page follows and the Full/Blind note is attached to,
+ * and what kind it is. In order: a waterfall about the earnings; a section
+ * about normalisation / add-backs; any waterfall; a section about adjusted
+ * EBITDA / SDE; the last financial section; the section before a
+ * contact/closing page; the last. Never a transaction, price or closing
+ * section, a summary page or the cover (a closing "Asking price & SDE
+ * multiple" never takes the page away from the bridge). The last of each
+ * kind wins. -1 for none.
+ */
+export function glEvidenceAnchorInfo(sections: ReadonlyArray<AnchorSection>): { index: number; kind: GlAnchorKind } {
+  if (sections.length === 0) return { index: -1, kind: "other" };
   const text = (s: AnchorSection) => `${s.sectionKey ?? ""} ${s.sectionTitle ?? ""}`.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2");
   const ok = (s: AnchorSection) => s.layoutType !== "cover_page" && !NOT_ANCHOR_RE.test(text(s));
   const last = (pred: (s: AnchorSection) => boolean) => {
@@ -343,20 +350,20 @@ export function glEvidenceAnchorInfo(sections: ReadonlyArray<AnchorSection>): { 
     return -1;
   };
   const waterfall = (s: AnchorSection) => s.layoutType === "waterfall_chart";
-  const steps: Array<[(s: AnchorSection) => boolean, boolean]> = [
-    [(s) => waterfall(s) && (BRIDGE_STRONG_RE.test(text(s)) || BRIDGE_WEAK_RE.test(text(s))), true],
-    [(s) => BRIDGE_STRONG_RE.test(text(s)), true],
-    [waterfall, true],
-    [(s) => BRIDGE_WEAK_RE.test(text(s)), true],
-    [(s) => FINANCIAL_RE.test(text(s)), false],
+  const steps: Array<[(s: AnchorSection) => boolean, GlAnchorKind]> = [
+    [(s) => waterfall(s) && (BRIDGE_STRONG_RE.test(text(s)) || BRIDGE_WEAK_RE.test(text(s))), "bridge"],
+    [(s) => BRIDGE_STRONG_RE.test(text(s)), "bridge"],
+    [waterfall, "bridge"],
+    [(s) => BRIDGE_WEAK_RE.test(text(s)), "earnings"],
+    [(s) => FINANCIAL_RE.test(text(s)), "other"],
   ];
-  for (const [pred, bridge] of steps) {
+  for (const [pred, kind] of steps) {
     const i = last(pred);
-    if (i >= 0) return { index: i, bridge };
+    if (i >= 0) return { index: i, kind };
   }
   const closing = sections.findIndex((s) => CLOSING_RE.test(text(s)) && s.layoutType !== "cover_page");
-  if (closing > 0) return { index: closing - 1, bridge: false };
-  return { index: sections.length - 1, bridge: false };
+  if (closing > 0) return { index: closing - 1, kind: "other" };
+  return { index: sections.length - 1, kind: "other" };
 }
 
 /** The anchor's index (see glEvidenceAnchorInfo). */
@@ -413,6 +420,35 @@ export function sectionFigures(section: FigureSection): Figure[] {
   walk(data, "");
   for (const t of [section.aiDraftContent, section.brokerEditedContent]) if (t) figuresInText(t, out);
   return out;
+}
+
+/** Add-back wording in a section's rows or text (an "Adjusted EBITDA" table that lists its add-backs is a bridge too). */
+const ADDBACK_WORDS_RE = /add-?backs?|normali[sz]|owner'?s?\s+(?:comp|compensation|pay|salary|vehicle|car)|founder (?:comp|compensation|pay|salary)|personal|one-?time|non-?recurring|discretionary|related[- ]party|family (?:salary|member|wage)|above (?:a |the )?(?:market|replacement)/i;
+
+/** Does a section list add-backs (its rows or text use add-back wording)? The note's own text is not read. */
+export function sectionListsAddbacks(section: FigureSection): boolean {
+  const texts: string[] = [];
+  const walk = (v: unknown, key: string) => {
+    if (key === "_glNote") return;
+    if (typeof v === "string") texts.push(v);
+    else if (Array.isArray(v)) v.forEach((x) => walk(x, ""));
+    else if (v && typeof v === "object") for (const [k, x] of Object.entries(v as Record<string, unknown>)) walk(x, k);
+  };
+  walk(section.layoutData, "");
+  for (const t of [section.aiDraftContent, section.brokerEditedContent]) if (t) texts.push(t);
+  return texts.some((t) => ADDBACK_WORDS_RE.test(t));
+}
+
+/**
+ * May the Full/Blind note sit on this anchor? Under an earnings bridge — or an
+ * adjusted-EBITDA section that lists add-backs — only when it shows every
+ * add-back the note counts (glBridgeShows); a section that lists none (a
+ * table of adjusted EBITDA by year, a financial overview) can't contradict it.
+ */
+export function glNoteFitsAnchor(section: FigureSection | null | undefined, kind: GlAnchorKind, checks: ReadonlyArray<GlBridgeCheck> | null | undefined): boolean {
+  if (kind === "other" || !section) return kind === "other";
+  if (kind === "earnings" && !sectionListsAddbacks(section)) return true;
+  return glBridgeShows(section, checks);
 }
 
 /**

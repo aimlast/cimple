@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { test, done } from "./_harness";
 import { buildBuyerCim } from "../../shared/cim-buyer-view";
-import { glBridgeShows, glEvidenceAnchor, glEvidenceAnchorInfo, sectionFigures, GL_EVIDENCE_LAYOUT, GL_EVIDENCE_SECTION_KEY, type GlEvidencePayload } from "../../shared/gl-evidence";
+import { glBridgeShows, glEvidenceAnchor, glEvidenceAnchorInfo, glNoteFitsAnchor, sectionFigures, sectionListsAddbacks, GL_EVIDENCE_LAYOUT, GL_EVIDENCE_SECTION_KEY, type GlEvidencePayload } from "../../shared/gl-evidence";
 import type { CimSection, CimSectionOverride } from "../../shared/schema";
 
 const deal = { id: "d1", businessName: "Lakeshore Home Comfort Ltd.", blindCodename: "Project Harbour", extractedInfo: { businessName: "Lakeshore Home Comfort Ltd.", city: "Mississauga", ownerName: "Tony Moretti" } };
@@ -130,8 +130,9 @@ await test("GL-R1-12: the anchor prefers the bridge (waterfall / normalisation) 
   // A waterfall about the earnings first, then a normalisation section, then any waterfall.
   assert.equal(glEvidenceAnchor([{ layoutType: "waterfall_chart", sectionTitle: "Revenue walk 2022–2024" }, { sectionTitle: "Normalization Adjustments" }]), 1);
   assert.equal(glEvidenceAnchor([{ sectionTitle: "Normalization Adjustments" }, { layoutType: "waterfall_chart", sectionTitle: "Adjusted EBITDA Bridge" }, { sectionTitle: "Adjusted EBITDA by year" }]), 1);
-  assert.deepEqual(glEvidenceAnchorInfo([{ sectionTitle: "Overview" }, { sectionTitle: "Financial Overview" }]), { index: 1, bridge: false });
-  assert.deepEqual(glEvidenceAnchorInfo([{ sectionKey: "sde_normalization" }]), { index: 0, bridge: true });
+  assert.deepEqual(glEvidenceAnchorInfo([{ sectionTitle: "Overview" }, { sectionTitle: "Financial Overview" }]), { index: 1, kind: "other" });
+  assert.deepEqual(glEvidenceAnchorInfo([{ sectionKey: "sde_normalization" }]), { index: 0, kind: "bridge" });
+  assert.deepEqual(glEvidenceAnchorInfo([{ sectionTitle: "Adjusted EBITDA & Margin", layoutType: "comparison_table" }]), { index: 0, kind: "earnings" });
   assert.equal(glEvidenceAnchor([{ sectionKey: "transactionOverview", sectionTitle: "Transaction Overview" }, { sectionTitle: "Contact" }]), 0, "nothing else → before the contact page");
 });
 
@@ -186,6 +187,26 @@ await test("GL-R1-05: Blind — the same rule on the redacted bridge", () => {
   assert.ok(out.sections.every((x) => !(x.layoutData as any)?._glNote));
   assert.equal(out.glEvidence, null);
   assert.deepEqual(out.leaked, []);
+});
+
+await test("GL-R1-05: an adjusted-EBITDA section that lists no add-backs can't contradict the note; one that lists them must agree", () => {
+  // Pacific's current "Adjusted EBITDA & Margin": revenue, adjusted EBITDA and margins by year — no add-backs.
+  const table = { layoutData: { title: "FY2023 vs FY2024", rows: [
+    { label: "Revenue", left: "$29,180,000", right: "$31,020,000" }, { label: "Adjusted EBITDA", left: "$3,310,000", right: "$3,900,000" },
+    { label: "Adjusted EBITDA Margin", left: "11.3%", right: "12.6%" },
+  ] } };
+  assert.equal(sectionListsAddbacks(table), false);
+  assert.equal(glNoteFitsAnchor(table, "earnings", tracedChecks), true);
+  const listing = { layoutData: { rows: [{ label: "Adjusted EBITDA", value: "$3,900,000" }, { label: "Personal vehicle expenses", value: "$38,000" }] } };
+  assert.equal(sectionListsAddbacks(listing), true);
+  assert.equal(glNoteFitsAnchor(listing, "earnings", tracedChecks), false);
+  assert.equal(glNoteFitsAnchor({ layoutData: stalePacificBridge }, "bridge", tracedChecks), false);
+  assert.equal(glNoteFitsAnchor({ layoutData: {} }, "other", tracedChecks), true, "a fallback section: nothing to contradict");
+  // In the CIM: the Full note sits on the adjusted-EBITDA table.
+  const fin = section({ sectionTitle: "Historical Financial Performance", layoutType: "financial_table", layoutData: { rows: [] } });
+  const adj = section({ sectionTitle: "Adjusted EBITDA & Margin", layoutType: "comparison_table", layoutData: table.layoutData });
+  const out = buildBuyerCim({ deal, accessLevel: "loi", sections: [fin, adj], overrides: [], glEvidence: { ...note("normal"), bridge: tracedChecks } });
+  assert.ok((out.sections.find((x) => x.id === adj.id)!.layoutData as any)._glNote);
 });
 
 done("buyer CIM + GL");

@@ -252,5 +252,25 @@ await test("GL-R1-06: the dialog lists each add-back's 'Why it's added back' exa
   await store.updateTrace(meals.id, { buyerReason: null } as any);
 });
 
+await test("GL-R1-05: buyers still reading a kept copy whose bridge shows other add-backs → the broker is told, Full/Blind may still be ticked (the note appears with the update)", async () => {
+  const st = (await import("../../server/storage")).storage as any;
+  const { memorySnapshotStore, _setSnapshotStoreForTests } = await import("../../server/cim/published-snapshot");
+  const { bridgeMismatch } = await import("../../server/gl/evidence");
+  const kept = memorySnapshotStore();
+  _setSnapshotStoreForTests(kept);
+  const realDeal = st.getDeal;
+  st.getDeal = async (id: string) => { const d = await realDeal(id); return d && id === dealId ? { ...d, isLive: true, cimGeneration: { buyerHold: { servingPublished: true } } } : d; };
+  st.getCimSectionsByDeal = async () => []; // the regenerated draft has no bridge yet
+  await kept.save(dealId, { sections: [{ id: "k1", dealId, sectionKey: "ebitda_normalization", sectionTitle: "EBITDA Normalization & Adjustments", order: 6, layoutType: "waterfall_chart", isVisible: true,
+    layoutData: { items: [{ label: "Personal vehicle expenses", value: 38_000, type: "add" }, { label: "Non-working family salary", value: 62_000, type: "add" }] } }], blindOverrides: [], ddOverrides: [], blindCodename: null } as any);
+  const p = await publishPreview(dealId);
+  assert.equal(p.bridgeMismatch, null, "the broker's current CIM doesn't contradict it");
+  assert.ok(p.warnings.some((w) => /still reading the previous version of your CIM, whose "EBITDA Normalization & Adjustments"/.test(w)), p.warnings.join(" | "));
+  const m = await bridgeMismatch(dealId, (await snapshotFromState(await loadEvidenceState(dealId), { versions: { dd: true, normal: true, blind: true }, leaveOut: [], publishedBy: null })).snapshot);
+  assert.deepEqual(m, { title: "EBITDA Normalization & Adjustments", keptCopy: true });
+  st.getDeal = realDeal;
+  _setSnapshotStoreForTests(null);
+});
+
 cleanup(B.w);
 done("evidence");

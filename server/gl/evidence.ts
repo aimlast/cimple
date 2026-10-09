@@ -25,7 +25,7 @@ import { storage } from "../storage";
 import type { Deal, Document, GlAddbackTrace, GlLedger, GlTraceLink, GlTracing } from "@shared/schema";
 import type { GlTieOutYear, GlTraceComputed, GlYearStatus } from "@shared/gl-types";
 import {
-  GL_EVIDENCE_MAX_ENTRIES, glNoteText, glBridgeShows, glEvidenceAnchorInfo,
+  GL_EVIDENCE_MAX_ENTRIES, glNoteText, glEvidenceAnchorInfo, glNoteFitsAnchor,
   type GlBridgeCheck, type GlBuyerStatus, type GlEvidenceDoc, type GlEvidenceEntry, type GlEvidenceLine, type GlEvidenceMode, type GlEvidencePayload,
   type GlEvidenceTieOut, type GlEvidenceYear, type GlPublishedEvidence, type GlSnapshotEntry, type GlSnapshotLine, type GlSnapshotYear,
 } from "@shared/gl-evidence";
@@ -763,7 +763,8 @@ export async function publishPreview(dealId: string): Promise<PublishPreview> {
     warnings.push(`${r.year}: the ledger's net income differs from the statements${r.difference ? ` by ${money(Math.abs(r.difference))}` : ""} and you haven't accepted it — the Full and Blind notes won't mention ${r.year}.`);
   }
   if (skippedUnreviewed.length) warnings.push(`Not reviewed yet, so left out: ${skippedUnreviewed.join(", ")}.`);
-  const bridge = await bridgeMismatch(dealId, snapshot).catch(() => null);
+  const mismatch = await bridgeMismatch(dealId, snapshot).catch(() => null);
+  const bridge = mismatch && !mismatch.keptCopy ? mismatch.title : null;
   if (bridge) {
     // The note would sit under different numbers: Full and Blind start off, with the reason.
     const reason = `Off because your CIM's earnings bridge ("${bridge}") shows different add-backs or amounts from the ones found in the books — regenerate that section first, or buyers would see two different sets of numbers.`;
@@ -772,6 +773,8 @@ export async function publishPreview(dealId: string): Promise<PublishPreview> {
     d.reasons.normal = reason;
     d.reasons.blind = reason;
     warnings.push(`Your CIM's "${bridge}" shows different add-backs or amounts from the latest financial analysis. Until you regenerate it, the Full and Blind note stays off what buyers see, and due-diligence buyers see this page's amounts next to the older bridge.`);
+  } else if (mismatch?.keptCopy) {
+    warnings.push(`Buyers are still reading the previous version of your CIM, whose "${mismatch.title}" shows other add-backs or amounts. The Full and Blind note stays off what they see until you publish the updated CIM.`);
   } else {
     const stale = await bridgeOlderThanAnalysis(dealId).catch(() => null);
     if (stale) warnings.push(`Your CIM's "${stale}" was written before the latest financial analysis — regenerate it so the bridge and the note show the same add-backs.`);
@@ -825,18 +828,30 @@ async function bridgeOlderThanAnalysis(dealId: string): Promise<string | null> {
 
 /**
  * The CIM's earnings bridge (its title) when it doesn't show the add-backs the
- * note counts — a bridge written from an earlier analysis. null when it does,
- * or when the CIM has no earnings bridge (nothing to contradict).
+ * note counts — a bridge written from an earlier analysis. `keptCopy`: only
+ * the previous version buyers still read (a regenerated live CIM waiting for
+ * the broker) has it. null when the bridge agrees, or when the CIM has no
+ * section that lists add-backs (nothing to contradict).
  */
-export async function bridgeMismatch(dealId: string, snap: GlPublishedEvidence): Promise<string | null> {
+export async function bridgeMismatch(dealId: string, snap: GlPublishedEvidence): Promise<{ title: string; keptCopy: boolean } | null> {
   const checks = bridgeChecksFor(snap.lines.filter((l) => !snap.leaveOut.includes(l.addbackKey)));
   if (checks.length === 0) return null;
-  const sections = await storage.getCimSectionsByDeal(dealId);
-  const visible = (sections ?? []).filter((x) => x.isVisible !== false).sort((a, b) => a.order - b.order);
-  const at = glEvidenceAnchorInfo(visible);
-  if (at.index < 0 || !at.bridge) return null;
-  const sec = visible[at.index];
-  return glBridgeShows(sec, checks) ? null : sec.sectionTitle || "Earnings bridge";
+  const misfit = (sections: ReadonlyArray<{ isVisible?: boolean | null; order: number; sectionTitle?: string | null; sectionKey?: string | null; layoutType?: string | null; layoutData?: unknown; aiDraftContent?: string | null; brokerEditedContent?: string | null }>): string | null => {
+    const visible = sections.filter((x) => x.isVisible !== false).sort((a, b) => a.order - b.order);
+    const at = glEvidenceAnchorInfo(visible);
+    if (at.index < 0) return null;
+    const sec = visible[at.index];
+    return glNoteFitsAnchor(sec, at.kind, checks) ? null : sec.sectionTitle || "Earnings bridge";
+  };
+  const now = misfit((await storage.getCimSectionsByDeal(dealId)) ?? []);
+  if (now) return { title: now, keptCopy: false };
+  // A live CIM under an update: buyers still read the kept copy.
+  const deal = await storage.getDeal(dealId);
+  if (!deal) return null;
+  const { buyerCimRows } = await import("../cim/published-snapshot");
+  const rows = await buyerCimRows(deal, "loi").catch(() => null);
+  const kept = rows?.fromSnapshot ? misfit(rows.sections) : null;
+  return kept ? { title: kept, keptCopy: true } : null;
 }
 
 /** What changed since the broker published: what tightening took away, and what waits for "Update what buyers see". */
@@ -845,7 +860,8 @@ async function changesSincePublished(s: EvidenceState, pub: GlPublishedEvidence)
   const out = [...tight.changes];
   if (pub.versions.normal || pub.versions.blind) {
     const bridge = await bridgeMismatch(s.dealId, tight.snapshot).catch(() => null);
-    if (bridge) out.push(`The Full and Blind note is held back from buyers: your CIM's "${bridge}" shows different add-backs or amounts. Regenerate it, then update what buyers see.`);
+    if (bridge?.keptCopy) out.push(`The Full and Blind note is held back from buyers: the version of your CIM they read ("${bridge.title}") shows other add-backs or amounts. It appears once you publish the updated CIM.`);
+    else if (bridge) out.push(`The Full and Blind note is held back from buyers: your CIM's "${bridge.title}" shows different add-backs or amounts. Regenerate it, then update what buyers see.`);
   }
   const { snapshot: live } = await snapshotFromState(s, { versions: pub.versions, leaveOut: pub.leaveOut, publishedBy: null });
   const was = new Map(tight.snapshot.lines.map((l) => [l.addbackKey, l]));
@@ -891,7 +907,7 @@ export async function publishEvidence(
     }
     if (body.versions.normal || body.versions.blind) {
       const bridge = await bridgeMismatch(dealId, snapshot).catch(() => null);
-      if (bridge) throw new GlPublishError(`Your CIM's "${bridge}" shows different add-backs or amounts from the ones found in the books. Regenerate it before showing the Full or Blind note — or show only the due-diligence page for now.`);
+      if (bridge && !bridge.keptCopy) throw new GlPublishError(`Your CIM's "${bridge.title}" shows different add-backs or amounts from the ones found in the books. Regenerate it before showing the Full or Blind note — or show only the due-diligence page for now.`);
     }
     await glStore().updateTracing(dealId, { published: snapshot, publishedAt: new Date(snapshot.publishedAt), publishedBy: by } as Partial<GlTracing>);
     return { publishedAt: snapshot.publishedAt, versions: snapshot.versions, lines: snapshot.lines.length };
