@@ -1,0 +1,2198 @@
+Brightwater Plumbing & Heating Ltd.
+General Ledger
+"January 1, 2022 - December 31, 2024"
+
+,Date,Transaction Type,Num,Name,Memo/Description,Split,Amount,Balance
+Chequing
+,,,,,Beginning Balance,,,0.00
+,01/28/2022,Deposit,1677,,Deposits - month,-Split-,95979.92,95979.92
+,01/28/2022,Payment,1678,,Payments - month,-Split-,-43816.07,52163.85
+,02/28/2022,Deposit,1679,,Deposits - month,-Split-,95979.92,148143.77
+,02/28/2022,Payment,1680,,Payments - month,-Split-,-43816.07,104327.70
+,03/28/2022,Deposit,1681,,Deposits - month,-Split-,95979.92,200307.62
+,03/28/2022,Payment,1682,,Payments - month,-Split-,-43816.07,156491.55
+,04/28/2022,Deposit,1684,,Deposits - month,-Split-,95979.92,252471.47
+,04/28/2022,Payment,1685,,Payments - month,-Split-,-43816.07,208655.40
+,05/28/2022,Deposit,1686,,Deposits - month,-Split-,95979.92,304635.32
+,05/28/2022,Payment,1687,,Payments - month,-Split-,-43816.07,260819.25
+,06/28/2022,Deposit,1688,,Deposits - month,-Split-,95979.92,356799.17
+,06/28/2022,Payment,1689,,Payments - month,-Split-,-43816.07,312983.10
+,07/28/2022,Deposit,1691,,Deposits - month,-Split-,95979.92,408963.02
+,07/28/2022,Payment,1692,,Payments - month,-Split-,-43816.07,365146.95
+,08/28/2022,Deposit,1693,,Deposits - month,-Split-,95979.92,461126.87
+,08/28/2022,Payment,1694,,Payments - month,-Split-,-43816.07,417310.80
+,09/28/2022,Deposit,1695,,Deposits - month,-Split-,95979.92,513290.72
+,09/28/2022,Payment,1696,,Payments - month,-Split-,-43816.07,469474.65
+,10/28/2022,Deposit,1698,,Deposits - month,-Split-,95979.92,565454.57
+,10/28/2022,Payment,1699,,Payments - month,-Split-,-43816.07,521638.50
+,11/28/2022,Deposit,1700,,Deposits - month,-Split-,95979.92,617618.42
+,11/28/2022,Payment,1701,,Payments - month,-Split-,-43816.07,573802.35
+,12/28/2022,Deposit,1702,,Deposits - month,-Split-,95979.92,669782.27
+,12/28/2022,Payment,1703,,Payments - month,-Split-,-43816.07,625966.20
+,01/28/2023,Deposit,2380,,Deposits - month,-Split-,105020.08,730986.28
+,01/28/2023,Payment,2381,,Payments - month,-Split-,-43503.71,687482.57
+,02/28/2023,Deposit,2382,,Deposits - month,-Split-,105020.08,792502.65
+,02/28/2023,Payment,2383,,Payments - month,-Split-,-43503.71,748998.94
+,03/28/2023,Deposit,2384,,Deposits - month,-Split-,105020.08,854019.02
+,03/28/2023,Payment,2385,,Payments - month,-Split-,-43503.71,810515.31
+,04/28/2023,Deposit,2387,,Deposits - month,-Split-,105020.08,915535.39
+,04/28/2023,Payment,2388,,Payments - month,-Split-,-43503.71,872031.68
+,05/28/2023,Deposit,2389,,Deposits - month,-Split-,105020.08,977051.76
+,05/28/2023,Payment,2390,,Payments - month,-Split-,-43503.71,933548.05
+,06/28/2023,Deposit,2391,,Deposits - month,-Split-,105020.08,1038568.13
+,06/28/2023,Payment,2392,,Payments - month,-Split-,-43503.71,995064.42
+,07/28/2023,Deposit,2394,,Deposits - month,-Split-,105020.08,1100084.50
+,07/28/2023,Payment,2395,,Payments - month,-Split-,-43503.71,1056580.79
+,08/28/2023,Deposit,2396,,Deposits - month,-Split-,105020.08,1161600.87
+,08/28/2023,Payment,2397,,Payments - month,-Split-,-43503.71,1118097.16
+,09/28/2023,Deposit,2398,,Deposits - month,-Split-,105020.08,1223117.24
+,09/28/2023,Payment,2399,,Payments - month,-Split-,-43503.71,1179613.53
+,10/28/2023,Deposit,2401,,Deposits - month,-Split-,105020.08,1284633.61
+,10/28/2023,Payment,2402,,Payments - month,-Split-,-43503.71,1241129.90
+,11/28/2023,Deposit,2403,,Deposits - month,-Split-,105020.08,1346149.98
+,11/28/2023,Payment,2404,,Payments - month,-Split-,-43503.71,1302646.27
+,12/28/2023,Deposit,2405,,Deposits - month,-Split-,105020.08,1407666.35
+,12/28/2023,Payment,2406,,Payments - month,-Split-,-43503.71,1364162.64
+,01/28/2024,Deposit,3089,,Deposits - month,-Split-,90497.25,1454659.89
+,01/28/2024,Payment,3090,,Payments - month,-Split-,-42924.70,1411735.19
+,02/28/2024,Deposit,3091,,Deposits - month,-Split-,90497.25,1502232.44
+,02/28/2024,Payment,3092,,Payments - month,-Split-,-42924.70,1459307.74
+,03/28/2024,Deposit,3093,,Deposits - month,-Split-,90497.25,1549804.99
+,03/28/2024,Payment,3094,,Payments - month,-Split-,-42924.70,1506880.29
+,04/28/2024,Deposit,3096,,Deposits - month,-Split-,90497.25,1597377.54
+,04/28/2024,Payment,3097,,Payments - month,-Split-,-42924.70,1554452.84
+,05/28/2024,Deposit,3098,,Deposits - month,-Split-,90497.25,1644950.09
+,05/28/2024,Payment,3099,,Payments - month,-Split-,-42924.70,1602025.39
+,06/28/2024,Deposit,3100,,Deposits - month,-Split-,90497.25,1692522.64
+,06/28/2024,Payment,3101,,Payments - month,-Split-,-42924.70,1649597.94
+,07/28/2024,Deposit,3103,,Deposits - month,-Split-,90497.25,1740095.19
+,07/28/2024,Payment,3104,,Payments - month,-Split-,-42924.70,1697170.49
+,08/28/2024,Deposit,3105,,Deposits - month,-Split-,90497.25,1787667.74
+,08/28/2024,Payment,3106,,Payments - month,-Split-,-42924.70,1744743.04
+,09/28/2024,Deposit,3107,,Deposits - month,-Split-,90497.25,1835240.29
+,09/28/2024,Payment,3108,,Payments - month,-Split-,-42924.70,1792315.59
+,10/28/2024,Deposit,3110,,Deposits - month,-Split-,90497.25,1882812.84
+,10/28/2024,Payment,3111,,Payments - month,-Split-,-42924.70,1839888.14
+,11/28/2024,Deposit,3112,,Deposits - month,-Split-,90497.25,1930385.39
+,11/28/2024,Payment,3113,,Payments - month,-Split-,-42924.70,1887460.69
+,12/28/2024,Deposit,3114,,Deposits - month,-Split-,90497.25,1977957.94
+,12/28/2024,Payment,3115,,Payments - month,-Split-,-42924.70,1935033.24
+Total for Chequing,,,,,,,1935033.24,
+Accumulated Amortization
+,,,,,Beginning Balance,,,0.00
+,12/31/2022,Journal Entry,1675,,Year-end amortization,Chequing,-28000.00,-28000.00
+,12/31/2024,Journal Entry,3087,,Year-end amortization,Chequing,-31000.00,-59000.00
+Total for Accumulated Amortization,,,,,,,-59000.00,
+HST Payable
+,,,,,Beginning Balance,,,0.00
+,03/30/2022,Payment,1683,Receiver General,HST remittance,Chequing,10278.99,10278.99
+,06/30/2022,Payment,1690,Receiver General,HST remittance,Chequing,10564.80,20843.79
+,09/30/2022,Payment,1697,Receiver General,HST remittance,Chequing,9954.89,30798.68
+,12/30/2022,Payment,1704,Receiver General,HST remittance,Chequing,10330.02,41128.70
+,03/30/2023,Payment,2386,Receiver General,HST remittance,Chequing,10246.63,51375.33
+,06/30/2023,Payment,2393,Receiver General,HST remittance,Chequing,10513.58,61888.91
+,09/30/2023,Payment,2400,Receiver General,HST remittance,Chequing,10461.37,72350.28
+,12/30/2023,Payment,2407,Receiver General,HST remittance,Chequing,10009.52,82359.80
+,03/30/2024,Payment,3095,Receiver General,HST remittance,Chequing,10280.64,92640.44
+,06/30/2024,Payment,3102,Receiver General,HST remittance,Chequing,10279.20,102919.64
+,09/30/2024,Payment,3109,Receiver General,HST remittance,Chequing,10040.00,112959.64
+,12/30/2024,Payment,3116,Receiver General,HST remittance,Chequing,10341.90,123301.54
+Total for HST Payable,,,,,,,123301.54,
+Shareholder Loan
+,,,,,Beginning Balance,,,0.00
+,06/01/2022,Journal Entry,1705,Dan Brightwater,Shareholder advance,Chequing,-10000.00,-10000.00
+,06/01/2023,Journal Entry,2408,Dan Brightwater,Shareholder advance,Chequing,-10000.00,-20000.00
+,06/01/2024,Journal Entry,3117,Dan Brightwater,Shareholder advance,Chequing,-10000.00,-30000.00
+Total for Shareholder Loan,,,,,,,-30000.00,
+Sales - Service
+,01/02/2022,Invoice,1001,Maple Ridge Condos,Service call 2022-01-1,Chequing,-7315.00,-7315.00
+,01/05/2022,Invoice,1002,J. Alvarez,Service call 2022-01-2,Chequing,-3073.00,-10388.00
+,01/08/2022,Invoice,1003,Lakeview Dental Centre,Service call 2022-01-3,Chequing,-7936.00,-18324.00
+,01/11/2022,Invoice,1004,Northgate Schools,Service call 2022-01-4,Chequing,-6842.00,-25166.00
+,01/14/2022,Invoice,1005,P. Nguyen,Service call 2022-01-5,Chequing,-2459.00,-27625.00
+,01/17/2022,Invoice,1006,Oakville Medical Arts,Service call 2022-01-6,Chequing,-2873.00,-30498.00
+,01/20/2022,Invoice,1007,Riverstone Homes,Service call 2022-01-7,Chequing,-8640.00,-39138.00
+,01/23/2022,Invoice,1008,S. Kowalski,Service call 2022-01-8,Chequing,-1909.00,-41047.00
+,02/02/2022,Invoice,1039,J. Alvarez,Service call 2022-02-1,Chequing,-7603.00,-48650.00
+,02/05/2022,Invoice,1040,Lakeview Dental Centre,Service call 2022-02-2,Chequing,-6447.00,-55097.00
+,02/08/2022,Invoice,1041,Northgate Schools,Service call 2022-02-3,Chequing,-5582.00,-60679.00
+,02/11/2022,Invoice,1042,P. Nguyen,Service call 2022-02-4,Chequing,-8670.00,-69349.00
+,02/14/2022,Invoice,1043,Oakville Medical Arts,Service call 2022-02-5,Chequing,-4585.00,-73934.00
+,02/17/2022,Invoice,1044,Riverstone Homes,Service call 2022-02-6,Chequing,-8862.00,-82796.00
+,02/20/2022,Invoice,1045,S. Kowalski,Service call 2022-02-7,Chequing,-8264.00,-91060.00
+,02/23/2022,Invoice,1046,Bayfront Hotel,Service call 2022-02-8,Chequing,-3117.00,-94177.00
+,03/02/2022,Invoice,1077,Lakeview Dental Centre,Service call 2022-03-1,Chequing,-2744.00,-96921.00
+,03/05/2022,Invoice,1078,Northgate Schools,Service call 2022-03-2,Chequing,-4277.00,-101198.00
+,03/08/2022,Invoice,1079,P. Nguyen,Service call 2022-03-3,Chequing,-1551.00,-102749.00
+,03/11/2022,Invoice,1080,Oakville Medical Arts,Service call 2022-03-4,Chequing,-2857.00,-105606.00
+,03/14/2022,Invoice,1081,Riverstone Homes,Service call 2022-03-5,Chequing,-8712.00,-114318.00
+,03/17/2022,Invoice,1082,S. Kowalski,Service call 2022-03-6,Chequing,-4379.00,-118697.00
+,03/20/2022,Invoice,1083,Bayfront Hotel,Service call 2022-03-7,Chequing,-4701.00,-123398.00
+,03/23/2022,Invoice,1084,Halton Property Group,Service call 2022-03-8,Chequing,-6966.00,-130364.00
+,04/02/2022,Invoice,1118,Northgate Schools,Service call 2022-04-1,Chequing,-5377.00,-135741.00
+,04/05/2022,Invoice,1119,P. Nguyen,Service call 2022-04-2,Chequing,-6583.00,-142324.00
+,04/08/2022,Invoice,1120,Oakville Medical Arts,Service call 2022-04-3,Chequing,-6184.00,-148508.00
+,04/11/2022,Invoice,1121,Riverstone Homes,Service call 2022-04-4,Chequing,-5456.00,-153964.00
+,04/14/2022,Invoice,1122,S. Kowalski,Service call 2022-04-5,Chequing,-2439.00,-156403.00
+,04/17/2022,Invoice,1123,Bayfront Hotel,Service call 2022-04-6,Chequing,-5655.00,-162058.00
+,04/20/2022,Invoice,1124,Halton Property Group,Service call 2022-04-7,Chequing,-8736.00,-170794.00
+,04/23/2022,Invoice,1125,Maple Ridge Condos,Service call 2022-04-8,Chequing,-6356.00,-177150.00
+,05/02/2022,Invoice,1156,P. Nguyen,Service call 2022-05-1,Chequing,-8274.00,-185424.00
+,05/05/2022,Invoice,1157,Oakville Medical Arts,Service call 2022-05-2,Chequing,-5292.00,-190716.00
+,05/08/2022,Invoice,1158,Riverstone Homes,Service call 2022-05-3,Chequing,-4064.00,-194780.00
+,05/11/2022,Invoice,1159,S. Kowalski,Service call 2022-05-4,Chequing,-4841.00,-199621.00
+,05/14/2022,Invoice,1160,Bayfront Hotel,Service call 2022-05-5,Chequing,-5057.00,-204678.00
+,05/17/2022,Invoice,1161,Halton Property Group,Service call 2022-05-6,Chequing,-3819.00,-208497.00
+,05/20/2022,Invoice,1162,Maple Ridge Condos,Service call 2022-05-7,Chequing,-2982.00,-211479.00
+,05/23/2022,Invoice,1163,J. Alvarez,Service call 2022-05-8,Chequing,-8609.00,-220088.00
+,06/02/2022,Invoice,1194,Oakville Medical Arts,Service call 2022-06-1,Chequing,-2446.00,-222534.00
+,06/05/2022,Invoice,1195,Riverstone Homes,Service call 2022-06-2,Chequing,-5771.00,-228305.00
+,06/08/2022,Invoice,1196,S. Kowalski,Service call 2022-06-3,Chequing,-5336.00,-233641.00
+,06/11/2022,Invoice,1197,Bayfront Hotel,Service call 2022-06-4,Chequing,-2466.00,-236107.00
+,06/14/2022,Invoice,1198,Halton Property Group,Service call 2022-06-5,Chequing,-7201.00,-243308.00
+,06/17/2022,Invoice,1199,Maple Ridge Condos,Service call 2022-06-6,Chequing,-8053.00,-251361.00
+,06/20/2022,Invoice,1200,J. Alvarez,Service call 2022-06-7,Chequing,-2294.00,-253655.00
+,06/23/2022,Invoice,1201,Lakeview Dental Centre,Service call 2022-06-8,Chequing,-1598.00,-255253.00
+,07/02/2022,Invoice,1236,Riverstone Homes,Service call 2022-07-1,Chequing,-3000.00,-258253.00
+,07/05/2022,Invoice,1237,S. Kowalski,Service call 2022-07-2,Chequing,-1267.00,-259520.00
+,07/08/2022,Invoice,1238,Bayfront Hotel,Service call 2022-07-3,Chequing,-2819.00,-262339.00
+,07/11/2022,Invoice,1239,Halton Property Group,Service call 2022-07-4,Chequing,-3339.00,-265678.00
+,07/14/2022,Invoice,1240,Maple Ridge Condos,Service call 2022-07-5,Chequing,-8465.00,-274143.00
+,07/17/2022,Invoice,1241,J. Alvarez,Service call 2022-07-6,Chequing,-1496.00,-275639.00
+,07/20/2022,Invoice,1242,Lakeview Dental Centre,Service call 2022-07-7,Chequing,-1556.00,-277195.00
+,07/23/2022,Invoice,1243,Northgate Schools,Service call 2022-07-8,Chequing,-3229.00,-280424.00
+,08/02/2022,Invoice,1274,S. Kowalski,Service call 2022-08-1,Chequing,-4686.00,-285110.00
+,08/05/2022,Invoice,1275,Bayfront Hotel,Service call 2022-08-2,Chequing,-1742.00,-286852.00
+,08/08/2022,Invoice,1276,Halton Property Group,Service call 2022-08-3,Chequing,-6978.00,-293830.00
+,08/11/2022,Invoice,1277,Maple Ridge Condos,Service call 2022-08-4,Chequing,-2033.00,-295863.00
+,08/14/2022,Invoice,1278,J. Alvarez,Service call 2022-08-5,Chequing,-7963.00,-303826.00
+,08/17/2022,Invoice,1279,Lakeview Dental Centre,Service call 2022-08-6,Chequing,-4993.00,-308819.00
+,08/20/2022,Invoice,1280,Northgate Schools,Service call 2022-08-7,Chequing,-6880.00,-315699.00
+,08/23/2022,Invoice,1281,P. Nguyen,Service call 2022-08-8,Chequing,-5724.00,-321423.00
+,09/02/2022,Invoice,1312,Bayfront Hotel,Service call 2022-09-1,Chequing,-4118.00,-325541.00
+,09/05/2022,Invoice,1313,Halton Property Group,Service call 2022-09-2,Chequing,-7960.00,-333501.00
+,09/08/2022,Invoice,1314,Maple Ridge Condos,Service call 2022-09-3,Chequing,-8678.00,-342179.00
+,09/11/2022,Invoice,1315,J. Alvarez,Service call 2022-09-4,Chequing,-6767.00,-348946.00
+,09/14/2022,Invoice,1316,Lakeview Dental Centre,Service call 2022-09-5,Chequing,-5711.00,-354657.00
+,09/17/2022,Invoice,1317,Northgate Schools,Service call 2022-09-6,Chequing,-8625.00,-363282.00
+,09/20/2022,Invoice,1318,P. Nguyen,Service call 2022-09-7,Chequing,-4687.00,-367969.00
+,09/23/2022,Invoice,1319,Oakville Medical Arts,Service call 2022-09-8,Chequing,-4117.00,-372086.00
+,10/02/2022,Invoice,1353,Halton Property Group,Service call 2022-10-1,Chequing,-5819.00,-377905.00
+,10/05/2022,Invoice,1354,Maple Ridge Condos,Service call 2022-10-2,Chequing,-3134.00,-381039.00
+,10/08/2022,Invoice,1355,J. Alvarez,Service call 2022-10-3,Chequing,-2827.00,-383866.00
+,10/11/2022,Invoice,1356,Lakeview Dental Centre,Service call 2022-10-4,Chequing,-3157.00,-387023.00
+,10/14/2022,Invoice,1357,Northgate Schools,Service call 2022-10-5,Chequing,-1282.00,-388305.00
+,10/17/2022,Invoice,1358,P. Nguyen,Service call 2022-10-6,Chequing,-4514.00,-392819.00
+,10/20/2022,Invoice,1359,Oakville Medical Arts,Service call 2022-10-7,Chequing,-2028.00,-394847.00
+,10/23/2022,Invoice,1360,Riverstone Homes,Service call 2022-10-8,Chequing,-3078.00,-397925.00
+,11/02/2022,Invoice,1391,Maple Ridge Condos,Service call 2022-11-1,Chequing,-3238.00,-401163.00
+,11/05/2022,Invoice,1392,J. Alvarez,Service call 2022-11-2,Chequing,-8109.00,-409272.00
+,11/08/2022,Invoice,1393,Lakeview Dental Centre,Service call 2022-11-3,Chequing,-2736.00,-412008.00
+,11/11/2022,Invoice,1394,Northgate Schools,Service call 2022-11-4,Chequing,-4587.00,-416595.00
+,11/14/2022,Invoice,1395,P. Nguyen,Service call 2022-11-5,Chequing,-6505.00,-423100.00
+,11/17/2022,Invoice,1396,Oakville Medical Arts,Service call 2022-11-6,Chequing,-1702.00,-424802.00
+,11/20/2022,Invoice,1397,Riverstone Homes,Service call 2022-11-7,Chequing,-8020.00,-432822.00
+,11/23/2022,Invoice,1398,S. Kowalski,Service call 2022-11-8,Chequing,-8854.00,-441676.00
+,12/02/2022,Invoice,1429,J. Alvarez,Service call 2022-12-1,Chequing,-5209.00,-446885.00
+,12/05/2022,Invoice,1430,Lakeview Dental Centre,Service call 2022-12-2,Chequing,-5200.00,-452085.00
+,12/08/2022,Invoice,1431,Northgate Schools,Service call 2022-12-3,Chequing,-7086.00,-459171.00
+,12/11/2022,Invoice,1432,P. Nguyen,Service call 2022-12-4,Chequing,-6807.00,-465978.00
+,12/14/2022,Invoice,1433,Oakville Medical Arts,Service call 2022-12-5,Chequing,-6672.00,-472650.00
+,12/17/2022,Invoice,1434,Riverstone Homes,Service call 2022-12-6,Chequing,-1425.00,-474075.00
+,12/20/2022,Invoice,1435,S. Kowalski,Service call 2022-12-7,Chequing,-5763.00,-479838.00
+,12/23/2022,Invoice,1436,Bayfront Hotel,Service call 2022-12-8,Chequing,-5623.00,-485461.00
+,01/02/2023,Invoice,1706,Maple Ridge Condos,Service call 2023-01-1,Chequing,-8607.00,-494068.00
+,01/05/2023,Invoice,1707,J. Alvarez,Service call 2023-01-2,Chequing,-2064.00,-496132.00
+,01/08/2023,Invoice,1708,Lakeview Dental Centre,Service call 2023-01-3,Chequing,-6278.00,-502410.00
+,01/11/2023,Invoice,1709,Northgate Schools,Service call 2023-01-4,Chequing,-8065.00,-510475.00
+,01/14/2023,Invoice,1710,P. Nguyen,Service call 2023-01-5,Chequing,-8681.00,-519156.00
+,01/17/2023,Invoice,1711,Oakville Medical Arts,Service call 2023-01-6,Chequing,-5376.00,-524532.00
+,01/20/2023,Invoice,1712,Riverstone Homes,Service call 2023-01-7,Chequing,-6711.00,-531243.00
+,01/23/2023,Invoice,1713,S. Kowalski,Service call 2023-01-8,Chequing,-8732.00,-539975.00
+,02/02/2023,Invoice,1744,J. Alvarez,Service call 2023-02-1,Chequing,-7217.00,-547192.00
+,02/05/2023,Invoice,1745,Lakeview Dental Centre,Service call 2023-02-2,Chequing,-2816.00,-550008.00
+,02/08/2023,Invoice,1746,Northgate Schools,Service call 2023-02-3,Chequing,-8567.00,-558575.00
+,02/11/2023,Invoice,1747,P. Nguyen,Service call 2023-02-4,Chequing,-8661.00,-567236.00
+,02/14/2023,Invoice,1748,Oakville Medical Arts,Service call 2023-02-5,Chequing,-4252.00,-571488.00
+,02/17/2023,Invoice,1749,Riverstone Homes,Service call 2023-02-6,Chequing,-5293.00,-576781.00
+,02/20/2023,Invoice,1750,S. Kowalski,Service call 2023-02-7,Chequing,-4690.00,-581471.00
+,02/23/2023,Invoice,1751,Bayfront Hotel,Service call 2023-02-8,Chequing,-2382.00,-583853.00
+,03/02/2023,Invoice,1782,Lakeview Dental Centre,Service call 2023-03-1,Chequing,-6343.00,-590196.00
+,03/05/2023,Invoice,1783,Northgate Schools,Service call 2023-03-2,Chequing,-6169.00,-596365.00
+,03/08/2023,Invoice,1784,P. Nguyen,Service call 2023-03-3,Chequing,-4333.00,-600698.00
+,03/11/2023,Invoice,1785,Oakville Medical Arts,Service call 2023-03-4,Chequing,-3626.00,-604324.00
+,03/14/2023,Invoice,1786,Riverstone Homes,Service call 2023-03-5,Chequing,-3480.00,-607804.00
+,03/17/2023,Invoice,1787,S. Kowalski,Service call 2023-03-6,Chequing,-2854.00,-610658.00
+,03/20/2023,Invoice,1788,Bayfront Hotel,Service call 2023-03-7,Chequing,-1919.00,-612577.00
+,03/23/2023,Invoice,1789,Halton Property Group,Service call 2023-03-8,Chequing,-3182.00,-615759.00
+,04/02/2023,Invoice,1823,Northgate Schools,Service call 2023-04-1,Chequing,-1887.00,-617646.00
+,04/05/2023,Invoice,1824,P. Nguyen,Service call 2023-04-2,Chequing,-5138.00,-622784.00
+,04/08/2023,Invoice,1825,Oakville Medical Arts,Service call 2023-04-3,Chequing,-7872.00,-630656.00
+,04/11/2023,Invoice,1826,Riverstone Homes,Service call 2023-04-4,Chequing,-5860.00,-636516.00
+,04/14/2023,Invoice,1827,S. Kowalski,Service call 2023-04-5,Chequing,-8555.00,-645071.00
+,04/17/2023,Invoice,1828,Bayfront Hotel,Service call 2023-04-6,Chequing,-8076.00,-653147.00
+,04/20/2023,Invoice,1829,Halton Property Group,Service call 2023-04-7,Chequing,-7262.00,-660409.00
+,04/23/2023,Invoice,1830,Maple Ridge Condos,Service call 2023-04-8,Chequing,-8402.00,-668811.00
+,05/02/2023,Invoice,1861,P. Nguyen,Service call 2023-05-1,Chequing,-4908.00,-673719.00
+,05/05/2023,Invoice,1862,Oakville Medical Arts,Service call 2023-05-2,Chequing,-1579.00,-675298.00
+,05/08/2023,Invoice,1863,Riverstone Homes,Service call 2023-05-3,Chequing,-2840.00,-678138.00
+,05/11/2023,Invoice,1864,S. Kowalski,Service call 2023-05-4,Chequing,-4593.00,-682731.00
+,05/14/2023,Invoice,1865,Bayfront Hotel,Service call 2023-05-5,Chequing,-1821.00,-684552.00
+,05/17/2023,Invoice,1866,Halton Property Group,Service call 2023-05-6,Chequing,-4273.00,-688825.00
+,05/20/2023,Invoice,1867,Maple Ridge Condos,Service call 2023-05-7,Chequing,-1799.00,-690624.00
+,05/23/2023,Invoice,1868,J. Alvarez,Service call 2023-05-8,Chequing,-7400.00,-698024.00
+,06/02/2023,Invoice,1899,Oakville Medical Arts,Service call 2023-06-1,Chequing,-4677.00,-702701.00
+,06/05/2023,Invoice,1900,Riverstone Homes,Service call 2023-06-2,Chequing,-5721.00,-708422.00
+,06/08/2023,Invoice,1901,S. Kowalski,Service call 2023-06-3,Chequing,-2320.00,-710742.00
+,06/11/2023,Invoice,1902,Bayfront Hotel,Service call 2023-06-4,Chequing,-7692.00,-718434.00
+,06/14/2023,Invoice,1903,Halton Property Group,Service call 2023-06-5,Chequing,-3412.00,-721846.00
+,06/17/2023,Invoice,1904,Maple Ridge Condos,Service call 2023-06-6,Chequing,-4303.00,-726149.00
+,06/20/2023,Invoice,1905,J. Alvarez,Service call 2023-06-7,Chequing,-8118.00,-734267.00
+,06/23/2023,Invoice,1906,Lakeview Dental Centre,Service call 2023-06-8,Chequing,-2156.00,-736423.00
+,07/02/2023,Invoice,1941,Riverstone Homes,Service call 2023-07-1,Chequing,-1293.00,-737716.00
+,07/05/2023,Invoice,1942,S. Kowalski,Service call 2023-07-2,Chequing,-5516.00,-743232.00
+,07/08/2023,Invoice,1943,Bayfront Hotel,Service call 2023-07-3,Chequing,-5996.00,-749228.00
+,07/11/2023,Invoice,1944,Halton Property Group,Service call 2023-07-4,Chequing,-3814.00,-753042.00
+,07/14/2023,Invoice,1945,Maple Ridge Condos,Service call 2023-07-5,Chequing,-3202.00,-756244.00
+,07/17/2023,Invoice,1946,J. Alvarez,Service call 2023-07-6,Chequing,-7178.00,-763422.00
+,07/20/2023,Invoice,1947,Lakeview Dental Centre,Service call 2023-07-7,Chequing,-1508.00,-764930.00
+,07/23/2023,Invoice,1948,Northgate Schools,Service call 2023-07-8,Chequing,-3440.00,-768370.00
+,08/02/2023,Invoice,1979,S. Kowalski,Service call 2023-08-1,Chequing,-1550.00,-769920.00
+,08/05/2023,Invoice,1980,Bayfront Hotel,Service call 2023-08-2,Chequing,-4694.00,-774614.00
+,08/08/2023,Invoice,1981,Halton Property Group,Service call 2023-08-3,Chequing,-4628.00,-779242.00
+,08/11/2023,Invoice,1982,Maple Ridge Condos,Service call 2023-08-4,Chequing,-8806.00,-788048.00
+,08/14/2023,Invoice,1983,J. Alvarez,Service call 2023-08-5,Chequing,-4438.00,-792486.00
+,08/17/2023,Invoice,1984,Lakeview Dental Centre,Service call 2023-08-6,Chequing,-7872.00,-800358.00
+,08/20/2023,Invoice,1985,Northgate Schools,Service call 2023-08-7,Chequing,-4902.00,-805260.00
+,08/23/2023,Invoice,1986,P. Nguyen,Service call 2023-08-8,Chequing,-5500.00,-810760.00
+,09/02/2023,Invoice,2017,Bayfront Hotel,Service call 2023-09-1,Chequing,-5172.00,-815932.00
+,09/05/2023,Invoice,2018,Halton Property Group,Service call 2023-09-2,Chequing,-4573.00,-820505.00
+,09/08/2023,Invoice,2019,Maple Ridge Condos,Service call 2023-09-3,Chequing,-1270.00,-821775.00
+,09/11/2023,Invoice,2020,J. Alvarez,Service call 2023-09-4,Chequing,-2357.00,-824132.00
+,09/14/2023,Invoice,2021,Lakeview Dental Centre,Service call 2023-09-5,Chequing,-2295.00,-826427.00
+,09/17/2023,Invoice,2022,Northgate Schools,Service call 2023-09-6,Chequing,-2893.00,-829320.00
+,09/20/2023,Invoice,2023,P. Nguyen,Service call 2023-09-7,Chequing,-6092.00,-835412.00
+,09/23/2023,Invoice,2024,Oakville Medical Arts,Service call 2023-09-8,Chequing,-2742.00,-838154.00
+,10/02/2023,Invoice,2058,Halton Property Group,Service call 2023-10-1,Chequing,-8887.00,-847041.00
+,10/05/2023,Invoice,2059,Maple Ridge Condos,Service call 2023-10-2,Chequing,-6824.00,-853865.00
+,10/08/2023,Invoice,2060,J. Alvarez,Service call 2023-10-3,Chequing,-7577.00,-861442.00
+,10/11/2023,Invoice,2061,Lakeview Dental Centre,Service call 2023-10-4,Chequing,-7634.00,-869076.00
+,10/14/2023,Invoice,2062,Northgate Schools,Service call 2023-10-5,Chequing,-4329.00,-873405.00
+,10/17/2023,Invoice,2063,P. Nguyen,Service call 2023-10-6,Chequing,-2991.00,-876396.00
+,10/20/2023,Invoice,2064,Oakville Medical Arts,Service call 2023-10-7,Chequing,-4106.00,-880502.00
+,10/23/2023,Invoice,2065,Riverstone Homes,Service call 2023-10-8,Chequing,-4360.00,-884862.00
+,11/02/2023,Invoice,2096,Maple Ridge Condos,Service call 2023-11-1,Chequing,-6615.00,-891477.00
+,11/05/2023,Invoice,2097,J. Alvarez,Service call 2023-11-2,Chequing,-7237.00,-898714.00
+,11/08/2023,Invoice,2098,Lakeview Dental Centre,Service call 2023-11-3,Chequing,-3393.00,-902107.00
+,11/11/2023,Invoice,2099,Northgate Schools,Service call 2023-11-4,Chequing,-6279.00,-908386.00
+,11/14/2023,Invoice,2100,P. Nguyen,Service call 2023-11-5,Chequing,-6241.00,-914627.00
+,11/17/2023,Invoice,2101,Oakville Medical Arts,Service call 2023-11-6,Chequing,-1663.00,-916290.00
+,11/20/2023,Invoice,2102,Riverstone Homes,Service call 2023-11-7,Chequing,-6315.00,-922605.00
+,11/23/2023,Invoice,2103,S. Kowalski,Service call 2023-11-8,Chequing,-2847.00,-925452.00
+,12/02/2023,Invoice,2134,J. Alvarez,Service call 2023-12-1,Chequing,-4402.00,-929854.00
+,12/05/2023,Invoice,2135,Lakeview Dental Centre,Service call 2023-12-2,Chequing,-5857.00,-935711.00
+,12/08/2023,Invoice,2136,Northgate Schools,Service call 2023-12-3,Chequing,-7336.00,-943047.00
+,12/11/2023,Invoice,2137,P. Nguyen,Service call 2023-12-4,Chequing,-2157.00,-945204.00
+,12/14/2023,Invoice,2138,Oakville Medical Arts,Service call 2023-12-5,Chequing,-6601.00,-951805.00
+,12/17/2023,Invoice,2139,Riverstone Homes,Service call 2023-12-6,Chequing,-5221.00,-957026.00
+,12/20/2023,Invoice,2140,S. Kowalski,Service call 2023-12-7,Chequing,-6936.00,-963962.00
+,12/23/2023,Invoice,2141,Bayfront Hotel,Service call 2023-12-8,Chequing,-4646.00,-968608.00
+,01/02/2024,Invoice,2409,Maple Ridge Condos,Service call 2024-01-1,Chequing,-4434.00,-973042.00
+,01/05/2024,Invoice,2410,J. Alvarez,Service call 2024-01-2,Chequing,-3430.00,-976472.00
+,01/08/2024,Invoice,2411,Lakeview Dental Centre,Service call 2024-01-3,Chequing,-6332.00,-982804.00
+,01/11/2024,Invoice,2412,Northgate Schools,Service call 2024-01-4,Chequing,-8583.00,-991387.00
+,01/14/2024,Invoice,2413,P. Nguyen,Service call 2024-01-5,Chequing,-7515.00,-998902.00
+,01/17/2024,Invoice,2414,Oakville Medical Arts,Service call 2024-01-6,Chequing,-5992.00,-1004894.00
+,01/20/2024,Invoice,2415,Riverstone Homes,Service call 2024-01-7,Chequing,-6802.00,-1011696.00
+,01/23/2024,Invoice,2416,S. Kowalski,Service call 2024-01-8,Chequing,-7823.00,-1019519.00
+,02/02/2024,Invoice,2447,J. Alvarez,Service call 2024-02-1,Chequing,-6575.00,-1026094.00
+,02/05/2024,Invoice,2448,Lakeview Dental Centre,Service call 2024-02-2,Chequing,-2909.00,-1029003.00
+,02/08/2024,Invoice,2449,Northgate Schools,Service call 2024-02-3,Chequing,-1568.00,-1030571.00
+,02/11/2024,Invoice,2450,P. Nguyen,Service call 2024-02-4,Chequing,-6668.00,-1037239.00
+,02/14/2024,Invoice,2451,Oakville Medical Arts,Service call 2024-02-5,Chequing,-3283.00,-1040522.00
+,02/17/2024,Invoice,2452,Riverstone Homes,Service call 2024-02-6,Chequing,-5927.00,-1046449.00
+,02/20/2024,Invoice,2453,S. Kowalski,Service call 2024-02-7,Chequing,-3945.00,-1050394.00
+,02/23/2024,Invoice,2454,Bayfront Hotel,Service call 2024-02-8,Chequing,-5434.00,-1055828.00
+,03/02/2024,Invoice,2485,Lakeview Dental Centre,Service call 2024-03-1,Chequing,-8967.00,-1064795.00
+,03/05/2024,Invoice,2486,Northgate Schools,Service call 2024-03-2,Chequing,-8582.00,-1073377.00
+,03/08/2024,Invoice,2487,P. Nguyen,Service call 2024-03-3,Chequing,-2299.00,-1075676.00
+,03/11/2024,Invoice,2488,Oakville Medical Arts,Service call 2024-03-4,Chequing,-2815.00,-1078491.00
+,03/14/2024,Invoice,2489,Riverstone Homes,Service call 2024-03-5,Chequing,-3334.00,-1081825.00
+,03/17/2024,Invoice,2490,S. Kowalski,Service call 2024-03-6,Chequing,-5225.00,-1087050.00
+,03/20/2024,Invoice,2491,Bayfront Hotel,Service call 2024-03-7,Chequing,-6029.00,-1093079.00
+,03/23/2024,Invoice,2492,Halton Property Group,Service call 2024-03-8,Chequing,-4446.00,-1097525.00
+,04/02/2024,Invoice,2526,Northgate Schools,Service call 2024-04-1,Chequing,-1844.00,-1099369.00
+,04/05/2024,Invoice,2527,P. Nguyen,Service call 2024-04-2,Chequing,-2197.00,-1101566.00
+,04/08/2024,Invoice,2528,Oakville Medical Arts,Service call 2024-04-3,Chequing,-5204.00,-1106770.00
+,04/11/2024,Invoice,2529,Riverstone Homes,Service call 2024-04-4,Chequing,-2575.00,-1109345.00
+,04/14/2024,Invoice,2530,S. Kowalski,Service call 2024-04-5,Chequing,-4012.00,-1113357.00
+,04/17/2024,Invoice,2531,Bayfront Hotel,Service call 2024-04-6,Chequing,-4586.00,-1117943.00
+,04/20/2024,Invoice,2532,Halton Property Group,Service call 2024-04-7,Chequing,-8967.00,-1126910.00
+,04/23/2024,Invoice,2533,Maple Ridge Condos,Service call 2024-04-8,Chequing,-1384.00,-1128294.00
+,05/02/2024,Invoice,2564,P. Nguyen,Service call 2024-05-1,Chequing,-3527.00,-1131821.00
+,05/05/2024,Invoice,2565,Oakville Medical Arts,Service call 2024-05-2,Chequing,-8181.00,-1140002.00
+,05/08/2024,Invoice,2566,Riverstone Homes,Service call 2024-05-3,Chequing,-4280.00,-1144282.00
+,05/11/2024,Invoice,2567,S. Kowalski,Service call 2024-05-4,Chequing,-5699.00,-1149981.00
+,05/14/2024,Invoice,2568,Bayfront Hotel,Service call 2024-05-5,Chequing,-4063.00,-1154044.00
+,05/17/2024,Invoice,2569,Halton Property Group,Service call 2024-05-6,Chequing,-4229.00,-1158273.00
+,05/20/2024,Invoice,2570,Maple Ridge Condos,Service call 2024-05-7,Chequing,-5526.00,-1163799.00
+,05/23/2024,Invoice,2571,J. Alvarez,Service call 2024-05-8,Chequing,-4943.00,-1168742.00
+,06/02/2024,Invoice,2602,Oakville Medical Arts,Service call 2024-06-1,Chequing,-8495.00,-1177237.00
+,06/05/2024,Invoice,2603,Riverstone Homes,Service call 2024-06-2,Chequing,-7660.00,-1184897.00
+,06/08/2024,Invoice,2604,S. Kowalski,Service call 2024-06-3,Chequing,-5761.00,-1190658.00
+,06/11/2024,Invoice,2605,Bayfront Hotel,Service call 2024-06-4,Chequing,-4095.00,-1194753.00
+,06/14/2024,Invoice,2606,Halton Property Group,Service call 2024-06-5,Chequing,-7425.00,-1202178.00
+,06/17/2024,Invoice,2607,Maple Ridge Condos,Service call 2024-06-6,Chequing,-4205.00,-1206383.00
+,06/20/2024,Invoice,2608,J. Alvarez,Service call 2024-06-7,Chequing,-7878.00,-1214261.00
+,06/23/2024,Invoice,2609,Lakeview Dental Centre,Service call 2024-06-8,Chequing,-4981.00,-1219242.00
+,07/02/2024,Invoice,2644,Riverstone Homes,Service call 2024-07-1,Chequing,-4301.00,-1223543.00
+,07/05/2024,Invoice,2645,S. Kowalski,Service call 2024-07-2,Chequing,-4423.00,-1227966.00
+,07/08/2024,Invoice,2646,Bayfront Hotel,Service call 2024-07-3,Chequing,-4586.00,-1232552.00
+,07/11/2024,Invoice,2647,Halton Property Group,Service call 2024-07-4,Chequing,-1276.00,-1233828.00
+,07/14/2024,Invoice,2648,Maple Ridge Condos,Service call 2024-07-5,Chequing,-8257.00,-1242085.00
+,07/17/2024,Invoice,2649,J. Alvarez,Service call 2024-07-6,Chequing,-8716.00,-1250801.00
+,07/20/2024,Invoice,2650,Lakeview Dental Centre,Service call 2024-07-7,Chequing,-8275.00,-1259076.00
+,07/23/2024,Invoice,2651,Northgate Schools,Service call 2024-07-8,Chequing,-2721.00,-1261797.00
+,08/02/2024,Invoice,2682,S. Kowalski,Service call 2024-08-1,Chequing,-4414.00,-1266211.00
+,08/05/2024,Invoice,2683,Bayfront Hotel,Service call 2024-08-2,Chequing,-7877.00,-1274088.00
+,08/08/2024,Invoice,2684,Halton Property Group,Service call 2024-08-3,Chequing,-5809.00,-1279897.00
+,08/11/2024,Invoice,2685,Maple Ridge Condos,Service call 2024-08-4,Chequing,-7473.00,-1287370.00
+,08/14/2024,Invoice,2686,J. Alvarez,Service call 2024-08-5,Chequing,-8838.00,-1296208.00
+,08/17/2024,Invoice,2687,Lakeview Dental Centre,Service call 2024-08-6,Chequing,-8804.00,-1305012.00
+,08/20/2024,Invoice,2688,Northgate Schools,Service call 2024-08-7,Chequing,-5599.00,-1310611.00
+,08/23/2024,Invoice,2689,P. Nguyen,Service call 2024-08-8,Chequing,-3859.00,-1314470.00
+,09/02/2024,Invoice,2720,Bayfront Hotel,Service call 2024-09-1,Chequing,-7617.00,-1322087.00
+,09/05/2024,Invoice,2721,Halton Property Group,Service call 2024-09-2,Chequing,-5387.00,-1327474.00
+,09/08/2024,Invoice,2722,Maple Ridge Condos,Service call 2024-09-3,Chequing,-3796.00,-1331270.00
+,09/11/2024,Invoice,2723,J. Alvarez,Service call 2024-09-4,Chequing,-7612.00,-1338882.00
+,09/14/2024,Invoice,2724,Lakeview Dental Centre,Service call 2024-09-5,Chequing,-3063.00,-1341945.00
+,09/17/2024,Invoice,2725,Northgate Schools,Service call 2024-09-6,Chequing,-8428.00,-1350373.00
+,09/20/2024,Invoice,2726,P. Nguyen,Service call 2024-09-7,Chequing,-4314.00,-1354687.00
+,09/23/2024,Invoice,2727,Oakville Medical Arts,Service call 2024-09-8,Chequing,-1591.00,-1356278.00
+,10/02/2024,Invoice,2761,Halton Property Group,Service call 2024-10-1,Chequing,-2690.00,-1358968.00
+,10/05/2024,Invoice,2762,Maple Ridge Condos,Service call 2024-10-2,Chequing,-4854.00,-1363822.00
+,10/08/2024,Invoice,2763,J. Alvarez,Service call 2024-10-3,Chequing,-6823.00,-1370645.00
+,10/11/2024,Invoice,2764,Lakeview Dental Centre,Service call 2024-10-4,Chequing,-3600.00,-1374245.00
+,10/14/2024,Invoice,2765,Northgate Schools,Service call 2024-10-5,Chequing,-2140.00,-1376385.00
+,10/17/2024,Invoice,2766,P. Nguyen,Service call 2024-10-6,Chequing,-5623.00,-1382008.00
+,10/20/2024,Invoice,2767,Oakville Medical Arts,Service call 2024-10-7,Chequing,-8977.00,-1390985.00
+,10/23/2024,Invoice,2768,Riverstone Homes,Service call 2024-10-8,Chequing,-7618.00,-1398603.00
+,11/02/2024,Invoice,2799,Maple Ridge Condos,Service call 2024-11-1,Chequing,-6364.00,-1404967.00
+,11/05/2024,Invoice,2800,J. Alvarez,Service call 2024-11-2,Chequing,-8050.00,-1413017.00
+,11/08/2024,Invoice,2801,Lakeview Dental Centre,Service call 2024-11-3,Chequing,-1921.00,-1414938.00
+,11/11/2024,Invoice,2802,Northgate Schools,Service call 2024-11-4,Chequing,-3575.00,-1418513.00
+,11/14/2024,Invoice,2803,P. Nguyen,Service call 2024-11-5,Chequing,-1349.00,-1419862.00
+,11/17/2024,Invoice,2804,Oakville Medical Arts,Service call 2024-11-6,Chequing,-7415.00,-1427277.00
+,11/20/2024,Invoice,2805,Riverstone Homes,Service call 2024-11-7,Chequing,-4331.00,-1431608.00
+,11/23/2024,Invoice,2806,S. Kowalski,Service call 2024-11-8,Chequing,-6854.00,-1438462.00
+,12/02/2024,Invoice,2837,J. Alvarez,Service call 2024-12-1,Chequing,-2679.00,-1441141.00
+,12/05/2024,Invoice,2838,Lakeview Dental Centre,Service call 2024-12-2,Chequing,-4822.00,-1445963.00
+,12/08/2024,Invoice,2839,Northgate Schools,Service call 2024-12-3,Chequing,-7230.00,-1453193.00
+,12/11/2024,Invoice,2840,P. Nguyen,Service call 2024-12-4,Chequing,-1949.00,-1455142.00
+,12/14/2024,Invoice,2841,Oakville Medical Arts,Service call 2024-12-5,Chequing,-1466.00,-1456608.00
+,12/17/2024,Invoice,2842,Riverstone Homes,Service call 2024-12-6,Chequing,-5262.00,-1461870.00
+,12/20/2024,Invoice,2843,S. Kowalski,Service call 2024-12-7,Chequing,-5647.00,-1467517.00
+,12/23/2024,Invoice,2844,Bayfront Hotel,Service call 2024-12-8,Chequing,-4626.00,-1472143.00
+Total for Sales - Service,,,,,,,-1472143.00,
+Sales - Installations
+,01/05/2022,Invoice,1009,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-19540.00,-19540.00
+,01/13/2022,Invoice,1010,Northgate Schools,Furnace / boiler installation,Chequing,-21484.00,-41024.00
+,01/21/2022,Invoice,1011,P. Nguyen,Furnace / boiler installation,Chequing,-22415.00,-63439.00
+,02/05/2022,Invoice,1047,Oakville Medical Arts,Furnace / boiler installation,Chequing,-29133.00,-92572.00
+,02/13/2022,Invoice,1048,Riverstone Homes,Furnace / boiler installation,Chequing,-15788.00,-108360.00
+,02/21/2022,Invoice,1049,S. Kowalski,Furnace / boiler installation,Chequing,-15298.00,-123658.00
+,03/05/2022,Invoice,1085,Bayfront Hotel,Furnace / boiler installation,Chequing,-16043.00,-139701.00
+,03/13/2022,Invoice,1086,Halton Property Group,Furnace / boiler installation,Chequing,-26755.00,-166456.00
+,03/21/2022,Invoice,1087,Maple Ridge Condos,Furnace / boiler installation,Chequing,-15090.00,-181546.00
+,04/05/2022,Invoice,1126,J. Alvarez,Furnace / boiler installation,Chequing,-12387.00,-193933.00
+,04/13/2022,Invoice,1127,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-27098.00,-221031.00
+,04/21/2022,Invoice,1128,Northgate Schools,Furnace / boiler installation,Chequing,-9514.00,-230545.00
+,05/05/2022,Invoice,1164,P. Nguyen,Furnace / boiler installation,Chequing,-27710.00,-258255.00
+,05/13/2022,Invoice,1165,Oakville Medical Arts,Furnace / boiler installation,Chequing,-15967.00,-274222.00
+,05/21/2022,Invoice,1166,Riverstone Homes,Furnace / boiler installation,Chequing,-13978.00,-288200.00
+,06/05/2022,Invoice,1202,S. Kowalski,Furnace / boiler installation,Chequing,-24002.00,-312202.00
+,06/13/2022,Invoice,1203,Bayfront Hotel,Furnace / boiler installation,Chequing,-11478.00,-323680.00
+,06/21/2022,Invoice,1204,Halton Property Group,Furnace / boiler installation,Chequing,-23018.00,-346698.00
+,07/05/2022,Invoice,1244,Maple Ridge Condos,Furnace / boiler installation,Chequing,-17891.00,-364589.00
+,07/13/2022,Invoice,1245,J. Alvarez,Furnace / boiler installation,Chequing,-23080.00,-387669.00
+,07/21/2022,Invoice,1246,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-16844.00,-404513.00
+,08/05/2022,Invoice,1282,Northgate Schools,Furnace / boiler installation,Chequing,-10078.00,-414591.00
+,08/13/2022,Invoice,1283,P. Nguyen,Furnace / boiler installation,Chequing,-11892.00,-426483.00
+,08/21/2022,Invoice,1284,Oakville Medical Arts,Furnace / boiler installation,Chequing,-15295.00,-441778.00
+,09/05/2022,Invoice,1320,Riverstone Homes,Furnace / boiler installation,Chequing,-16346.00,-458124.00
+,09/13/2022,Invoice,1321,S. Kowalski,Furnace / boiler installation,Chequing,-15760.00,-473884.00
+,09/21/2022,Invoice,1322,Bayfront Hotel,Furnace / boiler installation,Chequing,-18526.00,-492410.00
+,10/05/2022,Invoice,1361,Halton Property Group,Furnace / boiler installation,Chequing,-28995.00,-521405.00
+,10/13/2022,Invoice,1362,Maple Ridge Condos,Furnace / boiler installation,Chequing,-8615.00,-530020.00
+,10/21/2022,Invoice,1363,J. Alvarez,Furnace / boiler installation,Chequing,-12032.00,-542052.00
+,11/05/2022,Invoice,1399,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-21217.00,-563269.00
+,11/13/2022,Invoice,1400,Northgate Schools,Furnace / boiler installation,Chequing,-26253.00,-589522.00
+,11/21/2022,Invoice,1401,P. Nguyen,Furnace / boiler installation,Chequing,-8213.00,-597735.00
+,12/05/2022,Invoice,1437,Oakville Medical Arts,Furnace / boiler installation,Chequing,-15111.00,-612846.00
+,12/13/2022,Invoice,1438,Riverstone Homes,Furnace / boiler installation,Chequing,-27774.00,-640620.00
+,12/21/2022,Invoice,1439,S. Kowalski,Furnace / boiler installation,Chequing,-25678.00,-666298.00
+,01/05/2023,Invoice,1714,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-14790.00,-681088.00
+,01/13/2023,Invoice,1715,Northgate Schools,Furnace / boiler installation,Chequing,-16244.00,-697332.00
+,01/21/2023,Invoice,1716,P. Nguyen,Furnace / boiler installation,Chequing,-27865.00,-725197.00
+,02/05/2023,Invoice,1752,Oakville Medical Arts,Furnace / boiler installation,Chequing,-8721.00,-733918.00
+,02/13/2023,Invoice,1753,Riverstone Homes,Furnace / boiler installation,Chequing,-29494.00,-763412.00
+,02/21/2023,Invoice,1754,S. Kowalski,Furnace / boiler installation,Chequing,-16795.00,-780207.00
+,03/05/2023,Invoice,1790,Bayfront Hotel,Furnace / boiler installation,Chequing,-26590.00,-806797.00
+,03/13/2023,Invoice,1791,Halton Property Group,Furnace / boiler installation,Chequing,-25834.00,-832631.00
+,03/21/2023,Invoice,1792,Maple Ridge Condos,Furnace / boiler installation,Chequing,-29886.00,-862517.00
+,04/05/2023,Invoice,1831,J. Alvarez,Furnace / boiler installation,Chequing,-16712.00,-879229.00
+,04/13/2023,Invoice,1832,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-23095.00,-902324.00
+,04/21/2023,Invoice,1833,Northgate Schools,Furnace / boiler installation,Chequing,-20739.00,-923063.00
+,05/05/2023,Invoice,1869,P. Nguyen,Furnace / boiler installation,Chequing,-14695.00,-937758.00
+,05/13/2023,Invoice,1870,Oakville Medical Arts,Furnace / boiler installation,Chequing,-25621.00,-963379.00
+,05/21/2023,Invoice,1871,Riverstone Homes,Furnace / boiler installation,Chequing,-28520.00,-991899.00
+,06/05/2023,Invoice,1907,S. Kowalski,Furnace / boiler installation,Chequing,-12529.00,-1004428.00
+,06/13/2023,Invoice,1908,Bayfront Hotel,Furnace / boiler installation,Chequing,-22388.00,-1026816.00
+,06/21/2023,Invoice,1909,Halton Property Group,Furnace / boiler installation,Chequing,-26615.00,-1053431.00
+,07/05/2023,Invoice,1949,Maple Ridge Condos,Furnace / boiler installation,Chequing,-10441.00,-1063872.00
+,07/13/2023,Invoice,1950,J. Alvarez,Furnace / boiler installation,Chequing,-22833.00,-1086705.00
+,07/21/2023,Invoice,1951,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-20468.00,-1107173.00
+,08/05/2023,Invoice,1987,Northgate Schools,Furnace / boiler installation,Chequing,-25548.00,-1132721.00
+,08/13/2023,Invoice,1988,P. Nguyen,Furnace / boiler installation,Chequing,-27539.00,-1160260.00
+,08/21/2023,Invoice,1989,Oakville Medical Arts,Furnace / boiler installation,Chequing,-25903.00,-1186163.00
+,09/05/2023,Invoice,2025,Riverstone Homes,Furnace / boiler installation,Chequing,-20288.00,-1206451.00
+,09/13/2023,Invoice,2026,S. Kowalski,Furnace / boiler installation,Chequing,-17544.00,-1223995.00
+,09/21/2023,Invoice,2027,Bayfront Hotel,Furnace / boiler installation,Chequing,-8132.00,-1232127.00
+,10/05/2023,Invoice,2066,Halton Property Group,Furnace / boiler installation,Chequing,-26450.00,-1258577.00
+,10/13/2023,Invoice,2067,Maple Ridge Condos,Furnace / boiler installation,Chequing,-20516.00,-1279093.00
+,10/21/2023,Invoice,2068,J. Alvarez,Furnace / boiler installation,Chequing,-15241.00,-1294334.00
+,11/05/2023,Invoice,2104,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-25070.00,-1319404.00
+,11/13/2023,Invoice,2105,Northgate Schools,Furnace / boiler installation,Chequing,-20502.00,-1339906.00
+,11/21/2023,Invoice,2106,P. Nguyen,Furnace / boiler installation,Chequing,-20108.00,-1360014.00
+,12/05/2023,Invoice,2142,Oakville Medical Arts,Furnace / boiler installation,Chequing,-29309.00,-1389323.00
+,12/13/2023,Invoice,2143,Riverstone Homes,Furnace / boiler installation,Chequing,-29988.00,-1419311.00
+,12/21/2023,Invoice,2144,S. Kowalski,Furnace / boiler installation,Chequing,-24081.00,-1443392.00
+,01/05/2024,Invoice,2417,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-10135.00,-1453527.00
+,01/13/2024,Invoice,2418,Northgate Schools,Furnace / boiler installation,Chequing,-16644.00,-1470171.00
+,01/21/2024,Invoice,2419,P. Nguyen,Furnace / boiler installation,Chequing,-8116.00,-1478287.00
+,02/05/2024,Invoice,2455,Oakville Medical Arts,Furnace / boiler installation,Chequing,-13317.00,-1491604.00
+,02/13/2024,Invoice,2456,Riverstone Homes,Furnace / boiler installation,Chequing,-11394.00,-1502998.00
+,02/21/2024,Invoice,2457,S. Kowalski,Furnace / boiler installation,Chequing,-14211.00,-1517209.00
+,03/05/2024,Invoice,2493,Bayfront Hotel,Furnace / boiler installation,Chequing,-11580.00,-1528789.00
+,03/13/2024,Invoice,2494,Halton Property Group,Furnace / boiler installation,Chequing,-14806.00,-1543595.00
+,03/21/2024,Invoice,2495,Maple Ridge Condos,Furnace / boiler installation,Chequing,-28765.00,-1572360.00
+,04/05/2024,Invoice,2534,J. Alvarez,Furnace / boiler installation,Chequing,-12850.00,-1585210.00
+,04/13/2024,Invoice,2535,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-9823.00,-1595033.00
+,04/21/2024,Invoice,2536,Northgate Schools,Furnace / boiler installation,Chequing,-8736.00,-1603769.00
+,05/05/2024,Invoice,2572,P. Nguyen,Furnace / boiler installation,Chequing,-11222.00,-1614991.00
+,05/13/2024,Invoice,2573,Oakville Medical Arts,Furnace / boiler installation,Chequing,-18249.00,-1633240.00
+,05/21/2024,Invoice,2574,Riverstone Homes,Furnace / boiler installation,Chequing,-22354.00,-1655594.00
+,06/05/2024,Invoice,2610,S. Kowalski,Furnace / boiler installation,Chequing,-19840.00,-1675434.00
+,06/13/2024,Invoice,2611,Bayfront Hotel,Furnace / boiler installation,Chequing,-18276.00,-1693710.00
+,06/21/2024,Invoice,2612,Halton Property Group,Furnace / boiler installation,Chequing,-27254.00,-1720964.00
+,07/05/2024,Invoice,2652,Maple Ridge Condos,Furnace / boiler installation,Chequing,-26743.00,-1747707.00
+,07/13/2024,Invoice,2653,J. Alvarez,Furnace / boiler installation,Chequing,-24938.00,-1772645.00
+,07/21/2024,Invoice,2654,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-16763.00,-1789408.00
+,08/05/2024,Invoice,2690,Northgate Schools,Furnace / boiler installation,Chequing,-10399.00,-1799807.00
+,08/13/2024,Invoice,2691,P. Nguyen,Furnace / boiler installation,Chequing,-8340.00,-1808147.00
+,08/21/2024,Invoice,2692,Oakville Medical Arts,Furnace / boiler installation,Chequing,-27274.00,-1835421.00
+,09/05/2024,Invoice,2728,Riverstone Homes,Furnace / boiler installation,Chequing,-11433.00,-1846854.00
+,09/13/2024,Invoice,2729,S. Kowalski,Furnace / boiler installation,Chequing,-20610.00,-1867464.00
+,09/21/2024,Invoice,2730,Bayfront Hotel,Furnace / boiler installation,Chequing,-18354.00,-1885818.00
+,10/05/2024,Invoice,2769,Halton Property Group,Furnace / boiler installation,Chequing,-11683.00,-1897501.00
+,10/13/2024,Invoice,2770,Maple Ridge Condos,Furnace / boiler installation,Chequing,-16995.00,-1914496.00
+,10/21/2024,Invoice,2771,J. Alvarez,Furnace / boiler installation,Chequing,-27991.00,-1942487.00
+,11/05/2024,Invoice,2807,Lakeview Dental Centre,Furnace / boiler installation,Chequing,-8273.00,-1950760.00
+,11/13/2024,Invoice,2808,Northgate Schools,Furnace / boiler installation,Chequing,-8898.00,-1959658.00
+,11/21/2024,Invoice,2809,P. Nguyen,Furnace / boiler installation,Chequing,-9173.00,-1968831.00
+,12/05/2024,Invoice,2845,Oakville Medical Arts,Furnace / boiler installation,Chequing,-14748.00,-1983579.00
+,12/13/2024,Invoice,2846,Riverstone Homes,Furnace / boiler installation,Chequing,-13579.00,-1997158.00
+,12/21/2024,Invoice,2847,S. Kowalski,Furnace / boiler installation,Chequing,-28666.00,-2025824.00
+Total for Sales - Installations,,,,,,,-2025824.00,
+Materials & Supplies
+,01/03/2022,Bill,1012,Wolseley Canada,"Pipe, fittings and parts",Chequing,1556.00,1556.00
+,01/08/2022,Bill,1013,Emco Supply,"Pipe, fittings and parts",Chequing,2792.00,4348.00
+,01/13/2022,Bill,1014,The Home Depot,"Pipe, fittings and parts",Chequing,2490.00,6838.00
+,01/18/2022,Bill,1015,Wolseley Canada,"Pipe, fittings and parts",Chequing,3440.00,10278.00
+,01/23/2022,Bill,1016,Emco Supply,"Pipe, fittings and parts",Chequing,4771.00,15049.00
+,02/03/2022,Bill,1050,Wolseley Canada,"Pipe, fittings and parts",Chequing,1202.00,16251.00
+,02/08/2022,Bill,1051,Emco Supply,"Pipe, fittings and parts",Chequing,3704.00,19955.00
+,02/13/2022,Bill,1052,The Home Depot,"Pipe, fittings and parts",Chequing,2593.00,22548.00
+,02/18/2022,Bill,1053,Wolseley Canada,"Pipe, fittings and parts",Chequing,4343.00,26891.00
+,02/23/2022,Bill,1054,Emco Supply,"Pipe, fittings and parts",Chequing,4721.00,31612.00
+,03/03/2022,Bill,1088,Wolseley Canada,"Pipe, fittings and parts",Chequing,3901.00,35513.00
+,03/08/2022,Bill,1089,Emco Supply,"Pipe, fittings and parts",Chequing,1939.00,37452.00
+,03/13/2022,Bill,1090,The Home Depot,"Pipe, fittings and parts",Chequing,3499.00,40951.00
+,03/18/2022,Bill,1091,Wolseley Canada,"Pipe, fittings and parts",Chequing,4347.00,45298.00
+,03/23/2022,Bill,1092,Emco Supply,"Pipe, fittings and parts",Chequing,1018.00,46316.00
+,04/03/2022,Bill,1129,Wolseley Canada,"Pipe, fittings and parts",Chequing,1494.00,47810.00
+,04/08/2022,Bill,1130,Emco Supply,"Pipe, fittings and parts",Chequing,3788.00,51598.00
+,04/13/2022,Bill,1131,The Home Depot,"Pipe, fittings and parts",Chequing,3945.00,55543.00
+,04/18/2022,Bill,1132,Wolseley Canada,"Pipe, fittings and parts",Chequing,4180.00,59723.00
+,04/23/2022,Bill,1133,Emco Supply,"Pipe, fittings and parts",Chequing,432.00,60155.00
+,05/03/2022,Bill,1167,Wolseley Canada,"Pipe, fittings and parts",Chequing,1541.00,61696.00
+,05/08/2022,Bill,1168,Emco Supply,"Pipe, fittings and parts",Chequing,2531.00,64227.00
+,05/13/2022,Bill,1169,The Home Depot,"Pipe, fittings and parts",Chequing,1995.00,66222.00
+,05/18/2022,Bill,1170,Wolseley Canada,"Pipe, fittings and parts",Chequing,4975.00,71197.00
+,05/23/2022,Bill,1171,Emco Supply,"Pipe, fittings and parts",Chequing,3527.00,74724.00
+,06/03/2022,Bill,1205,Wolseley Canada,"Pipe, fittings and parts",Chequing,1798.00,76522.00
+,06/08/2022,Bill,1206,Emco Supply,"Pipe, fittings and parts",Chequing,4841.00,81363.00
+,06/13/2022,Bill,1207,The Home Depot,"Pipe, fittings and parts",Chequing,5081.00,86444.00
+,06/18/2022,Bill,1208,Wolseley Canada,"Pipe, fittings and parts",Chequing,4214.00,90658.00
+,06/23/2022,Bill,1209,Emco Supply,"Pipe, fittings and parts",Chequing,3187.00,93845.00
+,07/03/2022,Bill,1247,Wolseley Canada,"Pipe, fittings and parts",Chequing,4071.00,97916.00
+,07/08/2022,Bill,1248,Emco Supply,"Pipe, fittings and parts",Chequing,793.00,98709.00
+,07/13/2022,Bill,1249,The Home Depot,"Pipe, fittings and parts",Chequing,536.00,99245.00
+,07/18/2022,Bill,1250,Wolseley Canada,"Pipe, fittings and parts",Chequing,686.00,99931.00
+,07/23/2022,Bill,1251,Emco Supply,"Pipe, fittings and parts",Chequing,2135.00,102066.00
+,08/03/2022,Bill,1285,Wolseley Canada,"Pipe, fittings and parts",Chequing,3091.00,105157.00
+,08/08/2022,Bill,1286,Emco Supply,"Pipe, fittings and parts",Chequing,3733.00,108890.00
+,08/13/2022,Bill,1287,The Home Depot,"Pipe, fittings and parts",Chequing,2053.00,110943.00
+,08/18/2022,Bill,1288,Wolseley Canada,"Pipe, fittings and parts",Chequing,2741.00,113684.00
+,08/23/2022,Bill,1289,Emco Supply,"Pipe, fittings and parts",Chequing,832.00,114516.00
+,09/03/2022,Bill,1323,Wolseley Canada,"Pipe, fittings and parts",Chequing,1321.00,115837.00
+,09/08/2022,Bill,1324,Emco Supply,"Pipe, fittings and parts",Chequing,2446.00,118283.00
+,09/13/2022,Bill,1325,The Home Depot,"Pipe, fittings and parts",Chequing,2252.00,120535.00
+,09/18/2022,Bill,1326,Wolseley Canada,"Pipe, fittings and parts",Chequing,1473.00,122008.00
+,09/23/2022,Bill,1327,Emco Supply,"Pipe, fittings and parts",Chequing,3183.00,125191.00
+,10/03/2022,Bill,1364,Wolseley Canada,"Pipe, fittings and parts",Chequing,3657.00,128848.00
+,10/08/2022,Bill,1365,Emco Supply,"Pipe, fittings and parts",Chequing,4758.00,133606.00
+,10/13/2022,Bill,1366,The Home Depot,"Pipe, fittings and parts",Chequing,583.00,134189.00
+,10/18/2022,Bill,1367,Wolseley Canada,"Pipe, fittings and parts",Chequing,2648.00,136837.00
+,10/23/2022,Bill,1368,Emco Supply,"Pipe, fittings and parts",Chequing,1899.00,138736.00
+,11/03/2022,Bill,1402,Wolseley Canada,"Pipe, fittings and parts",Chequing,5249.00,143985.00
+,11/08/2022,Bill,1403,Emco Supply,"Pipe, fittings and parts",Chequing,4293.00,148278.00
+,11/13/2022,Bill,1404,The Home Depot,"Pipe, fittings and parts",Chequing,4117.00,152395.00
+,11/18/2022,Bill,1405,Wolseley Canada,"Pipe, fittings and parts",Chequing,5103.00,157498.00
+,11/23/2022,Bill,1406,Emco Supply,"Pipe, fittings and parts",Chequing,2398.00,159896.00
+,12/03/2022,Bill,1440,Wolseley Canada,"Pipe, fittings and parts",Chequing,708.00,160604.00
+,12/08/2022,Bill,1441,Emco Supply,"Pipe, fittings and parts",Chequing,1845.00,162449.00
+,12/13/2022,Bill,1442,The Home Depot,"Pipe, fittings and parts",Chequing,2275.00,164724.00
+,12/18/2022,Bill,1443,Wolseley Canada,"Pipe, fittings and parts",Chequing,3434.00,168158.00
+,12/23/2022,Bill,1444,Emco Supply,"Pipe, fittings and parts",Chequing,4280.00,172438.00
+,01/03/2023,Bill,1717,Wolseley Canada,"Pipe, fittings and parts",Chequing,4135.00,176573.00
+,01/08/2023,Bill,1718,Emco Supply,"Pipe, fittings and parts",Chequing,4542.00,181115.00
+,01/13/2023,Bill,1719,The Home Depot,"Pipe, fittings and parts",Chequing,707.00,181822.00
+,01/18/2023,Bill,1720,Wolseley Canada,"Pipe, fittings and parts",Chequing,3580.00,185402.00
+,01/23/2023,Bill,1721,Emco Supply,"Pipe, fittings and parts",Chequing,3677.00,189079.00
+,02/03/2023,Bill,1755,Wolseley Canada,"Pipe, fittings and parts",Chequing,5454.00,194533.00
+,02/08/2023,Bill,1756,Emco Supply,"Pipe, fittings and parts",Chequing,3842.00,198375.00
+,02/13/2023,Bill,1757,The Home Depot,"Pipe, fittings and parts",Chequing,2780.00,201155.00
+,02/18/2023,Bill,1758,Wolseley Canada,"Pipe, fittings and parts",Chequing,5492.00,206647.00
+,02/23/2023,Bill,1759,Emco Supply,"Pipe, fittings and parts",Chequing,2582.00,209229.00
+,03/03/2023,Bill,1793,Wolseley Canada,"Pipe, fittings and parts",Chequing,5328.00,214557.00
+,03/08/2023,Bill,1794,Emco Supply,"Pipe, fittings and parts",Chequing,860.00,215417.00
+,03/13/2023,Bill,1795,The Home Depot,"Pipe, fittings and parts",Chequing,2669.00,218086.00
+,03/18/2023,Bill,1796,Wolseley Canada,"Pipe, fittings and parts",Chequing,3930.00,222016.00
+,03/23/2023,Bill,1797,Emco Supply,"Pipe, fittings and parts",Chequing,2725.00,224741.00
+,04/03/2023,Bill,1834,Wolseley Canada,"Pipe, fittings and parts",Chequing,1479.00,226220.00
+,04/08/2023,Bill,1835,Emco Supply,"Pipe, fittings and parts",Chequing,4974.00,231194.00
+,04/13/2023,Bill,1836,The Home Depot,"Pipe, fittings and parts",Chequing,3387.00,234581.00
+,04/18/2023,Bill,1837,Wolseley Canada,"Pipe, fittings and parts",Chequing,1485.00,236066.00
+,04/23/2023,Bill,1838,Emco Supply,"Pipe, fittings and parts",Chequing,1858.00,237924.00
+,05/03/2023,Bill,1872,Wolseley Canada,"Pipe, fittings and parts",Chequing,3043.00,240967.00
+,05/08/2023,Bill,1873,Emco Supply,"Pipe, fittings and parts",Chequing,4047.00,245014.00
+,05/13/2023,Bill,1874,The Home Depot,"Pipe, fittings and parts",Chequing,454.00,245468.00
+,05/18/2023,Bill,1875,Wolseley Canada,"Pipe, fittings and parts",Chequing,1018.00,246486.00
+,05/23/2023,Bill,1876,Emco Supply,"Pipe, fittings and parts",Chequing,5542.00,252028.00
+,06/03/2023,Bill,1910,Wolseley Canada,"Pipe, fittings and parts",Chequing,4947.00,256975.00
+,06/08/2023,Bill,1911,Emco Supply,"Pipe, fittings and parts",Chequing,5064.00,262039.00
+,06/13/2023,Bill,1912,The Home Depot,"Pipe, fittings and parts",Chequing,5343.00,267382.00
+,06/18/2023,Bill,1913,Wolseley Canada,"Pipe, fittings and parts",Chequing,4104.00,271486.00
+,06/23/2023,Bill,1914,Emco Supply,"Pipe, fittings and parts",Chequing,4026.00,275512.00
+,07/03/2023,Bill,1952,Wolseley Canada,"Pipe, fittings and parts",Chequing,3212.00,278724.00
+,07/08/2023,Bill,1953,Emco Supply,"Pipe, fittings and parts",Chequing,2269.00,280993.00
+,07/13/2023,Bill,1954,The Home Depot,"Pipe, fittings and parts",Chequing,2324.00,283317.00
+,07/18/2023,Bill,1955,Wolseley Canada,"Pipe, fittings and parts",Chequing,2195.00,285512.00
+,07/23/2023,Bill,1956,Emco Supply,"Pipe, fittings and parts",Chequing,1136.00,286648.00
+,08/03/2023,Bill,1990,Wolseley Canada,"Pipe, fittings and parts",Chequing,1225.00,287873.00
+,08/08/2023,Bill,1991,Emco Supply,"Pipe, fittings and parts",Chequing,5509.00,293382.00
+,08/13/2023,Bill,1992,The Home Depot,"Pipe, fittings and parts",Chequing,4759.00,298141.00
+,08/18/2023,Bill,1993,Wolseley Canada,"Pipe, fittings and parts",Chequing,3210.00,301351.00
+,08/23/2023,Bill,1994,Emco Supply,"Pipe, fittings and parts",Chequing,2518.00,303869.00
+,09/03/2023,Bill,2028,Wolseley Canada,"Pipe, fittings and parts",Chequing,3154.00,307023.00
+,09/08/2023,Bill,2029,Emco Supply,"Pipe, fittings and parts",Chequing,3494.00,310517.00
+,09/13/2023,Bill,2030,The Home Depot,"Pipe, fittings and parts",Chequing,1271.00,311788.00
+,09/18/2023,Bill,2031,Wolseley Canada,"Pipe, fittings and parts",Chequing,1850.00,313638.00
+,09/23/2023,Bill,2032,Emco Supply,"Pipe, fittings and parts",Chequing,4466.00,318104.00
+,10/03/2023,Bill,2069,Wolseley Canada,"Pipe, fittings and parts",Chequing,2239.00,320343.00
+,10/08/2023,Bill,2070,Emco Supply,"Pipe, fittings and parts",Chequing,1348.00,321691.00
+,10/13/2023,Bill,2071,The Home Depot,"Pipe, fittings and parts",Chequing,3374.00,325065.00
+,10/18/2023,Bill,2072,Wolseley Canada,"Pipe, fittings and parts",Chequing,4629.00,329694.00
+,10/23/2023,Bill,2073,Emco Supply,"Pipe, fittings and parts",Chequing,2225.00,331919.00
+,11/03/2023,Bill,2107,Wolseley Canada,"Pipe, fittings and parts",Chequing,4897.00,336816.00
+,11/08/2023,Bill,2108,Emco Supply,"Pipe, fittings and parts",Chequing,779.00,337595.00
+,11/13/2023,Bill,2109,The Home Depot,"Pipe, fittings and parts",Chequing,1351.00,338946.00
+,11/18/2023,Bill,2110,Wolseley Canada,"Pipe, fittings and parts",Chequing,5182.00,344128.00
+,11/23/2023,Bill,2111,Emco Supply,"Pipe, fittings and parts",Chequing,2173.00,346301.00
+,12/03/2023,Bill,2145,Wolseley Canada,"Pipe, fittings and parts",Chequing,1945.00,348246.00
+,12/08/2023,Bill,2146,Emco Supply,"Pipe, fittings and parts",Chequing,1553.00,349799.00
+,12/13/2023,Bill,2147,The Home Depot,"Pipe, fittings and parts",Chequing,4184.00,353983.00
+,12/18/2023,Bill,2148,Wolseley Canada,"Pipe, fittings and parts",Chequing,1456.00,355439.00
+,12/23/2023,Bill,2149,Emco Supply,"Pipe, fittings and parts",Chequing,4351.00,359790.00
+,01/03/2024,Bill,2420,Wolseley Canada,"Pipe, fittings and parts",Chequing,4089.00,363879.00
+,01/08/2024,Bill,2421,Emco Supply,"Pipe, fittings and parts",Chequing,1412.00,365291.00
+,01/13/2024,Bill,2422,The Home Depot,"Pipe, fittings and parts",Chequing,1988.00,367279.00
+,01/18/2024,Bill,2423,Wolseley Canada,"Pipe, fittings and parts",Chequing,1288.00,368567.00
+,01/23/2024,Bill,2424,Emco Supply,"Pipe, fittings and parts",Chequing,994.00,369561.00
+,02/03/2024,Bill,2458,Wolseley Canada,"Pipe, fittings and parts",Chequing,2236.00,371797.00
+,02/08/2024,Bill,2459,Emco Supply,"Pipe, fittings and parts",Chequing,4713.00,376510.00
+,02/13/2024,Bill,2460,The Home Depot,"Pipe, fittings and parts",Chequing,3706.00,380216.00
+,02/18/2024,Bill,2461,Wolseley Canada,"Pipe, fittings and parts",Chequing,3389.00,383605.00
+,02/23/2024,Bill,2462,Emco Supply,"Pipe, fittings and parts",Chequing,4982.00,388587.00
+,03/03/2024,Bill,2496,Wolseley Canada,"Pipe, fittings and parts",Chequing,630.00,389217.00
+,03/08/2024,Bill,2497,Emco Supply,"Pipe, fittings and parts",Chequing,4544.00,393761.00
+,03/13/2024,Bill,2498,The Home Depot,"Pipe, fittings and parts",Chequing,2281.00,396042.00
+,03/18/2024,Bill,2499,Wolseley Canada,"Pipe, fittings and parts",Chequing,4036.00,400078.00
+,03/23/2024,Bill,2500,Emco Supply,"Pipe, fittings and parts",Chequing,2673.00,402751.00
+,04/03/2024,Bill,2537,Wolseley Canada,"Pipe, fittings and parts",Chequing,3108.00,405859.00
+,04/08/2024,Bill,2538,Emco Supply,"Pipe, fittings and parts",Chequing,4985.00,410844.00
+,04/13/2024,Bill,2539,The Home Depot,"Pipe, fittings and parts",Chequing,4057.00,414901.00
+,04/18/2024,Bill,2540,Wolseley Canada,"Pipe, fittings and parts",Chequing,3997.00,418898.00
+,04/23/2024,Bill,2541,Emco Supply,"Pipe, fittings and parts",Chequing,595.00,419493.00
+,05/03/2024,Bill,2575,Wolseley Canada,"Pipe, fittings and parts",Chequing,848.00,420341.00
+,05/08/2024,Bill,2576,Emco Supply,"Pipe, fittings and parts",Chequing,4391.00,424732.00
+,05/13/2024,Bill,2577,The Home Depot,"Pipe, fittings and parts",Chequing,1680.00,426412.00
+,05/18/2024,Bill,2578,Wolseley Canada,"Pipe, fittings and parts",Chequing,4209.00,430621.00
+,05/23/2024,Bill,2579,Emco Supply,"Pipe, fittings and parts",Chequing,1662.00,432283.00
+,06/03/2024,Bill,2613,Wolseley Canada,"Pipe, fittings and parts",Chequing,4042.00,436325.00
+,06/08/2024,Bill,2614,Emco Supply,"Pipe, fittings and parts",Chequing,5143.00,441468.00
+,06/13/2024,Bill,2615,The Home Depot,"Pipe, fittings and parts",Chequing,2768.00,444236.00
+,06/18/2024,Bill,2616,Wolseley Canada,"Pipe, fittings and parts",Chequing,1058.00,445294.00
+,06/23/2024,Bill,2617,Emco Supply,"Pipe, fittings and parts",Chequing,2154.00,447448.00
+,07/03/2024,Bill,2655,Wolseley Canada,"Pipe, fittings and parts",Chequing,3312.00,450760.00
+,07/08/2024,Bill,2656,Emco Supply,"Pipe, fittings and parts",Chequing,1013.00,451773.00
+,07/13/2024,Bill,2657,The Home Depot,"Pipe, fittings and parts",Chequing,2808.00,454581.00
+,07/18/2024,Bill,2658,Wolseley Canada,"Pipe, fittings and parts",Chequing,3876.00,458457.00
+,07/23/2024,Bill,2659,Emco Supply,"Pipe, fittings and parts",Chequing,4630.00,463087.00
+,08/03/2024,Bill,2693,Wolseley Canada,"Pipe, fittings and parts",Chequing,3761.00,466848.00
+,08/08/2024,Bill,2694,Emco Supply,"Pipe, fittings and parts",Chequing,2689.00,469537.00
+,08/13/2024,Bill,2695,The Home Depot,"Pipe, fittings and parts",Chequing,3169.00,472706.00
+,08/18/2024,Bill,2696,Wolseley Canada,"Pipe, fittings and parts",Chequing,935.00,473641.00
+,08/23/2024,Bill,2697,Emco Supply,"Pipe, fittings and parts",Chequing,5157.00,478798.00
+,09/03/2024,Bill,2731,Wolseley Canada,"Pipe, fittings and parts",Chequing,2666.00,481464.00
+,09/08/2024,Bill,2732,Emco Supply,"Pipe, fittings and parts",Chequing,2686.00,484150.00
+,09/13/2024,Bill,2733,The Home Depot,"Pipe, fittings and parts",Chequing,3650.00,487800.00
+,09/18/2024,Bill,2734,Wolseley Canada,"Pipe, fittings and parts",Chequing,4640.00,492440.00
+,09/23/2024,Bill,2735,Emco Supply,"Pipe, fittings and parts",Chequing,1736.00,494176.00
+,10/03/2024,Bill,2772,Wolseley Canada,"Pipe, fittings and parts",Chequing,650.00,494826.00
+,10/08/2024,Bill,2773,Emco Supply,"Pipe, fittings and parts",Chequing,2060.00,496886.00
+,10/13/2024,Bill,2774,The Home Depot,"Pipe, fittings and parts",Chequing,4336.00,501222.00
+,10/18/2024,Bill,2775,Wolseley Canada,"Pipe, fittings and parts",Chequing,3164.00,504386.00
+,10/23/2024,Bill,2776,Emco Supply,"Pipe, fittings and parts",Chequing,2921.00,507307.00
+,11/03/2024,Bill,2810,Wolseley Canada,"Pipe, fittings and parts",Chequing,4154.00,511461.00
+,11/08/2024,Bill,2811,Emco Supply,"Pipe, fittings and parts",Chequing,1684.00,513145.00
+,11/13/2024,Bill,2812,The Home Depot,"Pipe, fittings and parts",Chequing,2710.00,515855.00
+,11/18/2024,Bill,2813,Wolseley Canada,"Pipe, fittings and parts",Chequing,5363.00,521218.00
+,11/23/2024,Bill,2814,Emco Supply,"Pipe, fittings and parts",Chequing,3227.00,524445.00
+,12/03/2024,Bill,2848,Wolseley Canada,"Pipe, fittings and parts",Chequing,1120.00,525565.00
+,12/08/2024,Bill,2849,Emco Supply,"Pipe, fittings and parts",Chequing,3206.00,528771.00
+,12/13/2024,Bill,2850,The Home Depot,"Pipe, fittings and parts",Chequing,1166.00,529937.00
+,12/18/2024,Bill,2851,Wolseley Canada,"Pipe, fittings and parts",Chequing,5543.00,535480.00
+,12/23/2024,Bill,2852,Emco Supply,"Pipe, fittings and parts",Chequing,1190.00,536670.00
+Total for Materials & Supplies,,,,,,,536670.00,
+Subcontractors
+,01/10/2022,Bill,1017,Delta Electrical,Subcontract work,Chequing,5137.00,5137.00
+,01/19/2022,Bill,1018,Precision Ductwork,Subcontract work,Chequing,4269.00,9406.00
+,02/10/2022,Bill,1055,Delta Electrical,Subcontract work,Chequing,6278.00,15684.00
+,02/19/2022,Bill,1056,Precision Ductwork,Subcontract work,Chequing,6151.00,21835.00
+,03/10/2022,Bill,1093,Delta Electrical,Subcontract work,Chequing,6674.00,28509.00
+,03/19/2022,Bill,1094,Precision Ductwork,Subcontract work,Chequing,3155.00,31664.00
+,04/10/2022,Bill,1134,Delta Electrical,Subcontract work,Chequing,8440.00,40104.00
+,04/19/2022,Bill,1135,Precision Ductwork,Subcontract work,Chequing,6777.00,46881.00
+,05/10/2022,Bill,1172,Delta Electrical,Subcontract work,Chequing,2710.00,49591.00
+,05/19/2022,Bill,1173,Precision Ductwork,Subcontract work,Chequing,3167.00,52758.00
+,06/10/2022,Bill,1210,Delta Electrical,Subcontract work,Chequing,5711.00,58469.00
+,06/19/2022,Bill,1211,Precision Ductwork,Subcontract work,Chequing,8694.00,67163.00
+,07/10/2022,Bill,1252,Delta Electrical,Subcontract work,Chequing,8674.00,75837.00
+,07/19/2022,Bill,1253,Precision Ductwork,Subcontract work,Chequing,6658.00,82495.00
+,08/10/2022,Bill,1290,Delta Electrical,Subcontract work,Chequing,8599.00,91094.00
+,08/19/2022,Bill,1291,Precision Ductwork,Subcontract work,Chequing,6850.00,97944.00
+,09/10/2022,Bill,1328,Delta Electrical,Subcontract work,Chequing,8473.00,106417.00
+,09/19/2022,Bill,1329,Precision Ductwork,Subcontract work,Chequing,2939.00,109356.00
+,10/10/2022,Bill,1369,Delta Electrical,Subcontract work,Chequing,4619.00,113975.00
+,10/19/2022,Bill,1370,Precision Ductwork,Subcontract work,Chequing,6629.00,120604.00
+,11/10/2022,Bill,1407,Delta Electrical,Subcontract work,Chequing,5939.00,126543.00
+,11/19/2022,Bill,1408,Precision Ductwork,Subcontract work,Chequing,8538.00,135081.00
+,12/10/2022,Bill,1445,Delta Electrical,Subcontract work,Chequing,6859.00,141940.00
+,12/19/2022,Bill,1446,Precision Ductwork,Subcontract work,Chequing,4320.00,146260.00
+,01/10/2023,Bill,1722,Delta Electrical,Subcontract work,Chequing,3925.00,150185.00
+,01/19/2023,Bill,1723,Precision Ductwork,Subcontract work,Chequing,8735.00,158920.00
+,02/10/2023,Bill,1760,Delta Electrical,Subcontract work,Chequing,7424.00,166344.00
+,02/19/2023,Bill,1761,Precision Ductwork,Subcontract work,Chequing,3750.00,170094.00
+,03/10/2023,Bill,1798,Delta Electrical,Subcontract work,Chequing,4847.00,174941.00
+,03/19/2023,Bill,1799,Precision Ductwork,Subcontract work,Chequing,5911.00,180852.00
+,04/10/2023,Bill,1839,Delta Electrical,Subcontract work,Chequing,3326.00,184178.00
+,04/19/2023,Bill,1840,Precision Ductwork,Subcontract work,Chequing,3314.00,187492.00
+,05/10/2023,Bill,1877,Delta Electrical,Subcontract work,Chequing,3240.00,190732.00
+,05/19/2023,Bill,1878,Precision Ductwork,Subcontract work,Chequing,7136.00,197868.00
+,06/10/2023,Bill,1915,Delta Electrical,Subcontract work,Chequing,4479.00,202347.00
+,06/19/2023,Bill,1916,Precision Ductwork,Subcontract work,Chequing,2803.00,205150.00
+,07/10/2023,Bill,1957,Delta Electrical,Subcontract work,Chequing,5947.00,211097.00
+,07/19/2023,Bill,1958,Precision Ductwork,Subcontract work,Chequing,6466.00,217563.00
+,08/10/2023,Bill,1995,Delta Electrical,Subcontract work,Chequing,4366.00,221929.00
+,08/19/2023,Bill,1996,Precision Ductwork,Subcontract work,Chequing,3548.00,225477.00
+,09/10/2023,Bill,2033,Delta Electrical,Subcontract work,Chequing,5139.00,230616.00
+,09/19/2023,Bill,2034,Precision Ductwork,Subcontract work,Chequing,4234.00,234850.00
+,10/10/2023,Bill,2074,Delta Electrical,Subcontract work,Chequing,8788.00,243638.00
+,10/19/2023,Bill,2075,Precision Ductwork,Subcontract work,Chequing,5294.00,248932.00
+,11/10/2023,Bill,2112,Delta Electrical,Subcontract work,Chequing,6093.00,255025.00
+,11/19/2023,Bill,2113,Precision Ductwork,Subcontract work,Chequing,5129.00,260154.00
+,12/10/2023,Bill,2150,Delta Electrical,Subcontract work,Chequing,5802.00,265956.00
+,12/19/2023,Bill,2151,Precision Ductwork,Subcontract work,Chequing,8949.00,274905.00
+,01/10/2024,Bill,2425,Delta Electrical,Subcontract work,Chequing,3384.00,278289.00
+,01/19/2024,Bill,2426,Precision Ductwork,Subcontract work,Chequing,6714.00,285003.00
+,02/10/2024,Bill,2463,Delta Electrical,Subcontract work,Chequing,6511.00,291514.00
+,02/19/2024,Bill,2464,Precision Ductwork,Subcontract work,Chequing,3504.00,295018.00
+,03/10/2024,Bill,2501,Delta Electrical,Subcontract work,Chequing,3604.00,298622.00
+,03/19/2024,Bill,2502,Precision Ductwork,Subcontract work,Chequing,6640.00,305262.00
+,04/10/2024,Bill,2542,Delta Electrical,Subcontract work,Chequing,2946.00,308208.00
+,04/19/2024,Bill,2543,Precision Ductwork,Subcontract work,Chequing,8630.00,316838.00
+,05/10/2024,Bill,2580,Delta Electrical,Subcontract work,Chequing,7471.00,324309.00
+,05/19/2024,Bill,2581,Precision Ductwork,Subcontract work,Chequing,6604.00,330913.00
+,06/10/2024,Bill,2618,Delta Electrical,Subcontract work,Chequing,4932.00,335845.00
+,06/19/2024,Bill,2619,Precision Ductwork,Subcontract work,Chequing,5112.00,340957.00
+,07/10/2024,Bill,2660,Delta Electrical,Subcontract work,Chequing,5099.00,346056.00
+,07/19/2024,Bill,2661,Precision Ductwork,Subcontract work,Chequing,4324.00,350380.00
+,08/10/2024,Bill,2698,Delta Electrical,Subcontract work,Chequing,4382.00,354762.00
+,08/19/2024,Bill,2699,Precision Ductwork,Subcontract work,Chequing,8443.00,363205.00
+,09/10/2024,Bill,2736,Delta Electrical,Subcontract work,Chequing,5719.00,368924.00
+,09/19/2024,Bill,2737,Precision Ductwork,Subcontract work,Chequing,5443.00,374367.00
+,10/10/2024,Bill,2777,Delta Electrical,Subcontract work,Chequing,3095.00,377462.00
+,10/19/2024,Bill,2778,Precision Ductwork,Subcontract work,Chequing,6934.00,384396.00
+,11/10/2024,Bill,2815,Delta Electrical,Subcontract work,Chequing,2957.00,387353.00
+,11/19/2024,Bill,2816,Precision Ductwork,Subcontract work,Chequing,3637.00,390990.00
+,12/10/2024,Bill,2853,Delta Electrical,Subcontract work,Chequing,7077.00,398067.00
+,12/19/2024,Bill,2854,Precision Ductwork,Subcontract work,Chequing,7322.00,405389.00
+Total for Subcontractors,,,,,,,405389.00,
+Wages & Salaries
+,01/07/2022,Paycheque,1470,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,2615.38
+,01/07/2022,Paycheque,1496,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,5038.46
+,01/07/2022,Paycheque,1522,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,7230.77
+,01/07/2022,Paycheque,1548,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,10500.00
+,01/21/2022,Paycheque,1471,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,13115.38
+,01/21/2022,Paycheque,1497,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,15538.46
+,01/21/2022,Paycheque,1523,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,17730.77
+,01/21/2022,Paycheque,1549,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,21000.00
+,02/04/2022,Paycheque,1472,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,23615.38
+,02/04/2022,Paycheque,1498,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,26038.46
+,02/04/2022,Paycheque,1524,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,28230.77
+,02/04/2022,Paycheque,1550,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,31500.00
+,02/18/2022,Paycheque,1473,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,34115.38
+,02/18/2022,Paycheque,1499,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,36538.46
+,02/18/2022,Paycheque,1525,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,38730.77
+,02/18/2022,Paycheque,1551,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,42000.00
+,03/04/2022,Paycheque,1474,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,44615.38
+,03/04/2022,Paycheque,1500,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,47038.46
+,03/04/2022,Paycheque,1526,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,49230.77
+,03/04/2022,Paycheque,1552,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,52500.00
+,03/18/2022,Paycheque,1475,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,55115.38
+,03/18/2022,Paycheque,1501,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,57538.46
+,03/18/2022,Paycheque,1527,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,59730.77
+,03/18/2022,Paycheque,1553,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,63000.00
+,04/01/2022,Paycheque,1476,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,65615.38
+,04/01/2022,Paycheque,1502,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,68038.46
+,04/01/2022,Paycheque,1528,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,70230.77
+,04/01/2022,Paycheque,1554,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,73500.00
+,04/15/2022,Paycheque,1477,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,76115.38
+,04/15/2022,Paycheque,1503,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,78538.46
+,04/15/2022,Paycheque,1529,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,80730.77
+,04/15/2022,Paycheque,1555,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,84000.00
+,04/29/2022,Paycheque,1478,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,86615.38
+,04/29/2022,Paycheque,1504,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,89038.46
+,04/29/2022,Paycheque,1530,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,91230.77
+,04/29/2022,Paycheque,1556,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,94500.00
+,05/13/2022,Paycheque,1479,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,97115.38
+,05/13/2022,Paycheque,1505,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,99538.46
+,05/13/2022,Paycheque,1531,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,101730.77
+,05/13/2022,Paycheque,1557,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,105000.00
+,05/27/2022,Paycheque,1480,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,107615.38
+,05/27/2022,Paycheque,1506,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,110038.46
+,05/27/2022,Paycheque,1532,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,112230.77
+,05/27/2022,Paycheque,1558,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,115500.00
+,06/10/2022,Paycheque,1481,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,118115.38
+,06/10/2022,Paycheque,1507,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,120538.46
+,06/10/2022,Paycheque,1533,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,122730.77
+,06/10/2022,Paycheque,1559,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,126000.00
+,06/24/2022,Paycheque,1482,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,128615.38
+,06/24/2022,Paycheque,1508,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,131038.46
+,06/24/2022,Paycheque,1534,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,133230.77
+,06/24/2022,Paycheque,1560,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,136500.00
+,07/08/2022,Paycheque,1483,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,139115.38
+,07/08/2022,Paycheque,1509,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,141538.46
+,07/08/2022,Paycheque,1535,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,143730.77
+,07/08/2022,Paycheque,1561,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,147000.00
+,07/22/2022,Paycheque,1484,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,149615.38
+,07/22/2022,Paycheque,1510,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,152038.46
+,07/22/2022,Paycheque,1536,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,154230.77
+,07/22/2022,Paycheque,1562,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,157500.00
+,08/05/2022,Paycheque,1485,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,160115.38
+,08/05/2022,Paycheque,1511,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,162538.46
+,08/05/2022,Paycheque,1537,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,164730.77
+,08/05/2022,Paycheque,1563,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,168000.00
+,08/19/2022,Paycheque,1486,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,170615.38
+,08/19/2022,Paycheque,1512,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,173038.46
+,08/19/2022,Paycheque,1538,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,175230.77
+,08/19/2022,Paycheque,1564,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,178500.00
+,09/02/2022,Paycheque,1487,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,181115.38
+,09/02/2022,Paycheque,1513,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,183538.46
+,09/02/2022,Paycheque,1539,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,185730.77
+,09/02/2022,Paycheque,1565,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,189000.00
+,09/16/2022,Paycheque,1488,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,191615.38
+,09/16/2022,Paycheque,1514,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,194038.46
+,09/16/2022,Paycheque,1540,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,196230.77
+,09/16/2022,Paycheque,1566,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,199500.00
+,09/30/2022,Paycheque,1489,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,202115.38
+,09/30/2022,Paycheque,1515,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,204538.46
+,09/30/2022,Paycheque,1541,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,206730.77
+,09/30/2022,Paycheque,1567,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,210000.00
+,10/14/2022,Paycheque,1490,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,212615.38
+,10/14/2022,Paycheque,1516,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,215038.46
+,10/14/2022,Paycheque,1542,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,217230.77
+,10/14/2022,Paycheque,1568,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,220500.00
+,10/28/2022,Paycheque,1491,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,223115.38
+,10/28/2022,Paycheque,1517,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,225538.46
+,10/28/2022,Paycheque,1543,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,227730.77
+,10/28/2022,Paycheque,1569,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,231000.00
+,11/11/2022,Paycheque,1492,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,233615.38
+,11/11/2022,Paycheque,1518,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,236038.46
+,11/11/2022,Paycheque,1544,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,238230.77
+,11/11/2022,Paycheque,1570,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,241500.00
+,11/25/2022,Paycheque,1493,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,244115.38
+,11/25/2022,Paycheque,1519,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,246538.46
+,11/25/2022,Paycheque,1545,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,248730.77
+,11/25/2022,Paycheque,1571,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,252000.00
+,12/09/2022,Paycheque,1494,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,254615.38
+,12/09/2022,Paycheque,1520,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,257038.46
+,12/09/2022,Paycheque,1546,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,259230.77
+,12/09/2022,Paycheque,1572,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,262500.00
+,12/23/2022,Paycheque,1495,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,265115.38
+,12/23/2022,Paycheque,1521,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,267538.46
+,12/23/2022,Paycheque,1547,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,269730.77
+,12/23/2022,Paycheque,1573,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.25,273000.02
+,01/13/2023,Paycheque,2175,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,275615.40
+,01/13/2023,Paycheque,2201,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,278038.48
+,01/13/2023,Paycheque,2227,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,280230.79
+,01/13/2023,Paycheque,2253,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,283500.02
+,01/27/2023,Paycheque,2176,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,286115.40
+,01/27/2023,Paycheque,2202,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,288538.48
+,01/27/2023,Paycheque,2228,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,290730.79
+,01/27/2023,Paycheque,2254,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,294000.02
+,02/10/2023,Paycheque,2177,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,296615.40
+,02/10/2023,Paycheque,2203,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,299038.48
+,02/10/2023,Paycheque,2229,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,301230.79
+,02/10/2023,Paycheque,2255,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,304500.02
+,02/24/2023,Paycheque,2178,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,307115.40
+,02/24/2023,Paycheque,2204,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,309538.48
+,02/24/2023,Paycheque,2230,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,311730.79
+,02/24/2023,Paycheque,2256,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,315000.02
+,03/10/2023,Paycheque,2179,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,317615.40
+,03/10/2023,Paycheque,2205,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,320038.48
+,03/10/2023,Paycheque,2231,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,322230.79
+,03/10/2023,Paycheque,2257,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,325500.02
+,03/24/2023,Paycheque,2180,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,328115.40
+,03/24/2023,Paycheque,2206,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,330538.48
+,03/24/2023,Paycheque,2232,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,332730.79
+,03/24/2023,Paycheque,2258,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,336000.02
+,04/07/2023,Paycheque,2181,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,338615.40
+,04/07/2023,Paycheque,2207,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,341038.48
+,04/07/2023,Paycheque,2233,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,343230.79
+,04/07/2023,Paycheque,2259,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,346500.02
+,04/21/2023,Paycheque,2182,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,349115.40
+,04/21/2023,Paycheque,2208,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,351538.48
+,04/21/2023,Paycheque,2234,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,353730.79
+,04/21/2023,Paycheque,2260,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,357000.02
+,05/05/2023,Paycheque,2183,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,359615.40
+,05/05/2023,Paycheque,2209,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,362038.48
+,05/05/2023,Paycheque,2235,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,364230.79
+,05/05/2023,Paycheque,2261,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,367500.02
+,05/19/2023,Paycheque,2184,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,370115.40
+,05/19/2023,Paycheque,2210,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,372538.48
+,05/19/2023,Paycheque,2236,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,374730.79
+,05/19/2023,Paycheque,2262,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,378000.02
+,06/02/2023,Paycheque,2185,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,380615.40
+,06/02/2023,Paycheque,2211,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,383038.48
+,06/02/2023,Paycheque,2237,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,385230.79
+,06/02/2023,Paycheque,2263,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,388500.02
+,06/16/2023,Paycheque,2186,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,391115.40
+,06/16/2023,Paycheque,2212,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,393538.48
+,06/16/2023,Paycheque,2238,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,395730.79
+,06/16/2023,Paycheque,2264,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,399000.02
+,06/30/2023,Paycheque,2187,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,401615.40
+,06/30/2023,Paycheque,2213,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,404038.48
+,06/30/2023,Paycheque,2239,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,406230.79
+,06/30/2023,Paycheque,2265,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,409500.02
+,07/14/2023,Paycheque,2188,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,412115.40
+,07/14/2023,Paycheque,2214,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,414538.48
+,07/14/2023,Paycheque,2240,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,416730.79
+,07/14/2023,Paycheque,2266,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,420000.02
+,07/28/2023,Paycheque,2189,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,422615.40
+,07/28/2023,Paycheque,2215,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,425038.48
+,07/28/2023,Paycheque,2241,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,427230.79
+,07/28/2023,Paycheque,2267,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,430500.02
+,08/11/2023,Paycheque,2190,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,433115.40
+,08/11/2023,Paycheque,2216,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,435538.48
+,08/11/2023,Paycheque,2242,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,437730.79
+,08/11/2023,Paycheque,2268,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,441000.02
+,08/25/2023,Paycheque,2191,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,443615.40
+,08/25/2023,Paycheque,2217,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,446038.48
+,08/25/2023,Paycheque,2243,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,448230.79
+,08/25/2023,Paycheque,2269,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,451500.02
+,09/08/2023,Paycheque,2192,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,454115.40
+,09/08/2023,Paycheque,2218,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,456538.48
+,09/08/2023,Paycheque,2244,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,458730.79
+,09/08/2023,Paycheque,2270,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,462000.02
+,09/22/2023,Paycheque,2193,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,464615.40
+,09/22/2023,Paycheque,2219,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,467038.48
+,09/22/2023,Paycheque,2245,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,469230.79
+,09/22/2023,Paycheque,2271,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,472500.02
+,10/06/2023,Paycheque,2194,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,475115.40
+,10/06/2023,Paycheque,2220,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,477538.48
+,10/06/2023,Paycheque,2246,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,479730.79
+,10/06/2023,Paycheque,2272,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,483000.02
+,10/20/2023,Paycheque,2195,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,485615.40
+,10/20/2023,Paycheque,2221,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,488038.48
+,10/20/2023,Paycheque,2247,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,490230.79
+,10/20/2023,Paycheque,2273,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,493500.02
+,11/03/2023,Paycheque,2196,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,496115.40
+,11/03/2023,Paycheque,2222,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,498538.48
+,11/03/2023,Paycheque,2248,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,500730.79
+,11/03/2023,Paycheque,2274,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,504000.02
+,11/17/2023,Paycheque,2197,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,506615.40
+,11/17/2023,Paycheque,2223,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,509038.48
+,11/17/2023,Paycheque,2249,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,511230.79
+,11/17/2023,Paycheque,2275,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,514500.02
+,12/01/2023,Paycheque,2198,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,517115.40
+,12/01/2023,Paycheque,2224,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,519538.48
+,12/01/2023,Paycheque,2250,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,521730.79
+,12/01/2023,Paycheque,2276,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,525000.02
+,12/15/2023,Paycheque,2199,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,527615.40
+,12/15/2023,Paycheque,2225,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,530038.48
+,12/15/2023,Paycheque,2251,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,532230.79
+,12/15/2023,Paycheque,2277,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,535500.02
+,12/29/2023,Paycheque,2200,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,538115.40
+,12/29/2023,Paycheque,2226,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,540538.48
+,12/29/2023,Paycheque,2252,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,542730.79
+,12/29/2023,Paycheque,2278,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.25,546000.04
+,01/12/2024,Paycheque,2878,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,548615.42
+,01/12/2024,Paycheque,2904,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,551038.50
+,01/12/2024,Paycheque,2930,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,553230.81
+,01/12/2024,Paycheque,2956,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,556500.04
+,01/26/2024,Paycheque,2879,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,559115.42
+,01/26/2024,Paycheque,2905,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,561538.50
+,01/26/2024,Paycheque,2931,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,563730.81
+,01/26/2024,Paycheque,2957,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,567000.04
+,02/09/2024,Paycheque,2880,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,569615.42
+,02/09/2024,Paycheque,2906,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,572038.50
+,02/09/2024,Paycheque,2932,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,574230.81
+,02/09/2024,Paycheque,2958,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,577500.04
+,02/23/2024,Paycheque,2881,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,580115.42
+,02/23/2024,Paycheque,2907,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,582538.50
+,02/23/2024,Paycheque,2933,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,584730.81
+,02/23/2024,Paycheque,2959,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,588000.04
+,03/08/2024,Paycheque,2882,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,590615.42
+,03/08/2024,Paycheque,2908,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,593038.50
+,03/08/2024,Paycheque,2934,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,595230.81
+,03/08/2024,Paycheque,2960,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,598500.04
+,03/22/2024,Paycheque,2883,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,601115.42
+,03/22/2024,Paycheque,2909,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,603538.50
+,03/22/2024,Paycheque,2935,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,605730.81
+,03/22/2024,Paycheque,2961,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,609000.04
+,04/05/2024,Paycheque,2884,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,611615.42
+,04/05/2024,Paycheque,2910,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,614038.50
+,04/05/2024,Paycheque,2936,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,616230.81
+,04/05/2024,Paycheque,2962,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,619500.04
+,04/19/2024,Paycheque,2885,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,622115.42
+,04/19/2024,Paycheque,2911,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,624538.50
+,04/19/2024,Paycheque,2937,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,626730.81
+,04/19/2024,Paycheque,2963,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,630000.04
+,05/03/2024,Paycheque,2886,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,632615.42
+,05/03/2024,Paycheque,2912,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,635038.50
+,05/03/2024,Paycheque,2938,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,637230.81
+,05/03/2024,Paycheque,2964,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,640500.04
+,05/17/2024,Paycheque,2887,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,643115.42
+,05/17/2024,Paycheque,2913,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,645538.50
+,05/17/2024,Paycheque,2939,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,647730.81
+,05/17/2024,Paycheque,2965,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,651000.04
+,05/31/2024,Paycheque,2888,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,653615.42
+,05/31/2024,Paycheque,2914,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,656038.50
+,05/31/2024,Paycheque,2940,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,658230.81
+,05/31/2024,Paycheque,2966,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,661500.04
+,06/14/2024,Paycheque,2889,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,664115.42
+,06/14/2024,Paycheque,2915,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,666538.50
+,06/14/2024,Paycheque,2941,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,668730.81
+,06/14/2024,Paycheque,2967,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,672000.04
+,06/28/2024,Paycheque,2890,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,674615.42
+,06/28/2024,Paycheque,2916,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,677038.50
+,06/28/2024,Paycheque,2942,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,679230.81
+,06/28/2024,Paycheque,2968,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,682500.04
+,07/12/2024,Paycheque,2891,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,685115.42
+,07/12/2024,Paycheque,2917,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,687538.50
+,07/12/2024,Paycheque,2943,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,689730.81
+,07/12/2024,Paycheque,2969,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,693000.04
+,07/26/2024,Paycheque,2892,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,695615.42
+,07/26/2024,Paycheque,2918,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,698038.50
+,07/26/2024,Paycheque,2944,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,700230.81
+,07/26/2024,Paycheque,2970,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,703500.04
+,08/09/2024,Paycheque,2893,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,706115.42
+,08/09/2024,Paycheque,2919,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,708538.50
+,08/09/2024,Paycheque,2945,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,710730.81
+,08/09/2024,Paycheque,2971,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,714000.04
+,08/23/2024,Paycheque,2894,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,716615.42
+,08/23/2024,Paycheque,2920,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,719038.50
+,08/23/2024,Paycheque,2946,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,721230.81
+,08/23/2024,Paycheque,2972,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,724500.04
+,09/06/2024,Paycheque,2895,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,727115.42
+,09/06/2024,Paycheque,2921,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,729538.50
+,09/06/2024,Paycheque,2947,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,731730.81
+,09/06/2024,Paycheque,2973,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,735000.04
+,09/20/2024,Paycheque,2896,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,737615.42
+,09/20/2024,Paycheque,2922,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,740038.50
+,09/20/2024,Paycheque,2948,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,742230.81
+,09/20/2024,Paycheque,2974,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,745500.04
+,10/04/2024,Paycheque,2897,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,748115.42
+,10/04/2024,Paycheque,2923,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,750538.50
+,10/04/2024,Paycheque,2949,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,752730.81
+,10/04/2024,Paycheque,2975,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,756000.04
+,10/18/2024,Paycheque,2898,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,758615.42
+,10/18/2024,Paycheque,2924,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,761038.50
+,10/18/2024,Paycheque,2950,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,763230.81
+,10/18/2024,Paycheque,2976,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,766500.04
+,11/01/2024,Paycheque,2899,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,769115.42
+,11/01/2024,Paycheque,2925,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,771538.50
+,11/01/2024,Paycheque,2951,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,773730.81
+,11/01/2024,Paycheque,2977,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,777000.04
+,11/15/2024,Paycheque,2900,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,779615.42
+,11/15/2024,Paycheque,2926,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,782038.50
+,11/15/2024,Paycheque,2952,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,784230.81
+,11/15/2024,Paycheque,2978,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,787500.04
+,11/29/2024,Paycheque,2901,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,790115.42
+,11/29/2024,Paycheque,2927,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,792538.50
+,11/29/2024,Paycheque,2953,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,794730.81
+,11/29/2024,Paycheque,2979,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,798000.04
+,12/13/2024,Paycheque,2902,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,800615.42
+,12/13/2024,Paycheque,2928,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,803038.50
+,12/13/2024,Paycheque,2954,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,805230.81
+,12/13/2024,Paycheque,2980,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.23,808500.04
+,12/27/2024,Paycheque,2903,Payroll — M. Chen,Biweekly pay,Chequing,2615.38,811115.42
+,12/27/2024,Paycheque,2929,Payroll — J. Okafor,Biweekly pay,Chequing,2423.08,813538.50
+,12/27/2024,Paycheque,2955,Payroll — R. Singh,Biweekly pay,Chequing,2192.31,815730.81
+,12/27/2024,Paycheque,2981,Payroll — E. Brightwater,Biweekly pay,Chequing,3269.25,819000.06
+Total for Wages & Salaries,,,,,,,819000.06,
+Wages - Officers
+,01/15/2022,Paycheque,1574,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,10000.00
+,01/28/2022,Paycheque,1575,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,20000.00
+,02/15/2022,Paycheque,1576,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,30000.00
+,02/28/2022,Paycheque,1577,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,40000.00
+,03/15/2022,Paycheque,1578,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,50000.00
+,03/28/2022,Paycheque,1579,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,60000.00
+,04/15/2022,Paycheque,1580,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,70000.00
+,04/28/2022,Paycheque,1581,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,80000.00
+,05/15/2022,Paycheque,1582,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,90000.00
+,05/28/2022,Paycheque,1583,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,100000.00
+,06/15/2022,Paycheque,1584,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,110000.00
+,06/28/2022,Paycheque,1585,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,120000.00
+,07/15/2022,Paycheque,1586,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,130000.00
+,07/28/2022,Paycheque,1587,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,140000.00
+,08/15/2022,Paycheque,1588,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,150000.00
+,08/28/2022,Paycheque,1589,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,160000.00
+,09/15/2022,Paycheque,1590,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,170000.00
+,09/28/2022,Paycheque,1591,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,180000.00
+,10/15/2022,Paycheque,1592,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,190000.00
+,10/28/2022,Paycheque,1593,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,200000.00
+,11/15/2022,Paycheque,1594,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,210000.00
+,11/28/2022,Paycheque,1595,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,220000.00
+,12/15/2022,Paycheque,1596,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,230000.00
+,12/28/2022,Paycheque,1597,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,240000.00
+,01/15/2023,Paycheque,2279,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,250000.00
+,01/28/2023,Paycheque,2280,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,260000.00
+,02/15/2023,Paycheque,2281,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,270000.00
+,02/28/2023,Paycheque,2282,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,280000.00
+,03/15/2023,Paycheque,2283,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,290000.00
+,03/28/2023,Paycheque,2284,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,300000.00
+,04/15/2023,Paycheque,2285,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,310000.00
+,04/28/2023,Paycheque,2286,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,320000.00
+,05/15/2023,Paycheque,2287,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,330000.00
+,05/28/2023,Paycheque,2288,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,340000.00
+,06/15/2023,Paycheque,2289,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,350000.00
+,06/28/2023,Paycheque,2290,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,360000.00
+,07/15/2023,Paycheque,2291,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,370000.00
+,07/28/2023,Paycheque,2292,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,380000.00
+,08/15/2023,Paycheque,2293,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,390000.00
+,08/28/2023,Paycheque,2294,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,400000.00
+,09/15/2023,Paycheque,2295,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,410000.00
+,09/28/2023,Paycheque,2296,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,420000.00
+,10/15/2023,Paycheque,2297,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,430000.00
+,10/28/2023,Paycheque,2298,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,440000.00
+,11/15/2023,Paycheque,2299,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,450000.00
+,11/28/2023,Paycheque,2300,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,460000.00
+,12/15/2023,Paycheque,2301,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,470000.00
+,12/28/2023,Paycheque,2302,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,480000.00
+,01/15/2024,Paycheque,2982,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,490000.00
+,01/28/2024,Paycheque,2983,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,500000.00
+,02/15/2024,Paycheque,2984,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,510000.00
+,02/28/2024,Paycheque,2985,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,520000.00
+,03/15/2024,Paycheque,2986,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,530000.00
+,03/28/2024,Paycheque,2987,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,540000.00
+,04/15/2024,Paycheque,2988,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,550000.00
+,04/28/2024,Paycheque,2989,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,560000.00
+,05/15/2024,Paycheque,2990,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,570000.00
+,05/28/2024,Paycheque,2991,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,580000.00
+,06/15/2024,Paycheque,2992,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,590000.00
+,06/28/2024,Paycheque,2993,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,600000.00
+,07/15/2024,Paycheque,2994,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,610000.00
+,07/28/2024,Paycheque,2995,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,620000.00
+,08/15/2024,Paycheque,2996,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,630000.00
+,08/28/2024,Paycheque,2997,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,640000.00
+,09/15/2024,Paycheque,2998,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,650000.00
+,09/28/2024,Paycheque,2999,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,660000.00
+,10/15/2024,Paycheque,3000,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,670000.00
+,10/28/2024,Paycheque,3001,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,680000.00
+,11/15/2024,Paycheque,3002,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,690000.00
+,11/28/2024,Paycheque,3003,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,700000.00
+,12/15/2024,Paycheque,3004,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,710000.00
+,12/28/2024,Paycheque,3005,Payroll — D. Brightwater,Semi-monthly salary,Chequing,10000.00,720000.00
+Total for Wages - Officers,,,,,,,720000.00,
+Payroll Taxes - CPP/EI
+,01/11/2022,Expense,1030,Receiver General,CPP/EI remittance,Chequing,3275.17,3275.17
+,02/11/2022,Expense,1068,Receiver General,CPP/EI remittance,Chequing,3395.26,6670.43
+,03/11/2022,Expense,1106,Receiver General,CPP/EI remittance,Chequing,3149.79,9820.22
+,04/11/2022,Expense,1147,Receiver General,CPP/EI remittance,Chequing,3237.05,13057.27
+,05/11/2022,Expense,1185,Receiver General,CPP/EI remittance,Chequing,3365.17,16422.44
+,06/11/2022,Expense,1223,Receiver General,CPP/EI remittance,Chequing,3108.34,19530.78
+,07/11/2022,Expense,1265,Receiver General,CPP/EI remittance,Chequing,3211.00,22741.78
+,08/11/2022,Expense,1303,Receiver General,CPP/EI remittance,Chequing,3308.16,26049.94
+,09/11/2022,Expense,1341,Receiver General,CPP/EI remittance,Chequing,3390.84,29440.78
+,10/11/2022,Expense,1382,Receiver General,CPP/EI remittance,Chequing,3106.91,32547.69
+,11/11/2022,Expense,1420,Receiver General,CPP/EI remittance,Chequing,3179.17,35726.86
+,12/11/2022,Expense,1458,Receiver General,CPP/EI remittance,Chequing,3331.90,39058.76
+,01/11/2023,Expense,1735,Receiver General,CPP/EI remittance,Chequing,3205.10,42263.86
+,02/11/2023,Expense,1773,Receiver General,CPP/EI remittance,Chequing,3231.38,45495.24
+,03/11/2023,Expense,1811,Receiver General,CPP/EI remittance,Chequing,3387.17,48882.41
+,04/11/2023,Expense,1852,Receiver General,CPP/EI remittance,Chequing,3129.49,52011.90
+,05/11/2023,Expense,1890,Receiver General,CPP/EI remittance,Chequing,3100.38,55112.28
+,06/11/2023,Expense,1928,Receiver General,CPP/EI remittance,Chequing,3318.68,58430.96
+,07/11/2023,Expense,1970,Receiver General,CPP/EI remittance,Chequing,3134.93,61565.89
+,08/11/2023,Expense,2008,Receiver General,CPP/EI remittance,Chequing,3360.57,64926.46
+,09/11/2023,Expense,2046,Receiver General,CPP/EI remittance,Chequing,3145.14,68071.60
+,10/11/2023,Expense,2087,Receiver General,CPP/EI remittance,Chequing,3296.20,71367.80
+,11/11/2023,Expense,2125,Receiver General,CPP/EI remittance,Chequing,3250.91,74618.71
+,12/11/2023,Expense,2163,Receiver General,CPP/EI remittance,Chequing,3193.66,77812.37
+,01/11/2024,Expense,2438,Receiver General,CPP/EI remittance,Chequing,3138.81,80951.18
+,02/11/2024,Expense,2476,Receiver General,CPP/EI remittance,Chequing,3224.69,84175.87
+,03/11/2024,Expense,2514,Receiver General,CPP/EI remittance,Chequing,3280.93,87456.80
+,04/11/2024,Expense,2555,Receiver General,CPP/EI remittance,Chequing,3270.40,90727.20
+,05/11/2024,Expense,2593,Receiver General,CPP/EI remittance,Chequing,3212.89,93940.09
+,06/11/2024,Expense,2631,Receiver General,CPP/EI remittance,Chequing,3323.38,97263.47
+,07/11/2024,Expense,2673,Receiver General,CPP/EI remittance,Chequing,3258.41,100521.88
+,08/11/2024,Expense,2711,Receiver General,CPP/EI remittance,Chequing,3345.34,103867.22
+,09/11/2024,Expense,2749,Receiver General,CPP/EI remittance,Chequing,3266.16,107133.38
+,10/11/2024,Expense,2790,Receiver General,CPP/EI remittance,Chequing,3191.52,110324.90
+,11/11/2024,Expense,2828,Receiver General,CPP/EI remittance,Chequing,3132.92,113457.82
+,12/11/2024,Expense,2866,Receiver General,CPP/EI remittance,Chequing,3348.54,116806.36
+Total for Payroll Taxes - CPP/EI,,,,,,,116806.36,
+WSIB
+,03/15/2022,Expense,1115,WSIB,Quarterly premium,Chequing,2100.00,2100.00
+,06/15/2022,Expense,1232,WSIB,Quarterly premium,Chequing,2100.00,4200.00
+,09/15/2022,Expense,1350,WSIB,Quarterly premium,Chequing,2100.00,6300.00
+,12/15/2022,Expense,1467,WSIB,Quarterly premium,Chequing,2100.00,8400.00
+,03/15/2023,Expense,1820,WSIB,Quarterly premium,Chequing,2100.00,10500.00
+,06/15/2023,Expense,1937,WSIB,Quarterly premium,Chequing,2100.00,12600.00
+,09/15/2023,Expense,2055,WSIB,Quarterly premium,Chequing,2100.00,14700.00
+,12/15/2023,Expense,2172,WSIB,Quarterly premium,Chequing,2100.00,16800.00
+,03/15/2024,Expense,2523,WSIB,Quarterly premium,Chequing,2100.00,18900.00
+,06/15/2024,Expense,2640,WSIB,Quarterly premium,Chequing,2100.00,21000.00
+,09/15/2024,Expense,2758,WSIB,Quarterly premium,Chequing,2100.00,23100.00
+,12/15/2024,Expense,2875,WSIB,Quarterly premium,Chequing,2100.00,25200.00
+Total for WSIB,,,,,,,25200.00,
+Employee Benefits
+,01/13/2022,Expense,1031,Manulife,Group benefits,Chequing,1120.00,1120.00
+,02/13/2022,Expense,1069,Manulife,Group benefits,Chequing,1120.00,2240.00
+,03/13/2022,Expense,1107,Manulife,Group benefits,Chequing,1120.00,3360.00
+,04/13/2022,Expense,1148,Manulife,Group benefits,Chequing,1120.00,4480.00
+,05/13/2022,Expense,1186,Manulife,Group benefits,Chequing,1120.00,5600.00
+,06/13/2022,Expense,1224,Manulife,Group benefits,Chequing,1120.00,6720.00
+,07/13/2022,Expense,1266,Manulife,Group benefits,Chequing,1120.00,7840.00
+,08/13/2022,Expense,1304,Manulife,Group benefits,Chequing,1120.00,8960.00
+,09/13/2022,Expense,1342,Manulife,Group benefits,Chequing,1120.00,10080.00
+,10/13/2022,Expense,1383,Manulife,Group benefits,Chequing,1120.00,11200.00
+,11/13/2022,Expense,1421,Manulife,Group benefits,Chequing,1120.00,12320.00
+,12/13/2022,Expense,1459,Manulife,Group benefits,Chequing,1120.00,13440.00
+,01/13/2023,Expense,1736,Manulife,Group benefits,Chequing,1120.00,14560.00
+,02/13/2023,Expense,1774,Manulife,Group benefits,Chequing,1120.00,15680.00
+,03/13/2023,Expense,1812,Manulife,Group benefits,Chequing,1120.00,16800.00
+,04/13/2023,Expense,1853,Manulife,Group benefits,Chequing,1120.00,17920.00
+,05/13/2023,Expense,1891,Manulife,Group benefits,Chequing,1120.00,19040.00
+,06/13/2023,Expense,1929,Manulife,Group benefits,Chequing,1120.00,20160.00
+,07/13/2023,Expense,1971,Manulife,Group benefits,Chequing,1120.00,21280.00
+,08/13/2023,Expense,2009,Manulife,Group benefits,Chequing,1120.00,22400.00
+,09/13/2023,Expense,2047,Manulife,Group benefits,Chequing,1120.00,23520.00
+,10/13/2023,Expense,2088,Manulife,Group benefits,Chequing,1120.00,24640.00
+,11/13/2023,Expense,2126,Manulife,Group benefits,Chequing,1120.00,25760.00
+,12/13/2023,Expense,2164,Manulife,Group benefits,Chequing,1120.00,26880.00
+,01/13/2024,Expense,2439,Manulife,Group benefits,Chequing,1120.00,28000.00
+,02/13/2024,Expense,2477,Manulife,Group benefits,Chequing,1120.00,29120.00
+,03/13/2024,Expense,2515,Manulife,Group benefits,Chequing,1120.00,30240.00
+,04/13/2024,Expense,2556,Manulife,Group benefits,Chequing,1120.00,31360.00
+,05/13/2024,Expense,2594,Manulife,Group benefits,Chequing,1120.00,32480.00
+,06/13/2024,Expense,2632,Manulife,Group benefits,Chequing,1120.00,33600.00
+,07/13/2024,Expense,2674,Manulife,Group benefits,Chequing,1120.00,34720.00
+,08/13/2024,Expense,2712,Manulife,Group benefits,Chequing,1120.00,35840.00
+,09/13/2024,Expense,2750,Manulife,Group benefits,Chequing,1120.00,36960.00
+,10/13/2024,Expense,2791,Manulife,Group benefits,Chequing,1120.00,38080.00
+,11/13/2024,Expense,2829,Manulife,Group benefits,Chequing,1120.00,39200.00
+,12/13/2024,Expense,2867,Manulife,Group benefits,Chequing,1120.00,40320.00
+Total for Employee Benefits,,,,,,,40320.00,
+Automobile Expense
+   Vehicle - Owner
+,01/03/2022,Expense,1598,Lexus Financial,Lease Jan - Lexus RX,Chequing,1150.00,1150.00
+,01/11/2022,Expense,1610,Petro-Canada,Fuel - Lexus RX,Chequing,316.43,1466.43
+,01/24/2022,Expense,1611,Petro-Canada,Fuel - Lexus RX,Chequing,266.27,1732.70
+,02/03/2022,Expense,1599,Lexus Financial,Lease Feb - Lexus RX,Chequing,1150.00,2882.70
+,02/11/2022,Expense,1612,Petro-Canada,Fuel - Lexus RX,Chequing,250.90,3133.60
+,02/24/2022,Expense,1613,Petro-Canada,Fuel - Lexus RX,Chequing,338.24,3471.84
+,03/03/2022,Expense,1600,Lexus Financial,Lease Mar - Lexus RX,Chequing,1150.00,4621.84
+,03/11/2022,Expense,1614,Petro-Canada,Fuel - Lexus RX,Chequing,453.67,5075.51
+,03/24/2022,Expense,1615,Petro-Canada,Fuel - Lexus RX,Chequing,445.92,5521.43
+,04/02/2022,Expense,1634,Intact Insurance,Auto insurance - Lexus RX,Chequing,1860.00,7381.43
+,04/03/2022,Expense,1601,Lexus Financial,Lease Apr - Lexus RX,Chequing,1150.00,8531.43
+,04/11/2022,Expense,1616,Petro-Canada,Fuel - Lexus RX,Chequing,321.97,8853.40
+,04/24/2022,Expense,1617,Petro-Canada,Fuel - Lexus RX,Chequing,434.09,9287.49
+,05/03/2022,Expense,1602,Lexus Financial,Lease May - Lexus RX,Chequing,1150.00,10437.49
+,05/11/2022,Expense,1618,Petro-Canada,Fuel - Lexus RX,Chequing,328.78,10766.27
+,05/24/2022,Expense,1619,Petro-Canada,Fuel - Lexus RX,Chequing,278.14,11044.41
+,06/03/2022,Expense,1603,Lexus Financial,Lease Jun - Lexus RX,Chequing,1150.00,12194.41
+,06/11/2022,Expense,1620,Petro-Canada,Fuel - Lexus RX,Chequing,314.02,12508.43
+,06/24/2022,Expense,1621,Petro-Canada,Fuel - Lexus RX,Chequing,303.28,12811.71
+,07/03/2022,Expense,1604,Lexus Financial,Lease Jul - Lexus RX,Chequing,1150.00,13961.71
+,07/11/2022,Expense,1622,Petro-Canada,Fuel - Lexus RX,Chequing,378.96,14340.67
+,07/24/2022,Expense,1623,Petro-Canada,Fuel - Lexus RX,Chequing,377.88,14718.55
+,08/03/2022,Expense,1605,Lexus Financial,Lease Aug - Lexus RX,Chequing,1150.00,15868.55
+,08/11/2022,Expense,1624,Petro-Canada,Fuel - Lexus RX,Chequing,310.57,16179.12
+,08/24/2022,Expense,1625,Petro-Canada,Fuel - Lexus RX,Chequing,369.64,16548.76
+,09/03/2022,Expense,1606,Lexus Financial,Lease Sep - Lexus RX,Chequing,1150.00,17698.76
+,09/11/2022,Expense,1626,Petro-Canada,Fuel - Lexus RX,Chequing,375.68,18074.44
+,09/24/2022,Expense,1627,Petro-Canada,Fuel - Lexus RX,Chequing,435.06,18509.50
+,10/03/2022,Expense,1607,Lexus Financial,Lease Oct - Lexus RX,Chequing,1150.00,19659.50
+,10/11/2022,Expense,1628,Petro-Canada,Fuel - Lexus RX,Chequing,412.04,20071.54
+,10/24/2022,Expense,1629,Petro-Canada,Fuel - Lexus RX,Chequing,338.67,20410.21
+,11/03/2022,Expense,1608,Lexus Financial,Lease Nov - Lexus RX,Chequing,1150.00,21560.21
+,11/11/2022,Expense,1630,Petro-Canada,Fuel - Lexus RX,Chequing,285.99,21846.20
+,11/24/2022,Expense,1631,Petro-Canada,Fuel - Lexus RX,Chequing,276.36,22122.56
+,12/03/2022,Expense,1609,Lexus Financial,Lease Dec - Lexus RX,Chequing,1150.00,23272.56
+,12/11/2022,Expense,1632,Petro-Canada,Fuel - Lexus RX,Chequing,373.69,23646.25
+,12/24/2022,Expense,1633,Petro-Canada,Fuel - Lexus RX,Chequing,353.75,24000.00
+,01/03/2023,Expense,2303,Lexus Financial,Lease Jan - Lexus RX,Chequing,1150.00,25150.00
+,01/11/2023,Expense,2315,Petro-Canada,Fuel - Lexus RX,Chequing,501.81,25651.81
+,01/24/2023,Expense,2316,Petro-Canada,Fuel - Lexus RX,Chequing,492.66,26144.47
+,02/03/2023,Expense,2304,Lexus Financial,Lease Feb - Lexus RX,Chequing,1150.00,27294.47
+,02/11/2023,Expense,2317,Petro-Canada,Fuel - Lexus RX,Chequing,478.49,27772.96
+,02/24/2023,Expense,2318,Petro-Canada,Fuel - Lexus RX,Chequing,409.99,28182.95
+,03/03/2023,Expense,2305,Lexus Financial,Lease Mar - Lexus RX,Chequing,1150.00,29332.95
+,03/11/2023,Expense,2319,Petro-Canada,Fuel - Lexus RX,Chequing,359.24,29692.19
+,03/24/2023,Expense,2320,Petro-Canada,Fuel - Lexus RX,Chequing,504.88,30197.07
+,04/02/2023,Expense,2339,Intact Insurance,Auto insurance - Lexus RX,Chequing,1860.00,32057.07
+,04/03/2023,Expense,2306,Lexus Financial,Lease Apr - Lexus RX,Chequing,1150.00,33207.07
+,04/11/2023,Expense,2321,Petro-Canada,Fuel - Lexus RX,Chequing,400.10,33607.17
+,04/24/2023,Expense,2322,Petro-Canada,Fuel - Lexus RX,Chequing,386.85,33994.02
+,05/03/2023,Expense,2307,Lexus Financial,Lease May - Lexus RX,Chequing,1150.00,35144.02
+,05/11/2023,Expense,2323,Petro-Canada,Fuel - Lexus RX,Chequing,483.75,35627.77
+,05/24/2023,Expense,2324,Petro-Canada,Fuel - Lexus RX,Chequing,395.95,36023.72
+,06/03/2023,Expense,2308,Lexus Financial,Lease Jun - Lexus RX,Chequing,1150.00,37173.72
+,06/11/2023,Expense,2325,Petro-Canada,Fuel - Lexus RX,Chequing,454.05,37627.77
+,06/24/2023,Expense,2326,Petro-Canada,Fuel - Lexus RX,Chequing,458.00,38085.77
+,07/03/2023,Expense,2309,Lexus Financial,Lease Jul - Lexus RX,Chequing,1150.00,39235.77
+,07/11/2023,Expense,2327,Petro-Canada,Fuel - Lexus RX,Chequing,571.79,39807.56
+,07/24/2023,Expense,2328,Petro-Canada,Fuel - Lexus RX,Chequing,319.91,40127.47
+,08/03/2023,Expense,2310,Lexus Financial,Lease Aug - Lexus RX,Chequing,1150.00,41277.47
+,08/11/2023,Expense,2329,Petro-Canada,Fuel - Lexus RX,Chequing,361.19,41638.66
+,08/24/2023,Expense,2330,Petro-Canada,Fuel - Lexus RX,Chequing,442.30,42080.96
+,09/03/2023,Expense,2311,Lexus Financial,Lease Sep - Lexus RX,Chequing,1150.00,43230.96
+,09/11/2023,Expense,2331,Petro-Canada,Fuel - Lexus RX,Chequing,426.17,43657.13
+,09/24/2023,Expense,2332,Petro-Canada,Fuel - Lexus RX,Chequing,361.42,44018.55
+,10/03/2023,Expense,2312,Lexus Financial,Lease Oct - Lexus RX,Chequing,1150.00,45168.55
+,10/11/2023,Expense,2333,Petro-Canada,Fuel - Lexus RX,Chequing,576.89,45745.44
+,10/24/2023,Expense,2334,Petro-Canada,Fuel - Lexus RX,Chequing,554.73,46300.17
+,11/03/2023,Expense,2313,Lexus Financial,Lease Nov - Lexus RX,Chequing,1150.00,47450.17
+,11/11/2023,Expense,2335,Petro-Canada,Fuel - Lexus RX,Chequing,356.89,47807.06
+,11/24/2023,Expense,2336,Petro-Canada,Fuel - Lexus RX,Chequing,340.53,48147.59
+,12/03/2023,Expense,2314,Lexus Financial,Lease Dec - Lexus RX,Chequing,1150.00,49297.59
+,12/11/2023,Expense,2337,Petro-Canada,Fuel - Lexus RX,Chequing,372.21,49669.80
+,12/24/2023,Expense,2338,Petro-Canada,Fuel - Lexus RX,Chequing,330.20,50000.00
+,01/03/2024,Expense,3006,Lexus Financial,Lease Jan - Lexus RX,Chequing,1150.00,51150.00
+,01/11/2024,Expense,3018,Petro-Canada,Fuel - Lexus RX,Chequing,438.69,51588.69
+,01/24/2024,Expense,3019,Petro-Canada,Fuel - Lexus RX,Chequing,416.31,52005.00
+,02/03/2024,Expense,3007,Lexus Financial,Lease Feb - Lexus RX,Chequing,1150.00,53155.00
+,02/11/2024,Expense,3020,Petro-Canada,Fuel - Lexus RX,Chequing,387.97,53542.97
+,02/24/2024,Expense,3021,Petro-Canada,Fuel - Lexus RX,Chequing,368.14,53911.11
+,03/03/2024,Expense,3008,Lexus Financial,Lease Mar - Lexus RX,Chequing,1150.00,55061.11
+,03/11/2024,Expense,3022,Petro-Canada,Fuel - Lexus RX,Chequing,409.69,55470.80
+,03/24/2024,Expense,3023,Petro-Canada,Fuel - Lexus RX,Chequing,392.17,55862.97
+,04/02/2024,Expense,3042,Intact Insurance,Auto insurance - Lexus RX,Chequing,1860.00,57722.97
+,04/03/2024,Expense,3009,Lexus Financial,Lease Apr - Lexus RX,Chequing,1150.00,58872.97
+,04/11/2024,Expense,3024,Petro-Canada,Fuel - Lexus RX,Chequing,513.28,59386.25
+,04/24/2024,Expense,3025,Petro-Canada,Fuel - Lexus RX,Chequing,506.78,59893.03
+,05/03/2024,Expense,3010,Lexus Financial,Lease May - Lexus RX,Chequing,1150.00,61043.03
+,05/11/2024,Expense,3026,Petro-Canada,Fuel - Lexus RX,Chequing,512.91,61555.94
+,05/24/2024,Expense,3027,Petro-Canada,Fuel - Lexus RX,Chequing,676.73,62232.67
+,06/03/2024,Expense,3011,Lexus Financial,Lease Jun - Lexus RX,Chequing,1150.00,63382.67
+,06/11/2024,Expense,3028,Petro-Canada,Fuel - Lexus RX,Chequing,457.40,63840.07
+,06/24/2024,Expense,3029,Petro-Canada,Fuel - Lexus RX,Chequing,504.47,64344.54
+,07/03/2024,Expense,3012,Lexus Financial,Lease Jul - Lexus RX,Chequing,1150.00,65494.54
+,07/11/2024,Expense,3030,Petro-Canada,Fuel - Lexus RX,Chequing,622.31,66116.85
+,07/24/2024,Expense,3031,Petro-Canada,Fuel - Lexus RX,Chequing,580.48,66697.33
+,08/03/2024,Expense,3013,Lexus Financial,Lease Aug - Lexus RX,Chequing,1150.00,67847.33
+,08/11/2024,Expense,3032,Petro-Canada,Fuel - Lexus RX,Chequing,393.91,68241.24
+,08/24/2024,Expense,3033,Petro-Canada,Fuel - Lexus RX,Chequing,515.68,68756.92
+,09/03/2024,Expense,3014,Lexus Financial,Lease Sep - Lexus RX,Chequing,1150.00,69906.92
+,09/11/2024,Expense,3034,Petro-Canada,Fuel - Lexus RX,Chequing,500.96,70407.88
+,09/24/2024,Expense,3035,Petro-Canada,Fuel - Lexus RX,Chequing,530.01,70937.89
+,10/03/2024,Expense,3015,Lexus Financial,Lease Oct - Lexus RX,Chequing,1150.00,72087.89
+,10/11/2024,Expense,3036,Petro-Canada,Fuel - Lexus RX,Chequing,528.56,72616.45
+,10/24/2024,Expense,3037,Petro-Canada,Fuel - Lexus RX,Chequing,593.05,73209.50
+,11/03/2024,Expense,3016,Lexus Financial,Lease Nov - Lexus RX,Chequing,1150.00,74359.50
+,11/11/2024,Expense,3038,Petro-Canada,Fuel - Lexus RX,Chequing,608.01,74967.51
+,11/24/2024,Expense,3039,Petro-Canada,Fuel - Lexus RX,Chequing,609.56,75577.07
+,12/03/2024,Expense,3017,Lexus Financial,Lease Dec - Lexus RX,Chequing,1150.00,76727.07
+,12/11/2024,Expense,3040,Petro-Canada,Fuel - Lexus RX,Chequing,526.54,77253.61
+,12/24/2024,Expense,3041,Petro-Canada,Fuel - Lexus RX,Chequing,586.39,77840.00
+   Total for Vehicle - Owner,,,,,,,77840.00,
+   Fuel - Service Vans
+,01/03/2022,Expense,1035,Petro-Canada,Fuel - service vans,Chequing,232.28,232.28
+,01/10/2022,Expense,1036,Esso,Fuel - service vans,Chequing,169.75,402.03
+,01/17/2022,Expense,1037,Petro-Canada,Fuel - service vans,Chequing,169.60,571.63
+,01/24/2022,Expense,1038,Esso,Fuel - service vans,Chequing,238.19,809.82
+,02/03/2022,Expense,1073,Petro-Canada,Fuel - service vans,Chequing,222.42,1032.24
+,02/10/2022,Expense,1074,Esso,Fuel - service vans,Chequing,259.37,1291.61
+,02/17/2022,Expense,1075,Petro-Canada,Fuel - service vans,Chequing,179.82,1471.43
+,02/24/2022,Expense,1076,Esso,Fuel - service vans,Chequing,258.68,1730.11
+,03/03/2022,Expense,1111,Petro-Canada,Fuel - service vans,Chequing,153.10,1883.21
+,03/10/2022,Expense,1112,Esso,Fuel - service vans,Chequing,224.98,2108.19
+,03/17/2022,Expense,1113,Petro-Canada,Fuel - service vans,Chequing,244.58,2352.77
+,03/24/2022,Expense,1114,Esso,Fuel - service vans,Chequing,170.72,2523.49
+,04/03/2022,Expense,1152,Petro-Canada,Fuel - service vans,Chequing,196.98,2720.47
+,04/10/2022,Expense,1153,Esso,Fuel - service vans,Chequing,235.90,2956.37
+,04/17/2022,Expense,1154,Petro-Canada,Fuel - service vans,Chequing,215.96,3172.33
+,04/24/2022,Expense,1155,Esso,Fuel - service vans,Chequing,190.84,3363.17
+,05/03/2022,Expense,1190,Petro-Canada,Fuel - service vans,Chequing,196.03,3559.20
+,05/10/2022,Expense,1191,Esso,Fuel - service vans,Chequing,143.86,3703.06
+,05/17/2022,Expense,1192,Petro-Canada,Fuel - service vans,Chequing,161.23,3864.29
+,05/24/2022,Expense,1193,Esso,Fuel - service vans,Chequing,251.10,4115.39
+,06/03/2022,Expense,1228,Petro-Canada,Fuel - service vans,Chequing,196.06,4311.45
+,06/10/2022,Expense,1229,Esso,Fuel - service vans,Chequing,204.82,4516.27
+,06/17/2022,Expense,1230,Petro-Canada,Fuel - service vans,Chequing,177.77,4694.04
+,06/24/2022,Expense,1231,Esso,Fuel - service vans,Chequing,215.36,4909.40
+,07/03/2022,Expense,1270,Petro-Canada,Fuel - service vans,Chequing,248.17,5157.57
+,07/10/2022,Expense,1271,Esso,Fuel - service vans,Chequing,244.73,5402.30
+,07/17/2022,Expense,1272,Petro-Canada,Fuel - service vans,Chequing,223.56,5625.86
+,07/24/2022,Expense,1273,Esso,Fuel - service vans,Chequing,224.52,5850.38
+,08/03/2022,Expense,1308,Petro-Canada,Fuel - service vans,Chequing,207.68,6058.06
+,08/10/2022,Expense,1309,Esso,Fuel - service vans,Chequing,193.36,6251.42
+,08/17/2022,Expense,1310,Petro-Canada,Fuel - service vans,Chequing,213.14,6464.56
+,08/24/2022,Expense,1311,Esso,Fuel - service vans,Chequing,173.39,6637.95
+,09/03/2022,Expense,1346,Petro-Canada,Fuel - service vans,Chequing,161.53,6799.48
+,09/10/2022,Expense,1347,Esso,Fuel - service vans,Chequing,239.18,7038.66
+,09/17/2022,Expense,1348,Petro-Canada,Fuel - service vans,Chequing,239.68,7278.34
+,09/24/2022,Expense,1349,Esso,Fuel - service vans,Chequing,185.35,7463.69
+,10/03/2022,Expense,1387,Petro-Canada,Fuel - service vans,Chequing,169.77,7633.46
+,10/10/2022,Expense,1388,Esso,Fuel - service vans,Chequing,150.56,7784.02
+,10/17/2022,Expense,1389,Petro-Canada,Fuel - service vans,Chequing,161.02,7945.04
+,10/24/2022,Expense,1390,Esso,Fuel - service vans,Chequing,244.92,8189.96
+,11/03/2022,Expense,1425,Petro-Canada,Fuel - service vans,Chequing,164.48,8354.44
+,11/10/2022,Expense,1426,Esso,Fuel - service vans,Chequing,164.72,8519.16
+,11/17/2022,Expense,1427,Petro-Canada,Fuel - service vans,Chequing,230.94,8750.10
+,11/24/2022,Expense,1428,Esso,Fuel - service vans,Chequing,230.50,8980.60
+,12/03/2022,Expense,1463,Petro-Canada,Fuel - service vans,Chequing,237.62,9218.22
+,12/10/2022,Expense,1464,Esso,Fuel - service vans,Chequing,209.67,9427.89
+,12/17/2022,Expense,1465,Petro-Canada,Fuel - service vans,Chequing,250.67,9678.56
+,12/24/2022,Expense,1466,Esso,Fuel - service vans,Chequing,188.18,9866.74
+,01/03/2023,Expense,1740,Petro-Canada,Fuel - service vans,Chequing,167.73,10034.47
+,01/10/2023,Expense,1741,Esso,Fuel - service vans,Chequing,249.34,10283.81
+,01/17/2023,Expense,1742,Petro-Canada,Fuel - service vans,Chequing,145.56,10429.37
+,01/24/2023,Expense,1743,Esso,Fuel - service vans,Chequing,239.61,10668.98
+,02/03/2023,Expense,1778,Petro-Canada,Fuel - service vans,Chequing,191.80,10860.78
+,02/10/2023,Expense,1779,Esso,Fuel - service vans,Chequing,167.01,11027.79
+,02/17/2023,Expense,1780,Petro-Canada,Fuel - service vans,Chequing,184.92,11212.71
+,02/24/2023,Expense,1781,Esso,Fuel - service vans,Chequing,195.27,11407.98
+,03/03/2023,Expense,1816,Petro-Canada,Fuel - service vans,Chequing,185.34,11593.32
+,03/10/2023,Expense,1817,Esso,Fuel - service vans,Chequing,250.74,11844.06
+,03/17/2023,Expense,1818,Petro-Canada,Fuel - service vans,Chequing,159.35,12003.41
+,03/24/2023,Expense,1819,Esso,Fuel - service vans,Chequing,146.21,12149.62
+,04/03/2023,Expense,1857,Petro-Canada,Fuel - service vans,Chequing,147.73,12297.35
+,04/10/2023,Expense,1858,Esso,Fuel - service vans,Chequing,211.38,12508.73
+,04/17/2023,Expense,1859,Petro-Canada,Fuel - service vans,Chequing,185.65,12694.38
+,04/24/2023,Expense,1860,Esso,Fuel - service vans,Chequing,219.08,12913.46
+,05/03/2023,Expense,1895,Petro-Canada,Fuel - service vans,Chequing,149.68,13063.14
+,05/10/2023,Expense,1896,Esso,Fuel - service vans,Chequing,164.12,13227.26
+,05/17/2023,Expense,1897,Petro-Canada,Fuel - service vans,Chequing,145.91,13373.17
+,05/24/2023,Expense,1898,Esso,Fuel - service vans,Chequing,234.04,13607.21
+,06/03/2023,Expense,1933,Petro-Canada,Fuel - service vans,Chequing,144.29,13751.50
+,06/10/2023,Expense,1934,Esso,Fuel - service vans,Chequing,157.06,13908.56
+,06/17/2023,Expense,1935,Petro-Canada,Fuel - service vans,Chequing,182.92,14091.48
+,06/24/2023,Expense,1936,Esso,Fuel - service vans,Chequing,210.03,14301.51
+,07/03/2023,Expense,1975,Petro-Canada,Fuel - service vans,Chequing,157.82,14459.33
+,07/10/2023,Expense,1976,Esso,Fuel - service vans,Chequing,200.90,14660.23
+,07/17/2023,Expense,1977,Petro-Canada,Fuel - service vans,Chequing,193.33,14853.56
+,07/24/2023,Expense,1978,Esso,Fuel - service vans,Chequing,248.41,15101.97
+,08/03/2023,Expense,2013,Petro-Canada,Fuel - service vans,Chequing,177.81,15279.78
+,08/10/2023,Expense,2014,Esso,Fuel - service vans,Chequing,229.76,15509.54
+,08/17/2023,Expense,2015,Petro-Canada,Fuel - service vans,Chequing,206.78,15716.32
+,08/24/2023,Expense,2016,Esso,Fuel - service vans,Chequing,259.68,15976.00
+,09/03/2023,Expense,2051,Petro-Canada,Fuel - service vans,Chequing,145.71,16121.71
+,09/10/2023,Expense,2052,Esso,Fuel - service vans,Chequing,174.38,16296.09
+,09/17/2023,Expense,2053,Petro-Canada,Fuel - service vans,Chequing,173.93,16470.02
+,09/24/2023,Expense,2054,Esso,Fuel - service vans,Chequing,198.09,16668.11
+,10/03/2023,Expense,2092,Petro-Canada,Fuel - service vans,Chequing,209.18,16877.29
+,10/10/2023,Expense,2093,Esso,Fuel - service vans,Chequing,246.04,17123.33
+,10/17/2023,Expense,2094,Petro-Canada,Fuel - service vans,Chequing,225.10,17348.43
+,10/24/2023,Expense,2095,Esso,Fuel - service vans,Chequing,155.40,17503.83
+,11/03/2023,Expense,2130,Petro-Canada,Fuel - service vans,Chequing,198.59,17702.42
+,11/10/2023,Expense,2131,Esso,Fuel - service vans,Chequing,239.86,17942.28
+,11/17/2023,Expense,2132,Petro-Canada,Fuel - service vans,Chequing,218.94,18161.22
+,11/24/2023,Expense,2133,Esso,Fuel - service vans,Chequing,182.21,18343.43
+,12/03/2023,Expense,2168,Petro-Canada,Fuel - service vans,Chequing,152.35,18495.78
+,12/10/2023,Expense,2169,Esso,Fuel - service vans,Chequing,188.29,18684.07
+,12/17/2023,Expense,2170,Petro-Canada,Fuel - service vans,Chequing,147.62,18831.69
+,12/24/2023,Expense,2171,Esso,Fuel - service vans,Chequing,241.72,19073.41
+,01/03/2024,Expense,2443,Petro-Canada,Fuel - service vans,Chequing,236.07,19309.48
+,01/10/2024,Expense,2444,Esso,Fuel - service vans,Chequing,244.97,19554.45
+,01/17/2024,Expense,2445,Petro-Canada,Fuel - service vans,Chequing,187.61,19742.06
+,01/24/2024,Expense,2446,Esso,Fuel - service vans,Chequing,196.82,19938.88
+,02/03/2024,Expense,2481,Petro-Canada,Fuel - service vans,Chequing,155.43,20094.31
+,02/10/2024,Expense,2482,Esso,Fuel - service vans,Chequing,249.83,20344.14
+,02/17/2024,Expense,2483,Petro-Canada,Fuel - service vans,Chequing,196.44,20540.58
+,02/24/2024,Expense,2484,Esso,Fuel - service vans,Chequing,249.95,20790.53
+,03/03/2024,Expense,2519,Petro-Canada,Fuel - service vans,Chequing,173.21,20963.74
+,03/10/2024,Expense,2520,Esso,Fuel - service vans,Chequing,150.04,21113.78
+,03/17/2024,Expense,2521,Petro-Canada,Fuel - service vans,Chequing,159.07,21272.85
+,03/24/2024,Expense,2522,Esso,Fuel - service vans,Chequing,153.74,21426.59
+,04/03/2024,Expense,2560,Petro-Canada,Fuel - service vans,Chequing,184.93,21611.52
+,04/10/2024,Expense,2561,Esso,Fuel - service vans,Chequing,214.16,21825.68
+,04/17/2024,Expense,2562,Petro-Canada,Fuel - service vans,Chequing,238.88,22064.56
+,04/24/2024,Expense,2563,Esso,Fuel - service vans,Chequing,217.02,22281.58
+,05/03/2024,Expense,2598,Petro-Canada,Fuel - service vans,Chequing,222.89,22504.47
+,05/10/2024,Expense,2599,Esso,Fuel - service vans,Chequing,220.36,22724.83
+,05/17/2024,Expense,2600,Petro-Canada,Fuel - service vans,Chequing,141.87,22866.70
+,05/24/2024,Expense,2601,Esso,Fuel - service vans,Chequing,149.53,23016.23
+,06/03/2024,Expense,2636,Petro-Canada,Fuel - service vans,Chequing,221.66,23237.89
+,06/10/2024,Expense,2637,Esso,Fuel - service vans,Chequing,192.66,23430.55
+,06/17/2024,Expense,2638,Petro-Canada,Fuel - service vans,Chequing,253.11,23683.66
+,06/24/2024,Expense,2639,Esso,Fuel - service vans,Chequing,225.55,23909.21
+,07/03/2024,Expense,2678,Petro-Canada,Fuel - service vans,Chequing,222.79,24132.00
+,07/10/2024,Expense,2679,Esso,Fuel - service vans,Chequing,163.34,24295.34
+,07/17/2024,Expense,2680,Petro-Canada,Fuel - service vans,Chequing,240.16,24535.50
+,07/24/2024,Expense,2681,Esso,Fuel - service vans,Chequing,209.88,24745.38
+,08/03/2024,Expense,2716,Petro-Canada,Fuel - service vans,Chequing,183.72,24929.10
+,08/10/2024,Expense,2717,Esso,Fuel - service vans,Chequing,164.02,25093.12
+,08/17/2024,Expense,2718,Petro-Canada,Fuel - service vans,Chequing,217.39,25310.51
+,08/24/2024,Expense,2719,Esso,Fuel - service vans,Chequing,177.78,25488.29
+,09/03/2024,Expense,2754,Petro-Canada,Fuel - service vans,Chequing,228.46,25716.75
+,09/10/2024,Expense,2755,Esso,Fuel - service vans,Chequing,208.91,25925.66
+,09/17/2024,Expense,2756,Petro-Canada,Fuel - service vans,Chequing,199.24,26124.90
+,09/24/2024,Expense,2757,Esso,Fuel - service vans,Chequing,170.17,26295.07
+,10/03/2024,Expense,2795,Petro-Canada,Fuel - service vans,Chequing,181.75,26476.82
+,10/10/2024,Expense,2796,Esso,Fuel - service vans,Chequing,221.95,26698.77
+,10/17/2024,Expense,2797,Petro-Canada,Fuel - service vans,Chequing,168.09,26866.86
+,10/24/2024,Expense,2798,Esso,Fuel - service vans,Chequing,156.43,27023.29
+,11/03/2024,Expense,2833,Petro-Canada,Fuel - service vans,Chequing,256.43,27279.72
+,11/10/2024,Expense,2834,Esso,Fuel - service vans,Chequing,175.22,27454.94
+,11/17/2024,Expense,2835,Petro-Canada,Fuel - service vans,Chequing,198.92,27653.86
+,11/24/2024,Expense,2836,Esso,Fuel - service vans,Chequing,249.49,27903.35
+,12/03/2024,Expense,2871,Petro-Canada,Fuel - service vans,Chequing,141.44,28044.79
+,12/10/2024,Expense,2872,Esso,Fuel - service vans,Chequing,219.60,28264.39
+,12/17/2024,Expense,2873,Petro-Canada,Fuel - service vans,Chequing,140.82,28405.21
+,12/24/2024,Expense,2874,Esso,Fuel - service vans,Chequing,145.42,28550.63
+   Total for Fuel - Service Vans,,,,,,,28550.63,
+   Van Repairs & Maintenance
+,03/22/2022,Expense,1117,Midas,Van service,Chequing,541.10,541.10
+,06/22/2022,Expense,1234,Midas,Van service,Chequing,307.77,848.87
+,09/22/2022,Expense,1352,Midas,Van service,Chequing,748.70,1597.57
+,12/22/2022,Expense,1469,Midas,Van service,Chequing,721.23,2318.80
+,03/22/2023,Expense,1822,Midas,Van service,Chequing,599.97,2918.77
+,06/22/2023,Expense,1939,Midas,Van service,Chequing,424.34,3343.11
+,09/22/2023,Expense,2057,Midas,Van service,Chequing,451.19,3794.30
+,12/22/2023,Expense,2174,Midas,Van service,Chequing,545.87,4340.17
+,03/22/2024,Expense,2525,Midas,Van service,Chequing,422.86,4763.03
+,06/22/2024,Expense,2642,Midas,Van service,Chequing,502.53,5265.56
+,09/22/2024,Expense,2760,Midas,Van service,Chequing,682.67,5948.23
+,12/22/2024,Expense,2877,Midas,Van service,Chequing,317.65,6265.88
+   Total for Van Repairs & Maintenance,,,,,,,6265.88,
+Total for Automobile Expense,,,,,,,,
+Meals and Entertainment
+,01/06/2022,Credit Card,1635,The Keg,Client dinner,Chequing,802.45,802.45
+,01/14/2022,Credit Card,1636,Tim Hortons,Team lunch,Chequing,507.71,1310.16
+,01/22/2022,Credit Card,1637,Earls Kitchen,Team lunch,Chequing,336.93,1647.09
+,02/06/2022,Credit Card,1638,Café Novo,Team lunch,Chequing,371.09,2018.18
+,02/14/2022,Credit Card,1639,Jack Astor's,Client dinner,Chequing,828.79,2846.97
+,02/22/2022,Credit Card,1640,The Keg,Team lunch,Chequing,408.12,3255.09
+,03/06/2022,Credit Card,1641,Tim Hortons,Team lunch,Chequing,766.32,4021.41
+,03/14/2022,Credit Card,1642,Earls Kitchen,Team lunch,Chequing,473.16,4494.57
+,03/22/2022,Credit Card,1643,Café Novo,Client dinner,Chequing,730.64,5225.21
+,04/06/2022,Credit Card,1644,Jack Astor's,Team lunch,Chequing,463.07,5688.28
+,04/14/2022,Credit Card,1645,The Keg,Team lunch,Chequing,286.46,5974.74
+,04/22/2022,Credit Card,1646,Tim Hortons,Team lunch,Chequing,306.09,6280.83
+,05/06/2022,Credit Card,1647,Earls Kitchen,Client dinner,Chequing,374.45,6655.28
+,05/14/2022,Credit Card,1648,Café Novo,Team lunch,Chequing,418.10,7073.38
+,05/22/2022,Credit Card,1649,Jack Astor's,Team lunch,Chequing,706.37,7779.75
+,06/06/2022,Credit Card,1650,The Keg,Team lunch,Chequing,673.97,8453.72
+,06/14/2022,Credit Card,1651,Tim Hortons,Client dinner,Chequing,714.98,9168.70
+,06/22/2022,Credit Card,1652,Earls Kitchen,Team lunch,Chequing,308.79,9477.49
+,07/06/2022,Credit Card,1653,Café Novo,Team lunch,Chequing,856.51,10334.00
+,07/14/2022,Credit Card,1654,Jack Astor's,Team lunch,Chequing,302.45,10636.45
+,07/22/2022,Credit Card,1655,The Keg,Client dinner,Chequing,238.97,10875.42
+,08/06/2022,Credit Card,1656,Tim Hortons,Team lunch,Chequing,220.90,11096.32
+,08/14/2022,Credit Card,1657,Earls Kitchen,Team lunch,Chequing,545.08,11641.40
+,08/22/2022,Credit Card,1658,Café Novo,Team lunch,Chequing,333.80,11975.20
+,09/06/2022,Credit Card,1659,Jack Astor's,Client dinner,Chequing,535.43,12510.63
+,09/14/2022,Credit Card,1660,The Keg,Team lunch,Chequing,437.36,12947.99
+,09/22/2022,Credit Card,1661,Tim Hortons,Team lunch,Chequing,255.07,13203.06
+,10/06/2022,Credit Card,1662,Earls Kitchen,Team lunch,Chequing,391.59,13594.65
+,10/14/2022,Credit Card,1663,Café Novo,Client dinner,Chequing,781.81,14376.46
+,10/22/2022,Credit Card,1664,Jack Astor's,Team lunch,Chequing,565.71,14942.17
+,11/06/2022,Credit Card,1665,The Keg,Team lunch,Chequing,455.20,15397.37
+,11/14/2022,Credit Card,1666,Tim Hortons,Team lunch,Chequing,674.39,16071.76
+,11/22/2022,Credit Card,1667,Earls Kitchen,Client dinner,Chequing,492.58,16564.34
+,12/06/2022,Credit Card,1668,Café Novo,Team lunch,Chequing,522.16,17086.50
+,12/14/2022,Credit Card,1669,Jack Astor's,Team lunch,Chequing,363.62,17450.12
+,12/22/2022,Credit Card,1670,The Keg,Team lunch,Chequing,549.88,18000.00
+,01/06/2023,Credit Card,2340,The Keg,Client dinner,Chequing,418.05,18418.05
+,01/14/2023,Credit Card,2341,Tim Hortons,Team lunch,Chequing,431.96,18850.01
+,01/22/2023,Credit Card,2342,Earls Kitchen,Team lunch,Chequing,282.44,19132.45
+,02/06/2023,Credit Card,2343,Café Novo,Team lunch,Chequing,895.52,20027.97
+,02/14/2023,Credit Card,2344,Jack Astor's,Client dinner,Chequing,557.26,20585.23
+,02/22/2023,Credit Card,2345,The Keg,Team lunch,Chequing,362.56,20947.79
+,03/06/2023,Credit Card,2346,Tim Hortons,Team lunch,Chequing,384.93,21332.72
+,03/14/2023,Credit Card,2347,Earls Kitchen,Team lunch,Chequing,270.46,21603.18
+,03/22/2023,Credit Card,2348,Café Novo,Client dinner,Chequing,248.00,21851.18
+,04/06/2023,Credit Card,2349,Jack Astor's,Team lunch,Chequing,772.29,22623.47
+,04/14/2023,Credit Card,2350,The Keg,Team lunch,Chequing,471.30,23094.77
+,04/22/2023,Credit Card,2351,Tim Hortons,Team lunch,Chequing,446.87,23541.64
+,05/06/2023,Credit Card,2352,Earls Kitchen,Client dinner,Chequing,340.48,23882.12
+,05/14/2023,Credit Card,2353,Café Novo,Team lunch,Chequing,875.14,24757.26
+,05/22/2023,Credit Card,2354,Jack Astor's,Team lunch,Chequing,284.88,25042.14
+,06/06/2023,Credit Card,2355,The Keg,Team lunch,Chequing,898.11,25940.25
+,06/14/2023,Credit Card,2356,Tim Hortons,Client dinner,Chequing,711.13,26651.38
+,06/22/2023,Credit Card,2357,Earls Kitchen,Team lunch,Chequing,743.39,27394.77
+,07/06/2023,Credit Card,2358,Café Novo,Team lunch,Chequing,660.18,28054.95
+,07/14/2023,Credit Card,2359,Jack Astor's,Team lunch,Chequing,667.80,28722.75
+,07/22/2023,Credit Card,2360,The Keg,Client dinner,Chequing,542.90,29265.65
+,08/06/2023,Credit Card,2361,Tim Hortons,Team lunch,Chequing,727.92,29993.57
+,08/14/2023,Credit Card,2362,Earls Kitchen,Team lunch,Chequing,488.28,30481.85
+,08/22/2023,Credit Card,2363,Café Novo,Team lunch,Chequing,886.32,31368.17
+,09/06/2023,Credit Card,2364,Jack Astor's,Client dinner,Chequing,588.44,31956.61
+,09/14/2023,Credit Card,2365,The Keg,Team lunch,Chequing,456.14,32412.75
+,09/22/2023,Credit Card,2366,Tim Hortons,Team lunch,Chequing,247.63,32660.38
+,10/06/2023,Credit Card,2367,Earls Kitchen,Team lunch,Chequing,714.81,33375.19
+,10/14/2023,Credit Card,2368,Café Novo,Client dinner,Chequing,713.45,34088.64
+,10/22/2023,Credit Card,2369,Jack Astor's,Team lunch,Chequing,530.51,34619.15
+,11/06/2023,Credit Card,2370,The Keg,Team lunch,Chequing,573.77,35192.92
+,11/14/2023,Credit Card,2371,Tim Hortons,Team lunch,Chequing,665.26,35858.18
+,11/22/2023,Credit Card,2372,Earls Kitchen,Client dinner,Chequing,513.32,36371.50
+,12/06/2023,Credit Card,2373,Café Novo,Team lunch,Chequing,539.70,36911.20
+,12/14/2023,Credit Card,2374,Jack Astor's,Team lunch,Chequing,568.29,37479.49
+,12/22/2023,Credit Card,2375,The Keg,Team lunch,Chequing,520.51,38000.00
+,01/06/2024,Credit Card,3043,The Keg,Client dinner,Chequing,268.35,38268.35
+,01/14/2024,Credit Card,3044,Tim Hortons,Team lunch,Chequing,284.07,38552.42
+,01/22/2024,Credit Card,3045,Earls Kitchen,Team lunch,Chequing,621.13,39173.55
+,02/06/2024,Credit Card,3046,Café Novo,Team lunch,Chequing,733.39,39906.94
+,02/14/2024,Credit Card,3047,Jack Astor's,Client dinner,Chequing,641.30,40548.24
+,02/22/2024,Credit Card,3048,The Keg,Team lunch,Chequing,543.63,41091.87
+,03/06/2024,Credit Card,3049,Tim Hortons,Team lunch,Chequing,411.50,41503.37
+,03/14/2024,Credit Card,3050,Earls Kitchen,Team lunch,Chequing,834.84,42338.21
+,03/22/2024,Credit Card,3051,Café Novo,Client dinner,Chequing,894.01,43232.22
+,04/06/2024,Credit Card,3052,Jack Astor's,Team lunch,Chequing,781.57,44013.79
+,04/14/2024,Credit Card,3053,The Keg,Team lunch,Chequing,786.22,44800.01
+,04/22/2024,Credit Card,3054,Tim Hortons,Team lunch,Chequing,267.90,45067.91
+,05/06/2024,Credit Card,3055,Earls Kitchen,Client dinner,Chequing,391.45,45459.36
+,05/14/2024,Credit Card,3056,Café Novo,Team lunch,Chequing,327.43,45786.79
+,05/22/2024,Credit Card,3057,Jack Astor's,Team lunch,Chequing,885.01,46671.80
+,06/06/2024,Credit Card,3058,The Keg,Team lunch,Chequing,382.47,47054.27
+,06/14/2024,Credit Card,3059,Tim Hortons,Client dinner,Chequing,251.83,47306.10
+,06/22/2024,Credit Card,3060,Earls Kitchen,Team lunch,Chequing,951.05,48257.15
+,07/06/2024,Credit Card,3061,Café Novo,Team lunch,Chequing,807.76,49064.91
+,07/14/2024,Credit Card,3062,Jack Astor's,Team lunch,Chequing,871.27,49936.18
+,07/22/2024,Credit Card,3063,The Keg,Client dinner,Chequing,909.13,50845.31
+,08/06/2024,Credit Card,3064,Tim Hortons,Team lunch,Chequing,345.41,51190.72
+,08/14/2024,Credit Card,3065,Earls Kitchen,Team lunch,Chequing,284.24,51474.96
+,08/22/2024,Credit Card,3066,Café Novo,Team lunch,Chequing,598.09,52073.05
+,09/06/2024,Credit Card,3067,Jack Astor's,Client dinner,Chequing,657.39,52730.44
+,09/14/2024,Credit Card,3068,The Keg,Team lunch,Chequing,531.56,53262.00
+,09/22/2024,Credit Card,3069,Tim Hortons,Team lunch,Chequing,794.01,54056.01
+,10/06/2024,Credit Card,3070,Earls Kitchen,Team lunch,Chequing,883.36,54939.37
+,10/14/2024,Credit Card,3071,Café Novo,Client dinner,Chequing,594.55,55533.92
+,10/22/2024,Credit Card,3072,Jack Astor's,Team lunch,Chequing,754.99,56288.91
+,11/06/2024,Credit Card,3073,The Keg,Team lunch,Chequing,279.47,56568.38
+,11/14/2024,Credit Card,3074,Tim Hortons,Team lunch,Chequing,523.89,57092.27
+,11/22/2024,Credit Card,3075,Earls Kitchen,Client dinner,Chequing,836.63,57928.90
+,12/06/2024,Credit Card,3076,Café Novo,Team lunch,Chequing,849.82,58778.72
+,12/14/2024,Credit Card,3077,Jack Astor's,Team lunch,Chequing,936.85,59715.57
+,12/22/2024,Credit Card,3078,The Keg,Team lunch,Chequing,284.43,60000.00
+Total for Meals and Entertainment,,,,,,,60000.00,
+Insurance
+,01/09/2022,Expense,1033,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,750.00
+,02/09/2022,Expense,1071,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,1500.00
+,03/09/2022,Expense,1109,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,2250.00
+,03/20/2022,Expense,1116,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,5250.00
+,04/09/2022,Expense,1150,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,6000.00
+,05/09/2022,Expense,1188,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,6750.00
+,06/09/2022,Expense,1226,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,7500.00
+,06/20/2022,Expense,1233,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,10500.00
+,07/09/2022,Expense,1268,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,11250.00
+,08/09/2022,Expense,1306,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,12000.00
+,09/09/2022,Expense,1344,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,12750.00
+,09/20/2022,Expense,1351,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,15750.00
+,10/09/2022,Expense,1385,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,16500.00
+,11/09/2022,Expense,1423,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,17250.00
+,12/09/2022,Expense,1461,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,18000.00
+,12/20/2022,Expense,1468,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,21000.00
+,01/09/2023,Expense,1738,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,21750.00
+,02/09/2023,Expense,1776,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,22500.00
+,03/09/2023,Expense,1814,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,23250.00
+,03/20/2023,Expense,1821,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,26250.00
+,04/09/2023,Expense,1855,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,27000.00
+,05/09/2023,Expense,1893,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,27750.00
+,06/09/2023,Expense,1931,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,28500.00
+,06/20/2023,Expense,1938,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,31500.00
+,07/09/2023,Expense,1973,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,32250.00
+,08/09/2023,Expense,2011,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,33000.00
+,09/09/2023,Expense,2049,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,33750.00
+,09/20/2023,Expense,2056,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,36750.00
+,10/09/2023,Expense,2090,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,37500.00
+,11/09/2023,Expense,2128,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,38250.00
+,12/09/2023,Expense,2166,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,39000.00
+,12/20/2023,Expense,2173,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,42000.00
+,01/09/2024,Expense,2441,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,42750.00
+,02/09/2024,Expense,2479,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,43500.00
+,03/09/2024,Expense,2517,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,44250.00
+,03/20/2024,Expense,2524,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,47250.00
+,04/09/2024,Expense,2558,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,48000.00
+,05/09/2024,Expense,2596,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,48750.00
+,06/09/2024,Expense,2634,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,49500.00
+,06/20/2024,Expense,2641,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,52500.00
+,07/09/2024,Expense,2676,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,53250.00
+,08/09/2024,Expense,2714,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,54000.00
+,09/09/2024,Expense,2752,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,54750.00
+,09/20/2024,Expense,2759,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,57750.00
+,10/09/2024,Expense,2793,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,58500.00
+,11/09/2024,Expense,2831,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,59250.00
+,12/09/2024,Expense,2869,Sun Life,Life insurance premium - D. Brightwater,Chequing,750.00,60000.00
+,12/20/2024,Expense,2876,Intact Insurance,Business insurance - quarterly,Chequing,3000.00,63000.00
+Total for Insurance,,,,,,,63000.00,
+Legal & Professional Fees
+,01/09/2022,Expense,1032,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,450.00
+,02/09/2022,Expense,1070,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,900.00
+,03/09/2022,Expense,1108,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,1350.00
+,03/30/2022,Bill,1671,Moore & Partners CPA,Year-end financial statements,Chequing,6500.00,7850.00
+,04/09/2022,Expense,1149,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,8300.00
+,05/09/2022,Expense,1187,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,8750.00
+,06/09/2022,Expense,1225,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,9200.00
+,07/09/2022,Expense,1267,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,9650.00
+,08/09/2022,Expense,1305,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,10100.00
+,09/09/2022,Expense,1343,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,10550.00
+,10/09/2022,Expense,1384,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,11000.00
+,11/09/2022,Expense,1422,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,11450.00
+,12/09/2022,Expense,1460,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,11900.00
+,01/09/2023,Expense,1737,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,12350.00
+,02/09/2023,Expense,1775,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,12800.00
+,03/09/2023,Expense,1813,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,13250.00
+,03/30/2023,Bill,2376,Moore & Partners CPA,Year-end financial statements,Chequing,6500.00,19750.00
+,04/09/2023,Expense,1854,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,20200.00
+,05/09/2023,Expense,1892,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,20650.00
+,06/09/2023,Expense,1930,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,21100.00
+,07/09/2023,Expense,1972,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,21550.00
+,08/09/2023,Expense,2010,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,22000.00
+,09/09/2023,Expense,2048,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,22450.00
+,10/09/2023,Expense,2089,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,22900.00
+,11/09/2023,Expense,2127,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,23350.00
+,12/09/2023,Expense,2165,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,23800.00
+,01/09/2024,Expense,2440,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,24250.00
+,02/09/2024,Expense,2478,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,24700.00
+,03/09/2024,Expense,2516,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,25150.00
+,03/30/2024,Bill,3079,Moore & Partners CPA,Year-end financial statements,Chequing,6500.00,31650.00
+,04/09/2024,Expense,2557,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,32100.00
+,05/09/2024,Expense,2595,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,32550.00
+,06/09/2024,Expense,2633,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,33000.00
+,07/09/2024,Expense,2675,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,33450.00
+,07/15/2024,Bill Payment,3082,Holloway LLP,Settlement - wrongful dismissal,Chequing,22000.00,55450.00
+,07/31/2024,General Journal,3083,Holloway LLP,Refund of retainer,Chequing,-500.00,54950.00
+,08/09/2024,Expense,2713,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,55400.00
+,09/09/2024,Expense,2751,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,55850.00
+,10/09/2024,Expense,2792,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,56300.00
+,11/09/2024,Expense,2830,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,56750.00
+,12/09/2024,Expense,2868,Ledgerline Bookkeeping,Monthly bookkeeping,Chequing,450.00,57200.00
+Total for Legal & Professional Fees,,,,,,,57200.00,
+Rent
+,01/09/2022,Expense,1019,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,4500.00
+,02/09/2022,Expense,1057,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,9000.00
+,03/09/2022,Expense,1095,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,13500.00
+,04/09/2022,Expense,1136,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,18000.00
+,05/09/2022,Expense,1174,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,22500.00
+,06/09/2022,Expense,1212,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,27000.00
+,07/09/2022,Expense,1254,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,31500.00
+,08/09/2022,Expense,1292,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,36000.00
+,09/09/2022,Expense,1330,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,40500.00
+,10/09/2022,Expense,1371,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,45000.00
+,11/09/2022,Expense,1409,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,49500.00
+,12/09/2022,Expense,1447,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,54000.00
+,01/09/2023,Expense,1724,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,58500.00
+,02/09/2023,Expense,1762,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,63000.00
+,03/09/2023,Expense,1800,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,67500.00
+,04/09/2023,Expense,1841,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,72000.00
+,05/09/2023,Expense,1879,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,76500.00
+,06/09/2023,Expense,1917,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,81000.00
+,07/09/2023,Expense,1959,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,85500.00
+,08/09/2023,Expense,1997,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,90000.00
+,09/09/2023,Expense,2035,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,94500.00
+,10/09/2023,Expense,2076,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,99000.00
+,11/09/2023,Expense,2114,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,103500.00
+,12/09/2023,Expense,2152,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,108000.00
+,01/09/2024,Expense,2427,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,112500.00
+,02/09/2024,Expense,2465,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,117000.00
+,03/09/2024,Expense,2503,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,121500.00
+,04/09/2024,Expense,2544,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,126000.00
+,05/09/2024,Expense,2582,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,130500.00
+,06/09/2024,Expense,2620,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,135000.00
+,07/09/2024,Expense,2662,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,139500.00
+,08/09/2024,Expense,2700,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,144000.00
+,09/09/2024,Expense,2738,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,148500.00
+,10/09/2024,Expense,2779,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,153000.00
+,11/09/2024,Expense,2817,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,157500.00
+,12/09/2024,Expense,2855,Brightwater Holdings Inc.,Shop rent,Chequing,4500.00,162000.00
+Total for Rent,,,,,,,162000.00,
+Utilities
+,01/10/2022,Expense,1020,Enbridge Gas,Gas,Chequing,337.31,337.31
+,01/10/2022,Expense,1021,Toronto Hydro,Hydro,Chequing,347.89,685.20
+,02/10/2022,Expense,1058,Enbridge Gas,Gas,Chequing,232.44,917.64
+,02/10/2022,Expense,1059,Toronto Hydro,Hydro,Chequing,235.11,1152.75
+,03/10/2022,Expense,1096,Enbridge Gas,Gas,Chequing,328.07,1480.82
+,03/10/2022,Expense,1097,Toronto Hydro,Hydro,Chequing,325.53,1806.35
+,04/10/2022,Expense,1137,Enbridge Gas,Gas,Chequing,323.79,2130.14
+,04/10/2022,Expense,1138,Toronto Hydro,Hydro,Chequing,304.46,2434.60
+,05/10/2022,Expense,1175,Enbridge Gas,Gas,Chequing,254.31,2688.91
+,05/10/2022,Expense,1176,Toronto Hydro,Hydro,Chequing,213.78,2902.69
+,06/10/2022,Expense,1213,Enbridge Gas,Gas,Chequing,187.81,3090.50
+,06/10/2022,Expense,1214,Toronto Hydro,Hydro,Chequing,210.78,3301.28
+,07/10/2022,Expense,1255,Enbridge Gas,Gas,Chequing,222.48,3523.76
+,07/10/2022,Expense,1256,Toronto Hydro,Hydro,Chequing,278.18,3801.94
+,08/10/2022,Expense,1293,Enbridge Gas,Gas,Chequing,320.79,4122.73
+,08/10/2022,Expense,1294,Toronto Hydro,Hydro,Chequing,338.13,4460.86
+,09/10/2022,Expense,1331,Enbridge Gas,Gas,Chequing,381.11,4841.97
+,09/10/2022,Expense,1332,Toronto Hydro,Hydro,Chequing,222.81,5064.78
+,10/10/2022,Expense,1372,Enbridge Gas,Gas,Chequing,315.30,5380.08
+,10/10/2022,Expense,1373,Toronto Hydro,Hydro,Chequing,306.71,5686.79
+,11/10/2022,Expense,1410,Enbridge Gas,Gas,Chequing,252.68,5939.47
+,11/10/2022,Expense,1411,Toronto Hydro,Hydro,Chequing,237.23,6176.70
+,12/10/2022,Expense,1448,Enbridge Gas,Gas,Chequing,181.15,6357.85
+,12/10/2022,Expense,1449,Toronto Hydro,Hydro,Chequing,325.04,6682.89
+,01/10/2023,Expense,1725,Enbridge Gas,Gas,Chequing,252.75,6935.64
+,01/10/2023,Expense,1726,Toronto Hydro,Hydro,Chequing,220.95,7156.59
+,02/10/2023,Expense,1763,Enbridge Gas,Gas,Chequing,399.36,7555.95
+,02/10/2023,Expense,1764,Toronto Hydro,Hydro,Chequing,346.12,7902.07
+,03/10/2023,Expense,1801,Enbridge Gas,Gas,Chequing,314.79,8216.86
+,03/10/2023,Expense,1802,Toronto Hydro,Hydro,Chequing,286.83,8503.69
+,04/10/2023,Expense,1842,Enbridge Gas,Gas,Chequing,243.48,8747.17
+,04/10/2023,Expense,1843,Toronto Hydro,Hydro,Chequing,219.97,8967.14
+,05/10/2023,Expense,1880,Enbridge Gas,Gas,Chequing,363.05,9330.19
+,05/10/2023,Expense,1881,Toronto Hydro,Hydro,Chequing,246.86,9577.05
+,06/10/2023,Expense,1918,Enbridge Gas,Gas,Chequing,265.53,9842.58
+,06/10/2023,Expense,1919,Toronto Hydro,Hydro,Chequing,348.25,10190.83
+,07/10/2023,Expense,1960,Enbridge Gas,Gas,Chequing,314.42,10505.25
+,07/10/2023,Expense,1961,Toronto Hydro,Hydro,Chequing,242.62,10747.87
+,08/10/2023,Expense,1998,Enbridge Gas,Gas,Chequing,320.57,11068.44
+,08/10/2023,Expense,1999,Toronto Hydro,Hydro,Chequing,289.96,11358.40
+,09/10/2023,Expense,2036,Enbridge Gas,Gas,Chequing,235.95,11594.35
+,09/10/2023,Expense,2037,Toronto Hydro,Hydro,Chequing,352.00,11946.35
+,10/10/2023,Expense,2077,Enbridge Gas,Gas,Chequing,217.98,12164.33
+,10/10/2023,Expense,2078,Toronto Hydro,Hydro,Chequing,358.30,12522.63
+,11/10/2023,Expense,2115,Enbridge Gas,Gas,Chequing,295.33,12817.96
+,11/10/2023,Expense,2116,Toronto Hydro,Hydro,Chequing,339.63,13157.59
+,12/10/2023,Expense,2153,Enbridge Gas,Gas,Chequing,330.37,13487.96
+,12/10/2023,Expense,2154,Toronto Hydro,Hydro,Chequing,224.75,13712.71
+,01/10/2024,Expense,2428,Enbridge Gas,Gas,Chequing,364.16,14076.87
+,01/10/2024,Expense,2429,Toronto Hydro,Hydro,Chequing,321.08,14397.95
+,02/10/2024,Expense,2466,Enbridge Gas,Gas,Chequing,320.22,14718.17
+,02/10/2024,Expense,2467,Toronto Hydro,Hydro,Chequing,362.41,15080.58
+,03/10/2024,Expense,2504,Enbridge Gas,Gas,Chequing,211.23,15291.81
+,03/10/2024,Expense,2505,Toronto Hydro,Hydro,Chequing,329.93,15621.74
+,04/10/2024,Expense,2545,Enbridge Gas,Gas,Chequing,245.11,15866.85
+,04/10/2024,Expense,2546,Toronto Hydro,Hydro,Chequing,364.38,16231.23
+,05/10/2024,Expense,2583,Enbridge Gas,Gas,Chequing,249.14,16480.37
+,05/10/2024,Expense,2584,Toronto Hydro,Hydro,Chequing,353.23,16833.60
+,06/10/2024,Expense,2621,Enbridge Gas,Gas,Chequing,205.24,17038.84
+,06/10/2024,Expense,2622,Toronto Hydro,Hydro,Chequing,340.61,17379.45
+,07/10/2024,Expense,2663,Enbridge Gas,Gas,Chequing,379.25,17758.70
+,07/10/2024,Expense,2664,Toronto Hydro,Hydro,Chequing,326.97,18085.67
+,08/10/2024,Expense,2701,Enbridge Gas,Gas,Chequing,321.78,18407.45
+,08/10/2024,Expense,2702,Toronto Hydro,Hydro,Chequing,336.79,18744.24
+,09/10/2024,Expense,2739,Enbridge Gas,Gas,Chequing,386.22,19130.46
+,09/10/2024,Expense,2740,Toronto Hydro,Hydro,Chequing,349.95,19480.41
+,10/10/2024,Expense,2780,Enbridge Gas,Gas,Chequing,286.18,19766.59
+,10/10/2024,Expense,2781,Toronto Hydro,Hydro,Chequing,306.21,20072.80
+,11/10/2024,Expense,2818,Enbridge Gas,Gas,Chequing,382.16,20454.96
+,11/10/2024,Expense,2819,Toronto Hydro,Hydro,Chequing,242.00,20696.96
+,12/10/2024,Expense,2856,Enbridge Gas,Gas,Chequing,301.89,20998.85
+,12/10/2024,Expense,2857,Toronto Hydro,Hydro,Chequing,289.13,21287.98
+Total for Utilities,,,,,,,21287.98,
+Telephone & Internet
+,01/11/2022,Expense,1022,Bell Canada,Phones,Chequing,332.66,332.66
+,01/11/2022,Expense,1023,Rogers,Internet,Chequing,129.95,462.61
+,02/11/2022,Expense,1060,Bell Canada,Phones,Chequing,316.93,779.54
+,02/11/2022,Expense,1061,Rogers,Internet,Chequing,129.95,909.49
+,03/11/2022,Expense,1098,Bell Canada,Phones,Chequing,326.42,1235.91
+,03/11/2022,Expense,1099,Rogers,Internet,Chequing,129.95,1365.86
+,04/11/2022,Expense,1139,Bell Canada,Phones,Chequing,344.64,1710.50
+,04/11/2022,Expense,1140,Rogers,Internet,Chequing,129.95,1840.45
+,05/11/2022,Expense,1177,Bell Canada,Phones,Chequing,338.66,2179.11
+,05/11/2022,Expense,1178,Rogers,Internet,Chequing,129.95,2309.06
+,06/11/2022,Expense,1215,Bell Canada,Phones,Chequing,319.33,2628.39
+,06/11/2022,Expense,1216,Rogers,Internet,Chequing,129.95,2758.34
+,07/11/2022,Expense,1257,Bell Canada,Phones,Chequing,323.08,3081.42
+,07/11/2022,Expense,1258,Rogers,Internet,Chequing,129.95,3211.37
+,08/11/2022,Expense,1295,Bell Canada,Phones,Chequing,322.08,3533.45
+,08/11/2022,Expense,1296,Rogers,Internet,Chequing,129.95,3663.40
+,09/11/2022,Expense,1333,Bell Canada,Phones,Chequing,341.92,4005.32
+,09/11/2022,Expense,1334,Rogers,Internet,Chequing,129.95,4135.27
+,10/11/2022,Expense,1374,Bell Canada,Phones,Chequing,312.28,4447.55
+,10/11/2022,Expense,1375,Rogers,Internet,Chequing,129.95,4577.50
+,11/11/2022,Expense,1412,Bell Canada,Phones,Chequing,316.26,4893.76
+,11/11/2022,Expense,1413,Rogers,Internet,Chequing,129.95,5023.71
+,12/11/2022,Expense,1450,Bell Canada,Phones,Chequing,328.06,5351.77
+,12/11/2022,Expense,1451,Rogers,Internet,Chequing,129.95,5481.72
+,01/11/2023,Expense,1727,Bell Canada,Phones,Chequing,315.60,5797.32
+,01/11/2023,Expense,1728,Rogers,Internet,Chequing,129.95,5927.27
+,02/11/2023,Expense,1765,Bell Canada,Phones,Chequing,345.71,6272.98
+,02/11/2023,Expense,1766,Rogers,Internet,Chequing,129.95,6402.93
+,03/11/2023,Expense,1803,Bell Canada,Phones,Chequing,345.06,6747.99
+,03/11/2023,Expense,1804,Rogers,Internet,Chequing,129.95,6877.94
+,04/11/2023,Expense,1844,Bell Canada,Phones,Chequing,332.77,7210.71
+,04/11/2023,Expense,1845,Rogers,Internet,Chequing,129.95,7340.66
+,05/11/2023,Expense,1882,Bell Canada,Phones,Chequing,336.66,7677.32
+,05/11/2023,Expense,1883,Rogers,Internet,Chequing,129.95,7807.27
+,06/11/2023,Expense,1920,Bell Canada,Phones,Chequing,316.23,8123.50
+,06/11/2023,Expense,1921,Rogers,Internet,Chequing,129.95,8253.45
+,07/11/2023,Expense,1962,Bell Canada,Phones,Chequing,349.76,8603.21
+,07/11/2023,Expense,1963,Rogers,Internet,Chequing,129.95,8733.16
+,08/11/2023,Expense,2000,Bell Canada,Phones,Chequing,329.76,9062.92
+,08/11/2023,Expense,2001,Rogers,Internet,Chequing,129.95,9192.87
+,09/11/2023,Expense,2038,Bell Canada,Phones,Chequing,340.39,9533.26
+,09/11/2023,Expense,2039,Rogers,Internet,Chequing,129.95,9663.21
+,10/11/2023,Expense,2079,Bell Canada,Phones,Chequing,319.10,9982.31
+,10/11/2023,Expense,2080,Rogers,Internet,Chequing,129.95,10112.26
+,11/11/2023,Expense,2117,Bell Canada,Phones,Chequing,329.04,10441.30
+,11/11/2023,Expense,2118,Rogers,Internet,Chequing,129.95,10571.25
+,12/11/2023,Expense,2155,Bell Canada,Phones,Chequing,332.81,10904.06
+,12/11/2023,Expense,2156,Rogers,Internet,Chequing,129.95,11034.01
+,01/11/2024,Expense,2430,Bell Canada,Phones,Chequing,342.18,11376.19
+,01/11/2024,Expense,2431,Rogers,Internet,Chequing,129.95,11506.14
+,02/11/2024,Expense,2468,Bell Canada,Phones,Chequing,323.22,11829.36
+,02/11/2024,Expense,2469,Rogers,Internet,Chequing,129.95,11959.31
+,03/11/2024,Expense,2506,Bell Canada,Phones,Chequing,346.69,12306.00
+,03/11/2024,Expense,2507,Rogers,Internet,Chequing,129.95,12435.95
+,04/11/2024,Expense,2547,Bell Canada,Phones,Chequing,312.50,12748.45
+,04/11/2024,Expense,2548,Rogers,Internet,Chequing,129.95,12878.40
+,05/11/2024,Expense,2585,Bell Canada,Phones,Chequing,327.11,13205.51
+,05/11/2024,Expense,2586,Rogers,Internet,Chequing,129.95,13335.46
+,06/11/2024,Expense,2623,Bell Canada,Phones,Chequing,316.68,13652.14
+,06/11/2024,Expense,2624,Rogers,Internet,Chequing,129.95,13782.09
+,07/11/2024,Expense,2665,Bell Canada,Phones,Chequing,335.79,14117.88
+,07/11/2024,Expense,2666,Rogers,Internet,Chequing,129.95,14247.83
+,08/11/2024,Expense,2703,Bell Canada,Phones,Chequing,332.72,14580.55
+,08/11/2024,Expense,2704,Rogers,Internet,Chequing,129.95,14710.50
+,09/11/2024,Expense,2741,Bell Canada,Phones,Chequing,349.20,15059.70
+,09/11/2024,Expense,2742,Rogers,Internet,Chequing,129.95,15189.65
+,10/11/2024,Expense,2782,Bell Canada,Phones,Chequing,322.64,15512.29
+,10/11/2024,Expense,2783,Rogers,Internet,Chequing,129.95,15642.24
+,11/11/2024,Expense,2820,Bell Canada,Phones,Chequing,318.92,15961.16
+,11/11/2024,Expense,2821,Rogers,Internet,Chequing,129.95,16091.11
+,12/11/2024,Expense,2858,Bell Canada,Phones,Chequing,326.97,16418.08
+,12/11/2024,Expense,2859,Rogers,Internet,Chequing,129.95,16548.03
+Total for Telephone & Internet,,,,,,,16548.03,
+Advertising & Promotion
+,01/09/2022,Expense,1024,Google Ads,Search ads,Chequing,1083.92,1083.92
+,02/09/2022,Expense,1062,Google Ads,Search ads,Chequing,1476.06,2559.98
+,03/09/2022,Expense,1100,Google Ads,Search ads,Chequing,1221.06,3781.04
+,04/09/2022,Expense,1141,Google Ads,Search ads,Chequing,1115.34,4896.38
+,05/09/2022,Expense,1179,Google Ads,Search ads,Chequing,1002.28,5898.66
+,06/09/2022,Expense,1217,Google Ads,Search ads,Chequing,1552.26,7450.92
+,07/09/2022,Expense,1259,Google Ads,Search ads,Chequing,1225.90,8676.82
+,08/09/2022,Expense,1297,Google Ads,Search ads,Chequing,1519.86,10196.68
+,09/09/2022,Expense,1335,Google Ads,Search ads,Chequing,1462.77,11659.45
+,10/09/2022,Expense,1376,Google Ads,Search ads,Chequing,1447.75,13107.20
+,11/09/2022,Expense,1414,Google Ads,Search ads,Chequing,1261.19,14368.39
+,12/09/2022,Expense,1452,Google Ads,Search ads,Chequing,1208.06,15576.45
+,01/09/2023,Expense,1729,Google Ads,Search ads,Chequing,1311.27,16887.72
+,02/09/2023,Expense,1767,Google Ads,Search ads,Chequing,1107.60,17995.32
+,03/09/2023,Expense,1805,Google Ads,Search ads,Chequing,1153.03,19148.35
+,04/09/2023,Expense,1846,Google Ads,Search ads,Chequing,1074.68,20223.03
+,05/09/2023,Expense,1884,Google Ads,Search ads,Chequing,1510.86,21733.89
+,06/09/2023,Expense,1922,Google Ads,Search ads,Chequing,1444.36,23178.25
+,07/09/2023,Expense,1964,Google Ads,Search ads,Chequing,1528.70,24706.95
+,08/09/2023,Expense,2002,Google Ads,Search ads,Chequing,910.89,25617.84
+,09/09/2023,Expense,2040,Google Ads,Search ads,Chequing,1064.54,26682.38
+,10/09/2023,Expense,2081,Google Ads,Search ads,Chequing,1446.04,28128.42
+,11/09/2023,Expense,2119,Google Ads,Search ads,Chequing,1337.37,29465.79
+,12/09/2023,Expense,2157,Google Ads,Search ads,Chequing,1232.71,30698.50
+,01/09/2024,Expense,2432,Google Ads,Search ads,Chequing,1162.15,31860.65
+,02/09/2024,Expense,2470,Google Ads,Search ads,Chequing,1159.80,33020.45
+,03/09/2024,Expense,2508,Google Ads,Search ads,Chequing,1430.39,34450.84
+,04/09/2024,Expense,2549,Google Ads,Search ads,Chequing,1512.54,35963.38
+,05/09/2024,Expense,2587,Google Ads,Search ads,Chequing,1348.24,37311.62
+,06/09/2024,Expense,2625,Google Ads,Search ads,Chequing,904.32,38215.94
+,07/09/2024,Expense,2667,Google Ads,Search ads,Chequing,1226.64,39442.58
+,08/09/2024,Expense,2705,Google Ads,Search ads,Chequing,1506.37,40948.95
+,09/09/2024,Expense,2743,Google Ads,Search ads,Chequing,1521.43,42470.38
+,10/09/2024,Expense,2784,Google Ads,Search ads,Chequing,1549.00,44019.38
+,11/09/2024,Expense,2822,Google Ads,Search ads,Chequing,1403.11,45422.49
+,12/09/2024,Expense,2860,Google Ads,Search ads,Chequing,1088.21,46510.70
+Total for Advertising & Promotion,,,,,,,46510.70,
+Office Supplies
+,01/09/2022,Expense,1025,Staples,Office supplies,Chequing,139.07,139.07
+,02/09/2022,Expense,1063,Staples,Office supplies,Chequing,261.14,400.21
+,03/09/2022,Expense,1101,Staples,Office supplies,Chequing,111.43,511.64
+,04/09/2022,Expense,1142,Staples,Office supplies,Chequing,139.84,651.48
+,05/09/2022,Expense,1180,Staples,Office supplies,Chequing,265.90,917.38
+,06/09/2022,Expense,1218,Staples,Office supplies,Chequing,217.62,1135.00
+,07/09/2022,Expense,1260,Staples,Office supplies,Chequing,107.11,1242.11
+,08/09/2022,Expense,1298,Staples,Office supplies,Chequing,183.12,1425.23
+,09/09/2022,Expense,1336,Staples,Office supplies,Chequing,161.94,1587.17
+,10/09/2022,Expense,1377,Staples,Office supplies,Chequing,181.88,1769.05
+,11/09/2022,Expense,1415,Staples,Office supplies,Chequing,129.89,1898.94
+,12/09/2022,Expense,1453,Staples,Office supplies,Chequing,165.96,2064.90
+,01/09/2023,Expense,1730,Staples,Office supplies,Chequing,141.40,2206.30
+,02/09/2023,Expense,1768,Staples,Office supplies,Chequing,204.73,2411.03
+,03/09/2023,Expense,1806,Staples,Office supplies,Chequing,140.92,2551.95
+,04/09/2023,Expense,1847,Staples,Office supplies,Chequing,128.78,2680.73
+,05/09/2023,Expense,1885,Staples,Office supplies,Chequing,204.71,2885.44
+,06/09/2023,Expense,1923,Staples,Office supplies,Chequing,276.13,3161.57
+,07/09/2023,Expense,1965,Staples,Office supplies,Chequing,88.33,3249.90
+,08/09/2023,Expense,2003,Staples,Office supplies,Chequing,255.82,3505.72
+,09/09/2023,Expense,2041,Staples,Office supplies,Chequing,156.33,3662.05
+,10/09/2023,Expense,2082,Staples,Office supplies,Chequing,153.66,3815.71
+,11/09/2023,Expense,2120,Staples,Office supplies,Chequing,189.32,4005.03
+,12/09/2023,Expense,2158,Staples,Office supplies,Chequing,79.55,4084.58
+,01/09/2024,Expense,2433,Staples,Office supplies,Chequing,251.44,4336.02
+,02/09/2024,Expense,2471,Staples,Office supplies,Chequing,141.67,4477.69
+,03/09/2024,Expense,2509,Staples,Office supplies,Chequing,91.35,4569.04
+,04/09/2024,Expense,2550,Staples,Office supplies,Chequing,232.74,4801.78
+,05/09/2024,Expense,2588,Staples,Office supplies,Chequing,236.37,5038.15
+,06/09/2024,Expense,2626,Staples,Office supplies,Chequing,70.48,5108.63
+,07/09/2024,Expense,2668,Staples,Office supplies,Chequing,216.21,5324.84
+,08/09/2024,Expense,2706,Staples,Office supplies,Chequing,139.47,5464.31
+,09/09/2024,Expense,2744,Staples,Office supplies,Chequing,80.84,5545.15
+,10/09/2024,Expense,2785,Staples,Office supplies,Chequing,111.51,5656.66
+,11/09/2024,Expense,2823,Staples,Office supplies,Chequing,229.73,5886.39
+,12/09/2024,Expense,2861,Staples,Office supplies,Chequing,194.45,6080.84
+Total for Office Supplies,,,,,,,6080.84,
+Software & Subscriptions
+,01/10/2022,Expense,1026,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,90.00
+,01/10/2022,Expense,1027,Jobber,Field service software,Chequing,249.00,339.00
+,02/10/2022,Expense,1064,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,429.00
+,02/10/2022,Expense,1065,Jobber,Field service software,Chequing,249.00,678.00
+,03/10/2022,Expense,1102,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,768.00
+,03/10/2022,Expense,1103,Jobber,Field service software,Chequing,249.00,1017.00
+,04/10/2022,Expense,1143,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,1107.00
+,04/10/2022,Expense,1144,Jobber,Field service software,Chequing,249.00,1356.00
+,05/10/2022,Expense,1181,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,1446.00
+,05/10/2022,Expense,1182,Jobber,Field service software,Chequing,249.00,1695.00
+,06/10/2022,Expense,1219,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,1785.00
+,06/10/2022,Expense,1220,Jobber,Field service software,Chequing,249.00,2034.00
+,07/10/2022,Expense,1261,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,2124.00
+,07/10/2022,Expense,1262,Jobber,Field service software,Chequing,249.00,2373.00
+,08/10/2022,Expense,1299,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,2463.00
+,08/10/2022,Expense,1300,Jobber,Field service software,Chequing,249.00,2712.00
+,09/10/2022,Expense,1337,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,2802.00
+,09/10/2022,Expense,1338,Jobber,Field service software,Chequing,249.00,3051.00
+,10/10/2022,Expense,1378,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,3141.00
+,10/10/2022,Expense,1379,Jobber,Field service software,Chequing,249.00,3390.00
+,11/10/2022,Expense,1416,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,3480.00
+,11/10/2022,Expense,1417,Jobber,Field service software,Chequing,249.00,3729.00
+,12/10/2022,Expense,1454,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,3819.00
+,12/10/2022,Expense,1455,Jobber,Field service software,Chequing,249.00,4068.00
+,01/10/2023,Expense,1731,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,4158.00
+,01/10/2023,Expense,1732,Jobber,Field service software,Chequing,249.00,4407.00
+,02/10/2023,Expense,1769,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,4497.00
+,02/10/2023,Expense,1770,Jobber,Field service software,Chequing,249.00,4746.00
+,03/10/2023,Expense,1807,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,4836.00
+,03/10/2023,Expense,1808,Jobber,Field service software,Chequing,249.00,5085.00
+,04/10/2023,Expense,1848,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,5175.00
+,04/10/2023,Expense,1849,Jobber,Field service software,Chequing,249.00,5424.00
+,05/10/2023,Expense,1886,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,5514.00
+,05/10/2023,Expense,1887,Jobber,Field service software,Chequing,249.00,5763.00
+,06/10/2023,Expense,1924,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,5853.00
+,06/10/2023,Expense,1925,Jobber,Field service software,Chequing,249.00,6102.00
+,07/10/2023,Expense,1966,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,6192.00
+,07/10/2023,Expense,1967,Jobber,Field service software,Chequing,249.00,6441.00
+,08/10/2023,Expense,2004,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,6531.00
+,08/10/2023,Expense,2005,Jobber,Field service software,Chequing,249.00,6780.00
+,09/10/2023,Expense,2042,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,6870.00
+,09/10/2023,Expense,2043,Jobber,Field service software,Chequing,249.00,7119.00
+,10/10/2023,Expense,2083,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,7209.00
+,10/10/2023,Expense,2084,Jobber,Field service software,Chequing,249.00,7458.00
+,11/10/2023,Expense,2121,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,7548.00
+,11/10/2023,Expense,2122,Jobber,Field service software,Chequing,249.00,7797.00
+,12/10/2023,Expense,2159,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,7887.00
+,12/10/2023,Expense,2160,Jobber,Field service software,Chequing,249.00,8136.00
+,01/10/2024,Expense,2434,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,8226.00
+,01/10/2024,Expense,2435,Jobber,Field service software,Chequing,249.00,8475.00
+,02/10/2024,Expense,2472,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,8565.00
+,02/10/2024,Expense,2473,Jobber,Field service software,Chequing,249.00,8814.00
+,03/10/2024,Expense,2510,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,8904.00
+,03/10/2024,Expense,2511,Jobber,Field service software,Chequing,249.00,9153.00
+,04/10/2024,Expense,2551,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,9243.00
+,04/10/2024,Expense,2552,Jobber,Field service software,Chequing,249.00,9492.00
+,05/10/2024,Expense,2589,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,9582.00
+,05/10/2024,Expense,2590,Jobber,Field service software,Chequing,249.00,9831.00
+,06/10/2024,Expense,2627,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,9921.00
+,06/10/2024,Expense,2628,Jobber,Field service software,Chequing,249.00,10170.00
+,07/10/2024,Expense,2669,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,10260.00
+,07/10/2024,Expense,2670,Jobber,Field service software,Chequing,249.00,10509.00
+,08/10/2024,Expense,2707,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,10599.00
+,08/10/2024,Expense,2708,Jobber,Field service software,Chequing,249.00,10848.00
+,09/10/2024,Expense,2745,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,10938.00
+,09/10/2024,Expense,2746,Jobber,Field service software,Chequing,249.00,11187.00
+,10/10/2024,Expense,2786,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,11277.00
+,10/10/2024,Expense,2787,Jobber,Field service software,Chequing,249.00,11526.00
+,11/10/2024,Expense,2824,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,11616.00
+,11/10/2024,Expense,2825,Jobber,Field service software,Chequing,249.00,11865.00
+,12/10/2024,Expense,2862,Intuit QuickBooks,QuickBooks Online,Chequing,90.00,11955.00
+,12/10/2024,Expense,2863,Jobber,Field service software,Chequing,249.00,12204.00
+Total for Software & Subscriptions,,,,,,,12204.00,
+Bank Charges
+,01/09/2022,Expense,1028,RBC Royal Bank,Monthly fee,Chequing,29.95,29.95
+,02/09/2022,Expense,1066,RBC Royal Bank,Monthly fee,Chequing,29.95,59.90
+,03/09/2022,Expense,1104,RBC Royal Bank,Monthly fee,Chequing,29.95,89.85
+,04/09/2022,Expense,1145,RBC Royal Bank,Monthly fee,Chequing,29.95,119.80
+,05/09/2022,Expense,1183,RBC Royal Bank,Monthly fee,Chequing,29.95,149.75
+,06/09/2022,Expense,1221,RBC Royal Bank,Monthly fee,Chequing,29.95,179.70
+,07/09/2022,Expense,1263,RBC Royal Bank,Monthly fee,Chequing,29.95,209.65
+,08/09/2022,Expense,1301,RBC Royal Bank,Monthly fee,Chequing,29.95,239.60
+,09/09/2022,Expense,1339,RBC Royal Bank,Monthly fee,Chequing,29.95,269.55
+,10/09/2022,Expense,1380,RBC Royal Bank,Monthly fee,Chequing,29.95,299.50
+,11/09/2022,Expense,1418,RBC Royal Bank,Monthly fee,Chequing,29.95,329.45
+,12/09/2022,Expense,1456,RBC Royal Bank,Monthly fee,Chequing,29.95,359.40
+,01/09/2023,Expense,1733,RBC Royal Bank,Monthly fee,Chequing,29.95,389.35
+,02/09/2023,Expense,1771,RBC Royal Bank,Monthly fee,Chequing,29.95,419.30
+,03/09/2023,Expense,1809,RBC Royal Bank,Monthly fee,Chequing,29.95,449.25
+,04/09/2023,Expense,1850,RBC Royal Bank,Monthly fee,Chequing,29.95,479.20
+,05/09/2023,Expense,1888,RBC Royal Bank,Monthly fee,Chequing,29.95,509.15
+,06/09/2023,Expense,1926,RBC Royal Bank,Monthly fee,Chequing,29.95,539.10
+,07/09/2023,Expense,1968,RBC Royal Bank,Monthly fee,Chequing,29.95,569.05
+,08/09/2023,Expense,2006,RBC Royal Bank,Monthly fee,Chequing,29.95,599.00
+,09/09/2023,Expense,2044,RBC Royal Bank,Monthly fee,Chequing,29.95,628.95
+,10/09/2023,Expense,2085,RBC Royal Bank,Monthly fee,Chequing,29.95,658.90
+,11/09/2023,Expense,2123,RBC Royal Bank,Monthly fee,Chequing,29.95,688.85
+,12/09/2023,Expense,2161,RBC Royal Bank,Monthly fee,Chequing,29.95,718.80
+,01/09/2024,Expense,2436,RBC Royal Bank,Monthly fee,Chequing,29.95,748.75
+,02/09/2024,Expense,2474,RBC Royal Bank,Monthly fee,Chequing,29.95,778.70
+,03/09/2024,Expense,2512,RBC Royal Bank,Monthly fee,Chequing,29.95,808.65
+,04/09/2024,Expense,2553,RBC Royal Bank,Monthly fee,Chequing,29.95,838.60
+,05/09/2024,Expense,2591,RBC Royal Bank,Monthly fee,Chequing,29.95,868.55
+,06/09/2024,Expense,2629,RBC Royal Bank,Monthly fee,Chequing,29.95,898.50
+,07/09/2024,Expense,2671,RBC Royal Bank,Monthly fee,Chequing,29.95,928.45
+,08/09/2024,Expense,2709,RBC Royal Bank,Monthly fee,Chequing,29.95,958.40
+,09/09/2024,Expense,2747,RBC Royal Bank,Monthly fee,Chequing,29.95,988.35
+,10/09/2024,Expense,2788,RBC Royal Bank,Monthly fee,Chequing,29.95,1018.30
+,11/09/2024,Expense,2826,RBC Royal Bank,Monthly fee,Chequing,29.95,1048.25
+,12/09/2024,Expense,2864,RBC Royal Bank,Monthly fee,Chequing,29.95,1078.20
+Total for Bank Charges,,,,,,,1078.20,
+Interest Expense
+,01/10/2022,Expense,1029,RBC Royal Bank,Loan interest,Chequing,602.00,602.00
+,02/10/2022,Expense,1067,RBC Royal Bank,Loan interest,Chequing,594.00,1196.00
+,03/10/2022,Expense,1105,RBC Royal Bank,Loan interest,Chequing,586.00,1782.00
+,04/10/2022,Expense,1146,RBC Royal Bank,Loan interest,Chequing,578.00,2360.00
+,05/10/2022,Expense,1184,RBC Royal Bank,Loan interest,Chequing,570.00,2930.00
+,06/10/2022,Expense,1222,RBC Royal Bank,Loan interest,Chequing,562.00,3492.00
+,07/10/2022,Expense,1264,RBC Royal Bank,Loan interest,Chequing,554.00,4046.00
+,08/10/2022,Expense,1302,RBC Royal Bank,Loan interest,Chequing,546.00,4592.00
+,09/10/2022,Expense,1340,RBC Royal Bank,Loan interest,Chequing,538.00,5130.00
+,10/10/2022,Expense,1381,RBC Royal Bank,Loan interest,Chequing,530.00,5660.00
+,11/10/2022,Expense,1419,RBC Royal Bank,Loan interest,Chequing,522.00,6182.00
+,12/10/2022,Expense,1457,RBC Royal Bank,Loan interest,Chequing,514.00,6696.00
+,01/10/2023,Expense,1734,RBC Royal Bank,Loan interest,Chequing,602.00,7298.00
+,02/10/2023,Expense,1772,RBC Royal Bank,Loan interest,Chequing,594.00,7892.00
+,03/10/2023,Expense,1810,RBC Royal Bank,Loan interest,Chequing,586.00,8478.00
+,04/10/2023,Expense,1851,RBC Royal Bank,Loan interest,Chequing,578.00,9056.00
+,05/10/2023,Expense,1889,RBC Royal Bank,Loan interest,Chequing,570.00,9626.00
+,06/10/2023,Expense,1927,RBC Royal Bank,Loan interest,Chequing,562.00,10188.00
+,07/10/2023,Expense,1969,RBC Royal Bank,Loan interest,Chequing,554.00,10742.00
+,08/10/2023,Expense,2007,RBC Royal Bank,Loan interest,Chequing,546.00,11288.00
+,09/10/2023,Expense,2045,RBC Royal Bank,Loan interest,Chequing,538.00,11826.00
+,10/10/2023,Expense,2086,RBC Royal Bank,Loan interest,Chequing,530.00,12356.00
+,11/10/2023,Expense,2124,RBC Royal Bank,Loan interest,Chequing,522.00,12878.00
+,12/10/2023,Expense,2162,RBC Royal Bank,Loan interest,Chequing,514.00,13392.00
+,01/10/2024,Expense,2437,RBC Royal Bank,Loan interest,Chequing,602.00,13994.00
+,02/10/2024,Expense,2475,RBC Royal Bank,Loan interest,Chequing,594.00,14588.00
+,03/10/2024,Expense,2513,RBC Royal Bank,Loan interest,Chequing,586.00,15174.00
+,04/10/2024,Expense,2554,RBC Royal Bank,Loan interest,Chequing,578.00,15752.00
+,05/10/2024,Expense,2592,RBC Royal Bank,Loan interest,Chequing,570.00,16322.00
+,06/10/2024,Expense,2630,RBC Royal Bank,Loan interest,Chequing,562.00,16884.00
+,07/10/2024,Expense,2672,RBC Royal Bank,Loan interest,Chequing,554.00,17438.00
+,08/10/2024,Expense,2710,RBC Royal Bank,Loan interest,Chequing,546.00,17984.00
+,09/10/2024,Expense,2748,RBC Royal Bank,Loan interest,Chequing,538.00,18522.00
+,10/10/2024,Expense,2789,RBC Royal Bank,Loan interest,Chequing,530.00,19052.00
+,11/10/2024,Expense,2827,RBC Royal Bank,Loan interest,Chequing,522.00,19574.00
+,12/10/2024,Expense,2865,RBC Royal Bank,Loan interest,Chequing,514.00,20088.00
+Total for Interest Expense,,,,,,,20088.00,
+Dues & Memberships
+,01/09/2022,Expense,1034,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,1250.00
+,02/01/2022,Expense,1672,HRAI,Association membership,Chequing,650.00,1900.00
+,02/09/2022,Expense,1072,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,3150.00
+,03/09/2022,Expense,1110,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,4400.00
+,04/09/2022,Expense,1151,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,5650.00
+,05/09/2022,Expense,1189,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,6900.00
+,06/09/2022,Expense,1227,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,8150.00
+,07/09/2022,Expense,1269,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,9400.00
+,08/09/2022,Expense,1307,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,10650.00
+,09/09/2022,Expense,1345,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,11900.00
+,10/09/2022,Expense,1386,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,13150.00
+,11/09/2022,Expense,1424,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,14400.00
+,12/09/2022,Expense,1462,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,15650.00
+,01/09/2023,Expense,1739,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,16900.00
+,02/01/2023,Expense,2377,HRAI,Association membership,Chequing,650.00,17550.00
+,02/09/2023,Expense,1777,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,18800.00
+,03/09/2023,Expense,1815,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,20050.00
+,04/09/2023,Expense,1856,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,21300.00
+,05/09/2023,Expense,1894,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,22550.00
+,06/09/2023,Expense,1932,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,23800.00
+,07/09/2023,Expense,1974,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,25050.00
+,08/09/2023,Expense,2012,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,26300.00
+,09/09/2023,Expense,2050,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,27550.00
+,10/09/2023,Expense,2091,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,28800.00
+,11/09/2023,Expense,2129,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,30050.00
+,12/09/2023,Expense,2167,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,31300.00
+,01/09/2024,Expense,2442,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,32550.00
+,02/01/2024,Expense,3080,HRAI,Association membership,Chequing,650.00,33200.00
+,02/09/2024,Expense,2480,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,34450.00
+,03/09/2024,Expense,2518,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,35700.00
+,04/09/2024,Expense,2559,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,36950.00
+,05/09/2024,Expense,2597,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,38200.00
+,06/09/2024,Expense,2635,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,39450.00
+,07/09/2024,Expense,2677,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,40700.00
+,08/09/2024,Expense,2715,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,41950.00
+,09/09/2024,Expense,2753,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,43200.00
+,10/09/2024,Expense,2794,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,44450.00
+,11/09/2024,Expense,2832,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,45700.00
+,12/09/2024,Expense,2870,Glen Abbey Golf Club,Membership dues,Chequing,1250.00,46950.00
+Total for Dues & Memberships,,,,,,,46950.00,
+Shareholder Expenses
+,08/14/2023,Expense,2379,Rexall,Pharmacy,Chequing,38.15,38.15
+,05/02/2024,Expense,3084,Shoppers Drug Mart,Prescription,Chequing,64.20,102.35
+,09/05/2024,Expense,3085,Upper Canada College,Tuition - fall term,Chequing,9500.00,9602.35
+Total for Shareholder Expenses,,,,,,,9602.35,
+Donations
+,11/20/2022,Expense,1673,SickKids Foundation,Donation,Chequing,1000.00,1000.00
+,11/20/2023,Expense,2378,SickKids Foundation,Donation,Chequing,1000.00,2000.00
+,11/20/2024,Expense,3081,SickKids Foundation,Donation,Chequing,1000.00,3000.00
+Total for Donations,,,,,,,3000.00,
+Repairs & Maintenance
+,06/18/2022,Expense,1235,Rapid Roofing,Shop roof repair,Chequing,2154.94,2154.94
+,06/18/2023,Expense,1940,Rapid Roofing,Shop roof repair,Chequing,2112.79,4267.73
+,06/18/2024,Expense,2643,Rapid Roofing,Shop roof repair,Chequing,2090.10,6357.83
+Total for Repairs & Maintenance,,,,,,,6357.83,
+Amortization Expense
+,12/31/2022,Journal Entry,1674,,Year-end amortization,Chequing,28000.00,28000.00
+,12/31/2024,Journal Entry,3086,,Year-end amortization,Chequing,31000.00,59000.00
+Total for Amortization Expense,,,,,,,59000.00,
+Income Tax Expense
+,12/31/2022,Journal Entry,1676,,Current income taxes,Chequing,9800.00,9800.00
+,12/31/2024,Journal Entry,3088,,Current income taxes,Chequing,14200.00,24000.00
+Total for Income Tax Expense,,,,,,,24000.00,
+
+TOTAL,,,,,,,,
+
+"Accrual Basis Thursday, January 9, 2025 10:12 AM GMT-05:00"

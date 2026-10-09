@@ -1,0 +1,846 @@
+Account Transactions
+Brightwater Plumbing & Heating Ltd.
+For the period 1 January 2024 to 31 December 2024
+
+Date,Source,Description,Reference,Debit,Credit,Running Balance
+Chequing (1000)
+,,Opening Balance,,,,0.00
+28/01/2024,Spend Money,Deposits - month,3089,90497.25,,90497.25
+28/01/2024,Spend Money,Payments - month,3090,,42924.70,47572.55
+28/02/2024,Spend Money,Deposits - month,3091,90497.25,,138069.80
+28/02/2024,Spend Money,Payments - month,3092,,42924.70,95145.10
+28/03/2024,Spend Money,Deposits - month,3093,90497.25,,185642.35
+28/03/2024,Spend Money,Payments - month,3094,,42924.70,142717.65
+28/04/2024,Spend Money,Deposits - month,3096,90497.25,,233214.90
+28/04/2024,Spend Money,Payments - month,3097,,42924.70,190290.20
+28/05/2024,Spend Money,Deposits - month,3098,90497.25,,280787.45
+28/05/2024,Spend Money,Payments - month,3099,,42924.70,237862.75
+28/06/2024,Spend Money,Deposits - month,3100,90497.25,,328360.00
+28/06/2024,Spend Money,Payments - month,3101,,42924.70,285435.30
+28/07/2024,Spend Money,Deposits - month,3103,90497.25,,375932.55
+28/07/2024,Spend Money,Payments - month,3104,,42924.70,333007.85
+28/08/2024,Spend Money,Deposits - month,3105,90497.25,,423505.10
+28/08/2024,Spend Money,Payments - month,3106,,42924.70,380580.40
+28/09/2024,Spend Money,Deposits - month,3107,90497.25,,471077.65
+28/09/2024,Spend Money,Payments - month,3108,,42924.70,428152.95
+28/10/2024,Spend Money,Deposits - month,3110,90497.25,,518650.20
+28/10/2024,Spend Money,Payments - month,3111,,42924.70,475725.50
+28/11/2024,Spend Money,Deposits - month,3112,90497.25,,566222.75
+28/11/2024,Spend Money,Payments - month,3113,,42924.70,523298.05
+28/12/2024,Spend Money,Deposits - month,3114,90497.25,,613795.30
+28/12/2024,Spend Money,Payments - month,3115,,42924.70,570870.60
+Total Chequing (1000),,,,,,570870.60
+,,Closing Balance,,,,570870.60
+Accumulated Amortization (1510)
+,,Opening Balance,,,,0.00
+31/12/2024,Spend Money,Year-end amortization,3087,,31000.00,-31000.00
+Total Accumulated Amortization (1510),,,,,,-31000.00
+,,Closing Balance,,,,-31000.00
+HST Payable (2100)
+,,Opening Balance,,,,0.00
+30/03/2024,Spend Money,Receiver General - HST remittance,3095,10280.64,,10280.64
+30/06/2024,Spend Money,Receiver General - HST remittance,3102,10279.20,,20559.84
+30/09/2024,Spend Money,Receiver General - HST remittance,3109,10040.00,,30599.84
+30/12/2024,Spend Money,Receiver General - HST remittance,3116,10341.90,,40941.74
+Total HST Payable (2100),,,,,,40941.74
+,,Closing Balance,,,,40941.74
+Shareholder Loan (2500)
+,,Opening Balance,,,,0.00
+01/06/2024,Spend Money,Dan Brightwater - Shareholder advance,3117,,10000.00,-10000.00
+Total Shareholder Loan (2500),,,,,,-10000.00
+,,Closing Balance,,,,-10000.00
+Sales - Service (4000)
+,,Opening Balance,,,,0.00
+02/01/2024,Receivable Invoice,Maple Ridge Condos - Service call 2024-01-1,2409,,4434.00,-4434.00
+05/01/2024,Receivable Invoice,J. Alvarez - Service call 2024-01-2,2410,,3430.00,-7864.00
+08/01/2024,Receivable Invoice,Lakeview Dental Centre - Service call 2024-01-3,2411,,6332.00,-14196.00
+11/01/2024,Receivable Invoice,Northgate Schools - Service call 2024-01-4,2412,,8583.00,-22779.00
+14/01/2024,Receivable Invoice,P. Nguyen - Service call 2024-01-5,2413,,7515.00,-30294.00
+17/01/2024,Receivable Invoice,Oakville Medical Arts - Service call 2024-01-6,2414,,5992.00,-36286.00
+20/01/2024,Receivable Invoice,Riverstone Homes - Service call 2024-01-7,2415,,6802.00,-43088.00
+23/01/2024,Receivable Invoice,S. Kowalski - Service call 2024-01-8,2416,,7823.00,-50911.00
+02/02/2024,Receivable Invoice,J. Alvarez - Service call 2024-02-1,2447,,6575.00,-57486.00
+05/02/2024,Receivable Invoice,Lakeview Dental Centre - Service call 2024-02-2,2448,,2909.00,-60395.00
+08/02/2024,Receivable Invoice,Northgate Schools - Service call 2024-02-3,2449,,1568.00,-61963.00
+11/02/2024,Receivable Invoice,P. Nguyen - Service call 2024-02-4,2450,,6668.00,-68631.00
+14/02/2024,Receivable Invoice,Oakville Medical Arts - Service call 2024-02-5,2451,,3283.00,-71914.00
+17/02/2024,Receivable Invoice,Riverstone Homes - Service call 2024-02-6,2452,,5927.00,-77841.00
+20/02/2024,Receivable Invoice,S. Kowalski - Service call 2024-02-7,2453,,3945.00,-81786.00
+23/02/2024,Receivable Invoice,Bayfront Hotel - Service call 2024-02-8,2454,,5434.00,-87220.00
+02/03/2024,Receivable Invoice,Lakeview Dental Centre - Service call 2024-03-1,2485,,8967.00,-96187.00
+05/03/2024,Receivable Invoice,Northgate Schools - Service call 2024-03-2,2486,,8582.00,-104769.00
+08/03/2024,Receivable Invoice,P. Nguyen - Service call 2024-03-3,2487,,2299.00,-107068.00
+11/03/2024,Receivable Invoice,Oakville Medical Arts - Service call 2024-03-4,2488,,2815.00,-109883.00
+14/03/2024,Receivable Invoice,Riverstone Homes - Service call 2024-03-5,2489,,3334.00,-113217.00
+17/03/2024,Receivable Invoice,S. Kowalski - Service call 2024-03-6,2490,,5225.00,-118442.00
+20/03/2024,Receivable Invoice,Bayfront Hotel - Service call 2024-03-7,2491,,6029.00,-124471.00
+23/03/2024,Receivable Invoice,Halton Property Group - Service call 2024-03-8,2492,,4446.00,-128917.00
+02/04/2024,Receivable Invoice,Northgate Schools - Service call 2024-04-1,2526,,1844.00,-130761.00
+05/04/2024,Receivable Invoice,P. Nguyen - Service call 2024-04-2,2527,,2197.00,-132958.00
+08/04/2024,Receivable Invoice,Oakville Medical Arts - Service call 2024-04-3,2528,,5204.00,-138162.00
+11/04/2024,Receivable Invoice,Riverstone Homes - Service call 2024-04-4,2529,,2575.00,-140737.00
+14/04/2024,Receivable Invoice,S. Kowalski - Service call 2024-04-5,2530,,4012.00,-144749.00
+17/04/2024,Receivable Invoice,Bayfront Hotel - Service call 2024-04-6,2531,,4586.00,-149335.00
+20/04/2024,Receivable Invoice,Halton Property Group - Service call 2024-04-7,2532,,8967.00,-158302.00
+23/04/2024,Receivable Invoice,Maple Ridge Condos - Service call 2024-04-8,2533,,1384.00,-159686.00
+02/05/2024,Receivable Invoice,P. Nguyen - Service call 2024-05-1,2564,,3527.00,-163213.00
+05/05/2024,Receivable Invoice,Oakville Medical Arts - Service call 2024-05-2,2565,,8181.00,-171394.00
+08/05/2024,Receivable Invoice,Riverstone Homes - Service call 2024-05-3,2566,,4280.00,-175674.00
+11/05/2024,Receivable Invoice,S. Kowalski - Service call 2024-05-4,2567,,5699.00,-181373.00
+14/05/2024,Receivable Invoice,Bayfront Hotel - Service call 2024-05-5,2568,,4063.00,-185436.00
+17/05/2024,Receivable Invoice,Halton Property Group - Service call 2024-05-6,2569,,4229.00,-189665.00
+20/05/2024,Receivable Invoice,Maple Ridge Condos - Service call 2024-05-7,2570,,5526.00,-195191.00
+23/05/2024,Receivable Invoice,J. Alvarez - Service call 2024-05-8,2571,,4943.00,-200134.00
+02/06/2024,Receivable Invoice,Oakville Medical Arts - Service call 2024-06-1,2602,,8495.00,-208629.00
+05/06/2024,Receivable Invoice,Riverstone Homes - Service call 2024-06-2,2603,,7660.00,-216289.00
+08/06/2024,Receivable Invoice,S. Kowalski - Service call 2024-06-3,2604,,5761.00,-222050.00
+11/06/2024,Receivable Invoice,Bayfront Hotel - Service call 2024-06-4,2605,,4095.00,-226145.00
+14/06/2024,Receivable Invoice,Halton Property Group - Service call 2024-06-5,2606,,7425.00,-233570.00
+17/06/2024,Receivable Invoice,Maple Ridge Condos - Service call 2024-06-6,2607,,4205.00,-237775.00
+20/06/2024,Receivable Invoice,J. Alvarez - Service call 2024-06-7,2608,,7878.00,-245653.00
+23/06/2024,Receivable Invoice,Lakeview Dental Centre - Service call 2024-06-8,2609,,4981.00,-250634.00
+02/07/2024,Receivable Invoice,Riverstone Homes - Service call 2024-07-1,2644,,4301.00,-254935.00
+05/07/2024,Receivable Invoice,S. Kowalski - Service call 2024-07-2,2645,,4423.00,-259358.00
+08/07/2024,Receivable Invoice,Bayfront Hotel - Service call 2024-07-3,2646,,4586.00,-263944.00
+11/07/2024,Receivable Invoice,Halton Property Group - Service call 2024-07-4,2647,,1276.00,-265220.00
+14/07/2024,Receivable Invoice,Maple Ridge Condos - Service call 2024-07-5,2648,,8257.00,-273477.00
+17/07/2024,Receivable Invoice,J. Alvarez - Service call 2024-07-6,2649,,8716.00,-282193.00
+20/07/2024,Receivable Invoice,Lakeview Dental Centre - Service call 2024-07-7,2650,,8275.00,-290468.00
+23/07/2024,Receivable Invoice,Northgate Schools - Service call 2024-07-8,2651,,2721.00,-293189.00
+02/08/2024,Receivable Invoice,S. Kowalski - Service call 2024-08-1,2682,,4414.00,-297603.00
+05/08/2024,Receivable Invoice,Bayfront Hotel - Service call 2024-08-2,2683,,7877.00,-305480.00
+08/08/2024,Receivable Invoice,Halton Property Group - Service call 2024-08-3,2684,,5809.00,-311289.00
+11/08/2024,Receivable Invoice,Maple Ridge Condos - Service call 2024-08-4,2685,,7473.00,-318762.00
+14/08/2024,Receivable Invoice,J. Alvarez - Service call 2024-08-5,2686,,8838.00,-327600.00
+17/08/2024,Receivable Invoice,Lakeview Dental Centre - Service call 2024-08-6,2687,,8804.00,-336404.00
+20/08/2024,Receivable Invoice,Northgate Schools - Service call 2024-08-7,2688,,5599.00,-342003.00
+23/08/2024,Receivable Invoice,P. Nguyen - Service call 2024-08-8,2689,,3859.00,-345862.00
+02/09/2024,Receivable Invoice,Bayfront Hotel - Service call 2024-09-1,2720,,7617.00,-353479.00
+05/09/2024,Receivable Invoice,Halton Property Group - Service call 2024-09-2,2721,,5387.00,-358866.00
+08/09/2024,Receivable Invoice,Maple Ridge Condos - Service call 2024-09-3,2722,,3796.00,-362662.00
+11/09/2024,Receivable Invoice,J. Alvarez - Service call 2024-09-4,2723,,7612.00,-370274.00
+14/09/2024,Receivable Invoice,Lakeview Dental Centre - Service call 2024-09-5,2724,,3063.00,-373337.00
+17/09/2024,Receivable Invoice,Northgate Schools - Service call 2024-09-6,2725,,8428.00,-381765.00
+20/09/2024,Receivable Invoice,P. Nguyen - Service call 2024-09-7,2726,,4314.00,-386079.00
+23/09/2024,Receivable Invoice,Oakville Medical Arts - Service call 2024-09-8,2727,,1591.00,-387670.00
+02/10/2024,Receivable Invoice,Halton Property Group - Service call 2024-10-1,2761,,2690.00,-390360.00
+05/10/2024,Receivable Invoice,Maple Ridge Condos - Service call 2024-10-2,2762,,4854.00,-395214.00
+08/10/2024,Receivable Invoice,J. Alvarez - Service call 2024-10-3,2763,,6823.00,-402037.00
+11/10/2024,Receivable Invoice,Lakeview Dental Centre - Service call 2024-10-4,2764,,3600.00,-405637.00
+14/10/2024,Receivable Invoice,Northgate Schools - Service call 2024-10-5,2765,,2140.00,-407777.00
+17/10/2024,Receivable Invoice,P. Nguyen - Service call 2024-10-6,2766,,5623.00,-413400.00
+20/10/2024,Receivable Invoice,Oakville Medical Arts - Service call 2024-10-7,2767,,8977.00,-422377.00
+23/10/2024,Receivable Invoice,Riverstone Homes - Service call 2024-10-8,2768,,7618.00,-429995.00
+02/11/2024,Receivable Invoice,Maple Ridge Condos - Service call 2024-11-1,2799,,6364.00,-436359.00
+05/11/2024,Receivable Invoice,J. Alvarez - Service call 2024-11-2,2800,,8050.00,-444409.00
+08/11/2024,Receivable Invoice,Lakeview Dental Centre - Service call 2024-11-3,2801,,1921.00,-446330.00
+11/11/2024,Receivable Invoice,Northgate Schools - Service call 2024-11-4,2802,,3575.00,-449905.00
+14/11/2024,Receivable Invoice,P. Nguyen - Service call 2024-11-5,2803,,1349.00,-451254.00
+17/11/2024,Receivable Invoice,Oakville Medical Arts - Service call 2024-11-6,2804,,7415.00,-458669.00
+20/11/2024,Receivable Invoice,Riverstone Homes - Service call 2024-11-7,2805,,4331.00,-463000.00
+23/11/2024,Receivable Invoice,S. Kowalski - Service call 2024-11-8,2806,,6854.00,-469854.00
+02/12/2024,Receivable Invoice,J. Alvarez - Service call 2024-12-1,2837,,2679.00,-472533.00
+05/12/2024,Receivable Invoice,Lakeview Dental Centre - Service call 2024-12-2,2838,,4822.00,-477355.00
+08/12/2024,Receivable Invoice,Northgate Schools - Service call 2024-12-3,2839,,7230.00,-484585.00
+11/12/2024,Receivable Invoice,P. Nguyen - Service call 2024-12-4,2840,,1949.00,-486534.00
+14/12/2024,Receivable Invoice,Oakville Medical Arts - Service call 2024-12-5,2841,,1466.00,-488000.00
+17/12/2024,Receivable Invoice,Riverstone Homes - Service call 2024-12-6,2842,,5262.00,-493262.00
+20/12/2024,Receivable Invoice,S. Kowalski - Service call 2024-12-7,2843,,5647.00,-498909.00
+23/12/2024,Receivable Invoice,Bayfront Hotel - Service call 2024-12-8,2844,,4626.00,-503535.00
+Total Sales - Service (4000),,,,,,-503535.00
+,,Closing Balance,,,,-503535.00
+Sales - Installations (4010)
+,,Opening Balance,,,,0.00
+05/01/2024,Receivable Invoice,Lakeview Dental Centre - Furnace / boiler installation,2417,,10135.00,-10135.00
+13/01/2024,Receivable Invoice,Northgate Schools - Furnace / boiler installation,2418,,16644.00,-26779.00
+21/01/2024,Receivable Invoice,P. Nguyen - Furnace / boiler installation,2419,,8116.00,-34895.00
+05/02/2024,Receivable Invoice,Oakville Medical Arts - Furnace / boiler installation,2455,,13317.00,-48212.00
+13/02/2024,Receivable Invoice,Riverstone Homes - Furnace / boiler installation,2456,,11394.00,-59606.00
+21/02/2024,Receivable Invoice,S. Kowalski - Furnace / boiler installation,2457,,14211.00,-73817.00
+05/03/2024,Receivable Invoice,Bayfront Hotel - Furnace / boiler installation,2493,,11580.00,-85397.00
+13/03/2024,Receivable Invoice,Halton Property Group - Furnace / boiler installation,2494,,14806.00,-100203.00
+21/03/2024,Receivable Invoice,Maple Ridge Condos - Furnace / boiler installation,2495,,28765.00,-128968.00
+05/04/2024,Receivable Invoice,J. Alvarez - Furnace / boiler installation,2534,,12850.00,-141818.00
+13/04/2024,Receivable Invoice,Lakeview Dental Centre - Furnace / boiler installation,2535,,9823.00,-151641.00
+21/04/2024,Receivable Invoice,Northgate Schools - Furnace / boiler installation,2536,,8736.00,-160377.00
+05/05/2024,Receivable Invoice,P. Nguyen - Furnace / boiler installation,2572,,11222.00,-171599.00
+13/05/2024,Receivable Invoice,Oakville Medical Arts - Furnace / boiler installation,2573,,18249.00,-189848.00
+21/05/2024,Receivable Invoice,Riverstone Homes - Furnace / boiler installation,2574,,22354.00,-212202.00
+05/06/2024,Receivable Invoice,S. Kowalski - Furnace / boiler installation,2610,,19840.00,-232042.00
+13/06/2024,Receivable Invoice,Bayfront Hotel - Furnace / boiler installation,2611,,18276.00,-250318.00
+21/06/2024,Receivable Invoice,Halton Property Group - Furnace / boiler installation,2612,,27254.00,-277572.00
+05/07/2024,Receivable Invoice,Maple Ridge Condos - Furnace / boiler installation,2652,,26743.00,-304315.00
+13/07/2024,Receivable Invoice,J. Alvarez - Furnace / boiler installation,2653,,24938.00,-329253.00
+21/07/2024,Receivable Invoice,Lakeview Dental Centre - Furnace / boiler installation,2654,,16763.00,-346016.00
+05/08/2024,Receivable Invoice,Northgate Schools - Furnace / boiler installation,2690,,10399.00,-356415.00
+13/08/2024,Receivable Invoice,P. Nguyen - Furnace / boiler installation,2691,,8340.00,-364755.00
+21/08/2024,Receivable Invoice,Oakville Medical Arts - Furnace / boiler installation,2692,,27274.00,-392029.00
+05/09/2024,Receivable Invoice,Riverstone Homes - Furnace / boiler installation,2728,,11433.00,-403462.00
+13/09/2024,Receivable Invoice,S. Kowalski - Furnace / boiler installation,2729,,20610.00,-424072.00
+21/09/2024,Receivable Invoice,Bayfront Hotel - Furnace / boiler installation,2730,,18354.00,-442426.00
+05/10/2024,Receivable Invoice,Halton Property Group - Furnace / boiler installation,2769,,11683.00,-454109.00
+13/10/2024,Receivable Invoice,Maple Ridge Condos - Furnace / boiler installation,2770,,16995.00,-471104.00
+21/10/2024,Receivable Invoice,J. Alvarez - Furnace / boiler installation,2771,,27991.00,-499095.00
+05/11/2024,Receivable Invoice,Lakeview Dental Centre - Furnace / boiler installation,2807,,8273.00,-507368.00
+13/11/2024,Receivable Invoice,Northgate Schools - Furnace / boiler installation,2808,,8898.00,-516266.00
+21/11/2024,Receivable Invoice,P. Nguyen - Furnace / boiler installation,2809,,9173.00,-525439.00
+05/12/2024,Receivable Invoice,Oakville Medical Arts - Furnace / boiler installation,2845,,14748.00,-540187.00
+13/12/2024,Receivable Invoice,Riverstone Homes - Furnace / boiler installation,2846,,13579.00,-553766.00
+21/12/2024,Receivable Invoice,S. Kowalski - Furnace / boiler installation,2847,,28666.00,-582432.00
+Total Sales - Installations (4010),,,,,,-582432.00
+,,Closing Balance,,,,-582432.00
+Materials & Supplies (5000)
+,,Opening Balance,,,,0.00
+03/01/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2420,4089.00,,4089.00
+08/01/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2421,1412.00,,5501.00
+13/01/2024,Payable Invoice,"The Home Depot - Pipe, fittings and parts",2422,1988.00,,7489.00
+18/01/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2423,1288.00,,8777.00
+23/01/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2424,994.00,,9771.00
+03/02/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2458,2236.00,,12007.00
+08/02/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2459,4713.00,,16720.00
+13/02/2024,Payable Invoice,"The Home Depot - Pipe, fittings and parts",2460,3706.00,,20426.00
+18/02/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2461,3389.00,,23815.00
+23/02/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2462,4982.00,,28797.00
+03/03/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2496,630.00,,29427.00
+08/03/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2497,4544.00,,33971.00
+13/03/2024,Payable Invoice,"The Home Depot - Pipe, fittings and parts",2498,2281.00,,36252.00
+18/03/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2499,4036.00,,40288.00
+23/03/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2500,2673.00,,42961.00
+03/04/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2537,3108.00,,46069.00
+08/04/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2538,4985.00,,51054.00
+13/04/2024,Payable Invoice,"The Home Depot - Pipe, fittings and parts",2539,4057.00,,55111.00
+18/04/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2540,3997.00,,59108.00
+23/04/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2541,595.00,,59703.00
+03/05/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2575,848.00,,60551.00
+08/05/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2576,4391.00,,64942.00
+13/05/2024,Payable Invoice,"The Home Depot - Pipe, fittings and parts",2577,1680.00,,66622.00
+18/05/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2578,4209.00,,70831.00
+23/05/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2579,1662.00,,72493.00
+03/06/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2613,4042.00,,76535.00
+08/06/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2614,5143.00,,81678.00
+13/06/2024,Payable Invoice,"The Home Depot - Pipe, fittings and parts",2615,2768.00,,84446.00
+18/06/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2616,1058.00,,85504.00
+23/06/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2617,2154.00,,87658.00
+03/07/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2655,3312.00,,90970.00
+08/07/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2656,1013.00,,91983.00
+13/07/2024,Payable Invoice,"The Home Depot - Pipe, fittings and parts",2657,2808.00,,94791.00
+18/07/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2658,3876.00,,98667.00
+23/07/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2659,4630.00,,103297.00
+03/08/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2693,3761.00,,107058.00
+08/08/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2694,2689.00,,109747.00
+13/08/2024,Payable Invoice,"The Home Depot - Pipe, fittings and parts",2695,3169.00,,112916.00
+18/08/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2696,935.00,,113851.00
+23/08/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2697,5157.00,,119008.00
+03/09/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2731,2666.00,,121674.00
+08/09/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2732,2686.00,,124360.00
+13/09/2024,Payable Invoice,"The Home Depot - Pipe, fittings and parts",2733,3650.00,,128010.00
+18/09/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2734,4640.00,,132650.00
+23/09/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2735,1736.00,,134386.00
+03/10/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2772,650.00,,135036.00
+08/10/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2773,2060.00,,137096.00
+13/10/2024,Payable Invoice,"The Home Depot - Pipe, fittings and parts",2774,4336.00,,141432.00
+18/10/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2775,3164.00,,144596.00
+23/10/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2776,2921.00,,147517.00
+03/11/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2810,4154.00,,151671.00
+08/11/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2811,1684.00,,153355.00
+13/11/2024,Payable Invoice,"The Home Depot - Pipe, fittings and parts",2812,2710.00,,156065.00
+18/11/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2813,5363.00,,161428.00
+23/11/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2814,3227.00,,164655.00
+03/12/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2848,1120.00,,165775.00
+08/12/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2849,3206.00,,168981.00
+13/12/2024,Payable Invoice,"The Home Depot - Pipe, fittings and parts",2850,1166.00,,170147.00
+18/12/2024,Payable Invoice,"Wolseley Canada - Pipe, fittings and parts",2851,5543.00,,175690.00
+23/12/2024,Payable Invoice,"Emco Supply - Pipe, fittings and parts",2852,1190.00,,176880.00
+Total Materials & Supplies (5000),,,,,,176880.00
+,,Closing Balance,,,,176880.00
+Subcontractors (5100)
+,,Opening Balance,,,,0.00
+10/01/2024,Payable Invoice,Delta Electrical - Subcontract work,2425,3384.00,,3384.00
+19/01/2024,Payable Invoice,Precision Ductwork - Subcontract work,2426,6714.00,,10098.00
+10/02/2024,Payable Invoice,Delta Electrical - Subcontract work,2463,6511.00,,16609.00
+19/02/2024,Payable Invoice,Precision Ductwork - Subcontract work,2464,3504.00,,20113.00
+10/03/2024,Payable Invoice,Delta Electrical - Subcontract work,2501,3604.00,,23717.00
+19/03/2024,Payable Invoice,Precision Ductwork - Subcontract work,2502,6640.00,,30357.00
+10/04/2024,Payable Invoice,Delta Electrical - Subcontract work,2542,2946.00,,33303.00
+19/04/2024,Payable Invoice,Precision Ductwork - Subcontract work,2543,8630.00,,41933.00
+10/05/2024,Payable Invoice,Delta Electrical - Subcontract work,2580,7471.00,,49404.00
+19/05/2024,Payable Invoice,Precision Ductwork - Subcontract work,2581,6604.00,,56008.00
+10/06/2024,Payable Invoice,Delta Electrical - Subcontract work,2618,4932.00,,60940.00
+19/06/2024,Payable Invoice,Precision Ductwork - Subcontract work,2619,5112.00,,66052.00
+10/07/2024,Payable Invoice,Delta Electrical - Subcontract work,2660,5099.00,,71151.00
+19/07/2024,Payable Invoice,Precision Ductwork - Subcontract work,2661,4324.00,,75475.00
+10/08/2024,Payable Invoice,Delta Electrical - Subcontract work,2698,4382.00,,79857.00
+19/08/2024,Payable Invoice,Precision Ductwork - Subcontract work,2699,8443.00,,88300.00
+10/09/2024,Payable Invoice,Delta Electrical - Subcontract work,2736,5719.00,,94019.00
+19/09/2024,Payable Invoice,Precision Ductwork - Subcontract work,2737,5443.00,,99462.00
+10/10/2024,Payable Invoice,Delta Electrical - Subcontract work,2777,3095.00,,102557.00
+19/10/2024,Payable Invoice,Precision Ductwork - Subcontract work,2778,6934.00,,109491.00
+10/11/2024,Payable Invoice,Delta Electrical - Subcontract work,2815,2957.00,,112448.00
+19/11/2024,Payable Invoice,Precision Ductwork - Subcontract work,2816,3637.00,,116085.00
+10/12/2024,Payable Invoice,Delta Electrical - Subcontract work,2853,7077.00,,123162.00
+19/12/2024,Payable Invoice,Precision Ductwork - Subcontract work,2854,7322.00,,130484.00
+Total Subcontractors (5100),,,,,,130484.00
+,,Closing Balance,,,,130484.00
+Wages & Salaries (6000)
+,,Opening Balance,,,,0.00
+12/01/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2878,2615.38,,2615.38
+12/01/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2904,2423.08,,5038.46
+12/01/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2930,2192.31,,7230.77
+12/01/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2956,3269.23,,10500.00
+26/01/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2879,2615.38,,13115.38
+26/01/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2905,2423.08,,15538.46
+26/01/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2931,2192.31,,17730.77
+26/01/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2957,3269.23,,21000.00
+09/02/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2880,2615.38,,23615.38
+09/02/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2906,2423.08,,26038.46
+09/02/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2932,2192.31,,28230.77
+09/02/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2958,3269.23,,31500.00
+23/02/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2881,2615.38,,34115.38
+23/02/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2907,2423.08,,36538.46
+23/02/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2933,2192.31,,38730.77
+23/02/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2959,3269.23,,42000.00
+08/03/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2882,2615.38,,44615.38
+08/03/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2908,2423.08,,47038.46
+08/03/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2934,2192.31,,49230.77
+08/03/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2960,3269.23,,52500.00
+22/03/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2883,2615.38,,55115.38
+22/03/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2909,2423.08,,57538.46
+22/03/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2935,2192.31,,59730.77
+22/03/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2961,3269.23,,63000.00
+05/04/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2884,2615.38,,65615.38
+05/04/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2910,2423.08,,68038.46
+05/04/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2936,2192.31,,70230.77
+05/04/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2962,3269.23,,73500.00
+19/04/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2885,2615.38,,76115.38
+19/04/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2911,2423.08,,78538.46
+19/04/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2937,2192.31,,80730.77
+19/04/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2963,3269.23,,84000.00
+03/05/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2886,2615.38,,86615.38
+03/05/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2912,2423.08,,89038.46
+03/05/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2938,2192.31,,91230.77
+03/05/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2964,3269.23,,94500.00
+17/05/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2887,2615.38,,97115.38
+17/05/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2913,2423.08,,99538.46
+17/05/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2939,2192.31,,101730.77
+17/05/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2965,3269.23,,105000.00
+31/05/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2888,2615.38,,107615.38
+31/05/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2914,2423.08,,110038.46
+31/05/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2940,2192.31,,112230.77
+31/05/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2966,3269.23,,115500.00
+14/06/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2889,2615.38,,118115.38
+14/06/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2915,2423.08,,120538.46
+14/06/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2941,2192.31,,122730.77
+14/06/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2967,3269.23,,126000.00
+28/06/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2890,2615.38,,128615.38
+28/06/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2916,2423.08,,131038.46
+28/06/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2942,2192.31,,133230.77
+28/06/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2968,3269.23,,136500.00
+12/07/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2891,2615.38,,139115.38
+12/07/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2917,2423.08,,141538.46
+12/07/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2943,2192.31,,143730.77
+12/07/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2969,3269.23,,147000.00
+26/07/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2892,2615.38,,149615.38
+26/07/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2918,2423.08,,152038.46
+26/07/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2944,2192.31,,154230.77
+26/07/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2970,3269.23,,157500.00
+09/08/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2893,2615.38,,160115.38
+09/08/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2919,2423.08,,162538.46
+09/08/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2945,2192.31,,164730.77
+09/08/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2971,3269.23,,168000.00
+23/08/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2894,2615.38,,170615.38
+23/08/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2920,2423.08,,173038.46
+23/08/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2946,2192.31,,175230.77
+23/08/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2972,3269.23,,178500.00
+06/09/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2895,2615.38,,181115.38
+06/09/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2921,2423.08,,183538.46
+06/09/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2947,2192.31,,185730.77
+06/09/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2973,3269.23,,189000.00
+20/09/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2896,2615.38,,191615.38
+20/09/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2922,2423.08,,194038.46
+20/09/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2948,2192.31,,196230.77
+20/09/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2974,3269.23,,199500.00
+04/10/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2897,2615.38,,202115.38
+04/10/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2923,2423.08,,204538.46
+04/10/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2949,2192.31,,206730.77
+04/10/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2975,3269.23,,210000.00
+18/10/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2898,2615.38,,212615.38
+18/10/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2924,2423.08,,215038.46
+18/10/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2950,2192.31,,217230.77
+18/10/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2976,3269.23,,220500.00
+01/11/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2899,2615.38,,223115.38
+01/11/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2925,2423.08,,225538.46
+01/11/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2951,2192.31,,227730.77
+01/11/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2977,3269.23,,231000.00
+15/11/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2900,2615.38,,233615.38
+15/11/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2926,2423.08,,236038.46
+15/11/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2952,2192.31,,238230.77
+15/11/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2978,3269.23,,241500.00
+29/11/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2901,2615.38,,244115.38
+29/11/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2927,2423.08,,246538.46
+29/11/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2953,2192.31,,248730.77
+29/11/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2979,3269.23,,252000.00
+13/12/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2902,2615.38,,254615.38
+13/12/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2928,2423.08,,257038.46
+13/12/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2954,2192.31,,259230.77
+13/12/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2980,3269.23,,262500.00
+27/12/2024,Spend Money,Payroll — M. Chen - Biweekly pay,2903,2615.38,,265115.38
+27/12/2024,Spend Money,Payroll — J. Okafor - Biweekly pay,2929,2423.08,,267538.46
+27/12/2024,Spend Money,Payroll — R. Singh - Biweekly pay,2955,2192.31,,269730.77
+27/12/2024,Spend Money,Payroll — E. Brightwater - Biweekly pay,2981,3269.25,,273000.02
+Total Wages & Salaries (6000),,,,,,273000.02
+,,Closing Balance,,,,273000.02
+Wages - Officers (6010)
+,,Opening Balance,,,,0.00
+15/01/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2982,10000.00,,10000.00
+28/01/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2983,10000.00,,20000.00
+15/02/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2984,10000.00,,30000.00
+28/02/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2985,10000.00,,40000.00
+15/03/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2986,10000.00,,50000.00
+28/03/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2987,10000.00,,60000.00
+15/04/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2988,10000.00,,70000.00
+28/04/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2989,10000.00,,80000.00
+15/05/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2990,10000.00,,90000.00
+28/05/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2991,10000.00,,100000.00
+15/06/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2992,10000.00,,110000.00
+28/06/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2993,10000.00,,120000.00
+15/07/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2994,10000.00,,130000.00
+28/07/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2995,10000.00,,140000.00
+15/08/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2996,10000.00,,150000.00
+28/08/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2997,10000.00,,160000.00
+15/09/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2998,10000.00,,170000.00
+28/09/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,2999,10000.00,,180000.00
+15/10/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,3000,10000.00,,190000.00
+28/10/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,3001,10000.00,,200000.00
+15/11/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,3002,10000.00,,210000.00
+28/11/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,3003,10000.00,,220000.00
+15/12/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,3004,10000.00,,230000.00
+28/12/2024,Spend Money,Payroll — D. Brightwater - Semi-monthly salary,3005,10000.00,,240000.00
+Total Wages - Officers (6010),,,,,,240000.00
+,,Closing Balance,,,,240000.00
+Payroll Taxes - CPP/EI (6020)
+,,Opening Balance,,,,0.00
+11/01/2024,Spend Money,Receiver General - CPP/EI remittance,2438,3138.81,,3138.81
+11/02/2024,Spend Money,Receiver General - CPP/EI remittance,2476,3224.69,,6363.50
+11/03/2024,Spend Money,Receiver General - CPP/EI remittance,2514,3280.93,,9644.43
+11/04/2024,Spend Money,Receiver General - CPP/EI remittance,2555,3270.40,,12914.83
+11/05/2024,Spend Money,Receiver General - CPP/EI remittance,2593,3212.89,,16127.72
+11/06/2024,Spend Money,Receiver General - CPP/EI remittance,2631,3323.38,,19451.10
+11/07/2024,Spend Money,Receiver General - CPP/EI remittance,2673,3258.41,,22709.51
+11/08/2024,Spend Money,Receiver General - CPP/EI remittance,2711,3345.34,,26054.85
+11/09/2024,Spend Money,Receiver General - CPP/EI remittance,2749,3266.16,,29321.01
+11/10/2024,Spend Money,Receiver General - CPP/EI remittance,2790,3191.52,,32512.53
+11/11/2024,Spend Money,Receiver General - CPP/EI remittance,2828,3132.92,,35645.45
+11/12/2024,Spend Money,Receiver General - CPP/EI remittance,2866,3348.54,,38993.99
+Total Payroll Taxes - CPP/EI (6020),,,,,,38993.99
+,,Closing Balance,,,,38993.99
+WSIB (6030)
+,,Opening Balance,,,,0.00
+15/03/2024,Spend Money,WSIB - Quarterly premium,2523,2100.00,,2100.00
+15/06/2024,Spend Money,WSIB - Quarterly premium,2640,2100.00,,4200.00
+15/09/2024,Spend Money,WSIB - Quarterly premium,2758,2100.00,,6300.00
+15/12/2024,Spend Money,WSIB - Quarterly premium,2875,2100.00,,8400.00
+Total WSIB (6030),,,,,,8400.00
+,,Closing Balance,,,,8400.00
+Employee Benefits (6040)
+,,Opening Balance,,,,0.00
+13/01/2024,Spend Money,Manulife - Group benefits,2439,1120.00,,1120.00
+13/02/2024,Spend Money,Manulife - Group benefits,2477,1120.00,,2240.00
+13/03/2024,Spend Money,Manulife - Group benefits,2515,1120.00,,3360.00
+13/04/2024,Spend Money,Manulife - Group benefits,2556,1120.00,,4480.00
+13/05/2024,Spend Money,Manulife - Group benefits,2594,1120.00,,5600.00
+13/06/2024,Spend Money,Manulife - Group benefits,2632,1120.00,,6720.00
+13/07/2024,Spend Money,Manulife - Group benefits,2674,1120.00,,7840.00
+13/08/2024,Spend Money,Manulife - Group benefits,2712,1120.00,,8960.00
+13/09/2024,Spend Money,Manulife - Group benefits,2750,1120.00,,10080.00
+13/10/2024,Spend Money,Manulife - Group benefits,2791,1120.00,,11200.00
+13/11/2024,Spend Money,Manulife - Group benefits,2829,1120.00,,12320.00
+13/12/2024,Spend Money,Manulife - Group benefits,2867,1120.00,,13440.00
+Total Employee Benefits (6040),,,,,,13440.00
+,,Closing Balance,,,,13440.00
+Automobile Expense:Vehicle - Owner (6110)
+,,Opening Balance,,,,0.00
+03/01/2024,Spend Money,Lexus Financial - Lease Jan - Lexus RX,3006,1150.00,,1150.00
+11/01/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3018,438.69,,1588.69
+24/01/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3019,416.31,,2005.00
+03/02/2024,Spend Money,Lexus Financial - Lease Feb - Lexus RX,3007,1150.00,,3155.00
+11/02/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3020,387.97,,3542.97
+24/02/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3021,368.14,,3911.11
+03/03/2024,Spend Money,Lexus Financial - Lease Mar - Lexus RX,3008,1150.00,,5061.11
+11/03/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3022,409.69,,5470.80
+24/03/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3023,392.17,,5862.97
+02/04/2024,Spend Money,Intact Insurance - Auto insurance - Lexus RX,3042,1860.00,,7722.97
+03/04/2024,Spend Money,Lexus Financial - Lease Apr - Lexus RX,3009,1150.00,,8872.97
+11/04/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3024,513.28,,9386.25
+24/04/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3025,506.78,,9893.03
+03/05/2024,Spend Money,Lexus Financial - Lease May - Lexus RX,3010,1150.00,,11043.03
+11/05/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3026,512.91,,11555.94
+24/05/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3027,676.73,,12232.67
+03/06/2024,Spend Money,Lexus Financial - Lease Jun - Lexus RX,3011,1150.00,,13382.67
+11/06/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3028,457.40,,13840.07
+24/06/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3029,504.47,,14344.54
+03/07/2024,Spend Money,Lexus Financial - Lease Jul - Lexus RX,3012,1150.00,,15494.54
+11/07/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3030,622.31,,16116.85
+24/07/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3031,580.48,,16697.33
+03/08/2024,Spend Money,Lexus Financial - Lease Aug - Lexus RX,3013,1150.00,,17847.33
+11/08/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3032,393.91,,18241.24
+24/08/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3033,515.68,,18756.92
+03/09/2024,Spend Money,Lexus Financial - Lease Sep - Lexus RX,3014,1150.00,,19906.92
+11/09/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3034,500.96,,20407.88
+24/09/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3035,530.01,,20937.89
+03/10/2024,Spend Money,Lexus Financial - Lease Oct - Lexus RX,3015,1150.00,,22087.89
+11/10/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3036,528.56,,22616.45
+24/10/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3037,593.05,,23209.50
+03/11/2024,Spend Money,Lexus Financial - Lease Nov - Lexus RX,3016,1150.00,,24359.50
+11/11/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3038,608.01,,24967.51
+24/11/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3039,609.56,,25577.07
+03/12/2024,Spend Money,Lexus Financial - Lease Dec - Lexus RX,3017,1150.00,,26727.07
+11/12/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3040,526.54,,27253.61
+24/12/2024,Spend Money,Petro-Canada - Fuel - Lexus RX,3041,586.39,,27840.00
+Total Automobile Expense:Vehicle - Owner (6110),,,,,,27840.00
+,,Closing Balance,,,,27840.00
+Automobile Expense:Fuel - Service Vans (6120)
+,,Opening Balance,,,,0.00
+03/01/2024,Spend Money,Petro-Canada - Fuel - service vans,2443,236.07,,236.07
+10/01/2024,Spend Money,Esso - Fuel - service vans,2444,244.97,,481.04
+17/01/2024,Spend Money,Petro-Canada - Fuel - service vans,2445,187.61,,668.65
+24/01/2024,Spend Money,Esso - Fuel - service vans,2446,196.82,,865.47
+03/02/2024,Spend Money,Petro-Canada - Fuel - service vans,2481,155.43,,1020.90
+10/02/2024,Spend Money,Esso - Fuel - service vans,2482,249.83,,1270.73
+17/02/2024,Spend Money,Petro-Canada - Fuel - service vans,2483,196.44,,1467.17
+24/02/2024,Spend Money,Esso - Fuel - service vans,2484,249.95,,1717.12
+03/03/2024,Spend Money,Petro-Canada - Fuel - service vans,2519,173.21,,1890.33
+10/03/2024,Spend Money,Esso - Fuel - service vans,2520,150.04,,2040.37
+17/03/2024,Spend Money,Petro-Canada - Fuel - service vans,2521,159.07,,2199.44
+24/03/2024,Spend Money,Esso - Fuel - service vans,2522,153.74,,2353.18
+03/04/2024,Spend Money,Petro-Canada - Fuel - service vans,2560,184.93,,2538.11
+10/04/2024,Spend Money,Esso - Fuel - service vans,2561,214.16,,2752.27
+17/04/2024,Spend Money,Petro-Canada - Fuel - service vans,2562,238.88,,2991.15
+24/04/2024,Spend Money,Esso - Fuel - service vans,2563,217.02,,3208.17
+03/05/2024,Spend Money,Petro-Canada - Fuel - service vans,2598,222.89,,3431.06
+10/05/2024,Spend Money,Esso - Fuel - service vans,2599,220.36,,3651.42
+17/05/2024,Spend Money,Petro-Canada - Fuel - service vans,2600,141.87,,3793.29
+24/05/2024,Spend Money,Esso - Fuel - service vans,2601,149.53,,3942.82
+03/06/2024,Spend Money,Petro-Canada - Fuel - service vans,2636,221.66,,4164.48
+10/06/2024,Spend Money,Esso - Fuel - service vans,2637,192.66,,4357.14
+17/06/2024,Spend Money,Petro-Canada - Fuel - service vans,2638,253.11,,4610.25
+24/06/2024,Spend Money,Esso - Fuel - service vans,2639,225.55,,4835.80
+03/07/2024,Spend Money,Petro-Canada - Fuel - service vans,2678,222.79,,5058.59
+10/07/2024,Spend Money,Esso - Fuel - service vans,2679,163.34,,5221.93
+17/07/2024,Spend Money,Petro-Canada - Fuel - service vans,2680,240.16,,5462.09
+24/07/2024,Spend Money,Esso - Fuel - service vans,2681,209.88,,5671.97
+03/08/2024,Spend Money,Petro-Canada - Fuel - service vans,2716,183.72,,5855.69
+10/08/2024,Spend Money,Esso - Fuel - service vans,2717,164.02,,6019.71
+17/08/2024,Spend Money,Petro-Canada - Fuel - service vans,2718,217.39,,6237.10
+24/08/2024,Spend Money,Esso - Fuel - service vans,2719,177.78,,6414.88
+03/09/2024,Spend Money,Petro-Canada - Fuel - service vans,2754,228.46,,6643.34
+10/09/2024,Spend Money,Esso - Fuel - service vans,2755,208.91,,6852.25
+17/09/2024,Spend Money,Petro-Canada - Fuel - service vans,2756,199.24,,7051.49
+24/09/2024,Spend Money,Esso - Fuel - service vans,2757,170.17,,7221.66
+03/10/2024,Spend Money,Petro-Canada - Fuel - service vans,2795,181.75,,7403.41
+10/10/2024,Spend Money,Esso - Fuel - service vans,2796,221.95,,7625.36
+17/10/2024,Spend Money,Petro-Canada - Fuel - service vans,2797,168.09,,7793.45
+24/10/2024,Spend Money,Esso - Fuel - service vans,2798,156.43,,7949.88
+03/11/2024,Spend Money,Petro-Canada - Fuel - service vans,2833,256.43,,8206.31
+10/11/2024,Spend Money,Esso - Fuel - service vans,2834,175.22,,8381.53
+17/11/2024,Spend Money,Petro-Canada - Fuel - service vans,2835,198.92,,8580.45
+24/11/2024,Spend Money,Esso - Fuel - service vans,2836,249.49,,8829.94
+03/12/2024,Spend Money,Petro-Canada - Fuel - service vans,2871,141.44,,8971.38
+10/12/2024,Spend Money,Esso - Fuel - service vans,2872,219.60,,9190.98
+17/12/2024,Spend Money,Petro-Canada - Fuel - service vans,2873,140.82,,9331.80
+24/12/2024,Spend Money,Esso - Fuel - service vans,2874,145.42,,9477.22
+Total Automobile Expense:Fuel - Service Vans (6120),,,,,,9477.22
+,,Closing Balance,,,,9477.22
+Automobile Expense:Van Repairs & Maintenance (6130)
+,,Opening Balance,,,,0.00
+22/03/2024,Spend Money,Midas - Van service,2525,422.86,,422.86
+22/06/2024,Spend Money,Midas - Van service,2642,502.53,,925.39
+22/09/2024,Spend Money,Midas - Van service,2760,682.67,,1608.06
+22/12/2024,Spend Money,Midas - Van service,2877,317.65,,1925.71
+Total Automobile Expense:Van Repairs & Maintenance (6130),,,,,,1925.71
+,,Closing Balance,,,,1925.71
+Meals and Entertainment (6200)
+,,Opening Balance,,,,0.00
+06/01/2024,Spend Money,The Keg - Client dinner,3043,268.35,,268.35
+14/01/2024,Spend Money,Tim Hortons - Team lunch,3044,284.07,,552.42
+22/01/2024,Spend Money,Earls Kitchen - Team lunch,3045,621.13,,1173.55
+06/02/2024,Spend Money,Café Novo - Team lunch,3046,733.39,,1906.94
+14/02/2024,Spend Money,Jack Astor's - Client dinner,3047,641.30,,2548.24
+22/02/2024,Spend Money,The Keg - Team lunch,3048,543.63,,3091.87
+06/03/2024,Spend Money,Tim Hortons - Team lunch,3049,411.50,,3503.37
+14/03/2024,Spend Money,Earls Kitchen - Team lunch,3050,834.84,,4338.21
+22/03/2024,Spend Money,Café Novo - Client dinner,3051,894.01,,5232.22
+06/04/2024,Spend Money,Jack Astor's - Team lunch,3052,781.57,,6013.79
+14/04/2024,Spend Money,The Keg - Team lunch,3053,786.22,,6800.01
+22/04/2024,Spend Money,Tim Hortons - Team lunch,3054,267.90,,7067.91
+06/05/2024,Spend Money,Earls Kitchen - Client dinner,3055,391.45,,7459.36
+14/05/2024,Spend Money,Café Novo - Team lunch,3056,327.43,,7786.79
+22/05/2024,Spend Money,Jack Astor's - Team lunch,3057,885.01,,8671.80
+06/06/2024,Spend Money,The Keg - Team lunch,3058,382.47,,9054.27
+14/06/2024,Spend Money,Tim Hortons - Client dinner,3059,251.83,,9306.10
+22/06/2024,Spend Money,Earls Kitchen - Team lunch,3060,951.05,,10257.15
+06/07/2024,Spend Money,Café Novo - Team lunch,3061,807.76,,11064.91
+14/07/2024,Spend Money,Jack Astor's - Team lunch,3062,871.27,,11936.18
+22/07/2024,Spend Money,The Keg - Client dinner,3063,909.13,,12845.31
+06/08/2024,Spend Money,Tim Hortons - Team lunch,3064,345.41,,13190.72
+14/08/2024,Spend Money,Earls Kitchen - Team lunch,3065,284.24,,13474.96
+22/08/2024,Spend Money,Café Novo - Team lunch,3066,598.09,,14073.05
+06/09/2024,Spend Money,Jack Astor's - Client dinner,3067,657.39,,14730.44
+14/09/2024,Spend Money,The Keg - Team lunch,3068,531.56,,15262.00
+22/09/2024,Spend Money,Tim Hortons - Team lunch,3069,794.01,,16056.01
+06/10/2024,Spend Money,Earls Kitchen - Team lunch,3070,883.36,,16939.37
+14/10/2024,Spend Money,Café Novo - Client dinner,3071,594.55,,17533.92
+22/10/2024,Spend Money,Jack Astor's - Team lunch,3072,754.99,,18288.91
+06/11/2024,Spend Money,The Keg - Team lunch,3073,279.47,,18568.38
+14/11/2024,Spend Money,Tim Hortons - Team lunch,3074,523.89,,19092.27
+22/11/2024,Spend Money,Earls Kitchen - Client dinner,3075,836.63,,19928.90
+06/12/2024,Spend Money,Café Novo - Team lunch,3076,849.82,,20778.72
+14/12/2024,Spend Money,Jack Astor's - Team lunch,3077,936.85,,21715.57
+22/12/2024,Spend Money,The Keg - Team lunch,3078,284.43,,22000.00
+Total Meals and Entertainment (6200),,,,,,22000.00
+,,Closing Balance,,,,22000.00
+Insurance (6300)
+,,Opening Balance,,,,0.00
+09/01/2024,Spend Money,Sun Life - Life insurance premium - D. Brightwater,2441,750.00,,750.00
+09/02/2024,Spend Money,Sun Life - Life insurance premium - D. Brightwater,2479,750.00,,1500.00
+09/03/2024,Spend Money,Sun Life - Life insurance premium - D. Brightwater,2517,750.00,,2250.00
+20/03/2024,Spend Money,Intact Insurance - Business insurance - quarterly,2524,3000.00,,5250.00
+09/04/2024,Spend Money,Sun Life - Life insurance premium - D. Brightwater,2558,750.00,,6000.00
+09/05/2024,Spend Money,Sun Life - Life insurance premium - D. Brightwater,2596,750.00,,6750.00
+09/06/2024,Spend Money,Sun Life - Life insurance premium - D. Brightwater,2634,750.00,,7500.00
+20/06/2024,Spend Money,Intact Insurance - Business insurance - quarterly,2641,3000.00,,10500.00
+09/07/2024,Spend Money,Sun Life - Life insurance premium - D. Brightwater,2676,750.00,,11250.00
+09/08/2024,Spend Money,Sun Life - Life insurance premium - D. Brightwater,2714,750.00,,12000.00
+09/09/2024,Spend Money,Sun Life - Life insurance premium - D. Brightwater,2752,750.00,,12750.00
+20/09/2024,Spend Money,Intact Insurance - Business insurance - quarterly,2759,3000.00,,15750.00
+09/10/2024,Spend Money,Sun Life - Life insurance premium - D. Brightwater,2793,750.00,,16500.00
+09/11/2024,Spend Money,Sun Life - Life insurance premium - D. Brightwater,2831,750.00,,17250.00
+09/12/2024,Spend Money,Sun Life - Life insurance premium - D. Brightwater,2869,750.00,,18000.00
+20/12/2024,Spend Money,Intact Insurance - Business insurance - quarterly,2876,3000.00,,21000.00
+Total Insurance (6300),,,,,,21000.00
+,,Closing Balance,,,,21000.00
+Legal & Professional Fees (6400)
+,,Opening Balance,,,,0.00
+09/01/2024,Spend Money,Ledgerline Bookkeeping - Monthly bookkeeping,2440,450.00,,450.00
+09/02/2024,Spend Money,Ledgerline Bookkeeping - Monthly bookkeeping,2478,450.00,,900.00
+09/03/2024,Spend Money,Ledgerline Bookkeeping - Monthly bookkeeping,2516,450.00,,1350.00
+30/03/2024,Payable Invoice,Moore & Partners CPA - Year-end financial statements,3079,6500.00,,7850.00
+09/04/2024,Spend Money,Ledgerline Bookkeeping - Monthly bookkeeping,2557,450.00,,8300.00
+09/05/2024,Spend Money,Ledgerline Bookkeeping - Monthly bookkeeping,2595,450.00,,8750.00
+09/06/2024,Spend Money,Ledgerline Bookkeeping - Monthly bookkeeping,2633,450.00,,9200.00
+09/07/2024,Spend Money,Ledgerline Bookkeeping - Monthly bookkeeping,2675,450.00,,9650.00
+15/07/2024,Spend Money,Holloway LLP - Settlement - wrongful dismissal,3082,22000.00,,31650.00
+31/07/2024,Spend Money,Holloway LLP - Refund of retainer,3083,,500.00,31150.00
+09/08/2024,Spend Money,Ledgerline Bookkeeping - Monthly bookkeeping,2713,450.00,,31600.00
+09/09/2024,Spend Money,Ledgerline Bookkeeping - Monthly bookkeeping,2751,450.00,,32050.00
+09/10/2024,Spend Money,Ledgerline Bookkeeping - Monthly bookkeeping,2792,450.00,,32500.00
+09/11/2024,Spend Money,Ledgerline Bookkeeping - Monthly bookkeeping,2830,450.00,,32950.00
+09/12/2024,Spend Money,Ledgerline Bookkeeping - Monthly bookkeeping,2868,450.00,,33400.00
+Total Legal & Professional Fees (6400),,,,,,33400.00
+,,Closing Balance,,,,33400.00
+Rent (6500)
+,,Opening Balance,,,,0.00
+09/01/2024,Spend Money,Brightwater Holdings Inc. - Shop rent,2427,4500.00,,4500.00
+09/02/2024,Spend Money,Brightwater Holdings Inc. - Shop rent,2465,4500.00,,9000.00
+09/03/2024,Spend Money,Brightwater Holdings Inc. - Shop rent,2503,4500.00,,13500.00
+09/04/2024,Spend Money,Brightwater Holdings Inc. - Shop rent,2544,4500.00,,18000.00
+09/05/2024,Spend Money,Brightwater Holdings Inc. - Shop rent,2582,4500.00,,22500.00
+09/06/2024,Spend Money,Brightwater Holdings Inc. - Shop rent,2620,4500.00,,27000.00
+09/07/2024,Spend Money,Brightwater Holdings Inc. - Shop rent,2662,4500.00,,31500.00
+09/08/2024,Spend Money,Brightwater Holdings Inc. - Shop rent,2700,4500.00,,36000.00
+09/09/2024,Spend Money,Brightwater Holdings Inc. - Shop rent,2738,4500.00,,40500.00
+09/10/2024,Spend Money,Brightwater Holdings Inc. - Shop rent,2779,4500.00,,45000.00
+09/11/2024,Spend Money,Brightwater Holdings Inc. - Shop rent,2817,4500.00,,49500.00
+09/12/2024,Spend Money,Brightwater Holdings Inc. - Shop rent,2855,4500.00,,54000.00
+Total Rent (6500),,,,,,54000.00
+,,Closing Balance,,,,54000.00
+Utilities (6510)
+,,Opening Balance,,,,0.00
+10/01/2024,Spend Money,Enbridge Gas - Gas,2428,364.16,,364.16
+10/01/2024,Spend Money,Toronto Hydro - Hydro,2429,321.08,,685.24
+10/02/2024,Spend Money,Enbridge Gas - Gas,2466,320.22,,1005.46
+10/02/2024,Spend Money,Toronto Hydro - Hydro,2467,362.41,,1367.87
+10/03/2024,Spend Money,Enbridge Gas - Gas,2504,211.23,,1579.10
+10/03/2024,Spend Money,Toronto Hydro - Hydro,2505,329.93,,1909.03
+10/04/2024,Spend Money,Enbridge Gas - Gas,2545,245.11,,2154.14
+10/04/2024,Spend Money,Toronto Hydro - Hydro,2546,364.38,,2518.52
+10/05/2024,Spend Money,Enbridge Gas - Gas,2583,249.14,,2767.66
+10/05/2024,Spend Money,Toronto Hydro - Hydro,2584,353.23,,3120.89
+10/06/2024,Spend Money,Enbridge Gas - Gas,2621,205.24,,3326.13
+10/06/2024,Spend Money,Toronto Hydro - Hydro,2622,340.61,,3666.74
+10/07/2024,Spend Money,Enbridge Gas - Gas,2663,379.25,,4045.99
+10/07/2024,Spend Money,Toronto Hydro - Hydro,2664,326.97,,4372.96
+10/08/2024,Spend Money,Enbridge Gas - Gas,2701,321.78,,4694.74
+10/08/2024,Spend Money,Toronto Hydro - Hydro,2702,336.79,,5031.53
+10/09/2024,Spend Money,Enbridge Gas - Gas,2739,386.22,,5417.75
+10/09/2024,Spend Money,Toronto Hydro - Hydro,2740,349.95,,5767.70
+10/10/2024,Spend Money,Enbridge Gas - Gas,2780,286.18,,6053.88
+10/10/2024,Spend Money,Toronto Hydro - Hydro,2781,306.21,,6360.09
+10/11/2024,Spend Money,Enbridge Gas - Gas,2818,382.16,,6742.25
+10/11/2024,Spend Money,Toronto Hydro - Hydro,2819,242.00,,6984.25
+10/12/2024,Spend Money,Enbridge Gas - Gas,2856,301.89,,7286.14
+10/12/2024,Spend Money,Toronto Hydro - Hydro,2857,289.13,,7575.27
+Total Utilities (6510),,,,,,7575.27
+,,Closing Balance,,,,7575.27
+Telephone & Internet (6520)
+,,Opening Balance,,,,0.00
+11/01/2024,Spend Money,Bell Canada - Phones,2430,342.18,,342.18
+11/01/2024,Spend Money,Rogers - Internet,2431,129.95,,472.13
+11/02/2024,Spend Money,Bell Canada - Phones,2468,323.22,,795.35
+11/02/2024,Spend Money,Rogers - Internet,2469,129.95,,925.30
+11/03/2024,Spend Money,Bell Canada - Phones,2506,346.69,,1271.99
+11/03/2024,Spend Money,Rogers - Internet,2507,129.95,,1401.94
+11/04/2024,Spend Money,Bell Canada - Phones,2547,312.50,,1714.44
+11/04/2024,Spend Money,Rogers - Internet,2548,129.95,,1844.39
+11/05/2024,Spend Money,Bell Canada - Phones,2585,327.11,,2171.50
+11/05/2024,Spend Money,Rogers - Internet,2586,129.95,,2301.45
+11/06/2024,Spend Money,Bell Canada - Phones,2623,316.68,,2618.13
+11/06/2024,Spend Money,Rogers - Internet,2624,129.95,,2748.08
+11/07/2024,Spend Money,Bell Canada - Phones,2665,335.79,,3083.87
+11/07/2024,Spend Money,Rogers - Internet,2666,129.95,,3213.82
+11/08/2024,Spend Money,Bell Canada - Phones,2703,332.72,,3546.54
+11/08/2024,Spend Money,Rogers - Internet,2704,129.95,,3676.49
+11/09/2024,Spend Money,Bell Canada - Phones,2741,349.20,,4025.69
+11/09/2024,Spend Money,Rogers - Internet,2742,129.95,,4155.64
+11/10/2024,Spend Money,Bell Canada - Phones,2782,322.64,,4478.28
+11/10/2024,Spend Money,Rogers - Internet,2783,129.95,,4608.23
+11/11/2024,Spend Money,Bell Canada - Phones,2820,318.92,,4927.15
+11/11/2024,Spend Money,Rogers - Internet,2821,129.95,,5057.10
+11/12/2024,Spend Money,Bell Canada - Phones,2858,326.97,,5384.07
+11/12/2024,Spend Money,Rogers - Internet,2859,129.95,,5514.02
+Total Telephone & Internet (6520),,,,,,5514.02
+,,Closing Balance,,,,5514.02
+Advertising & Promotion (6600)
+,,Opening Balance,,,,0.00
+09/01/2024,Spend Money,Google Ads - Search ads,2432,1162.15,,1162.15
+09/02/2024,Spend Money,Google Ads - Search ads,2470,1159.80,,2321.95
+09/03/2024,Spend Money,Google Ads - Search ads,2508,1430.39,,3752.34
+09/04/2024,Spend Money,Google Ads - Search ads,2549,1512.54,,5264.88
+09/05/2024,Spend Money,Google Ads - Search ads,2587,1348.24,,6613.12
+09/06/2024,Spend Money,Google Ads - Search ads,2625,904.32,,7517.44
+09/07/2024,Spend Money,Google Ads - Search ads,2667,1226.64,,8744.08
+09/08/2024,Spend Money,Google Ads - Search ads,2705,1506.37,,10250.45
+09/09/2024,Spend Money,Google Ads - Search ads,2743,1521.43,,11771.88
+09/10/2024,Spend Money,Google Ads - Search ads,2784,1549.00,,13320.88
+09/11/2024,Spend Money,Google Ads - Search ads,2822,1403.11,,14723.99
+09/12/2024,Spend Money,Google Ads - Search ads,2860,1088.21,,15812.20
+Total Advertising & Promotion (6600),,,,,,15812.20
+,,Closing Balance,,,,15812.20
+Office Supplies (6700)
+,,Opening Balance,,,,0.00
+09/01/2024,Spend Money,Staples - Office supplies,2433,251.44,,251.44
+09/02/2024,Spend Money,Staples - Office supplies,2471,141.67,,393.11
+09/03/2024,Spend Money,Staples - Office supplies,2509,91.35,,484.46
+09/04/2024,Spend Money,Staples - Office supplies,2550,232.74,,717.20
+09/05/2024,Spend Money,Staples - Office supplies,2588,236.37,,953.57
+09/06/2024,Spend Money,Staples - Office supplies,2626,70.48,,1024.05
+09/07/2024,Spend Money,Staples - Office supplies,2668,216.21,,1240.26
+09/08/2024,Spend Money,Staples - Office supplies,2706,139.47,,1379.73
+09/09/2024,Spend Money,Staples - Office supplies,2744,80.84,,1460.57
+09/10/2024,Spend Money,Staples - Office supplies,2785,111.51,,1572.08
+09/11/2024,Spend Money,Staples - Office supplies,2823,229.73,,1801.81
+09/12/2024,Spend Money,Staples - Office supplies,2861,194.45,,1996.26
+Total Office Supplies (6700),,,,,,1996.26
+,,Closing Balance,,,,1996.26
+Software & Subscriptions (6710)
+,,Opening Balance,,,,0.00
+10/01/2024,Spend Money,Intuit QuickBooks - QuickBooks Online,2434,90.00,,90.00
+10/01/2024,Spend Money,Jobber - Field service software,2435,249.00,,339.00
+10/02/2024,Spend Money,Intuit QuickBooks - QuickBooks Online,2472,90.00,,429.00
+10/02/2024,Spend Money,Jobber - Field service software,2473,249.00,,678.00
+10/03/2024,Spend Money,Intuit QuickBooks - QuickBooks Online,2510,90.00,,768.00
+10/03/2024,Spend Money,Jobber - Field service software,2511,249.00,,1017.00
+10/04/2024,Spend Money,Intuit QuickBooks - QuickBooks Online,2551,90.00,,1107.00
+10/04/2024,Spend Money,Jobber - Field service software,2552,249.00,,1356.00
+10/05/2024,Spend Money,Intuit QuickBooks - QuickBooks Online,2589,90.00,,1446.00
+10/05/2024,Spend Money,Jobber - Field service software,2590,249.00,,1695.00
+10/06/2024,Spend Money,Intuit QuickBooks - QuickBooks Online,2627,90.00,,1785.00
+10/06/2024,Spend Money,Jobber - Field service software,2628,249.00,,2034.00
+10/07/2024,Spend Money,Intuit QuickBooks - QuickBooks Online,2669,90.00,,2124.00
+10/07/2024,Spend Money,Jobber - Field service software,2670,249.00,,2373.00
+10/08/2024,Spend Money,Intuit QuickBooks - QuickBooks Online,2707,90.00,,2463.00
+10/08/2024,Spend Money,Jobber - Field service software,2708,249.00,,2712.00
+10/09/2024,Spend Money,Intuit QuickBooks - QuickBooks Online,2745,90.00,,2802.00
+10/09/2024,Spend Money,Jobber - Field service software,2746,249.00,,3051.00
+10/10/2024,Spend Money,Intuit QuickBooks - QuickBooks Online,2786,90.00,,3141.00
+10/10/2024,Spend Money,Jobber - Field service software,2787,249.00,,3390.00
+10/11/2024,Spend Money,Intuit QuickBooks - QuickBooks Online,2824,90.00,,3480.00
+10/11/2024,Spend Money,Jobber - Field service software,2825,249.00,,3729.00
+10/12/2024,Spend Money,Intuit QuickBooks - QuickBooks Online,2862,90.00,,3819.00
+10/12/2024,Spend Money,Jobber - Field service software,2863,249.00,,4068.00
+Total Software & Subscriptions (6710),,,,,,4068.00
+,,Closing Balance,,,,4068.00
+Bank Charges (6800)
+,,Opening Balance,,,,0.00
+09/01/2024,Spend Money,RBC Royal Bank - Monthly fee,2436,29.95,,29.95
+09/02/2024,Spend Money,RBC Royal Bank - Monthly fee,2474,29.95,,59.90
+09/03/2024,Spend Money,RBC Royal Bank - Monthly fee,2512,29.95,,89.85
+09/04/2024,Spend Money,RBC Royal Bank - Monthly fee,2553,29.95,,119.80
+09/05/2024,Spend Money,RBC Royal Bank - Monthly fee,2591,29.95,,149.75
+09/06/2024,Spend Money,RBC Royal Bank - Monthly fee,2629,29.95,,179.70
+09/07/2024,Spend Money,RBC Royal Bank - Monthly fee,2671,29.95,,209.65
+09/08/2024,Spend Money,RBC Royal Bank - Monthly fee,2709,29.95,,239.60
+09/09/2024,Spend Money,RBC Royal Bank - Monthly fee,2747,29.95,,269.55
+09/10/2024,Spend Money,RBC Royal Bank - Monthly fee,2788,29.95,,299.50
+09/11/2024,Spend Money,RBC Royal Bank - Monthly fee,2826,29.95,,329.45
+09/12/2024,Spend Money,RBC Royal Bank - Monthly fee,2864,29.95,,359.40
+Total Bank Charges (6800),,,,,,359.40
+,,Closing Balance,,,,359.40
+Interest Expense (6810)
+,,Opening Balance,,,,0.00
+10/01/2024,Spend Money,RBC Royal Bank - Loan interest,2437,602.00,,602.00
+10/02/2024,Spend Money,RBC Royal Bank - Loan interest,2475,594.00,,1196.00
+10/03/2024,Spend Money,RBC Royal Bank - Loan interest,2513,586.00,,1782.00
+10/04/2024,Spend Money,RBC Royal Bank - Loan interest,2554,578.00,,2360.00
+10/05/2024,Spend Money,RBC Royal Bank - Loan interest,2592,570.00,,2930.00
+10/06/2024,Spend Money,RBC Royal Bank - Loan interest,2630,562.00,,3492.00
+10/07/2024,Spend Money,RBC Royal Bank - Loan interest,2672,554.00,,4046.00
+10/08/2024,Spend Money,RBC Royal Bank - Loan interest,2710,546.00,,4592.00
+10/09/2024,Spend Money,RBC Royal Bank - Loan interest,2748,538.00,,5130.00
+10/10/2024,Spend Money,RBC Royal Bank - Loan interest,2789,530.00,,5660.00
+10/11/2024,Spend Money,RBC Royal Bank - Loan interest,2827,522.00,,6182.00
+10/12/2024,Spend Money,RBC Royal Bank - Loan interest,2865,514.00,,6696.00
+Total Interest Expense (6810),,,,,,6696.00
+,,Closing Balance,,,,6696.00
+Dues & Memberships (6900)
+,,Opening Balance,,,,0.00
+09/01/2024,Spend Money,Glen Abbey Golf Club - Membership dues,2442,1250.00,,1250.00
+01/02/2024,Spend Money,HRAI - Association membership,3080,650.00,,1900.00
+09/02/2024,Spend Money,Glen Abbey Golf Club - Membership dues,2480,1250.00,,3150.00
+09/03/2024,Spend Money,Glen Abbey Golf Club - Membership dues,2518,1250.00,,4400.00
+09/04/2024,Spend Money,Glen Abbey Golf Club - Membership dues,2559,1250.00,,5650.00
+09/05/2024,Spend Money,Glen Abbey Golf Club - Membership dues,2597,1250.00,,6900.00
+09/06/2024,Spend Money,Glen Abbey Golf Club - Membership dues,2635,1250.00,,8150.00
+09/07/2024,Spend Money,Glen Abbey Golf Club - Membership dues,2677,1250.00,,9400.00
+09/08/2024,Spend Money,Glen Abbey Golf Club - Membership dues,2715,1250.00,,10650.00
+09/09/2024,Spend Money,Glen Abbey Golf Club - Membership dues,2753,1250.00,,11900.00
+09/10/2024,Spend Money,Glen Abbey Golf Club - Membership dues,2794,1250.00,,13150.00
+09/11/2024,Spend Money,Glen Abbey Golf Club - Membership dues,2832,1250.00,,14400.00
+09/12/2024,Spend Money,Glen Abbey Golf Club - Membership dues,2870,1250.00,,15650.00
+Total Dues & Memberships (6900),,,,,,15650.00
+,,Closing Balance,,,,15650.00
+Shareholder Expenses (6910)
+,,Opening Balance,,,,0.00
+02/05/2024,Spend Money,Shoppers Drug Mart - Prescription,3084,64.20,,64.20
+05/09/2024,Spend Money,Upper Canada College - Tuition - fall term,3085,9500.00,,9564.20
+Total Shareholder Expenses (6910),,,,,,9564.20
+,,Closing Balance,,,,9564.20
+Donations (6920)
+,,Opening Balance,,,,0.00
+20/11/2024,Spend Money,SickKids Foundation - Donation,3081,1000.00,,1000.00
+Total Donations (6920),,,,,,1000.00
+,,Closing Balance,,,,1000.00
+Repairs & Maintenance (6950)
+,,Opening Balance,,,,0.00
+18/06/2024,Spend Money,Rapid Roofing - Shop roof repair,2643,2090.10,,2090.10
+Total Repairs & Maintenance (6950),,,,,,2090.10
+,,Closing Balance,,,,2090.10
+Amortization Expense (7000)
+,,Opening Balance,,,,0.00
+31/12/2024,Spend Money,Year-end amortization,3086,31000.00,,31000.00
+Total Amortization Expense (7000),,,,,,31000.00
+,,Closing Balance,,,,31000.00
+Income Tax Expense (7100)
+,,Opening Balance,,,,0.00
+31/12/2024,Spend Money,Current income taxes,3088,14200.00,,14200.00
+Total Income Tax Expense (7100),,,,,,14200.00
+,,Closing Balance,,,,14200.00
