@@ -75,9 +75,9 @@ export function DdCitedDialog({ dealId, open, onOpenChange }: { dealId: string; 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto" data-testid="dd-cited-dialog">
+      <DialogContent className="max-h-[90vh] max-w-lg grid-cols-[minmax(0,1fr)] overflow-y-auto" data-testid="dd-cited-dialog">
         <DialogHeader>
-          <DialogTitle>Share what the DD CIM points to</DialogTitle>
+          <DialogTitle className="pr-6">Share what the DD CIM cites</DialogTitle>
           <DialogDescription>
             The due-diligence CIM links buyers to these documents. Share them with due diligence buyers so every link in the CIM opens.
           </DialogDescription>
@@ -118,7 +118,7 @@ export function DdCitedDialog({ dealId, open, onOpenChange }: { dealId: string; 
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Check these first ({data.check.length})</h3>
                 {data.check.map((r) => (
                   <div key={r.itemId} className="space-y-1.5 rounded-md border border-teal/30 bg-teal/5 px-3 py-2 text-sm">
-                    <p className="flex items-center gap-1.5 font-medium"><AlertTriangle className="h-3.5 w-3.5 shrink-0 text-teal" /><span className="truncate">{r.title}</span></p>
+                    <p className="flex min-w-0 items-center gap-1.5 font-medium"><AlertTriangle className="h-3.5 w-3.5 shrink-0 text-teal" /><span className="min-w-0 truncate">{r.title}</span></p>
                     <ul className="space-y-0.5 text-xs text-muted-foreground">{r.flags.map((f) => <li key={f.key}>{f.copy}</li>)}</ul>
                     <label className="flex cursor-pointer items-center gap-2 text-xs">
                       <Checkbox checked={checked.has(r.itemId)} onCheckedChange={(v) => setChecked((s) => { const n = new Set(s); if (v === true) n.add(r.itemId); else n.delete(r.itemId); return n; })} data-testid={`dd-cited-check-${r.itemId}`} />
@@ -145,7 +145,7 @@ export function DdCitedDialog({ dealId, open, onOpenChange }: { dealId: string; 
             {data?.available && data.share.length + data.check.length > 0 && (
               <Button onClick={shareThem} disabled={busy || total === 0} data-testid="dd-cited-share">
                 {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-                Share {total} with due diligence buyers
+                {total === 0 ? "Share with due diligence buyers" : `Share ${total} with due diligence buyers`}
               </Button>
             )}
           </DialogFooter>

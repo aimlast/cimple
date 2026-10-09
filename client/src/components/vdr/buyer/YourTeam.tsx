@@ -82,7 +82,7 @@ function InviteDialog({ token, open, onOpenChange }: { token: string; open: bool
   };
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md grid-cols-[minmax(0,1fr)]">
         <DialogHeader>
           <DialogTitle>Invite someone from your team</DialogTitle>
           <DialogDescription>Your broker approves it and sends them their own link. They see the same documents as you, with their own name on every page. They can't see the memorandum.</DialogDescription>

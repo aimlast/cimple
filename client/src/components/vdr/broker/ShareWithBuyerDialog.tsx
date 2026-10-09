@@ -56,9 +56,9 @@ export function ShareWithBuyerDialog({ dealId, buyer, open, onOpenChange }: { de
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto" data-testid="share-with-buyer">
+      <DialogContent className="max-h-[90vh] max-w-lg grid-cols-[minmax(0,1fr)] overflow-y-auto" data-testid="share-with-buyer">
         <DialogHeader>
-          <DialogTitle>Share documents with {label}</DialogTitle>
+          <DialogTitle className="pr-6">Share documents with {label}</DialogTitle>
           <DialogDescription>Only {label} will see the ones you pick. Nothing is emailed unless you choose to tell them.</DialogDescription>
         </DialogHeader>
         {saved ? (

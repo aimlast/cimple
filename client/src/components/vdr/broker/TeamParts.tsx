@@ -26,7 +26,7 @@ export function TeamLinkDialog({ result, who, onClose }: { result: LinkResult | 
   if (!result) return null;
   return (
     <Dialog open onOpenChange={(o) => { if (!o) { setCopied(false); onClose(); } }}>
-      <DialogContent className="max-w-md" data-testid="team-link-dialog">
+      <DialogContent className="max-w-md grid-cols-[minmax(0,1fr)]" data-testid="team-link-dialog">
         <DialogHeader>
           <DialogTitle>{result.emailed.sent ? `Link sent to ${who}` : `${who}'s link`}</DialogTitle>
           <DialogDescription>
@@ -76,9 +76,9 @@ export function AddTeamMemberDialog({ dealId, accessId, buyerLabel, open, onOpen
   return (
     <>
       <Dialog open={open} onOpenChange={(o) => { if (!o) reset(); onOpenChange(o); }}>
-        <DialogContent className="max-w-md" data-testid="add-team-dialog">
+        <DialogContent className="max-w-md grid-cols-[minmax(0,1fr)]" data-testid="add-team-dialog">
           <DialogHeader>
-            <DialogTitle>Add someone from {buyerLabel}'s team</DialogTitle>
+            <DialogTitle className="pr-6">Add someone from {buyerLabel}'s team</DialogTitle>
             <DialogDescription>They get their own link to {buyerLabel}'s data room: the same documents, their own name on every page. No memorandum, no decisions. Up to 5 people per buyer.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

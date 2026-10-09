@@ -137,7 +137,10 @@ export function BuyersView({ dealId, focusAccessId, onViewAs }: { dealId: string
                 return team.length === 0 ? [row] : [row, (
                   <tr key={`${b.key}-team`} className="border-b border-border bg-muted/10 last:border-0">
                     <td colSpan={8} className="px-3 pb-2.5 pt-0">
-                      <p className="mb-1 text-[11px] uppercase tracking-wider text-muted-foreground/70">Their team</p>
+                      <p className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-wider text-muted-foreground/70">
+                        Their team
+                        {team.length < 5 && <button className="normal-case tracking-normal text-teal hover:underline" onClick={() => { setAddingTo(b); setAddOpen(true); }}>+ Add someone</button>}
+                      </p>
                       <TeamRows dealId={dealId} team={team} />
                     </td>
                   </tr>
