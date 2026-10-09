@@ -23,7 +23,7 @@ import type { Document, GlLedger } from "@shared/schema";
 import type { GlLayout, GlLedgerView, GlRole, GlYearSummary } from "@shared/gl-types";
 import { glStore } from "../gl/store";
 import { ledgerAudience } from "../gl/audience";
-import { GL_CSV_MAX_BYTES, GL_XLSX_MAX_BYTES, dealFiscalYearEnd, readAsLedger, readAsNormalDocument, requestedYearsFor, rereadWithLayout, startLedgerRead } from "../gl/ingest";
+import { GL_CSV_MAX_BYTES, GL_XLSX_MAX_BYTES, dealFiscalYearEnd, dismissMaybeLedger, isMaybeLedger, readAsLedger, readAsNormalDocument, requestedYearsFor, rereadWithLayout, startLedgerRead } from "../gl/ingest";
 import { ledgerFileKind, peekRows } from "../gl/read-file";
 import { withHeavySheetSlot } from "../documents/heavy-sheet";
 import { detectLayout } from "../gl/detect";
@@ -252,14 +252,16 @@ export function sellerLedgerView(v: GlLedgerView) {
   };
 }
 
-async function brokerLedgerViews(dealId: string): Promise<{ ledgers: GlLedgerView[]; unread: Array<{ documentId: string; name: string; reason: "not_read" | "pdf" }> }> {
+async function brokerLedgerViews(dealId: string): Promise<{ ledgers: GlLedgerView[]; unread: Array<{ documentId: string; name: string; reason: "not_read" | "pdf" | "maybe" }> }> {
   const [ledgers, docs] = await Promise.all([glStore().listLedgers(dealId), storage.getDocumentsByDeal(dealId)]);
   const byId = new Map(docs.map((d) => [d.id, d]));
   const withLedger = new Set(ledgers.map((l) => l.documentId));
   const views = ledgers.filter((l) => byId.has(l.documentId)).map((l) => ledgerView(l, byId.get(l.documentId)!));
-  const unread = docs
+  const unread: Array<{ documentId: string; name: string; reason: "not_read" | "pdf" | "maybe" }> = docs
     .filter((d) => d.subcategory === "general_ledger" && !withLedger.has(d.id))
     .map((d) => ({ documentId: d.id, name: d.originalName || d.name, reason: (ledgerFileKind(d.fileUrl) ? "not_read" : "pdf") as "not_read" | "pdf" }));
+  // Spreadsheets shaped like a ledger that the upload couldn't confirm (read as ordinary documents).
+  for (const d of docs) if (!withLedger.has(d.id) && isMaybeLedger(d)) unread.push({ documentId: d.id, name: d.originalName || d.name, reason: "maybe" });
   return { ledgers: views, unread };
 }
 
@@ -426,6 +428,19 @@ export function registerGlRoutes(app: Express): void {
     } catch (err) {
       console.error("[gl] read-as-ledger failed:", err);
       res.status(500).json({ error: "Couldn't start reading the ledger" });
+    }
+  });
+
+  // "It isn't a ledger" on a spreadsheet the upload thought might be one: never offered again.
+  app.post("/api/deals/:dealId/gl/maybe-ledgers/:documentId/dismiss", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const doc = await storage.getDocument(req.params.documentId);
+      if (!doc || doc.dealId !== req.params.dealId) return res.status(404).json({ error: "Document not found" });
+      await dismissMaybeLedger(doc.id);
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[gl] dismiss maybe-ledger failed:", err);
+      res.status(500).json({ error: "Couldn't save that" });
     }
   });
 

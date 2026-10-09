@@ -76,7 +76,8 @@ export interface BrokerGlData {
   /** The fiscal years to ask for (the analysis's, else the three before this one). */
   requestedYears: string[];
   ledgers: GlLedgerView[];
-  unread: Array<{ documentId: string; name: string; reason: "not_read" | "pdf" }>;
+  /** not_read / pdf: filed as a ledger, no entries yet; maybe: a spreadsheet shaped like a ledger, read as an ordinary document. */
+  unread: Array<{ documentId: string; name: string; reason: "not_read" | "pdf" | "maybe" }>;
   /** The add-backs couldn't load (the ledgers still show). */
   tracesError?: boolean;
   analysis?: { present: boolean };

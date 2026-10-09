@@ -400,18 +400,29 @@ function LedgersView({ dealId, data }: { dealId: string; data: BrokerGlData }) {
 
         {(data.unread.length > 0) && (
           <div className="px-4 py-3 border-t border-border space-y-2" data-testid="gl-unread">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Ledgers Cimple hasn't read yet</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              {data.unread.every((u) => u.reason === "maybe") ? "Might one of these be the general ledger?" : "Ledgers Cimple hasn't read yet"}
+            </p>
             {data.unread.map((u) => (
-              <div key={u.documentId} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div key={u.documentId} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between" data-testid={`gl-unread-${u.reason}`}>
                 <div className="min-w-0">
                   <p className="text-sm break-words">{u.name}</p>
                   {u.reason === "pdf" && <p className="text-xs text-muted-foreground">A PDF ledger can't be matched entry by entry — ask for the Excel or CSV export.</p>}
+                  {u.reason === "maybe" && <p className="text-xs text-muted-foreground">Laid out like a ledger, so Cimple read it as an ordinary document. If it is the general ledger, read it as one.</p>}
                 </div>
-                {u.reason === "not_read" && (
-                  <Button size="sm" variant="outline" className="h-8 text-xs shrink-0" disabled={act.isPending}
-                    onClick={() => act.mutate({ url: `/api/deals/${dealId}/gl/ledgers/read-as-ledger`, body: { documentId: u.documentId } })}>
-                    Read as a ledger
-                  </Button>
+                {(u.reason === "not_read" || u.reason === "maybe") && (
+                  <div className="flex gap-2 shrink-0">
+                    {u.reason === "maybe" && (
+                      <Button size="sm" variant="ghost" className="h-8 text-xs" disabled={act.isPending}
+                        onClick={() => act.mutate({ url: `/api/deals/${dealId}/gl/maybe-ledgers/${u.documentId}/dismiss`, body: {} })} data-testid="gl-maybe-dismiss">
+                        It isn't
+                      </Button>
+                    )}
+                    <Button size="sm" variant="outline" className="h-8 text-xs" disabled={act.isPending}
+                      onClick={() => act.mutate({ url: `/api/deals/${dealId}/gl/ledgers/read-as-ledger`, body: { documentId: u.documentId } })} data-testid="gl-read-as-ledger">
+                      Read it as a ledger
+                    </Button>
+                  </div>
                 )}
               </div>
             ))}

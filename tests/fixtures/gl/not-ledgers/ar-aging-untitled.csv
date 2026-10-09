@@ -1,0 +1,33 @@
+,Date,Transaction Type,Num,Customer,Due Date,Amount,Open Balance
+Current
+,12/01/2024,Invoice,2000,Acme Corp,01/01/2025,7699.59,7699.59
+,12/02/2024,Invoice,2001,Beta Logistics,01/02/2025,2474.15,2474.15
+,12/03/2024,Invoice,2002,Coastal Foods,01/03/2025,1804.52,1804.52
+,12/04/2024,Invoice,2003,Delta Grocers,01/04/2025,4177.85,4177.85
+,12/05/2024,Invoice,2004,Evergreen Farms,01/05/2025,3365.64,3365.64
+,12/06/2024,Invoice,2005,Fraser Valley Markets,01/06/2025,6197.21,6197.21
+Total for Current,,,,,,0,0
+1 - 30 days past due
+,12/01/2024,Invoice,2000,Acme Corp,01/01/2025,2258.93,2258.93
+,12/02/2024,Invoice,2001,Beta Logistics,01/02/2025,1562.97,1562.97
+,12/03/2024,Invoice,2002,Coastal Foods,01/03/2025,6837.01,6837.01
+,12/04/2024,Invoice,2003,Delta Grocers,01/04/2025,8949.83,8949.83
+,12/05/2024,Invoice,2004,Evergreen Farms,01/05/2025,3529.29,3529.29
+,12/06/2024,Invoice,2005,Fraser Valley Markets,01/06/2025,8866.31,8866.31
+Total for 1 - 30 days past due,,,,,,0,0
+31 - 60 days past due
+,12/01/2024,Invoice,2000,Acme Corp,01/01/2025,3176.52,3176.52
+,12/02/2024,Invoice,2001,Beta Logistics,01/02/2025,7746.38,7746.38
+,12/03/2024,Invoice,2002,Coastal Foods,01/03/2025,7216.90,7216.90
+,12/04/2024,Invoice,2003,Delta Grocers,01/04/2025,5995.71,5995.71
+,12/05/2024,Invoice,2004,Evergreen Farms,01/05/2025,6803.51,6803.51
+,12/06/2024,Invoice,2005,Fraser Valley Markets,01/06/2025,4021.50,4021.50
+Total for 31 - 60 days past due,,,,,,0,0
+61 - 90 days past due
+,12/01/2024,Invoice,2000,Acme Corp,01/01/2025,3021.89,3021.89
+,12/02/2024,Invoice,2001,Beta Logistics,01/02/2025,6292.04,6292.04
+,12/03/2024,Invoice,2002,Coastal Foods,01/03/2025,6377.41,6377.41
+,12/04/2024,Invoice,2003,Delta Grocers,01/04/2025,8572.32,8572.32
+,12/05/2024,Invoice,2004,Evergreen Farms,01/05/2025,4857.52,4857.52
+,12/06/2024,Invoice,2005,Fraser Valley Markets,01/06/2025,2085.35,2085.35
+Total for 61 - 90 days past due,,,,,,0,0

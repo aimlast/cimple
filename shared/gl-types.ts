@@ -100,6 +100,12 @@ export type GlSourceMeta = DocumentSourceMeta & {
   glTraceId?: string;
   /** Why a file filed as a ledger can't be read entry by entry (a PDF ledger). */
   glNote?: string;
+  /**
+   * A spreadsheet shaped like a ledger without the evidence that it is one
+   * (no ledger title, accounts that don't read as a chart of accounts): read
+   * as an ordinary document; the broker is offered "Read it as a ledger".
+   */
+  glMaybeLedger?: boolean;
 };
 
 /** One row of a ledger file as read (before parsing): 1-based across sheets. */

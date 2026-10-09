@@ -297,6 +297,23 @@ await test("GL-R1-07: 'Mark reviewed' on an add-back nothing was asked or found 
   await w.gl.updateTrace(t.id, { removedAt: new Date() } as any);
 });
 
+await test("GL-R2-03: a spreadsheet that might be a ledger is offered to the broker ('Read it as a ledger' / 'It isn't'); another deal's document is 404", async () => {
+  const maybe = w.addDocument({ dealId: deal.id, fileUrl: w.addFile(fixture("not-ledgers/sales-by-customer-untitled.csv"), "x.csv"), name: "export.csv", originalName: "export.csv", category: "other", sourceMeta: { glMaybeLedger: true } } as any);
+  const clear = w.addDocument({ dealId: deal.id, fileUrl: w.addFile(fixture("not-ledgers/sales-by-customer.csv"), "y.csv"), name: "Sales by Customer.csv", originalName: "Sales by Customer.csv", category: "other" } as any);
+  const r = await call("GET", `/api/deals/${deal.id}/gl`);
+  assert.equal(r.status, 200);
+  const offered = r.json.unread.filter((u: any) => u.reason === "maybe").map((u: any) => u.documentId);
+  assert.deepEqual(offered, [maybe.id], "only the flagged one");
+  assert.ok(!r.json.unread.some((u: any) => u.documentId === clear.id));
+  const foreign = await call("POST", `/api/deals/another-deal/gl/maybe-ledgers/${maybe.id}/dismiss`, {});
+  assert.equal(foreign.status, 404);
+  const d = await call("POST", `/api/deals/${deal.id}/gl/maybe-ledgers/${maybe.id}/dismiss`, {});
+  assert.equal(d.status, 200);
+  const again = await call("GET", `/api/deals/${deal.id}/gl`);
+  assert.ok(!again.json.unread.some((u: any) => u.documentId === maybe.id), "dismissed: not offered again");
+  assert.equal((w.documents.get(maybe.id)!.sourceMeta as any).notLedger, true);
+});
+
 server.close();
 cleanup(w);
 done("routes / flow");

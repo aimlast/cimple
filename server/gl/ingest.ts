@@ -30,7 +30,7 @@ import { LEDGER_FAILURES, ledgerDocumentSummary, problemMessage } from "@shared/
 import { glStore, type GlStore } from "./store";
 import { withGlLock } from "./lock";
 import { ledgerFileKind, peekRows, readLedgerRows, SNIFF_ROWS, type LedgerFileKind } from "./read-file";
-import { detectLayout, headerFingerprint, rowFingerprint, sniffGeneralLedger, type DetectResult } from "./detect";
+import { detectLayout, headerFingerprint, rowFingerprint, sniffLedger, type DetectResult } from "./detect";
 import { LedgerParser, normHeader } from "./parse";
 import { fiscalYearEndFor, fiscalYearOf } from "./fiscal";
 import { classifyHint } from "./sensitive";
@@ -91,21 +91,33 @@ export interface LedgerSniffDeps {
  * Is this document a general ledger? Filed as one (subcategory, the GL
  * checklist row, the GL screens) → "ledger"; a PDF/Word file named or filed
  * as one → "pdf_ledger" (stored with a summary only, $0); any other
- * spreadsheet upload is sniffed (≥3 accounts in a confident layout).
+ * spreadsheet upload is sniffed (detect.ts sniffLedger: a confident layout
+ * with ≥3 accounts AND a ledger's title or a chart of accounts — a sales
+ * report by customer or an aging is never taken for one). "maybe" = shaped
+ * like a ledger without the evidence: read as an ordinary document, and the
+ * broker is offered "Read it as a ledger".
  */
-export async function isLedgerDocument(doc: DocLike, deps: LedgerSniffDeps = { peek: peekRows }): Promise<LedgerDocKind | null> {
+export async function ledgerVerdict(doc: DocLike, deps: LedgerSniffDeps = { peek: peekRows }): Promise<LedgerDocKind | "maybe" | null> {
   const k = ledgerKindWithoutReading(doc);
   if (k !== "sniff") return k;
   const filePath = resolveDocumentPath(doc);
   if (!filePath || !fs.existsSync(filePath)) return null;
   const kind = ledgerFileKind(docFileName(doc))!;
   try {
-    const sniff = async () => sniffGeneralLedger(await deps.peek(filePath, kind, SNIFF_ROWS, docFileName(doc)), { minAccounts: 3 });
-    const yes = kind === "xlsx" ? await withHeavySheetSlot(sniff) : await sniff();
-    return yes ? "ledger" : null;
+    // The name the uploader gave it counts as a title ("Sales by Customer Detail.xlsx", "GL 2024.csv").
+    const names = `${doc.originalName ?? ""} ${doc.name ?? ""}`;
+    const sniff = async () => sniffLedger(await deps.peek(filePath, kind, SNIFF_ROWS, docFileName(doc)), { minAccounts: 3, fileName: names });
+    const v = kind === "xlsx" ? await withHeavySheetSlot(sniff) : await sniff();
+    return v === "ledger" ? "ledger" : v === "maybe" ? "maybe" : null;
   } catch {
     return null;
   }
+}
+
+/** ledgerVerdict without the "maybe" (a maybe is read as an ordinary document). */
+export async function isLedgerDocument(doc: DocLike, deps: LedgerSniffDeps = { peek: peekRows }): Promise<LedgerDocKind | null> {
+  const v = await ledgerVerdict(doc, deps);
+  return v === "maybe" ? null : v;
 }
 
 // ── Dependencies (tests swap them) ───────────────────────────────────────
@@ -231,7 +243,12 @@ export async function ingestLedgerFromDocument(
   doc: Document,
   opts: { uploadedBy?: "broker" | "seller"; role?: "ledger" | "adjustments"; sniffDeps?: LedgerSniffDeps } = {},
 ): Promise<{ status: "extracted" | "failed"; fieldsWritten: string[] } | null> {
-  const kind = await isLedgerDocument(doc, opts.sniffDeps);
+  const kind = await ledgerVerdict(doc, opts.sniffDeps);
+  if (kind === "maybe") {
+    // Read as an ordinary document (the caller continues); the broker's GL panel offers "Read it as a ledger".
+    await flagMaybeLedger(doc);
+    return null;
+  }
   if (!kind) return null;
   const d = effectiveDeps();
   if (kind === "pdf_ledger") {
@@ -248,6 +265,23 @@ export async function ingestLedgerFromDocument(
   }
   await startLedgerRead(doc, { uploadedBy: opts.uploadedBy, role: opts.role }, d);
   return { status: "extracted", fieldsWritten: [] };
+}
+
+/**
+ * Marks a ledger-shaped spreadsheet the sniff couldn't confirm. The caller's
+ * copy of the row is updated too: the ordinary read that follows writes
+ * sourceMeta from it (sourceMetaAfterRead), which would otherwise drop the flag.
+ */
+async function flagMaybeLedger(doc: Document): Promise<void> {
+  const meta = { ...((doc.sourceMeta as GlSourceMeta | null) ?? {}) } as GlSourceMeta;
+  if (meta.glMaybeLedger) return;
+  meta.glMaybeLedger = true;
+  try {
+    await effectiveDeps().updateDocument(doc.id, { sourceMeta: meta } as Partial<Document>);
+    (doc as { sourceMeta: unknown }).sourceMeta = meta;
+  } catch (err) {
+    console.warn(`[gl] couldn't mark ${doc.id} as a possible ledger:`, (err as Error).message);
+  }
 }
 
 /** Creates (or resets) the document's ledger row and queues its read. */
@@ -764,9 +798,27 @@ export async function readAsNormalDocument(documentId: string): Promise<void> {
   if (!doc) return;
   await onLedgerDocumentDeleted(doc);
   const meta: GlSourceMeta = { ...((doc.sourceMeta as GlSourceMeta | null) ?? {}), notLedger: true };
+  delete meta.glMaybeLedger;
   await d.updateDocument(doc.id, { subcategory: null, sourceMeta: meta, status: "pending" } as Partial<Document>);
   const { ingestDocument } = await import("../documents/ingest");
   void ingestDocument(doc.id).catch((err) => console.error(`[gl] re-reading ${doc.id} as a document failed:`, err));
+}
+
+/** The broker says a possible ledger isn't one ("It isn't a ledger"): never offered or sniffed again; its ordinary read stays. */
+export async function dismissMaybeLedger(documentId: string): Promise<boolean> {
+  const d = effectiveDeps();
+  const doc = await d.getDocument(documentId);
+  if (!doc) return false;
+  const meta: GlSourceMeta = { ...((doc.sourceMeta as GlSourceMeta | null) ?? {}), notLedger: true };
+  delete meta.glMaybeLedger;
+  await d.updateDocument(doc.id, { sourceMeta: meta } as Partial<Document>);
+  return true;
+}
+
+/** A document the broker is offered "Read it as a ledger" for (pure): ledger-shaped, not confirmed, not dismissed, not read as one. */
+export function isMaybeLedger(doc: Pick<Document, "sourceMeta" | "subcategory" | "fileUrl">): boolean {
+  const meta = (doc.sourceMeta as GlSourceMeta | null) ?? null;
+  return !!meta?.glMaybeLedger && !meta.notLedger && doc.subcategory !== "general_ledger" && !!ledgerFileKind(doc.fileUrl ?? "");
 }
 
 /** "Read as a ledger" (a general-ledger document with no ledger row yet — legacy uploads, a sniff that said no). */
@@ -775,8 +827,19 @@ export async function readAsLedger(documentId: string, uploadedBy?: "broker" | "
   const doc = await d.getDocument(documentId);
   if (!doc || !ledgerFileKind(docFileName(doc))) return null;
   const meta: GlSourceMeta = { ...((doc.sourceMeta as GlSourceMeta | null) ?? {}) };
+  const wasReadAsDocument = !!meta.glMaybeLedger;
   delete meta.notLedger;
+  delete meta.glMaybeLedger;
   await d.updateDocument(doc.id, { subcategory: "general_ledger", sourceMeta: Object.keys(meta).length ? meta : null } as Partial<Document>);
+  // A possible ledger was read as an ordinary document first: a ledger is never facts, so what that read merged goes.
+  if (wasReadAsDocument) {
+    try {
+      const { removeSourceFacts } = await import("../documents/cleanup");
+      await removeSourceFacts(doc.dealId, doc.id);
+    } catch (err) {
+      console.warn(`[gl] taking ${doc.id}'s document facts off failed:`, (err as Error).message);
+    }
+  }
   return startLedgerRead({ ...doc, subcategory: "general_ledger" }, { uploadedBy }, d);
 }
 

@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import type { GlAccountMode, GlAmountMode, GlBasis, GlDateOrder, GlLayout, GlRawRow, GlRole, GlSoftware } from "@shared/gl-types";
 import { ACCRUAL_BASIS_RE, CASH_BASIS_RE, normHeader, parseLedgerRows, SKIP_ANYWHERE } from "./parse";
 import { cellText, numericDateParts, parseLedgerDate } from "./text";
+import { classifyAccount } from "./tie-out";
 
 const SYNONYMS: Array<[Exclude<GlRole, "balance" | "ignore"> | "balance" | "ignore", string[]]> = [
   ["date", ["date", "transaction date", "txn date", "trans date", "posting date", "posted", "date posted", "entry date", "gl date"]],
@@ -58,6 +59,8 @@ export interface DetectResult {
   accounts: number;
   /** Why confidence is below 1 (plain, for logs and the broker's column dialog). */
   shaky: string[];
+  /** The rows above the column headings (the report's title, company, period), joined. */
+  titleText: string;
   datesAmbiguous: boolean;
 }
 
@@ -287,19 +290,68 @@ export function detectLayout(rows: GlRawRow[]): DetectResult | null {
     headerFingerprint: rowFingerprint(headerRow.cells),
     accounts,
     shaky,
+    titleText: titleTexts.join(" ").slice(0, 600),
     datesAmbiguous: ambiguous,
   };
 }
 
+/** A title naming a general-ledger report (QuickBooks, Xero, Sage, Wave, FreshBooks; French "grand livre"). */
+export const GL_TITLE_RE = /general[\s_-]*ledger|grand[\s-]livre|\bg\/l\b|\bgl[\s_-]+(?:export|detail|report)\b|transaction detail by account|transaction list by account|account transactions|account quick ?report|general journal|transaction journal|journal (?:report|entries|transactions)/i;
+
+/**
+ * A title naming a report that shares a ledger's shape but isn't one — a
+ * detail report grouped by customer or vendor, an aging, a sales or expense
+ * report (checker r2: QuickBooks "Sales by Customer Detail" and "A/R Aging
+ * Detail" have the heading-row layout of a ledger). Never sniffed as one.
+ */
+export const NOT_GL_TITLE_RE = /\bby (?:customers?|clients?|vendors?|suppliers?|payees?|products?|items?|services?|employees?|class(?:es)?|locations?|projects?|jobs?|reps?|tags?)\b|\bage?ing\b|\bsales by\b|\bexpenses? by\b|\bpurchases? by\b|\bopen (?:invoices?|bills?|purchase orders?)\b|\bunpaid (?:bills?|invoices?)\b|\binvoice list\b|\bcollections? report\b|\b(?:customer|vendor|supplier) balance\b|\bstatement of account\b|\bpayroll (?:summary|details?|register)\b|\b(?:deposit|check|cheque) detail\b|\bbank reconciliation\b|\btime (?:activities|sheets?)\b|\binventory valuation\b/i;
+
+/** Words of a balance-sheet or income-statement account — an account title, not a customer or an aging bucket. */
+const ACCOUNT_WORDS_RE = /\b(?:bank|cash|chequing|checking|savings|receivables?|payables?|inventory|prepaid|deposits?|accumulated|accrued|accruals?|loans?|line of credit|mortgage|gst|hst|pst|qst|vat|sales tax|liabilit(?:y|ies)|deductions?|due (?:to|from)|shareholders?|equity|retained|capital|dividends?|draws?|drawings|opening balance|undeposited|clearing|suspense|credit card|visa|mastercard|amex|assets?|equipment|vehicles?|furniture|leasehold|buildings?|revenue|sales|income|fees?|commissions?|expenses?|costs?|cogs|wages?|salar(?:y|ies)|payroll|rent|utilities|insurance|fuel|repairs?|maintenance|advertising|marketing|promotion|supplies|materials|subcontract\w*|professional|legal|accounting|bookkeeping|charges|interest|depreciation|amorti[sz]ation|telephone|phone|internet|travel|meals|entertainment|office|software|subscriptions?|dues|memberships?|licen[cs]es?|permits?|freight|shipping|delivery|postage|training|automobile|auto|uniforms|benefits|wsib|cpp|donations?|bad debts?|purchases|contractors?|consulting|management|royalt\w*|franchise|taxes)\b/i;
+
+export type LedgerSniff = "ledger" | "maybe" | "no";
+
 /**
  * Is this file a general ledger? For files uploaded outside the GL screens
- * (a generic document upload): confident layout, an account dimension, and
- * at least three accounts — bank statements, P&Ls, membership lists and
- * fleet lists are not. Files uploaded through the GL screens or the GL
- * checklist row need only one account (`minAccounts: 1`).
+ * (a generic document upload) — the GL screens and the GL checklist row file
+ * a ledger without sniffing. A confident layout with at least three accounts
+ * (`minAccounts`), and evidence that it IS a ledger, not a report of the same
+ * shape:
+ *   - a title (or the file's name) naming a general-ledger report → "ledger";
+ *   - a title naming another report (by customer / vendor, an aging, sales
+ *     by…, open invoices…) → "no", whatever its shape;
+ *   - otherwise the accounts must read as a chart of accounts: most titles
+ *     use account words (or numbers), and they span the balance sheet AND
+ *     the income statement → "ledger".
+ * A ledger-shaped file without that evidence is "maybe": it is read as an
+ * ordinary document and the broker is offered "Read it as a ledger".
+ * Bank statements, P&Ls, membership lists and fleet lists are "no".
  */
-export function sniffGeneralLedger(rows: GlRawRow[], opts: { minAccounts?: number } = {}): boolean {
+export function sniffLedger(rows: GlRawRow[], opts: { minAccounts?: number; fileName?: string | null } = {}): LedgerSniff {
   const r = detectLayout(rows);
-  if (!r || r.confidence < 0.6) return false;
-  return r.accounts >= (opts.minAccounts ?? 3);
+  if (!r || r.confidence < 0.6) return "no";
+  const title = `${r.titleText} ${opts.fileName ?? ""}`;
+  if (NOT_GL_TITLE_RE.test(title)) return "no";
+  // Accounts over the whole sample (the detector's dry parse looks at 200 rows only).
+  const { entries } = parseLedgerRows(rows, r.layout);
+  const accounts = new Map<string, { account: string; number: string | null; type: string | null }>();
+  for (const e of entries) if (e.accountKey && e.accountKey !== "no account" && !accounts.has(e.accountKey)) accounts.set(e.accountKey, { account: e.account, number: e.accountNumber, type: e.accountType });
+  if (Math.max(accounts.size, r.accounts) < (opts.minAccounts ?? 3)) return "no";
+  if (GL_TITLE_RE.test(title)) return "ledger";
+  const list = Array.from(accounts.entries());
+  if (list.length === 0) return "maybe";
+  const numbered = list.filter(([, a]) => a.number || /^\s*\d{3,6}\b/.test(a.account)).length >= 0.6 * list.length;
+  const accountLike = list.filter(([, a]) => a.number || a.type || /^\s*\d{3,6}\b/.test(a.account) || / · /.test(a.account) || ACCOUNT_WORDS_RE.test(a.account)).length;
+  const classes = new Set(list.map(([key, a]) => {
+    const c = classifyAccount(a.account, a.number, a.type, {}, numbered, key);
+    // "expense" is classifyAccount's default for any name: count it only with an account word, a number or a type.
+    return c === "expense" && !(a.number || a.type || numbered || ACCOUNT_WORDS_RE.test(a.account)) ? "unknown" : c;
+  }));
+  const chart = accountLike >= 0.6 * list.length && classes.has("balance_sheet") && (classes.has("revenue") || classes.has("expense"));
+  return chart ? "ledger" : "maybe";
+}
+
+/** sniffLedger === "ledger" (see there). */
+export function sniffGeneralLedger(rows: GlRawRow[], opts: { minAccounts?: number; fileName?: string | null } = {}): boolean {
+  return sniffLedger(rows, opts) === "ledger";
 }

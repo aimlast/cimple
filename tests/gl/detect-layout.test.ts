@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { test, done, fixture } from "./_harness";
-import { detectLayout, roleOfHeader, sniffGeneralLedger, softwareFrom } from "../../server/gl/detect";
+import { detectLayout, roleOfHeader, sniffGeneralLedger, sniffLedger, softwareFrom } from "../../server/gl/detect";
 import { peekRows } from "../../server/gl/read-file";
 import type { GlRawRow } from "../../shared/gl-types";
 
@@ -66,6 +66,47 @@ await test("bank statements, P&Ls, odd layouts and membership/fleet lists are no
   assert.equal(sniffGeneralLedger(membership), false, "membership list");
   const fleet = rows([["Unit", "Year", "Make", "Model", "VIN", "Purchase date", "Cost"], ["101", "2019", "Ford", "Transit", "1FT…", "2019-04-02", "48000"]]);
   assert.equal(sniffGeneralLedger(fleet), false, "fleet list");
+});
+
+await test("GL-R2-03: reports shaped like a ledger are not ledgers — sales by customer, A/R aging (QuickBooks detail reports)", async () => {
+  for (const f of ["sales-by-customer.csv", "ar-aging.csv"]) {
+    const peek = await peekRows(fixture(`not-ledgers/${f}`), "csv", 2000, f);
+    assert.ok((detectLayout(peek)?.confidence ?? 0) >= 0.6, `${f} has a ledger's layout (the trap)`);
+    assert.equal(sniffLedger(peek, { minAccounts: 3 }), "no", `${f}: its title says what it is`);
+    assert.equal(sniffGeneralLedger(peek), false, f);
+  }
+  // Without their title rows: still not a ledger — customers and aging buckets aren't a chart of accounts. "maybe" → read as a
+  // normal document, the broker is offered "Read it as a ledger".
+  for (const f of ["sales-by-customer-untitled.csv", "ar-aging-untitled.csv"]) {
+    const peek = await peekRows(fixture(`not-ledgers/${f}`), "csv", 2000, f);
+    assert.equal(sniffLedger(peek, { minAccounts: 3 }), "maybe", f);
+    assert.equal(sniffLedger(peek, { minAccounts: 3, fileName: "Sales by Customer Detail 2024.xlsx" }), "no", `${f}: the file's name says what it is`);
+    assert.equal(sniffLedger(peek, { minAccounts: 3, fileName: "General Ledger 2024.csv" }), "ledger", `${f}: the uploader named it a general ledger`);
+  }
+  // A customer named like an account ("TD Bank") doesn't turn a customer list into a chart of accounts.
+  const banked = rows([
+    ["", "Date", "Transaction Type", "Num", "Memo/Description", "Amount", "Balance"],
+    ["Acme Corp"], ["", "01/15/2024", "Invoice", "1", "Service", "100.00", "100.00"], ["", "02/15/2024", "Invoice", "2", "Service", "120.00", "220.00"],
+    ["TD Bank"], ["", "01/16/2024", "Invoice", "3", "Service", "90.00", "90.00"], ["", "02/16/2024", "Invoice", "4", "Service", "95.00", "185.00"],
+    ["Coastal Foods"], ["", "01/17/2024", "Invoice", "5", "Service", "80.00", "80.00"], ["", "02/17/2024", "Invoice", "6", "Service", "85.00", "165.00"],
+    ["Delta Grocers"], ["", "01/18/2024", "Invoice", "7", "Service", "70.00", "70.00"],
+  ]);
+  assert.notEqual(sniffLedger(banked, { minAccounts: 3 }), "ledger");
+  // Every real export is still a ledger — by its title, or (Wave, QuickBooks Desktop, a flat export) by a chart of accounts.
+  for (const f of ["qbo-classic.csv", "qbd.csv", "wave.csv", "sage50.csv", "xero-account-transactions.csv", "freshbooks.csv", "account-type.csv", "payroll-provider.csv", "qbo-cash-basis.csv"]) {
+    assert.equal(sniffLedger(await peekRows(fixture(f), "csv", 2000, f), { minAccounts: 3 }), "ledger", f);
+  }
+  for (const f of ["qbo-classic.xlsx", "qbo-modern.xlsx", "xero-gl-detail.xlsx"]) {
+    assert.equal(sniffLedger(await peekRows(fixture(f), "xlsx", 2000, f), { minAccounts: 3 }), "ledger", f);
+  }
+  // An untitled flat export with a chart of accounts (no title rows at all) is a ledger by its accounts.
+  const flat = rows([
+    ["Date", "Account", "Name", "Memo", "Debit", "Credit"],
+    ["2024-01-02", "Sales - Service", "Maple Ridge", "Call", "", "400.00"], ["2024-01-02", "Chequing", "Maple Ridge", "Call", "400.00", ""],
+    ["2024-01-03", "Fuel", "Petro-Canada", "Vans", "60.00", ""], ["2024-01-03", "Chequing", "Petro-Canada", "Vans", "", "60.00"],
+    ["2024-01-04", "Rent", "Landlord", "Jan", "1500.00", ""], ["2024-01-04", "Chequing", "Landlord", "Jan", "", "1500.00"],
+  ]);
+  assert.equal(sniffLedger(flat, { minAccounts: 3 }), "ledger");
 });
 
 await test("the odd layout has no recognisable headings at all (the AI-mapping stub's case)", async () => {
