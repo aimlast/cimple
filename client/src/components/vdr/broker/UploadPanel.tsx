@@ -4,6 +4,7 @@
  * at the bottom right, plain reasons for refused files, and — when more than
  * 10 files arrive at once — the question whether to read them for the CIM's
  * facts or just store them. Every upload is also a normal deal document.
+ * A .zip is unpacked in the browser (unzip.ts) and uploads like a folder.
  */
 import { useCallback, useRef, useState } from "react";
 import { CheckCircle2, Loader2, X, XCircle } from "lucide-react";
@@ -12,17 +13,17 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { VDR_LIMITS, extensionOf } from "@shared/vdr";
 import type { RoomFolderRow } from "@shared/vdr-api";
 import { invalidateRoom, roomBase, vdrFetch } from "@/hooks/useDataRoom";
+import { unzipEntries } from "./unzip";
 
 export type UploadEntry = { file: File; dirs: string[] };
 type Job = { id: number; name: string; status: "queued" | "uploading" | "done" | "failed"; reason?: string };
 
-export const UPLOAD_ACCEPT = VDR_LIMITS.uploadExtensions.join(",");
+export const UPLOAD_ACCEPT = [...VDR_LIMITS.uploadExtensions, ".zip"].join(",");
 
 /** Plain words for a file the room won't take (the server says the same). */
 export function refusalFor(file: File): string | null {
   const ext = extensionOf(file.name);
   if (ext === ".heic" || ext === ".heif") return ".heic (iPhone photo): share it as a JPEG, or set the camera to 'Most compatible'.";
-  if (ext === ".zip") return ".zip: unzip it first and drop the folder.";
   if (!VDR_LIMITS.uploadExtensions.includes(ext)) return `${ext || "These"} files can't go in the data room.`;
   if (file.size > VDR_LIMITS.uploadBytes) return "Too large (over 20 MB). Save a smaller copy or split it.";
   return null;
@@ -63,7 +64,19 @@ export function useRoomUploads(dealId: string) {
   const seq = useRef(0);
   const patch = (id: number, p: Partial<Job>) => setJobs((js) => js.map((j) => (j.id === id ? { ...j, ...p } : j)));
 
-  const start = useCallback(async (entries: UploadEntry[], folderId: string, folders: RoomFolderRow[]) => {
+  const start = useCallback(async (dropped: UploadEntry[], folderId: string, folders: RoomFolderRow[]) => {
+    // A .zip is unpacked here, in the browser (it never reaches the server); its files upload like a dropped folder.
+    const entries: UploadEntry[] = [];
+    const zipNotes: Job[] = [];
+    for (const e of dropped) {
+      if (extensionOf(e.file.name) !== ".zip") { entries.push(e); continue; }
+      const r = await unzipEntries(e.file);
+      if ("error" in r) { zipNotes.push({ id: ++seq.current, name: e.file.name, status: "failed", reason: r.error }); continue; }
+      for (const x of r.entries) entries.push({ file: x.file, dirs: [...e.dirs, ...x.dirs] });
+      for (const sk of r.skipped) zipNotes.push({ id: ++seq.current, name: `${e.file.name} › ${sk.name}`, status: "failed", reason: sk.reason });
+      if (r.entries.length === 0 && r.skipped.length === 0) zipNotes.push({ id: ++seq.current, name: e.file.name, status: "failed", reason: "The zip is empty." });
+    }
+    if (zipNotes.length) setJobs((js) => [...js, ...zipNotes]);
     const fresh: Array<Job & { entry: UploadEntry }> = entries.map((entry) => ({ id: ++seq.current, name: [...entry.dirs, entry.file.name].join("/"), status: "queued", entry }));
     const refused = fresh.filter((j) => refusalFor(j.entry.file)).map((j) => ({ ...j, status: "failed" as const, reason: refusalFor(j.entry.file)! }));
     const ok = fresh.filter((j) => !refusalFor(j.entry.file));
