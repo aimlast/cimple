@@ -32,6 +32,16 @@ export function fakeVdrStore(seed: { documents?: any[] } = {}) {
       folders.push(f);
       return f;
     },
+    async insertFolders(rows) {
+      const out: any[] = [];
+      for (const r of rows) { const f = await store.insertFolder(r); if (f) out.push(f); }
+      return out;
+    },
+    async insertItems(rows) {
+      const out: any[] = [];
+      for (const r of rows) { const it = await store.insertItem(r); if (it) out.push(it); }
+      return out;
+    },
     async listItems(dealId) { return items.filter((i) => i.dealId === dealId).sort((a, b) => a.position - b.position); },
     async getItem(id) { return items.find((i) => i.id === id) ?? null; },
     async itemsForDocument(documentId) { return items.filter((i) => i.documentId === documentId); },
@@ -78,6 +88,7 @@ export function fakeVdrStore(seed: { documents?: any[] } = {}) {
     },
     async deletePageText(itemId) { for (let i = pageText.length - 1; i >= 0; i--) if (pageText[i].itemId === itemId) pageText.splice(i, 1); },
     async log(row) { activity.push({ id: randomUUID(), at: now(), ...row }); },
+    async logMany(rows) { for (const row of rows) activity.push({ id: randomUUID(), at: now(), ...row }); },
     async getDocument(id) { return documents.find((d) => d.id === id) ?? null; },
     async listDocuments(dealId) { return documents.filter((d) => d.dealId === dealId); },
     async markRequestsReady(requirementId, documentId) {

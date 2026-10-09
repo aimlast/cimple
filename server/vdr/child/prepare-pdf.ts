@@ -23,7 +23,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { assembleLines, findPersonalNumbers, applyMasks, piecesTouched, personalKinds, type TextPiece, type PersonalMatch } from "../../../shared/vdr-sensitive";
 import { openPdf, renderPage } from "./pdf";
 import { sanitisePdf } from "./sanitise";
-import { visiblePart, visibleChars, type PixelBox } from "./hidden";
+import { visiblePart, visibleChars, wordChars, type PixelBox } from "./hidden";
 import { loadPdfjs } from "./libs";
 import type { PageTextRow, PrepareResult } from "../render-jobs";
 
@@ -86,7 +86,7 @@ async function preparePage(doc: PDFDocumentProxy, n: number, width: 700 | 1400, 
     const box = normBox(viewport.convertToViewportRectangle([x, y - 0.25 * h, x + w, y + h]));
     const band = normBox(viewport.convertToViewportRectangle([x, y + 0.05 * h, x + w, y + 0.6 * h]));
     let str = it.str as string;
-    if (w > 0 && visibleChars(str) >= 3) {
+    if (w > 0 && wordChars(str) >= 3) {
       const v = visiblePart(str, band, img, W, H);
       hiddenSpans += v.hiddenSpans;
       str = v.text;

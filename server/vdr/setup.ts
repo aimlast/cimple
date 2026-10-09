@@ -37,16 +37,22 @@ function logRow(dealId: string, action: VdrAction, extra: Partial<InsertVdrActiv
   return { dealId, action, actorKind: "system", ...extra };
 }
 
-/** Creates the preset folders that don't exist yet (parents first). */
+/** Creates the preset folders that don't exist yet: one statement per level (parents first). */
 async function ensurePresetFolders(dealId: string, deps: SetupDeps) {
   const existing = await deps.store.listFolders(dealId);
   const byPreset = new Map(existing.filter((f) => f.presetKey).map((f) => [f.presetKey!, f]));
-  for (const row of presetFolderRows()) {
-    if (byPreset.has(row.presetKey)) continue;
-    const parent = row.parentKey ? byPreset.get(row.parentKey) : null;
-    if (row.parentKey && !parent) continue;
-    const created = await deps.store.insertFolder({ dealId, parentId: parent?.id ?? null, name: row.name, position: row.position, presetKey: row.presetKey });
-    if (created) byPreset.set(row.presetKey, created);
+  const rows = presetFolderRows().filter((r) => !byPreset.has(r.presetKey));
+  if (rows.length === 0) return existing;
+  // Top level first, then the sub-folders (their parents' ids are known by then).
+  for (const level of [rows.filter((r) => !r.parentKey), rows.filter((r) => !!r.parentKey)]) {
+    const values = level
+      .filter((r) => !r.parentKey || byPreset.has(r.parentKey))
+      .map((r) => ({ dealId, parentId: r.parentKey ? byPreset.get(r.parentKey)!.id : null, name: r.name, position: r.position, presetKey: r.presetKey }));
+    for (const f of await deps.store.insertFolders(values)) if (f.presetKey) byPreset.set(f.presetKey, f);
+    // Another request may have created some meanwhile (ON CONFLICT DO NOTHING): read them back.
+    if (values.some((v) => !byPreset.has(v.presetKey))) {
+      for (const f of await deps.store.listFolders(dealId)) if (f.presetKey) byPreset.set(f.presetKey, f);
+    }
   }
   return deps.store.listFolders(dealId);
 }
@@ -75,29 +81,29 @@ export async function setUpRoom(dealId: string, by: string, mode: "auto" | "empt
     // Oldest first, so the index reads in the order the files arrived.
     fresh.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     const plan = planAutoFile(fresh, folders);
-    const all = items.slice();
+    const all: Array<Pick<VdrItem, "folderId" | "position" | "removedAt">> = items.slice();
+    const rows = [];
     for (const p of plan) {
       if (!p.folderId) continue;
       const doc = fresh.find((d) => d.id === p.documentId)!;
-      const row = await deps.store.insertItem({
+      const row = {
         dealId,
         folderId: p.folderId,
         documentId: doc.id,
         title: (doc.name || doc.originalName || "Document").slice(0, 200),
         position: nextPosition(all, p.folderId),
         addedBy: by === "demo-seed" ? "demo-seed" : "auto",
-      });
-      if (row) {
-        placed.push(row);
-        all.push(row);
-      }
+      };
+      rows.push(row);
+      all.push({ folderId: row.folderId, position: row.position, removedAt: null });
     }
+    placed.push(...(await deps.store.insertItems(rows)));
   }
-  if (!before) await logVdrQuietly(deps.store, logRow(dealId, "room_set_up", { actorKind: by === "demo-seed" ? "system" : "broker", actorId: by, detail: { mode, placed: placed.length } }));
-  for (const it of placed) {
-    await logVdrQuietly(deps.store, logRow(dealId, "item_added", { itemId: it.id, folderId: it.folderId, detail: { addedBy: it.addedBy } }));
-    deps.enqueue(it.id);
-  }
+  const logs: InsertVdrActivity[] = [];
+  if (!before) logs.push(logRow(dealId, "room_set_up", { actorKind: by === "demo-seed" ? "system" : "broker", actorId: by, detail: { mode, placed: placed.length } }));
+  for (const it of placed) logs.push(logRow(dealId, "item_added", { itemId: it.id, folderId: it.folderId, detail: { addedBy: it.addedBy } }));
+  await logVdrQuietly(deps.store, logs);
+  for (const it of placed) deps.enqueue(it.id);
   return { room, folders, placed };
 }
 
@@ -224,7 +230,7 @@ export async function onSourceDeleted(doc: { id: string; dealId: string }, opts:
       const reason = opts.bySeller ? "seller_removed" : "source_deleted";
       const cleanCopy = it.cleanCopyPath;
       const replacedBy = it.replacedByItemId ?? null;
-      await deps.store.updateItem(it.id, { removedAt: deps.now(), removedReason: reason, documentId: null, cleanCopyPath: null, cleanCopyName: null, cleanCopyMime: null, cleanCopyAt: null });
+      await deps.store.updateItem(it.id, { removedAt: deps.now(), removedReason: reason, documentId: null, cleanCopyPath: null, cleanCopyName: null, cleanCopyMime: null, cleanCopyAt: null, prepared: null });
       await removeCleanCopy(cleanCopy, it.dealId);
       await removeItemCache(it.dealId, it.id);
       await deps.store.deletePageText(it.id);
@@ -247,7 +253,8 @@ export async function onSourceMadePrivate(documentId: string, deps: SetupDeps = 
     const live = (await deps.store.itemsForDocument(documentId)).filter((r) => !r.removedAt);
     for (const it of live) {
       const was = await shareSummary(deps.store, it.id);
-      await deps.store.updateItem(it.id, { removedAt: deps.now(), removedReason: "made_private" });
+      // Its prepared pages and text go (a private file is not kept searchable); restoring prepares it again.
+      await deps.store.updateItem(it.id, { removedAt: deps.now(), removedReason: "made_private", prepared: null });
       await deps.store.deleteSharesForItem(it.id);
       await removeItemCache(it.dealId, it.id);
       await deps.store.deletePageText(it.id);
@@ -289,7 +296,7 @@ export async function restoreItem(itemId: string, by: string, deps: SetupDeps = 
   const live = (await deps.store.itemsForDocument(it.documentId)).find((r) => !r.removedAt);
   if (live) return { ok: false, reason: "It's already in the room." };
   const items = await deps.store.listItems(it.dealId);
-  const back = await deps.store.updateItem(it.id, { removedAt: null, removedReason: null, position: nextPosition(items, it.folderId) });
+  const back = await deps.store.updateItem(it.id, { removedAt: null, removedReason: null, position: nextPosition(items, it.folderId), prepared: null });
   if (!back) return { ok: false, reason: "It can't go in the data room." };
   await logVdrQuietly(deps.store, logRow(it.dealId, "item_restored", { actorKind: "broker", actorId: by, itemId: it.id, folderId: it.folderId }));
   deps.enqueue(it.id);

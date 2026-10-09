@@ -416,7 +416,7 @@ export function itemFlags(
       key: "hidden_words",
       look: true,
       pages: p.hidden.pages,
-      copy: `Words are hidden under black boxes on ${pageListCopy(p.hidden.pages)}. Black boxes drawn in a PDF editor don't remove the words underneath. Buyers see the boxes and the hidden words are left out of search, but use your PDF tool's Redact feature or upload a cleaned copy if you meant to remove them.`,
+      copy: `Words are hidden on ${pageListCopy(p.hidden.pages)}, under black boxes or printed so they can't be seen. Black boxes drawn in a PDF editor don't remove the words underneath. Buyers see the page as it looks and the hidden words are left out of search, but use your PDF tool's Redact feature or upload a cleaned copy if you meant to remove them.`,
     });
   }
   const matters = (info.privateMatters ?? []).filter((s) => typeof s === "string" && s.trim());

@@ -135,6 +135,7 @@ const fsDoc = f.documents.find((d) => d.id === "fs-23");
 fsDoc.visibility = "broker_only";
 await setup.onSourceVisibilityChanged("fs-23", true, deps);
 assert.equal(fsItem.removedReason, "made_private");
+assert.equal(fsItem.prepared, null, "its prepared pages and text are dropped; restoring prepares it again");
 assert.equal(fsItem.documentId, "fs-23", "the document still exists; the tombstone keeps it for Put back");
 assert.equal(f.shares.filter((s) => s.itemId === fsItem.id).length, 0, "its grants are gone");
 // Re-reading the document must never put it back on its own.

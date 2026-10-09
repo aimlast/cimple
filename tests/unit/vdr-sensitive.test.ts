@@ -127,7 +127,9 @@ assert.equal(isIdColumnValue("John"), false);
 assert.equal(personalRecordsHint({ folderKey: "people.staff" }, ""), true);
 assert.equal(personalRecordsHint({ folderKey: "financial.gl" }, ""), true);
 assert.equal(personalRecordsHint({ subcategory: "addback_support" }, ""), true);
-assert.equal(personalRecordsHint({ folderKey: "financial.tax" }, "Salary and wages, payroll remittance, T4 slips"), true);
-assert.equal(personalRecordsHint({ folderKey: "financial.tax" }, "Revenue and expenses"), false);
+assert.equal(personalRecordsHint({ folderKey: "operations.reports" }, "Salary and wages, payroll remittance, T4 slips"), true, "three telling words");
+assert.equal(personalRecordsHint({ folderKey: "operations.reports" }, "Revenue and expenses"), false);
+assert.equal(personalRecordsHint({ folderKey: "financial.statements" }, "Salaries and wages 1,200,000\nPayroll taxes 90,000\nT4 remittances"), false, "pay lines in statements are ordinary accounts");
+assert.equal(personalRecordsHint({ folderKey: "financial.tax" }, "Schedule 50 shareholder SIN, salary, wages"), false);
 
 console.log("vdr sensitive: ok");

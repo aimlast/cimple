@@ -44,8 +44,17 @@ export function visibleChars(s: string): number {
 }
 
 /**
+ * Letters and digits in a string — what carries information. A signature line
+ * ("______") or a dotted leader sits below the band the check measures, so a
+ * run of punctuation is never checked (it would always look "invisible").
+ */
+export function wordChars(s: string): number {
+  return (s.match(/[\p{L}\p{N}]/gu) ?? []).length;
+}
+
+/**
  * Which parts of one text piece can't be seen. The whole piece first; if it
- * is visible as a whole, each word of 3+ characters is checked on its own
+ * is visible as a whole, each word of 3+ letters or digits is checked on its own
  * (positions estimated proportionally, narrowed by 15% each side so a
  * neighbouring word's pixels don't count), so a box over a name in the middle
  * of a sentence still drops that name. Returns the visible text (hidden words
@@ -58,7 +67,7 @@ export function visiblePart(
   width: number,
   height: number,
 ): { text: string; hiddenSpans: number } {
-  if (visibleChars(str) < 3) return { text: str, hiddenSpans: 0 };
+  if (wordChars(str) < 3) return { text: str, hiddenSpans: 0 };
   if (isHiddenBox(data, width, height, box)) return { text: "", hiddenSpans: 1 };
   const len = str.length;
   if (len < 2) return { text: str, hiddenSpans: 0 };
@@ -70,7 +79,7 @@ export function visiblePart(
   let m: RegExpExecArray | null;
   while ((m = re.exec(str))) {
     const word = m[0];
-    if (/^\s+$/.test(word) || visibleChars(word) < 3) {
+    if (/^\s+$/.test(word) || wordChars(word) < 3) {
       out.push(word);
       if (!/^\s+$/.test(word)) inHidden = false;
       continue;

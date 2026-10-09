@@ -46,6 +46,7 @@ import {
 } from "../interview/info-merger";
 import type { Document, DocumentSourceMeta } from "@shared/schema";
 import { isHousekeepingNote, noteRecordedAsFact } from "@shared/private-notes";
+import { isImageMime } from "@shared/vdr";
 import { withDealFactsLock } from "./facts-lock";
 import { normalisePeriod, stampSourceDetails, type MergeConflict, type MergeContext } from "./merge-policy";
 import { applyRosterCounts, recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
@@ -437,7 +438,6 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
     // (it has no text and Cimple never sends pictures to the AI), and a file
     // the broker chose to "Just store in the data room" isn't read until
     // they ask. No text, no AI.
-    const { isImageMime } = await import("@shared/vdr");
     const storedOnly = !!(doc.sourceMeta as DocumentSourceMeta | null)?.readSkipped;
     if (isImageMime(doc.mimeType) || storedOnly) {
       const meta: DocumentSourceMeta = { ...(((doc.sourceMeta as DocumentSourceMeta | null) ?? {}) as DocumentSourceMeta) };

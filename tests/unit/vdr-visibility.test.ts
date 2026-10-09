@@ -165,7 +165,7 @@ assert.equal(downloadCopy(dd("ledger")), "The general ledger can't be downloaded
   const byKey = Object.fromEntries(flags.map((f) => [f.key, f]));
   assert.equal(byKey.scanned.copy, "Cimple couldn't read text on pages 3–5, so it couldn't check them for personal numbers.");
   assert.equal(byKey.staff_records.look, true);
-  assert.match(byKey.hidden_words.copy, /^Words are hidden under black boxes on page 4\./);
+  assert.match(byKey.hidden_words.copy, /^Words are hidden on page 4, under black boxes or printed so they can't be seen\./);
   assert.equal(byKey.private_matters.copy, "Cimple kept something from this document out of the CIM: 'a driver's possible departure'. Check the document before sharing it.");
   assert.equal(byKey.personal_covered.copy, "3 social insurance numbers on page 2 are covered on every page buyers see.");
   assert.equal(byKey.personal_covered.look, false);

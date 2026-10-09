@@ -124,9 +124,10 @@ export async function prepareItem(itemId: string, opts: { force?: boolean } = {}
   const fileChanged = !!prev && prev.status === "ready" && !!prev.fileHash && prev.fileHash !== fileHash;
   const versionExtra = fileChanged ? { fileVersion: (item.fileVersion ?? 1) + 1, fileChangedAt: now } : {};
 
-  // 3. Nothing to do?
+  // 3. Nothing to do? (A ready item whose cache folder was pruned is prepared again.)
+  const cacheGone = kind !== "ledger" && kind !== "ledger_pending" && kind !== "unsupported" && !fs.existsSync(vdrCacheDir(item.dealId, item.id, forFile, deps.root) ?? "/nonexistent");
   if (prev && prev.forFile === forFile && !opts.force) {
-    if (prev.status === "ready") return prev;
+    if (prev.status === "ready" && !cacheGone) return prev;
     if (prev.status === "failed") {
       const code = prev.errorCode ?? "unreadable";
       const retry = RETRY_CODES.has(code) || (CRASH_CODES.has(code) && (prev.attempts ?? 0) < 2);

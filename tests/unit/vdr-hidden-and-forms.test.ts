@@ -70,6 +70,9 @@ const hiddenPdf = await makePdf(path.join(tmp, "hidden.pdf"), (doc) => {
   doc.rect(68, 146, 330, 20).fill("#1F2A44");
   doc.fillColor("white").fontSize(12).text("Income statement 2023 (header band)", 72, 150);
   doc.fillColor("black").fontSize(12).text("Cost of sales 18,400,000", 72, 200);
+  // A signature line (underscores sit below the measured band): never "hidden".
+  doc.fillColor("black").fontSize(12).text("Per: ______________________", 72, 260);
+  doc.fillColor("black").fontSize(12).text("________________________________ Director", 72, 290);
   // p3: white text on white paper
   doc.addPage();
   doc.fillColor("white").fontSize(12).text("Hidden white text Pacific Coast", 72, 250);
@@ -119,6 +122,8 @@ try {
   assert.match(text(1), /Revenue 29,180,000/);
   assert.match(text(2), /Income statement 2023 \(header band\)/, "white text on a dark band is kept (a design, not a redaction)");
   assert.match(text(2), /Cost of sales 18,400,000/);
+  assert.match(text(2), /Per: _+/, "a signature line is not hidden text");
+  assert.match(text(2), /_+ Director/);
   assert.ok(!/Hidden white text/.test(text(3)), "white-on-white is dropped");
   assert.match(text(3), /Visible line on page three/);
   assert.equal(text(4), "Owner Harjit lives in Surrey", "only the boxed word is dropped");

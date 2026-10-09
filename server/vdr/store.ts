@@ -39,6 +39,8 @@ export interface VdrStore {
 
   listFolders(dealId: string): Promise<VdrFolder[]>;
   insertFolder(row: InsertVdrFolder): Promise<VdrFolder | null>;
+  /** Several folders in one statement (existing preset folders are skipped). */
+  insertFolders(rows: InsertVdrFolder[]): Promise<VdrFolder[]>;
 
   listItems(dealId: string): Promise<VdrItem[]>;
   getItem(id: string): Promise<VdrItem | null>;
@@ -46,6 +48,8 @@ export interface VdrStore {
   itemsForDocument(documentId: string): Promise<VdrItem[]>;
   /** null when a live item for the same document already exists. */
   insertItem(row: InsertVdrItem): Promise<VdrItem | null>;
+  /** Several items in one statement; rows whose document already has a live item are skipped. */
+  insertItems(rows: InsertVdrItem[]): Promise<VdrItem[]>;
   updateItem(id: string, patch: Partial<InsertVdrItem>): Promise<VdrItem | null>;
   /** Live items whose preparation hasn't started, or stalled before `staleBefore`. */
   itemsNeedingPrepare(staleBefore: Date): Promise<Array<{ id: string }>>;
@@ -59,6 +63,7 @@ export interface VdrStore {
   deletePageText(itemId: string): Promise<void>;
 
   log(row: InsertVdrActivity): Promise<void>;
+  logMany(rows: InsertVdrActivity[]): Promise<void>;
 
   getDocument(id: string): Promise<Document | null>;
   listDocuments(dealId: string): Promise<Document[]>;
@@ -97,6 +102,11 @@ export const dbVdrStore: VdrStore = {
     const [r] = await db.insert(vdrFolders).values(row).onConflictDoNothing().returning();
     return r ?? null;
   },
+  async insertFolders(rows) {
+    if (rows.length === 0) return [];
+    const db = await getDb();
+    return db.insert(vdrFolders).values(rows).onConflictDoNothing().returning();
+  },
 
   async listItems(dealId) {
     const db = await getDb();
@@ -115,6 +125,11 @@ export const dbVdrStore: VdrStore = {
     const db = await getDb();
     const [r] = await db.insert(vdrItems).values(row).onConflictDoNothing().returning();
     return r ?? null;
+  },
+  async insertItems(rows) {
+    if (rows.length === 0) return [];
+    const db = await getDb();
+    return db.insert(vdrItems).values(rows).onConflictDoNothing().returning();
   },
   async updateItem(id, patch) {
     const db = await getDb();
@@ -172,6 +187,11 @@ export const dbVdrStore: VdrStore = {
     const db = await getDb();
     await db.insert(vdrActivity).values(row);
   },
+  async logMany(rows) {
+    if (rows.length === 0) return;
+    const db = await getDb();
+    await db.insert(vdrActivity).values(rows);
+  },
 
   async getDocument(id) {
     const db = await getDb();
@@ -194,10 +214,13 @@ export const dbVdrStore: VdrStore = {
 };
 
 /** Logs without ever failing the caller (the log is best-effort; the action stands). */
-export async function logVdrQuietly(store: VdrStore, row: InsertVdrActivity): Promise<void> {
+export async function logVdrQuietly(store: VdrStore, row: InsertVdrActivity | InsertVdrActivity[]): Promise<void> {
+  const rows = Array.isArray(row) ? row : [row];
+  if (rows.length === 0) return;
   try {
-    await store.log(row);
+    if (rows.length === 1) await store.log(rows[0]);
+    else await store.logMany(rows);
   } catch (err: any) {
-    console.warn(`[vdr] couldn't log ${row.action} on ${row.dealId}:`, err?.message ?? err);
+    console.warn(`[vdr] couldn't log ${rows[0].action} on ${rows[0].dealId}:`, err?.message ?? err);
   }
 }

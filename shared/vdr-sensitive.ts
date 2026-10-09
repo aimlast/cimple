@@ -298,10 +298,18 @@ export function scanOfficeParts(entries: ReadonlyArray<{ name: string; text: str
 
 const RECORD_WORDS = [/\bsalar(y|ies)\b/i, /\bwages?\b/i, /\bpayroll\b/i, /\bhourly rate\b/i, /\bSIN\b/, /\bdate of birth\b/i, /\bT4\b/];
 
+/**
+ * Folders whose documents name pay lines as ordinary accounts ("Salaries and
+ * wages", "Payroll taxes", a T2's shareholder schedule): the word rule would
+ * call every set of statements a staff record, so it doesn't apply there.
+ */
+const ACCOUNTS_FOLDERS = new Set(["financial.statements", "financial.tax", "financial.revenue", "financial.bank", "financial.debt"]);
+
 /** True for documents that are staff or pay records (folder, subcategory or ≥ 3 telling words). */
 export function personalRecordsHint(doc: { folderKey?: string | null; subcategory?: string | null }, text: string): boolean {
   if (doc.folderKey === "people.staff" || doc.folderKey === "people.agreements" || doc.folderKey === "financial.gl") return true;
   if (doc.subcategory === "addback_support") return true;
+  if (doc.folderKey && ACCOUNTS_FOLDERS.has(doc.folderKey)) return false;
   let hits = 0;
   for (const re of RECORD_WORDS) if (re.test(text)) hits++;
   return hits >= 3;

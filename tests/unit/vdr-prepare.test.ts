@@ -113,6 +113,12 @@ try {
   assert.equal(again!.forFile, p!.forFile);
   assert.equal(fs.statSync(preparedCacheFile(item("t2"), p!, "p1.webp", root)!).mtimeMs, mtime);
 
+  // A pruned cache folder (the 30-day sweep) is rebuilt on the next open.
+  fs.rmSync(vdrCacheDir(D, item("t2").id, p!.forFile, root)!, { recursive: true, force: true });
+  const rebuilt = await prepareItem(item("t2").id, {}, deps);
+  assert.equal(rebuilt!.forFile, p!.forFile);
+  assert.ok(fs.existsSync(preparedCacheFile(item("t2"), p!, "p1.webp", root)!), "rebuilt");
+
   // ── The broker's cleaned copy is what buyers get ──
   const name = newPrivateName(".pdf");
   fs.mkdirSync(path.dirname(cleanCopyPath(D, name, root)!), { recursive: true });
@@ -190,6 +196,14 @@ try {
   // ── Removed items aren't prepared ──
   await f.store.updateItem(item("notes").id, { removedAt: new Date() });
   assert.equal(await prepareItem(f.items.find((i) => i.documentId === "notes")!.id, {}, deps), null);
+
+  // ── Caps apply to prepare jobs too (before anything is decoded) ──
+  const bomb = Buffer.alloc(64);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]).copy(bomb, 0);
+  bomb.writeUInt32BE(30000, 16);
+  bomb.writeUInt32BE(30000, 20);
+  fs.writeFileSync(path.join(docsDir, "doc_bomb.png"), bomb);
+  await assert.rejects(pool.run({ kind: "prepare", file: path.join(docsDir, "doc_bomb.png"), outDir: path.join(root, "private-vdr-cache", D, "x", "9999999999999999"), fileKind: "image", ext: ".png" }), (e: any) => e.code === "too_large", "a 900-megapixel header is refused without decoding");
 
   // ── The background queue is off on a local server against production ──
   enqueuePrepare("anything");
