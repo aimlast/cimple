@@ -123,8 +123,21 @@ test("DD: an unexplained difference reaches buyers only once shown, and reads 'a
   assert.ok(!/no reason/i.test(JSON.stringify(layer)));
   k.decision = "left_out";
   layer = buildFigureLayer(base.fx.sections as any, figureInputsFor(base.raw, { audience: "buyer", mode: "dd" }), "dd")!;
-  assert.ok(!interestFig()?.checks?.some((x) => x.id === k.key), "left_out never reaches the payload");
+  const opaque = figureInputsFor(base.raw, { audience: "buyer", mode: "dd" })!.idFor!(k.key);
+  assert.ok(!interestFig()?.checks?.some((x) => x.id === k.key || x.id === opaque), "left_out never reaches the payload");
   assert.ok(!JSON.stringify(layer).includes("left_out"));
+});
+
+test("DD buyers: check ids are opaque (a check key carries the figure key)", async () => {
+  const base = await lakeshore({ ddShownAt: new Date() });
+  const layer = buildFigureLayer(base.fx.sections as any, figureInputsFor(base.raw, { audience: "buyer", mode: "dd" }), "dd")!;
+  const checks = Object.values(layer.figures).flatMap((f) => f.checks ?? []);
+  assert.ok(checks.length > 0);
+  for (const c of checks) {
+    assert.match(c.id, /^f_[0-9a-f]{10}$/);
+    if (c.note) assert.ok(!c.note.id.includes("|") && !c.note.id.includes("~"), c.note.id);
+  }
+  assert.ok(!JSON.stringify(layer).includes("~tax_return:"), "no check keys in the buyer payload");
 });
 
 test("a broker preview followed by a buyer view on the same raw inputs serves no suggested note", async () => {

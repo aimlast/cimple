@@ -379,7 +379,8 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
       ? (cimMis || (c.kind === "cim_statements" && c.cimMismatch) ? "cim_mismatch" : !c.located ? "needs_checking" : "not_shown")
       : undefined;
     return {
-      id: c.key,
+      // Opaque for buyers (a check key carries the figure key, and a line slug can carry a name).
+      id: idFor(c.key),
       kindLabel: c.otherLabel,
       value: dollars(c.other),
       ...(c.sourceLabel ? { sourceLabel: c.sourceLabel } : {}),
@@ -389,7 +390,7 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
       size: c.size,
       ...(c.asIssuedText ? { asIssued: c.asIssuedText } : {}),
       note: c.regrouped && c.regroupedText
-        ? { id: `${c.key}#computed`, text: c.regroupedText, basis: "computed", basisLabel: "Worked out from the two documents.", citations: [c.baseCitation, c.otherCitation].filter((x): x is FigureDocRef => !!x) }
+        ? { id: `${idFor(c.key)}#computed`, text: c.regroupedText, basis: "computed", basisLabel: "Worked out from the two documents.", citations: [c.baseCitation, c.otherCitation].filter((x): x is FigureDocRef => !!x) }
         : note ? noteView(note, mode, broker) : null,
       citation: c.otherCitation,
       baseCitation: c.baseCitation,
