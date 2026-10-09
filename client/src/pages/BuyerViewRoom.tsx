@@ -46,6 +46,7 @@ import type { ViewRoomDataRoom } from "@shared/vdr-api";
 import { RoomSwitch } from "@/components/vdr/RoomSwitch";
 import { VdrLinkProvider } from "@/components/vdr/VdrLinkContext";
 import { GlRoomLinkProvider } from "@/components/vdr/GlRoomLinks";
+import { GlMarksProvider, glMarkedLineIds } from "@/components/cim/gl/GlLinks";
 
 type BuyerDecision = "under_review" | "interested" | "not_interested" | "lapsed";
 
@@ -485,6 +486,8 @@ export default function BuyerViewRoom() {
               <CimBlocksProvider host={tracker}>
               {/* Notes on the figures (and, due diligence, the checks) — whitelisted by the server. */}
               <FigureLayerProvider layer={data.figureLayer ?? null} buyer={figureBuyer}>
+              {/* gl's "Found in the books" row marks: only lines whose mark is on in what this buyer is served. */}
+              <GlMarksProvider marks={glMarkedLineIds(visibleSections)}>
               <CimSheet className="px-5 py-6 sm:px-10 sm:py-12" {...{ [READING_SHEET_ATTR]: "" }}>
                 {!visibleSections.some((s) => s.layoutType === "cover_page") && <DdBanner />}
                 {withBrokeragePages(visibleSections, {
@@ -524,6 +527,7 @@ export default function BuyerViewRoom() {
                   </Fragment>
                 ); })())}
               </CimSheet>
+              </GlMarksProvider>
               </FigureLayerProvider>
               </CimBlocksProvider>
               </CimDesignProvider>

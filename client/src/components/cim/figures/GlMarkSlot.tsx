@@ -2,20 +2,17 @@
  * GlMarkSlot — where gl's "Found in the books" mark goes on an earnings-bridge
  * row (dd spec §4.4 / §11.2, INTEGRATION §2.7 rule 6): `<GlMark lineId
  * variant="row" />`, gl's own component, for rows the figure layer ties to a
- * general-ledger add-back line (`layer.glMarks`).
- *
- * STUB until the gl branch is merged: renders nothing (gl's evidence, which
- * the mark reads, doesn't exist yet), so the bridge draws exactly as today.
- * INTEGRATOR (gl merge): `import { GlMark } from "../gl/GlMark";` and return
- * `<GlMark lineId={lineId} variant={variant} />`.
+ * general-ledger add-back line (`layer.glMarks`). gl's mark shows only when
+ * that line's mark is on in what this reader is served (GlMarksProvider,
+ * from the DD page / the note); without a provider nothing is drawn.
  */
 import { useFigureLayer } from "./FigureLayerContext";
 import { useBlockScope } from "../blocks";
+import { GlMark } from "../gl/GlMark";
 
 export function GlMarkSlot({ lineId, variant = "row" }: { lineId: string | null | undefined; variant?: "row" }) {
   if (!lineId) return null;
-  void variant;
-  return null; // INTEGRATOR: <GlMark lineId={lineId} variant={variant} />
+  return <GlMark lineId={lineId} variant={variant} />;
 }
 
 /** The gl line a bridge row (chart point) is, on the current page — or null. */

@@ -271,6 +271,9 @@ const INTERACTION_WORDS: Partial<Record<ReadingInteractionType, [string, string]
   download_attempt: ["Tried to download", "Tried to download"],
   chat_open: ["Opened the question box", "Opened the question box"],
   vdr_open: ["Opened a data-room document", "Opened data-room documents"],
+  // dd (INTEGRATION §2.14): a note on a figure opened; the due-diligence compare switch.
+  figure_note: ["Opened a note on a figure", "Opened notes on figures"],
+  figure_compare: ["Compared the figures with the tax returns", "Compared the figures with the tax returns"],
 };
 
 /** "Switched a table to Normalized · 3 times", most frequent first; media_progress folds into plays. */

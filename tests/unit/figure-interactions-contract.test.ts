@@ -7,8 +7,8 @@
  *     (detail = side_by_side | cim_only) are in READING_INTERACTIONS, so the
  *     ingest accepts them — including on the DD check page and in a chart
  *     point inside a column (block keys the reading tracker already uses);
- *   - before heatmap adds its words, the Engagement tab's interaction lines and
- *     the journey moments skip them (nothing breaks, nothing is invented);
+ *   - the Engagement tab's interaction lines use heatmap's §2.14 words; the
+ *     journey moments skip types without a moment (nothing is invented);
  *   - `financial_view` keeps meaning As Reported / Normalized.
  */
 import assert from "node:assert/strict";
@@ -49,9 +49,12 @@ test("the ingest accepts them where the CIM records them", () => {
   assert.ok(r.success, JSON.stringify(r.success ? null : r.error.issues.slice(0, 3)));
 });
 
-test("before heatmap's words land, the Engagement lines skip them (no crash, nothing invented)", () => {
+test("heatmap's words for them (INTEGRATION §2.14, wired at the dd merge); journeys still skip types without moments", () => {
   const lines = interactionLines({ figure_note: 4, figure_compare: 1, financial_view: 2 } as any);
-  assert.deepEqual(lines.map((l) => l.type), ["financial_view"]);
+  assert.deepEqual(lines.map((l) => l.type), ["figure_note", "financial_view", "figure_compare"]);
+  assert.equal(lines.find((l) => l.type === "figure_note")!.text, "Opened notes on figures · 4 times");
+  assert.equal(lines.find((l) => l.type === "figure_compare")!.text, "Compared the figures with the tax returns");
+  assert.equal(interactionLines({ figure_note: 1 } as any)[0].text, "Opened a note on a figure");
   const insights = readFileSync(join(ROOT, "server/engagement/insights.ts"), "utf8");
   assert.match(insights, /const make = EVENT_MOMENT\[e\.type\];\s*if \(!make\) continue;/, "journeys skip types without words");
 });

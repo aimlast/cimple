@@ -2,25 +2,54 @@ import type { CimSection, CimSectionOverride, Deal, Document } from "@shared/sch
 import { citableDocument } from "@shared/vdr";
 
 /**
- * The data room's side of the dd contract (INTEGRATION §2.6, vdr spec §11.1).
+ * The data room's side of the dd contract (INTEGRATION §2.6, vdr spec §11.1):
+ * what the due-diligence CIM cites comes from dd's registry
+ * (server/cim/dd-citations.ts — the figures' statements, both sides of each
+ * check, note citations, page sources, key terms and the check page), never
+ * from a second rule here. Broker-only, email, call and CRM sources are never
+ * cited (`citableDocument`, applied by dd at build AND serve time). No AI.
  *
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ INTEGRATOR, at the dd merge: return the ids from dd's registry —         │
- * │   const { ddCitedDocuments } = await import("../cim/dd-citations");      │
- * │   return Array.from(new Set((await ddCitedDocuments(dealId))            │
- * │     .map((r) => r.documentId)));                                         │
- * └──────────────────────────────────────────────────────────────────────────┘
- *
- * Until then (dd not merged) the spec's FALLBACK answers (vdr spec §11.1.4):
- * fact tracing over the DD version — every room document whose figures the
- * deal's due-diligence sections print (`documentCimLinks`, the same rule as
- * "Used in the CIM"). No DD version yet → null, so the Data room tab shows
+ * Null = there is no CIM to cite anything yet, so the Data room tab shows
  * "Share what the DD CIM cites" disabled ("Generate the due-diligence CIM
- * first"). Broker-only, email, call and CRM sources are never cited
- * (`citableDocument`). No AI.
+ * first"). A CIM whose figure layer cites nothing → [] (nothing to share).
+ *
+ * `citedByFactTracing` (below) was the stand-in until dd merged — the
+ * documents whose figures the DD sections print. It is kept (and tested) as
+ * the documented fallback rule, but no route calls it any more.
  */
-export async function ddCitedDocumentIds(dealId: string): Promise<string[] | null> {
-  return citedByFactTracing(dealId);
+export type DdAdapterDeps = {
+  cited: (dealId: string) => Promise<Array<{ documentId: string; sectionId: string; page?: number | null }>>;
+  hasCim: (dealId: string) => Promise<boolean>;
+};
+
+async function defaultDdDeps(): Promise<DdAdapterDeps> {
+  const [{ ddCitedDocuments }, { storage }] = await Promise.all([import("../cim/dd-citations"), import("../storage")]);
+  return {
+    cited: (id) => ddCitedDocuments(id),
+    hasCim: async (id) => (await storage.getCimSectionsByDeal(id)).some((s) => s.isVisible !== false),
+  };
+}
+
+const citedMemo = new Map<string, { at: number; ids: string[] | null }>();
+
+export async function ddCitedDocumentIds(dealId: string, depsIn?: DdAdapterDeps): Promise<string[] | null> {
+  const hit = !depsIn ? citedMemo.get(dealId) : undefined;
+  if (hit && Date.now() - hit.at < MEMO_MS) return hit.ids;
+  try {
+    const deps = depsIn ?? (await defaultDdDeps());
+    const rows = await deps.cited(dealId);
+    const ids: string[] | null = rows.length > 0
+      ? Array.from(new Set(rows.map((r) => r.documentId)))
+      : (await deps.hasCim(dealId)) ? [] : null;
+    if (!depsIn) {
+      citedMemo.set(dealId, { at: Date.now(), ids });
+      if (citedMemo.size > 500) citedMemo.clear();
+    }
+    return ids;
+  } catch (err: any) {
+    console.warn(`[vdr] couldn't read what the DD CIM cites for ${dealId}:`, err?.message ?? err);
+    return null;
+  }
 }
 
 export type FactTracingDeps = {
@@ -89,39 +118,50 @@ export type DdDocumentCheck = {
 };
 
 /**
- * ┌──────────────────────────────────────────────────────────────────────────┐
- * │ INTEGRATOR, at the dd merge:                                             │
- * │   const { ddDocumentChecks: dd } = await import("../cim/dd-citations");  │
- * │   return dd(dealId, documentId);                                         │
- * └──────────────────────────────────────────────────────────────────────────┘
- * Until then: null (the broker sees the discrepancy-based checks; buyers none).
+ * dd's checks in which this document is one side (dd-citations
+ * `ddDocumentChecks`). Buyers (the default): exactly what a due-diligence
+ * buyer is served now. The broker's room passes { audience: "broker" } — every
+ * check, marks included; when dd has none for the document, null, so the
+ * broker sees the discrepancy-based checks instead (an empty list would hide
+ * them).
  */
-export async function ddDocumentChecks(_dealId: string, _documentId: string): Promise<DdDocumentCheck[] | null> {
-  return null;
+export async function ddDocumentChecks(dealId: string, documentId: string, opts: { audience?: "buyer" | "broker" } = {}): Promise<DdDocumentCheck[] | null> {
+  const { ddDocumentChecks: dd } = await import("../cim/dd-citations");
+  const checks = await dd(dealId, documentId, { audience: opts.audience ?? "buyer" });
+  if (opts.audience === "broker" && checks.length === 0) return null;
+  return checks;
 }
 
 /**
  * The DD CIM pages that point to one document ("Cited by the DD CIM" in the
- * broker's drawer). ┌ INTEGRATOR, at the dd merge: from dd's registry —
- *   (await ddCitedDocuments(dealId)).filter((r) => r.documentId === documentId)
- *     .map((r) => ({ sectionId: r.sectionId, title: <section title>, page: r.page ?? null }))
- * └ Until then: the same fact tracing over the DD version (page unknown → null).
+ * broker's drawer), from dd's registry: each section it is cited on, with the
+ * page when the citation names one. The check page ("How the figures check
+ * out") is synthetic — it has no stored section, so it is titled here.
  */
-export async function ddCitedSections(dealId: string, documentId: string, depsIn?: FactTracingDeps): Promise<Array<{ sectionId: string; title: string; page: number | null }>> {
+export async function ddCitedSections(dealId: string, documentId: string, depsIn?: DdAdapterDeps & { sections?: (dealId: string) => Promise<Array<Pick<CimSection, "id" | "sectionTitle" | "isVisible">>> }): Promise<Array<{ sectionId: string; title: string; page: number | null }>> {
   try {
-    const deps = depsIn ?? (await defaultTracingDeps());
-    const [deal, overrides, sections, docs] = await Promise.all([deps.getDeal(dealId), deps.ddOverrides(dealId), deps.sections(dealId), deps.documents(dealId)]);
-    const doc = docs.find((d) => d.id === documentId);
-    if (!deal || !doc || !citableDocument(doc) || overrides.length === 0) return [];
-    const { documentCimLinks, documentFacts, sectionText } = await import("./analysis");
+    const deps = depsIn ?? (await defaultDdDeps());
+    const loadSections = depsIn?.sections ?? (async (id: string) => (await import("../storage")).storage.getCimSectionsByDeal(id));
+    const rows = (await deps.cited(dealId)).filter((r) => r.documentId === documentId);
+    if (rows.length === 0) return [];
+    const [{ DD_SOURCE_CHECK_PAGE_ID }, { getCimLayout }, sections] = await Promise.all([
+      import("@shared/figure-layer"),
+      import("@shared/cim-layouts"),
+      loadSections(dealId),
+    ]);
     const byId = new Map(sections.map((s) => [s.id, s]));
-    const texts = overrides
-      .map((o) => {
-        const s = byId.get(o.cimSectionId);
-        return s && s.isVisible !== false ? sectionText({ id: s.id, sectionTitle: s.sectionTitle, brokerEditedContent: o.contentOverride ?? null, aiDraftContent: null, layoutData: o.layoutData ?? null }) : null;
-      })
-      .filter((x): x is NonNullable<typeof x> => !!x);
-    return documentCimLinks(documentFacts((deal.extractedInfo ?? {}) as Record<string, unknown>, documentId), texts).links.map((l) => ({ sectionId: l.sectionId, title: l.title, page: null }));
+    const out: Array<{ sectionId: string; title: string; page: number | null }> = [];
+    const seen = new Set<string>();
+    for (const r of rows) {
+      if (seen.has(r.sectionId)) continue;
+      const s = byId.get(r.sectionId);
+      const title = r.sectionId === DD_SOURCE_CHECK_PAGE_ID ? getCimLayout("dd_source_check")?.label ?? "How the figures check out"
+        : s && s.isVisible !== false ? s.sectionTitle : null;
+      if (!title) continue;
+      seen.add(r.sectionId);
+      out.push({ sectionId: r.sectionId, title, page: typeof r.page === "number" && r.page > 0 ? r.page : null });
+    }
+    return out;
   } catch {
     return [];
   }

@@ -12,6 +12,7 @@
  * row chips placed elsewhere in the CIM (GlMark variant="row").
  */
 import { createContext, useContext, type ReactNode } from "react";
+import { GL_EVIDENCE_LAYOUT, glNoteOf, isGlEvidencePayload } from "@shared/gl-evidence";
 
 export interface GlLinkRenderers {
   /** The ledger link for one add-back (rows = the entries' row numbers, highlighted in the viewer). */
@@ -39,4 +40,22 @@ export function GlMarksProvider({ marks, children }: { marks: ReadonlySet<string
 
 export function useGlMarks(): ReadonlySet<string> | null {
   return useContext(MarksContext);
+}
+
+/**
+ * The lines whose mark is on, read from the sections a reader is served: the
+ * DD page's payload (`mark` per line) and the Full/Blind note's `lineIds`.
+ * The figure layer only says WHERE a bridge row's line is; whether it may say
+ * "Found in the books" is gl's published decision, carried here.
+ */
+export function glMarkedLineIds(sections: ReadonlyArray<{ layoutType: string; layoutData: unknown }>): Set<string> {
+  const out = new Set<string>();
+  for (const s of sections) {
+    if (s.layoutType === GL_EVIDENCE_LAYOUT && isGlEvidencePayload(s.layoutData)) {
+      for (const l of s.layoutData.lines) if (l.mark && typeof l.lineId === "string") out.add(l.lineId);
+    }
+    const note = glNoteOf(s.layoutData);
+    if (note) for (const id of note.lineIds) out.add(id);
+  }
+  return out;
 }

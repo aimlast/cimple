@@ -8,9 +8,9 @@
  *     "Click for more"; a click opens the popover (all three charts wired);
  *   - gl: a bridge row is a ledger add-back line only when its label AND
  *     amount agree (never by amount alone); marks in Full and DD, never in
- *     Blind; the line ids come from gl's glLineIdsForDeal (stubbed until gl
- *     merges → no marks, every CIM as today); the GL mark slot renders nothing
- *     until gl's GlMark is plugged in.
+ *     Blind; the line ids come from gl's glLineIdsForDeal; the GL mark slot
+ *     renders gl's GlMark, shown only for a line whose mark is on in what the
+ *     reader is served (GlMarksProvider).
  */
 import "./react-global";
 import assert from "node:assert/strict";
@@ -70,22 +70,47 @@ test("gl marks in the layer: Full and DD, never Blind", async () => {
   assert.equal(noGl?.glMarks, undefined, "no gl lines → no marks (today)");
 });
 
-test("gl line ids: stubbed until gl merges; mapped through gl's add-back ids when present", async () => {
-  assert.equal((await glLineIdsFor("any")).size, 0, "the stub returns nothing");
+test("gl line ids: gl's glLineIdsForDeal (wired at the dd merge); mapped through gl's add-back ids", async () => {
+  const { memoryStore, _setGlStoreForTests } = await import("../../server/gl/store");
+  const store = memoryStore();
+  _setGlStoreForTests(store);
+  try {
+    assert.equal((await glLineIdsFor("d-none")).size, 0, "no traces → no lines");
+    await store.upsertTrace({ dealId: "d", addbackKey: "vehicle", analysisAddbackId: "ab-1" } as any);
+    await store.upsertTrace({ dealId: "d", addbackKey: "gone", analysisAddbackId: "ab-2", removedAt: new Date() } as any);
+    const ids = await glLineIdsFor("d");
+    assert.ok(ids.get("ab-1"), "the analysis add-back id maps to its ledger line");
+    assert.equal(ids.get("ab-1"), ids.get("vehicle"), "the same line under gl's own key");
+    assert.equal(ids.has("ab-2"), false, "a removed trace has no line");
+  } finally {
+    _setGlStoreForTests(null);
+  }
   const bridge = [{ label: "Personal portion of automobile", amounts: { "2024": 12300 }, addbackId: "ab-1" }, { label: "Donations", amounts: { "2024": 6000 }, addbackId: null }];
   assert.deepEqual(glLinesFrom(bridge, new Map()), []);
   assert.deepEqual(glLinesFrom(bridge, new Map([["ab-1", "glA"]])), [{ lineId: "glA", label: "Personal portion of automobile", amounts: { "2024": 12300 } }]);
   const inputs = { registry: {} } as any;
-  assert.equal(await withGlLines(inputs, "d", bridge), inputs, "unchanged while gl isn't merged");
+  _setGlLineIdsForTests(async () => new Map());
+  assert.equal(await withGlLines(inputs, "d", bridge), inputs, "no ledger line → unchanged");
   _setGlLineIdsForTests(async () => new Map([["ab-1", "glA"]]));
   assert.deepEqual((await withGlLines(inputs, "d", bridge))!.glLines, [{ lineId: "glA", label: "Personal portion of automobile", amounts: { "2024": 12300 } }]);
   _setGlLineIdsForTests(null);
+  const contract = readFileSync(join(ROOT, "server/cim/figures/gl-contract.ts"), "utf8");
+  assert.match(contract, /glLineIdsForDeal\(dealId\)/);
 });
 
-test("the GL mark slot renders nothing until gl's GlMark is plugged in", () => {
-  assert.equal(renderToStaticMarkup(h(GlMarkSlot, { lineId: "glA" })), "");
-  const slot = readFileSync(join(ROOT, "client/src/components/cim/figures/GlMarkSlot.tsx"), "utf8");
-  assert.match(slot, /INTEGRATOR/);
+test("the GL mark slot renders gl's GlMark — only for a line whose mark is on in what the reader is served", async () => {
+  const { GlMarksProvider, glMarkedLineIds } = await import("../../client/src/components/cim/gl/GlLinks");
+  assert.equal(renderToStaticMarkup(h(GlMarkSlot, { lineId: "glA" })), "", "no marks provider (print, heat map) → nothing");
+  const on = renderToStaticMarkup(h(GlMarksProvider, { marks: new Set(["glA"]) }, h(GlMarkSlot, { lineId: "glA" })));
+  assert.match(on, /Found in the books/);
+  assert.match(on, /data-testid="gl-row-mark-glA"/);
+  assert.equal(renderToStaticMarkup(h(GlMarksProvider, { marks: new Set(["glA"]) }, h(GlMarkSlot, { lineId: "glB" }))), "", "a line whose mark is off → nothing");
+  const marks = glMarkedLineIds([
+    { layoutType: "gl_evidence", layoutData: { pageId: "glsec_1", lines: [{ lineId: "glA", mark: true }, { lineId: "glB", mark: false }] } },
+    { layoutType: "waterfall_chart", layoutData: { _glNote: { text: "Found in the books.", lineIds: ["glC"] } } },
+    { layoutType: "financial_table", layoutData: {} },
+  ]);
+  assert.deepEqual([...marks].sort(), ["glA", "glC"]);
 });
 
 test("the earnings bridge on a phone: each anchored amount is a figure trigger", async () => {

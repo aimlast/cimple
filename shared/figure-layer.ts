@@ -34,64 +34,30 @@ import { AS_ISSUED, FIGURE_LINES, baseLineOf, figureKey, parseFigureKey, standar
 import { pageRole } from "./cim-page-role";
 import { keyTermFamilyFor, type KeyTermFamily } from "./dd-key-terms";
 import { screenBuyerStrings, type StringScreen } from "./figure-strings";
+import { citableDocument, citationLabel, type VdrDocKind, type VdrDocRef } from "./vdr";
 
-// ── Documents (vdr contract fallbacks) ─────────────────────────────────────
-// These mirror shared/vdr.ts (stream "vdr" — VdrDocKind, VdrDocRef,
-// citationLabel, citableDocument) so dd builds and runs before vdr merges.
-// INTEGRATOR: at the dd merge, alias FigureDocRef = VdrDocRef and switch the
-// two functions to vdr's (same behaviour, same words).
+// ── Documents (vdr's contract, INTEGRATION §2.6) ───────────────────────────
+// The data room owns the document rules (shared/vdr.ts): the citation kinds,
+// the reference shape, the neutral chip label (never a title) and which
+// documents may be cited at all. dd only uses them.
 
-export type FigureDocKind =
-  | "financial_statements" | "tax_return" | "general_ledger" | "bank_statement" | "revenue_report"
-  | "ar_ap_report" | "lease" | "contract" | "corporate_record" | "payroll_report" | "invoice"
-  | "licence" | "insurance" | "asset_list" | "operating_report" | "other";
+export type FigureDocKind = VdrDocKind;
+export type FigureDocRef = VdrDocRef;
 
-export interface FigureDocRef {
-  documentId: string;
-  kind: FigureDocKind;
-  period?: string | null;
-  page?: number | null;
-  needle?: string | null;
-  sheet?: string | null;
-  rows?: number[] | null;
-  sumColumn?: number | null;
-}
-
-const KIND_LABEL: Record<FigureDocKind, string> = {
-  financial_statements: "Financial statements",
-  tax_return: "Tax return",
-  general_ledger: "General ledger",
-  bank_statement: "Bank statement",
-  revenue_report: "Revenue report",
-  ar_ap_report: "Receivables and payables report",
-  lease: "Lease",
-  contract: "Contract",
-  corporate_record: "Corporate record",
-  payroll_report: "Payroll report",
-  invoice: "Invoice",
-  licence: "Licence",
-  insurance: "Insurance document",
-  asset_list: "Asset list",
-  operating_report: "Operating report",
-  other: "A supporting document",
-};
-
-/** The chip text when the document isn't visible: "Tax return 2023" — never a title (= vdr citationLabel). */
+/** The chip text when the document isn't visible: "Tax return 2023" — never a title (vdr citationLabel). */
 export function figureCitationLabel(ref: Pick<FigureDocRef, "kind" | "period">): string {
-  const kind = ref.kind in KIND_LABEL ? ref.kind : "other";
-  if (kind === "other") return KIND_LABEL.other;
-  const period = typeof ref.period === "string" && /^(FY)?\d{4}(-\d{2})?$/.test(ref.period.trim()) ? ref.period.trim() : null;
-  return period ? `${KIND_LABEL[kind]} ${period}` : KIND_LABEL[kind];
+  return citationLabel(ref);
 }
 
-/** May the DD CIM cite this document at all (= vdr citableDocument / isRoomMaterial)? */
+/** May the DD CIM cite this document at all (vdr citableDocument)? */
 export function figureCitableDocument(doc: { visibility?: string | null; sourceKind?: string | null; category?: string | null; subcategory?: string | null; fileUrl?: string | null }): boolean {
-  if (doc.visibility === "broker_only") return false;
-  if (doc.sourceKind && doc.sourceKind !== "document") return false;
-  if (!doc.fileUrl) return false;
-  if (doc.category && ["transcripts", "email"].includes(doc.category)) return false;
-  if (doc.subcategory && ["transcript", "call", "email", "crm_note"].includes(doc.subcategory)) return false;
-  return true;
+  return citableDocument({
+    visibility: doc.visibility ?? null,
+    sourceKind: doc.sourceKind ?? null,
+    category: doc.category ?? null,
+    subcategory: doc.subcategory ?? null,
+    fileUrl: doc.fileUrl ?? null,
+  });
 }
 
 // ── Inputs ───────────────────────────────────────────────────────────────

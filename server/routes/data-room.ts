@@ -1865,7 +1865,8 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       const keyFigures = presentKeyFigures(facts).sort((a, b) => keyFigureRank(a) - keyFigureRank(b)).slice(0, 12).map((f) => ({ key: f.key, label: f.label, value: f.text.length > 160 ? `${f.text.slice(0, 159)}…` : f.text, inCim: f.keys.some((k) => inCim.has(k)) }));
       let checks: ItemNotesPayload["checks"] = [];
       if (doc) {
-        const dd = await ddDocumentChecks(deal.id, doc.id).catch(() => null);
+        // The broker reads every check (marks included); none from dd → the discrepancy-based checks.
+        const dd = await ddDocumentChecks(deal.id, doc.id, { audience: "broker" }).catch(() => null);
         if (dd) {
           checks = dd.map((c) => {
             const other = c.other ? docs.find((x) => x.id === c.other!.documentId)?.name ?? "another document" : null;

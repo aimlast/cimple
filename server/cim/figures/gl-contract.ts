@@ -8,12 +8,11 @@
  *                  (`CimBridgeLine.addbackId`, added by gl in cim-financials.ts)
  *   line ids       gl's `glLineIdsForDeal(dealId)`: add-back id → lineId
  *
- * STUB until the gl branch is merged: `glLineIdsFor` returns an empty map, so
- * no mark is emitted and every CIM renders as today.
- * INTEGRATOR (gl merge): make `glLineIdsFor` return
- *   `(await import("../../gl/evidence")).glLineIdsForDeal(dealId)`
- * and swap `client/src/components/cim/figures/GlMarkSlot.tsx` to render gl's
- * `GlMark`. dd never writes add-back notes (that is gl's `why`).
+ * Wired at the dd merge: `glLineIdsFor` is gl's `glLineIdsForDeal`, and
+ * `client/src/components/cim/figures/GlMarkSlot.tsx` renders gl's `GlMark`
+ * (shown only when gl's published payload has that line's mark on). The layer
+ * never emits marks in the Blind CIM. dd never writes add-back notes (that is
+ * gl's `why`).
  */
 import type { GlBridgeLine } from "@shared/figure-anchors";
 
@@ -29,10 +28,11 @@ export function _setGlLineIdsForTests(fn: ((dealId: string) => Promise<Map<strin
   lineIdsSeam = fn;
 }
 
-/** gl's add-back id → ledger line id for this deal ({} until gl is merged). */
+/** gl's add-back id → ledger line id for this deal (gl's glLineIdsForDeal). */
 export async function glLineIdsFor(dealId: string): Promise<Map<string, string>> {
   if (lineIdsSeam) return lineIdsSeam(dealId);
-  return new Map(); // INTEGRATOR: glLineIdsForDeal(dealId)
+  const { glLineIdsForDeal } = await import("../../gl/evidence");
+  return glLineIdsForDeal(dealId);
 }
 
 /** The bridge's add-backs with a ledger line (pure). */

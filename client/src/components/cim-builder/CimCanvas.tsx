@@ -29,6 +29,9 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TASK_LABEL, type BuilderSection } from "./api";
 import { FigureLayerProvider } from "@/components/cim/figures/FigureLayerContext";
+import { VdrLinkProvider } from "@/components/vdr/VdrLinkContext";
+import { GlRoomLinkProvider } from "@/components/vdr/GlRoomLinks";
+import { GlMarksProvider, glMarkedLineIds } from "@/components/cim/gl/GlLinks";
 import { DdBanner } from "@/components/cim/figures/DdBanner";
 import { DdPreviewBar } from "@/components/cim/figures/DdPreviewBar";
 import { usePreviewFigureLayer, withPreviewExtras } from "@/components/cim/figures/usePreviewFigureLayer";
@@ -266,6 +269,11 @@ function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId
         onReview={figActions.openReview}
       />
       {figActions.overlays}
+      {/* The broker's preview: citation chips name the deal's own documents and link into the
+          Data room tab; gl's ledger links and row marks read the same way as for buyers (INTEGRATION §2.6–2.7). */}
+      <VdrLinkProvider source={{ kind: "broker", dealId: deal.id }}>
+      <GlRoomLinkProvider>
+      <GlMarksProvider marks={glMarkedLineIds(shown)}>
       <FigureLayerProvider layer={fig.data?.layer ?? null} broker={figActions.hooks}>
       <CimSheet className="px-4 py-6 sm:px-10 sm:py-12">
         {!shown.some((s) => s.layoutType === "cover_page") && <DdBanner />}
@@ -289,6 +297,9 @@ function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId
         )}
       </CimSheet>
       </FigureLayerProvider>
+      </GlMarksProvider>
+      </GlRoomLinkProvider>
+      </VdrLinkProvider>
     </CimDesignProvider>
   );
 }

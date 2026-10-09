@@ -30,29 +30,23 @@ import { financialSources, sourceKindOf, statementValuesByYear, sourceRef, sourc
 import { buildChecks, type CheckDecision, type ChecksResult } from "./checks";
 import { analysisNoteSentences, hintsFor } from "./hints";
 import { getFigureState, listDecisions, listNotes, listQuestions, type FigureDb } from "./store";
+import { docKindFor } from "../../vdr/auto-file";
 import { screenCtxFor, stringScreenFor, holdsText, type FigureScreenCtx } from "./guards";
 
-// ── Document kinds for citations (vdr's docKindFor until vdr merges) ───────
+// ── Document kinds for citations ────────────────────────────────────────
 
-/** The citation kind of a document (= vdr docKindFor's buckets; fallback rules). */
-export function docKindOf(doc: Pick<SourceDoc, "name" | "extractedData" | "category">): FigureDocKind {
+/**
+ * The citation kind of a document. A statement or tax return the figure
+ * checks themselves read as one keeps that role (the check's two sides must
+ * be labelled as what they are); everything else is the data room's
+ * classification (vdr docKindFor, INTEGRATION §2.6), so a chip names a
+ * document the way the room files it.
+ */
+export function docKindOf(doc: Pick<SourceDoc, "name" | "extractedData" | "category"> & { subcategory?: string | null; fileUrl?: string | null }): FigureDocKind {
   const kind = sourceKindOf(doc);
   if (kind === "tax_return") return "tax_return";
   if (kind === "statements" || kind === "management") return "financial_statements";
-  const t = `${String((doc.extractedData ?? {})._documentType ?? "")} ${doc.name ?? ""}`;
-  if (/general ledger|\bg\/l\b|trial balance/i.test(t)) return "general_ledger";
-  if (/bank statement/i.test(t)) return "bank_statement";
-  if (/\blease\b/i.test(t)) return "lease";
-  if (/licen[cs]|permit|certificat|accreditation|registration/i.test(t)) return "licence";
-  if (/insurance/i.test(t)) return "insurance";
-  if (/contract|agreement|\bmsa\b/i.test(t)) return "contract";
-  if (/minute book|articles|bylaws|corporate record|share register/i.test(t)) return "corporate_record";
-  if (/payroll|t4\b|staff list|roster/i.test(t)) return "payroll_report";
-  if (/fleet list|asset (?:list|register)|equipment list/i.test(t)) return "asset_list";
-  if (/revenue|sales report|customer revenue|payer mix/i.test(t)) return "revenue_report";
-  if (/receivable|payable|aging/i.test(t)) return "ar_ap_report";
-  if (/report|summary|workbook|schedule/i.test(t)) return "operating_report";
-  return "other";
+  return docKindFor({ name: doc.name, category: doc.category, subcategory: doc.subcategory ?? null, fileUrl: doc.fileUrl ?? null, extractedData: doc.extractedData });
 }
 
 /** A short phrase for a document kind ("From the lease"). */
