@@ -145,7 +145,7 @@ async function main() {
     assert.deepEqual(row.draft.blocks.map((b) => b.slot), TEASER_TEMPLATES.one_page.slots.map((s) => s.slot));
     const key = row.draft.blocks.find((b) => b.slot === "key_numbers")!;
     const cells = key.layoutData.cells as Array<{ key: string; value: string }>;
-    assert.deepEqual(cells.map((c) => [c.key, c.value]), [["revenue", "$30M–$35M"], ["earnings", "$3M–$4M"], ["askingPrice", "{price}"], ["employees", "100–249 employees"]]);
+    assert.deepEqual(cells.map((c) => [c.key, c.value]), [["revenue", "$30M–$35M"], ["earnings", "$3M–$4M"], ["askingPrice", "{price}"], ["employees", "100–249"]]);
     assert.equal(row.draft.header!.label, "CONFIDENTIAL OPPORTUNITY");
     assert.equal(row.draft.header!.tagline, written.tagline);
     assert.deepEqual(row.draft.header!.chips, ["Transportation & Logistics", "British Columbia", "Established 30+ years"]);

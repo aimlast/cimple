@@ -382,6 +382,32 @@
 /* ─────────────────────────────────────────────
    CIM PRINT STYLES
 ───────────────────────────────────────────── */
+/* ── Teaser pages (client/src/components/teaser/TeaserPages.tsx) ────────────
+   A teaser is a one- or two-page printed summary: the CIM's own renderers,
+   a little denser than the CIM's reading layout. The hidden measuring copy
+   wears the same class, so the page count matches what's drawn. */
+.teaser-sheet .cim-heading { font-size: 1rem !important; line-height: 1.3rem !important; }
+.teaser-sheet .cim-section > .mb-4,
+.teaser-sheet .cim-section > .mb-5 { margin-bottom: 0.375rem !important; }
+.teaser-sheet .space-y-4 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.2rem !important; }
+.teaser-sheet .space-y-3 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.375rem !important; }
+.teaser-sheet .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.25rem !important; }
+.teaser-sheet .py-4 { padding-top: 0.625rem !important; padding-bottom: 0.625rem !important; }
+.teaser-sheet .leading-relaxed, .teaser-sheet .leading-\[1\.7\] { line-height: 1.45 !important; }
+.teaser-sheet .text-sm { font-size: 0.8125rem !important; line-height: 1.125rem !important; }
+.teaser-sheet .text-xs { font-size: 0.71875rem !important; line-height: 1rem !important; }
+.teaser-sheet .py-1 { padding-top: 0.0625rem !important; padding-bottom: 0.0625rem !important; }
+.teaser-sheet .pb-1\.5 { padding-bottom: 0.25rem !important; }
+.teaser-sheet .mb-2 { margin-bottom: 0.3rem !important; }
+.teaser-sheet .mt-1 { margin-top: 0.125rem !important; }
+/* Key numbers at one size (the CIM sizes each by its length); a phrase ("Vendor financing available") smaller. */
+.teaser-sheet .tabular-nums.font-semibold.tracking-tight { font-size: 1.125rem !important; line-height: 1.5rem !important; }
+.teaser-sheet .tabular-nums.font-semibold.tracking-tight.text-base.break-words { font-size: 0.9375rem !important; line-height: 1.25rem !important; }
+/* Rule-style headings (some looks): a tighter rule. */
+.teaser-sheet .cim-section .pb-2\.5 { padding-bottom: 0.375rem !important; }
+/* Numbered steps: small numbers. */
+.teaser-sheet .text-xl.tabular-nums.text-teal { font-size: 0.9375rem !important; line-height: 1.25rem !important; }
+
 @media print {
   /* Hide interactive chrome */
   .sticky, [class*="sticky"] { position: static !important; }

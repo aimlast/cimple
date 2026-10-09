@@ -355,10 +355,8 @@ export interface CellSettings {
 
 const cell = (key: string, label: string, value: string | null): KeyCell | null => (value ? { key, label, value } : null);
 const money = (n: number | null, style: NumberStyle) => (n ? moneyIn(style, n) : null);
-const employeesWords = (n: number | null) => {
-  const r = headcountRange(n);
-  return r ? `${r} employees` : null;
-};
+/** "10–24" under the label "Employees" (never "10–24 employees · Employees"). */
+const employeesWords = (n: number | null) => headcountRange(n);
 
 /** The Key numbers row (One page, Two page, Investor): Revenue · SDE/Adjusted EBITDA · Asking price · Employees (+ margin for the Investor brief). */
 export function keyCellsFor(templateKey: string, f: TeaserFigures, s: CellSettings): KeyCell[] {

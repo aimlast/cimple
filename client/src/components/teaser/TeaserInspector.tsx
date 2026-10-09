@@ -188,6 +188,9 @@ function HeaderEditor({ api, state }: { api: TeaserApi; state: TeaserState }) {
 // ── A block ─────────────────────────────────────────────────────────────────
 type Json = Record<string, any>;
 
+/** Layout settings the editor keeps but doesn't show (how a list is drawn, the index flag…). */
+const KEPT_KEYS = ["style", "columns", "ordered", "indexed", "expandable", "series"];
+
 /** The part of layoutData the structured editor shows (cells and the data drawn from them stay out). */
 function editableData(b: TeaserBlock): Json {
   const d: Json = { ...(b.layoutData ?? {}) };
@@ -199,8 +202,15 @@ function editableData(b: TeaserBlock): Json {
     if (b.layoutType === "two_column") delete d.right;
   }
   if (b.layoutType === "prose_highlight") delete d.body;
-  delete d.indexed;
+  for (const k of KEPT_KEYS) delete d[k];
   return d;
+}
+
+/** The edited fields put back over everything the editor didn't show. */
+function mergedData(b: TeaserBlock, edited: Json): Json {
+  const { cells: _cells, ...rest } = (b.layoutData ?? {}) as Json;
+  void _cells;
+  return { ...rest, ...edited };
 }
 
 function BlockEditor({
@@ -226,9 +236,9 @@ function BlockEditor({
     if (title !== block.title) patch.title = title;
     if (prose) {
       patch.body = body;
-      patch.layoutData = { ...editableData(block), body };
+      patch.layoutData = mergedData(block, { ...editableData(block), body });
     } else if (showData && JSON.stringify(data) !== initialData) {
-      patch.layoutData = data;
+      patch.layoutData = mergedData(block, data);
     }
     api.patchBlock.mutate(patch);
   };

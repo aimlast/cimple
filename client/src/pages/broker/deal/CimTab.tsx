@@ -209,6 +209,8 @@ export function CimTab() {
     approved: !!(deal.contentApprovedByBroker || deal.contentApprovedBySeller || deal.designApprovedByBroker || deal.designApprovedBySeller),
   });
   const byLevel = (l: AccessLevel) => data.buyers.byLevel[l] ?? 0;
+  // Made, but buyers can't open it until the CIM is published.
+  const readyWord: TileModel["status"] = deal.isLive ? { text: "Ready", tone: "ok" } : { text: "Ready · not live yet", tone: "amber" };
   const ddStatusWord = ddRun.busy ? "Writing" : !data.dd.generated ? "Not made yet" : (data.dd.outOfDate ?? 0) > 0 ? `${data.dd.outOfDate} section${data.dd.outOfDate === 1 ? "" : "s"} out of date` : "Ready";
 
   // ── The four tiles ─────────────────────────────────────────────────────
@@ -233,7 +235,7 @@ export function CimTab() {
         : !data.blind.generated ? { text: "Not made yet", tone: "amber" }
         : data.blind.held > 0 ? { text: `${data.blind.held} section${data.blind.held === 1 ? "" : "s"} held back`, tone: "red" }
         : data.blind.updating > 0 ? { text: `Updating ${data.blind.updating}`, tone: "amber" }
-        : { text: "Ready", tone: "ok" },
+        : readyWord,
       count: byLevel(BLIND_ACCESS_LEVEL),
       desc: data.blind.codename ? `Under “${data.blind.codename}”` : "Under a project codename",
       onOpen: () => setView("versions"),
@@ -241,7 +243,7 @@ export function CimTab() {
     },
     {
       level: NAMED_ACCESS_LEVEL,
-      status: !hasSections ? { text: "No CIM yet", tone: "muted" } : { text: "Ready", tone: "ok" },
+      status: !hasSections ? { text: "No CIM yet", tone: "muted" } : readyWord,
       count: byLevel(NAMED_ACCESS_LEVEL),
       desc: "Name, people and places shown",
       onOpen: () => setView("versions"),
@@ -249,7 +251,7 @@ export function CimTab() {
     },
     {
       level: DD_ACCESS_LEVEL,
-      status: !hasSections ? { text: "No CIM yet", tone: "muted" } : { text: ddStatusWord, tone: ddStatusWord === "Ready" ? "ok" : ddRun.busy ? "amber" : (data.dd.outOfDate ?? 0) > 0 ? "blue" : "muted" },
+      status: !hasSections ? { text: "No CIM yet", tone: "muted" } : ddStatusWord === "Ready" ? readyWord : { text: ddStatusWord, tone: ddRun.busy ? "amber" : (data.dd.outOfDate ?? 0) > 0 ? "blue" : "muted" },
       count: byLevel(DD_ACCESS_LEVEL),
       desc: "+ DD detail and the data room",
       onOpen: () => setView("versions"),

@@ -39,7 +39,7 @@ import { pageBox, paginateTeaser, printedPageCount, type TeaserPagination } from
 export type TeaserPagesMode = "editor" | "buyer" | "seller" | "print" | "thumb";
 
 /** Space between blocks on a teaser page (tighter than the CIM's 40 px). */
-export const TEASER_BLOCK_GAP = 22;
+export const TEASER_BLOCK_GAP = 11;
 
 export interface TeaserLayoutInfo {
   /** Printed pages (an oversized block spills onto more). */
@@ -235,7 +235,7 @@ export function TeaserPages(props: TeaserPagesProps) {
   // ── The hidden measuring layer (page text width; no reading attributes) ──
   const measureLayer = (
     <div aria-hidden className="pointer-events-none absolute left-0 top-0 h-0 overflow-hidden" style={{ visibility: "hidden", width: box.contentWidth }}>
-      <CimSheet flow={false} style={{ width: box.contentWidth, border: "none", boxShadow: "none", borderRadius: 0, padding: 0 }}>
+      <CimSheet flow={false} className="teaser-sheet" style={{ width: box.contentWidth, border: "none", boxShadow: "none", borderRadius: 0, padding: 0 }}>
         <div ref={measured.ref}>
           {items.map((it) => (
             <div key={it.id} className="flow-root">{renderItem(it.id, it.section, true)}</div>
@@ -264,7 +264,7 @@ export function TeaserPages(props: TeaserPagesProps) {
             <div style={mode === "print" ? undefined : { width: box.width, transform: `scale(${scale})`, transformOrigin: "top left" }}>
               <CimSheet
                 flow={false}
-                className={cn("relative", mode === "print" ? "teaser-print-sheet" : "")}
+                className={cn("teaser-sheet relative", mode === "print" ? "teaser-print-sheet" : "")}
                 style={{ width: box.width, minHeight: box.height, height: mode === "print" ? box.height : pageH, padding: 48, borderRadius: mode === "thumb" ? 4 : 6, overflow: mode === "print" ? "hidden" : undefined }}
               >
                 {group.map((idx, j) => {
@@ -296,7 +296,7 @@ export function TeaserPages(props: TeaserPagesProps) {
   // One continuous sheet (phones): page breaks shown as thin dividers in the editor.
   const pageStartIdx = new Set(allGroups.slice(1).map((g) => g[0]));
   const sheetView = (
-    <CimSheet flow={false} className="px-5 py-6 sm:px-8 sm:py-8" style={{ borderRadius: 8 }}>
+    <CimSheet flow={false} className="teaser-sheet px-5 py-6 sm:px-8 sm:py-8" style={{ borderRadius: 8 }}>
       {items.map((it, i) => (
         <div key={it.id} className="flow-root" style={i === 0 ? undefined : { marginTop: TEASER_BLOCK_GAP }}>
           {mode === "editor" && pageStartIdx.has(i) && (

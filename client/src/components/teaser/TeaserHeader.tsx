@@ -36,7 +36,7 @@ export function TeaserHeader({ header, className, warning }: { header: TeaserHea
             <p className="text-[11px] font-semibold uppercase tracking-[0.22em]" style={{ color: theme.accentText }}>
               {header.label}
             </p>
-            <h1 className="cim-display mt-2 text-[34px] leading-[1.08] tracking-tight break-words" style={{ color: theme.heading }}>
+            <h1 className="cim-display mt-1.5 text-[30px] leading-[1.08] tracking-tight break-words" style={{ color: theme.heading }}>
               {header.codename}
             </h1>
           </div>
@@ -47,10 +47,10 @@ export function TeaserHeader({ header, className, warning }: { header: TeaserHea
           ) : null}
         </div>
         {header.tagline && (
-          <p className="mt-3 text-[15px] leading-relaxed max-w-[60ch]" style={{ color: theme.inkSoft }}>{header.tagline}</p>
+          <p className="mt-2 text-[14px] leading-snug max-w-[60ch]" style={{ color: theme.inkSoft }}>{header.tagline}</p>
         )}
         {header.chips.length > 0 && (
-          <div className="mt-4 flex flex-wrap gap-1.5">
+          <div className="mt-2.5 flex flex-wrap gap-1.5">
             {header.chips.map((c, i) => (
               <span
                 key={`${c}-${i}`}
@@ -62,7 +62,7 @@ export function TeaserHeader({ header, className, warning }: { header: TeaserHea
             ))}
           </div>
         )}
-        <div className="mt-5 h-px w-full" style={{ backgroundColor: theme.line }} />
+        <div className="mt-3 h-px w-full" style={{ backgroundColor: theme.line }} />
       </div>
       {warning && (
         <p className="mt-2 rounded-md border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-[11px] text-red-700" role="alert">{warning}</p>

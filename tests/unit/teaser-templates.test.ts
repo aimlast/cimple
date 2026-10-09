@@ -101,7 +101,7 @@ async function main() {
   await check("employees and years are ranges in both number styles", () => {
     for (const numbers of ["ranges", "rounded"] as const) {
       const cells = kn.keyCellsFor("one_page", base, { numbers, showAskingPrice: true });
-      assert.equal(cells.find((c) => c.key === "employees")!.value, "25–49 employees");
+      assert.equal(cells.find((c) => c.key === "employees")!.value, "25–49");
       const rows = kn.listingRowsFor(base, { numbers, showAskingPrice: true });
       assert.equal(rows.find((r) => r.key === "established")!.value, "20+ years");
       assert.ok(!rows.some((r) => /\b27\b|\b22\b/.test(r.value)), "never the exact headcount or years");

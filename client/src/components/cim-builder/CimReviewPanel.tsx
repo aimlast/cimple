@@ -298,13 +298,18 @@ const KIND_ORDER: CimWarningKind[] = ["placeholder", "hidden", "figures", "remov
 /** Groups that start open (the ones that keep a section from buyers). */
 const OPEN_KINDS = new Set<CimWarningKind>(["placeholder", "hidden"]);
 
-/** "3 sections: Fleet, Customers, Working capital" / "2 notes". */
-export function groupSummary(items: Array<{ sectionTitle: string | null }>): string {
-  const titles = Array.from(new Set(items.map((i) => i.sectionTitle).filter((t): t is string => !!t)));
-  if (titles.length === 0) return `${items.length} note${items.length === 1 ? "" : "s"}`;
+/**
+ * "3 sections: Fleet, Customers, Working capital" / "2 notes". Only quoted
+ * names that ARE sections count as sections (a note may quote a figure).
+ */
+export function groupSummary(items: Array<{ sectionTitle: string | null }>, isSection: (title: string) => boolean = () => true): string {
+  const titles = Array.from(new Set(items.map((i) => i.sectionTitle).filter((t): t is string => !!t && isSection(t))));
+  const notes = `${items.length} note${items.length === 1 ? "" : "s"}`;
+  if (titles.length === 0) return notes;
   const shown = titles.slice(0, 3).join(", ");
   const more = titles.length > 3 ? ` and ${titles.length - 3} more` : "";
-  return `${titles.length} section${titles.length === 1 ? "" : "s"}: ${shown}${more}`;
+  const where = `${titles.length} section${titles.length === 1 ? "" : "s"}: ${shown}${more}`;
+  return items.length > titles.length ? `${notes} · ${where}` : where;
 }
 
 /** The note groups the CIM tab shows (and counts): one per kind, in order; placeholders without a note get their own group. */
@@ -425,7 +430,7 @@ function NoteGroup({
       <button type="button" className="flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
         <span className={cn("shrink-0 rounded px-1.5 py-px text-[10px] font-medium", severe ? "bg-red-500/10 text-red-400" : "bg-amber-500/10 text-amber-600 dark:text-amber-400")}>{KIND_LABEL[kind]}</span>
         <span className="shrink-0 rounded-full bg-muted px-1.5 text-[11px] font-semibold tabular-nums text-muted-foreground">{items.length}</span>
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{groupSummary(items)}</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{groupSummary(items, (t) => !!sectionFor(t))}</span>
         {first && onOpenSection && !open && (
           <span role="link" tabIndex={0} className="hidden shrink-0 text-xs text-teal hover:underline sm:inline" onClick={(e) => { e.stopPropagation(); onOpenSection(first.id); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onOpenSection(first.id); } }}>
             Open section

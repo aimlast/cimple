@@ -131,8 +131,11 @@ const hasToken = (s: string, t: string) => s.includes(t);
 /** Fill the serve-time tokens in a block. Cells / lines whose token has no value are dropped. */
 export function fillTeaserTokens(block: TeaserBlock, fill: TeaserFill): TeaserBlock {
   const firm = fill.firm;
-  const replaceAll = (s: string) =>
-    s.split(TEASER_TOKENS.firm).join(firm).split(TEASER_TOKENS.price).join(fill.price ?? "").split(TEASER_TOKENS.contact).join(fill.contact ?? "");
+  const replaceAll = (s: string) => {
+    const out = s.split(TEASER_TOKENS.firm).join(firm).split(TEASER_TOKENS.price).join(fill.price ?? "").split(TEASER_TOKENS.contact).join(fill.contact ?? "");
+    // "{firm} reviews your request" with no firm name on file: "The broker reviews…", never "the broker…" at the start.
+    return s.startsWith(TEASER_TOKENS.firm) ? out.charAt(0).toUpperCase() + out.slice(1) : out;
+  };
   // Cells first: a price cell with no price is dropped (never "—").
   let b = block;
   const cells = blockCells(b);
