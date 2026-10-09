@@ -156,7 +156,11 @@ async function fixedBlockFor(deal: Deal, row: TeaserRow, slot: string, templateK
 
 /** The per-link limiter for the buyer's request steps (10 an hour; fresh link once a day). */
 const linkKey = (req: Request) => createHash("sha256").update(String(req.params.token ?? "")).digest("hex").slice(0, 32);
+// One budget per step, so "Not for me" twice never blocks confirming the email.
+const sendLimiter = createPerKeyLimiter({ limit: 10, windowMs: 3_600_000 }); // the module adds 3/h + 10/day on actual sends
+const verifyLimiter = createPerKeyLimiter({ limit: 10, windowMs: 3_600_000 });
 const requestLimiter = createPerKeyLimiter({ limit: 10, windowMs: 3_600_000 });
+const passLimiter = createPerKeyLimiter({ limit: 10, windowMs: 3_600_000 });
 const freshLimiter = createPerKeyLimiter({ limit: 1, windowMs: 86_400_000 });
 const perLink = (limiter: ReturnType<typeof createPerKeyLimiter>): RequestHandler => (req, res, next) => {
   if (!limiter.take(linkKey(req))) {
@@ -166,8 +170,7 @@ const perLink = (limiter: ReturnType<typeof createPerKeyLimiter>): RequestHandle
   next();
 };
 export function _resetTeaserLinkLimitsForTests(): void {
-  requestLimiter.reset();
-  freshLimiter.reset();
+  for (const l of [sendLimiter, verifyLimiter, requestLimiter, passLimiter, freshLimiter]) l.reset();
 }
 
 /**
@@ -808,7 +811,7 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
     return { ...found, row };
   };
 
-  app.post("/api/view/:token/email-check", perLink(requestLimiter), async (req, res) => {
+  app.post("/api/view/:token/email-check", perLink(sendLimiter), async (req, res) => {
     try {
       const g = await buyerTeaserGate(req, res);
       if (!g) return;
@@ -822,7 +825,7 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
     }
   });
 
-  app.post("/api/view/:token/email-check/verify", perLink(requestLimiter), async (req, res) => {
+  app.post("/api/view/:token/email-check/verify", perLink(verifyLimiter), async (req, res) => {
     try {
       const g = await buyerTeaserGate(req, res);
       if (!g) return;
@@ -903,7 +906,7 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
     }
   });
 
-  app.post("/api/view/:token/teaser-pass", perLink(requestLimiter), async (req, res) => {
+  app.post("/api/view/:token/teaser-pass", perLink(passLimiter), async (req, res) => {
     try {
       const g = await buyerTeaserGate(req, res);
       if (!g) return;
