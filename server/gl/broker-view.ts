@@ -126,9 +126,13 @@ export async function glRecipients(dealId: string, members?: DealMember[], invit
   const { sellerPortalRecipients } = await import("../notifications/service");
   const ms = members ?? (await storage.getDealMembers(dealId));
   const inv = invites ?? (await storage.getSellerInvitesByDealId(dealId));
+  const { sellerLinkRights } = await import("@shared/seller-link-rights");
   return sellerPortalRecipients(glSellerEvent(), ms, inv).map((r) => {
     const m = ms.find((x) => x.id === r.recipientId);
-    return { id: r.recipientId, name: r.name, email: r.email, role: m?.role ?? "owner", via: r.via, muted: !!r.muted };
+    // A link reached through the seller invites: its role is the deal member with that address (else the owner).
+    const viaInvite = !m ? inv.find((i) => i.id === r.recipientId) : undefined;
+    const role = m?.role ?? (viaInvite ? sellerLinkRights(viaInvite, ms).role : "owner");
+    return { id: r.recipientId, name: r.name, email: r.email, role, via: r.via, muted: !!r.muted };
   });
 }
 

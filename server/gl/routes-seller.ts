@@ -261,6 +261,10 @@ export function registerGlSellerRoutes(app: Express, opts: { supportGate: (req: 
       if (!caller) return;
       const found = await sellerTrace(req, res, caller);
       if (!found) return;
+      // "Yes, that's right" answers Cimple's summary — without one there is nothing to confirm (spec §6.7).
+      if (!(found.trace.computed as { summary?: unknown } | null)?.summary) {
+        return res.status(409).json({ error: "There's no summary to confirm for this cost — tick the entries that belong to it instead.", code: "no_summary" });
+      }
       const n = await confirmSummary(found.trace, { by: "seller", memberId: caller.memberId }, await loadGlContext(caller.deal.id));
       res.json({ ok: true, confirmed: n });
     } catch (err) {

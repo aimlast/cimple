@@ -92,7 +92,8 @@ export async function confirmSummary(trace: GlAddbackTrace, who: { by: "seller" 
     state: "confirmed", proposedBy: k.proposedBy, confidence: k.confidence, reason: k.reason,
     decidedBy: who.by, decidedByMember: who.memberId, decidedAt: at,
   } as any)));
-  if (who.by === "seller") await store.updateTrace(trace.id, { sellerStatus: "done", reopenedNote: null, notInLedger: null } as Partial<GlAddbackTrace>);
+  // Done only when something was confirmed (the entries may have gone since the summary was shown).
+  if (who.by === "seller" && props.length > 0) await store.updateTrace(trace.id, { sellerStatus: "done", reopenedNote: null, notInLedger: null } as Partial<GlAddbackTrace>);
   await recomputeTraces(c.dealId, [trace.id], c);
   return props.length;
 }

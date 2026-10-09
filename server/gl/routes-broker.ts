@@ -18,6 +18,7 @@ import { TEAM_ROLES, type GlAddbackTrace, type GlTracing } from "@shared/schema"
 import { normaliseFiscalYearEnd } from "@shared/fiscal-year";
 import { glStore } from "./store";
 import { withGlLock } from "./lock";
+import { traceHasActivity } from "@shared/gl-reconcile";
 import { loadGlContext } from "./context";
 import { changeFiscalYearEnd, refreshGl } from "./service";
 import { glRecipients } from "./broker-view";
@@ -216,6 +217,13 @@ export function registerGlBrokerRoutes(app: Express): void {
         const verdict = req.body?.verdict ?? (t.computed as { suggestedVerdict?: string } | null)?.suggestedVerdict ?? "not_found";
         if (!["found", "partly_found", "not_found"].includes(String(verdict))) return res.status(400).json({ error: "Pick found, partly found or not found." });
         const note = typeof req.body?.note === "string" ? req.body.note.trim().slice(0, 2000) : undefined;
+        // Nothing asked or found yet: a review counts toward the due-diligence hold, so it needs the broker's reason (D16).
+        if (!traceHasActivity(t as any) && (note ?? "").length < 3) {
+          return res.status(409).json({
+            code: "nothing_to_review",
+            error: "Nothing has been asked or found for this add-back yet. Send it to the seller or tick the entries yourself — or write why you're marking it reviewed.",
+          });
+        }
         await glStore().updateTrace(t.id, { reviewedAt: new Date(), brokerVerdict: String(verdict), ...(note !== undefined ? { brokerNote: note || null } : {}) } as Partial<GlAddbackTrace>);
       }
       await stampReviewed(t.dealId);

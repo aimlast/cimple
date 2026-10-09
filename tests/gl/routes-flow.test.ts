@@ -268,6 +268,35 @@ await test("the fiscal-year end changes: entries, links and the ledger's years m
   void refreshGl;
 });
 
+// ── Fixer round 1 ──
+
+await test("GL-R1-09: 'Yes, that's right' on a cost with no summary → 409, nothing confirmed, not marked done", asSeller(async () => {
+  // Cimple found no confident summary for this cost (computed.summary is null).
+  const noSummary = (await w.gl.listTraces(deal.id)).find((t) => !t.removedAt && t.sentAt && t.label === "Golf club dues")!;
+  await w.gl.updateTrace(noSummary.id, { sellerStatus: "in_progress", computed: { ...(noSummary.computed as any), summary: null } } as any);
+  const before = JSON.stringify(w.gl.data.links);
+  const r = await call("POST", `/api/seller/tok-owner/gl/traces/${noSummary.id}/confirm-summary`);
+  assert.equal(r.status, 409);
+  assert.equal(r.json.code, "no_summary");
+  assert.equal(JSON.stringify(w.gl.data.links), before);
+  assert.equal((await w.gl.getTrace(noSummary.id))!.sellerStatus, "in_progress", "not marked done");
+}));
+
+await test("GL-R1-07: 'Mark reviewed' on an add-back nothing was asked or found for needs the broker's reason", async () => {
+  // A fresh add-back: never sent, nothing ticked, no seller note.
+  const t = await w.gl.upsertTrace({
+    dealId: deal.id, addbackKey: "zz quiet cost", label: "Quiet cost", category: "discretionary", proof: "ledger", claims: { "2024": 120_000 }, yearLabels: { "2024": "2024" }, sellerLabel: "Quiet cost",
+  } as any);
+  const r = await call("POST", `/api/deals/${deal.id}/gl/traces/${t.id}/review`, {});
+  assert.equal(r.status, 409);
+  assert.equal(r.json.code, "nothing_to_review");
+  assert.equal((await w.gl.getTrace(t.id))!.reviewedAt, null, "not counted toward the hold");
+  const ok = await call("POST", `/api/deals/${deal.id}/gl/traces/${t.id}/review`, { verdict: "not_found", note: "The owner says this was paid personally." });
+  assert.equal(ok.status, 200);
+  assert.ok((await w.gl.getTrace(t.id))!.reviewedAt);
+  await w.gl.updateTrace(t.id, { removedAt: new Date() } as any);
+});
+
 server.close();
 cleanup(w);
 done("routes / flow");

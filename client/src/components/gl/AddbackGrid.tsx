@@ -3,7 +3,8 @@
  * spec §3.4). Each cell says where the year stands in words, with the amount
  * ("Adds up · $28,140", "Close — $400 short", "$12,000 of $26,000",
  * "Not started", "Shown by the T4"); each row ends with "Mark reviewed"
- * (Cimple's suggestion pre-selected) or the verdict. Wide screens: a table;
+ * (Cimple's suggestion pre-selected) or the verdict — or "Not asked yet"
+ * while nothing has been asked or found (there's nothing to review). Wide screens: a table;
  * below md: one card per add-back with its year chips. A row opens the
  * add-back's drawer.
  */
@@ -13,6 +14,7 @@ import { cn } from "@/lib/utils";
 import type { BrokerTrace } from "@/lib/gl-api";
 import { Pill, dollars, statusTone } from "./gl-ui";
 import { VERDICT_WORDS, yearsWords } from "@shared/gl-copy";
+import { traceHasActivity } from "@shared/gl-reconcile";
 
 const verdictTone = (v: string | null) => (v === "found" ? "good" : v === "partly_found" ? "close" : "warn") as "good" | "close" | "warn";
 
@@ -119,6 +121,10 @@ function ReviewCell({ t, onReview, busy }: { t: BrokerTrace; onReview: (t: Broke
         <Pill tone={verdictTone(t.brokerVerdict)}>{VERDICT_WORDS[t.brokerVerdict]}</Pill>
       </span>
     );
+  }
+  // Nothing asked or found yet: there's nothing to review (the drawer still takes a written reason).
+  if (!traceHasActivity(t)) {
+    return <span className="text-2xs text-muted-foreground" data-testid="gl-not-asked">Not asked yet</span>;
   }
   const suggestion = t.computed?.suggestedVerdict ?? "not_found";
   return (

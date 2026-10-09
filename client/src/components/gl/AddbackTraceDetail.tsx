@@ -26,7 +26,16 @@ import { Pill, dollars, ledgerDate, money, statusTone } from "./gl-ui";
 import { ApplyLedgerAmountDialog } from "./ApplyLedgerAmountDialog";
 import { SupportDocUpload } from "./SupportDocUpload";
 import { accountPath, PROOF_LABEL, VERDICT_WORDS, YEAR_STATUS_WORDS } from "@shared/gl-copy";
+import { traceHasActivity } from "@shared/gl-reconcile";
 import type { GlYearStatus } from "@shared/gl-types";
+
+/** The example question, by what the add-back is proven by (never about fuel on a pay add-back). */
+const ASK_EXAMPLE: Record<string, string> = {
+  payroll: "e.g. Does this pay include a bonus or taxable benefits?",
+  one_off: "e.g. Was this paid once, or in instalments?",
+  ledger: "e.g. Are all of these entries for this cost?",
+  statement: "e.g. Where does this figure come from?",
+};
 
 const NOT_IN_LEDGER: Record<string, string> = {
   personal: "the seller paid it personally, outside the business",
@@ -77,6 +86,9 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, payDo
   const proposed = entries.filter((e) => e.state === "proposed");
   const rejected = entries.filter((e) => e.state === "rejected");
   const overall = trace.computed?.overall ?? "not_started";
+  // A year a document (a T4) shows, with no ledger entries: the document is the whole story — no empty entries table.
+  const docsOnly = confirmed.length === 0 && proposed.length === 0 && docs.length > 0;
+  const activity = traceHasActivity(trace);
   const statusWord = (s: GlYearStatus | string) => YEAR_STATUS_WORDS[s as GlYearStatus]?.broker ?? s;
 
   return (
@@ -120,14 +132,14 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, payDo
 
       {/* Entries */}
       <section className="space-y-2">
-        <h4 className="text-sm font-medium">Entries {confirmed.length ? `· ${confirmed.length} ticked` : ""}</h4>
+        <h4 className="text-sm font-medium">{docsOnly ? "Shown by a document" : `Entries${confirmed.length ? ` · ${confirmed.length} ticked` : ""}`}</h4>
         {entriesQ.isLoading ? (
           <p className="text-xs text-muted-foreground flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" /> Loading the entries…</p>
         ) : entriesQ.error ? (
           <p className="text-xs text-red-500">Couldn't load the entries. <button className="underline" onClick={() => entriesQ.refetch()}>Try again</button></p>
         ) : confirmed.length === 0 && proposed.length === 0 && docs.length === 0 ? (
           <p className="text-xs text-muted-foreground">{trace.proof === "statement" ? "Nothing to find — this comes straight from the financial statements." : "No entries yet for this year."}</p>
-        ) : (
+        ) : docsOnly ? null : (
           <EntryTable
             rows={[...confirmed, ...proposed]}
             onTick={(e, tick) => links(tick ? { add: [{ ledgerId: e.ledgerId, rowNo: e.rowNo }] } : { remove: [{ ledgerId: e.ledgerId, rowNo: e.rowNo }] })}
@@ -205,7 +217,7 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, payDo
       {trace.sentAt && (
         <section className="space-y-2">
           <Label htmlFor="gl-ask" className="text-sm font-medium">Ask the seller about this</Label>
-          <Textarea id="gl-ask" value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="e.g. Is all of this fuel for the owner's own car?" rows={2} maxLength={1000} />
+          <Textarea id="gl-ask" value={question} onChange={(e) => setQuestion(e.target.value)} placeholder={ASK_EXAMPLE[trace.proof] ?? ASK_EXAMPLE.ledger} rows={2} maxLength={1000} />
           <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5" disabled={question.trim().length < 3 || act.isPending}
             onClick={() => act.mutate({ method: "POST", url: `/api/deals/${dealId}/gl/traces/${trace.id}/question`, body: { text: question } }, { onSuccess: () => { setQuestion(""); toast({ title: "Question sent", description: "It's on the seller's page." }); } })}>
             <MessageSquare className="h-3.5 w-3.5" /> Send the question
@@ -224,7 +236,11 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, payDo
           ) : (
             <>
               <p className="text-sm font-medium">Mark reviewed</p>
-              <p className="text-xs text-muted-foreground">Cimple suggests: {VERDICT_WORDS[trace.computed?.suggestedVerdict ?? "not_found"]}.</p>
+              {activity ? (
+                <p className="text-xs text-muted-foreground">Cimple suggests: {VERDICT_WORDS[trace.computed?.suggestedVerdict ?? "not_found"]}.</p>
+              ) : (
+                <p className="text-xs text-muted-foreground" data-testid="gl-review-needs-reason">Nothing has been asked or found yet. Send it to the seller or tick the entries yourself — or write why you're marking it reviewed.</p>
+              )}
               <div className="flex flex-col gap-2 sm:flex-row">
                 <Select value={verdict} onValueChange={setVerdict}>
                   <SelectTrigger className="h-9 sm:w-56" aria-label="Verdict"><SelectValue /></SelectTrigger>
@@ -232,9 +248,9 @@ export function AddbackTraceDetail({ dealId, trace, initialYear, docShort, payDo
                     {(["found", "partly_found", "not_found"] as const).map((v) => <SelectItem key={v} value={v}>{VERDICT_WORDS[v]}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Your note (optional)" className="h-9" maxLength={2000} />
+                <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder={activity ? "Your note (optional)" : "Why (needed — nothing was found yet)"} aria-label={activity ? "Your note" : "Why you're marking it reviewed"} className="h-9" maxLength={2000} />
               </div>
-              <Button size="sm" className="h-9 bg-teal text-teal-foreground hover:bg-teal/90" disabled={act.isPending}
+              <Button size="sm" className="h-9 bg-teal text-teal-foreground hover:bg-teal/90" disabled={act.isPending || (!activity && note.trim().length < 3)}
                 onClick={() => act.mutate({ method: "POST", url: `/api/deals/${dealId}/gl/traces/${trace.id}/review`, body: { verdict, note } })} data-testid="gl-drawer-mark-reviewed">
                 Mark reviewed
               </Button>

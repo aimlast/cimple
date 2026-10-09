@@ -175,3 +175,23 @@ export function reconcileWords(foundCents: number, target: number): { status: "f
   if (status === "short") return { status, words: `${money(diff)} short` };
   return { status, words: `${money(diff)} more than the cost` };
 }
+
+/**
+ * Has anything happened on an add-back that a broker's review could rest on?
+ * Entries ticked or found, a document, the seller asked (sent, a question, a
+ * note, "not in my ledger", started). Without any, "Mark reviewed" needs the
+ * broker's written reason (a silent way round the due-diligence hold
+ * otherwise — gl spec D16). Pure; the server and the broker's grid share it.
+ */
+export function traceHasActivity(t: {
+  computed?: { byYear?: Record<string, { confirmed?: number; foundCents?: number; documentCents?: number }> } | null;
+  sentAt?: unknown;
+  question?: unknown;
+  notInLedger?: unknown;
+  sellerNote?: string | null;
+  sellerStatus?: string | null;
+}): boolean {
+  if (t.sentAt || t.question || t.notInLedger || (t.sellerNote ?? "").trim()) return true;
+  if (t.sellerStatus && t.sellerStatus !== "not_started") return true;
+  return Object.values(t.computed?.byYear ?? {}).some((y) => (y.confirmed ?? 0) > 0 || (y.foundCents ?? 0) !== 0 || (y.documentCents ?? 0) > 0);
+}

@@ -117,10 +117,24 @@ export async function remindGlRequest(dealId: string, recipientIds: string[]) {
   return { recipients: r.recipients, emailsSent: r.emailsSent, demo: !!deal.demoKey };
 }
 
-/** "Ask the seller about this" — names the cost's seller label only. */
+/**
+ * "Ask the seller about this" — names the cost's seller label only. It goes
+ * to the people the request went to; with none on record, to the owner only
+ * (never everyone the event routes to — a representative can't open the
+ * books page), else to nobody (the question still waits on the page).
+ */
 export async function sendTraceQuestion(dealId: string, sellerLabel: string, traceId: string, recipientIds: string[]) {
   const deal = await storage.getDeal(dealId);
   if (!deal) return;
+  let to = recipientIds;
+  if (to.length === 0) {
+    const { glRecipients } = await import("./broker-view");
+    to = (await glRecipients(dealId)).filter((r) => r.role === "owner").map((r) => r.id);
+    if (to.length === 0) {
+      console.log(`[gl] question on deal ${dealId}: no owner to email — it waits on the seller's books page`);
+      return;
+    }
+  }
   const { notifySellerPortal } = await import("../notifications/service");
   await notifySellerPortal(dealId, glSellerEvent(), {
     title: "Your broker has a question about your books",
@@ -128,7 +142,7 @@ export async function sendTraceQuestion(dealId: string, sellerLabel: string, tra
     path: `books?cost=${encodeURIComponent(traceId)}`,
     businessName: deal.businessName,
     metadata: { gl: "question" },
-    onlyRecipients: recipientIds.length ? recipientIds : undefined,
+    onlyRecipients: to,
   });
 }
 
