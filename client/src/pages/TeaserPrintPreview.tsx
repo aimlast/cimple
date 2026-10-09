@@ -29,16 +29,20 @@ import type { BuyerSection } from "@shared/cim-buyer-view";
  * "Questions?" line goes, since the step now carries the contact).
  */
 export function sectionsForPaper(sections: BuyerSection[], contact: TeaserContact): BuyerSection[] {
-  const firm = contact.firm?.trim() || "the broker";
-  const line = contactLine(contact);
-  const withContact = !!line && line !== contact.firm?.trim();
+  const firm = contact.firm?.trim() || null;
+  const name = contact.name?.trim() || null;
+  // Who to ask: the firm, else the broker's name; the rest of the contact after the colon.
+  const who = firm ?? name ?? "the broker";
+  const rest = contactLine({ firm: null, name: firm ? name : null, email: contact.email, phone: contact.phone });
+  const line = rest && rest !== who ? rest : null;
+  const withContact = !!line || (!firm && !!name);
   return sections.map((s) => {
     if (s.layoutType !== "numbered_list") return s;
     const d = (s.layoutData ?? {}) as { items?: Array<{ title?: string; description?: string }>; note?: string };
     const items = Array.isArray(d.items) ? d.items : [];
     const i = items.findIndex((it) => /\bfrom this page\b/i.test(it?.title ?? ""));
     if (i < 0) return s;
-    const ask = `Ask ${firm} for the CIM${withContact ? `: ${line}` : ""}`;
+    const ask = `Ask ${who} for the CIM${line ? `: ${line}` : ""}`;
     const { note, ...rest } = d;
     return { ...s, layoutData: { ...rest, items: items.map((it, j) => (j === i ? { ...it, title: ask } : it)), ...(!withContact && note ? { note } : {}) } };
   });

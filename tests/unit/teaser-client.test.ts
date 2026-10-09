@@ -156,6 +156,12 @@ test("on paper the 'ask from this page' step names the firm and its contact; the
   // No contact on file: the firm only, and the Questions line stays as it was.
   const [q] = sectionsForPaper([sec], { firm: "Brassline Advisory Partners", name: null, email: null, phone: null });
   assert.equal((q.layoutData as { items: Array<{ title: string }> }).items[0].title, "Ask Brassline Advisory Partners for the CIM");
+  assert.equal((q.layoutData as { note?: string }).note, "Questions? Morgan Ellis · morgan@brassline.invalid");
+  // No firm name: ask the broker by name.
+  const [r] = sectionsForPaper([sec], { firm: null, name: "Morgan Ellis", email: "morgan@brassline.invalid", phone: null });
+  assert.equal((r.layoutData as { items: Array<{ title: string }> }).items[0].title, "Ask Morgan Ellis for the CIM: morgan@brassline.invalid");
+  const [n] = sectionsForPaper([sec], { firm: null, name: "Morgan Ellis", email: null, phone: null });
+  assert.equal((n.layoutData as { items: Array<{ title: string }> }).items[0].title, "Ask Morgan Ellis for the CIM");
   // Other lists are untouched.
   const other = { ...(sec as object), layoutData: { items: [{ title: "Add a second terminal" }] } } as never;
   assert.equal(sectionsForPaper([other], { firm: "X", name: null, email: null, phone: null })[0], other);
