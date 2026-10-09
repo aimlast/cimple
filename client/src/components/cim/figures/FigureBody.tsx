@@ -20,6 +20,7 @@ import { STATE_PAINT, STATE_WORDS } from "@shared/figure-states";
 import { FigureCitation, FigureCitations } from "./FigureCitation";
 import { StateIcon } from "./figurePaint";
 import type { FigureBrokerHooks, FigureBuyerHooks } from "./FigureLayerContext";
+import { glBooksPage } from "./GlMarkSlot";
 
 const INK = "#201D18";
 const SOFT = "#46423B";
@@ -224,6 +225,8 @@ export function FigureBody({ fig, mode, audience, broker, buyer, onClose }: Figu
         </div>
       )}
 
+      {mode !== "blind" && fig.gl && <GlBooksLink />}
+
       {isBroker && fig.noReason && !fig.why && (
         <div className="space-y-1.5 rounded-md border border-dashed px-2 py-1.5" style={{ borderColor: "#8A8170" }}>
           <p className="text-[12px] font-medium" style={{ color: SOFT }}>{BROKER_NO_REASON}</p>
@@ -251,5 +254,21 @@ export function FigureBody({ fig, mode, audience, broker, buyer, onClose }: Figu
         </div>
       )}
     </div>
+  );
+}
+
+/** gl contract: "Where this add-back is in the books →" — only when gl's page is on this CIM. */
+function GlBooksLink() {
+  const page = glBooksPage();
+  if (!page) return null;
+  return (
+    <button
+      type="button"
+      className="text-[12px] font-medium underline underline-offset-2"
+      style={{ color: "#9E752E" }}
+      onClick={() => page.scrollIntoView({ behavior: "smooth", block: "start" })}
+    >
+      Where this add-back is in the books →
+    </button>
   );
 }

@@ -29,6 +29,9 @@ import { CimMediaProvider } from "@/components/cim/CimMediaContext";
 import { CimSheet } from "@/components/cim/CimSheet";
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { CimContactPage, CimDisclaimerPage, withBrokeragePages } from "@/components/cim/CimFrontBackPages";
+// dd: the notes on the figures exactly as this version's buyers get them, printed expanded.
+import { FigureLayerProvider } from "@/components/cim/figures/FigureLayerContext";
+import { usePreviewFigureLayer, withPreviewExtras } from "@/components/cim/figures/usePreviewFigureLayer";
 
 type Version = "normal" | "blind" | "dd";
 const VERSIONS: Array<{ key: Version; label: string; accessLevel: string }> = [
@@ -103,7 +106,8 @@ export default function CimPrintPreview() {
     version,
   );
   const branding = buildBranding(null, deal ?? null);
-  const shown = (view?.sections ?? []) as unknown as CimSection[];
+  const figures = usePreviewFigureLayer(dealId, meta.accessLevel, { audience: "buyer" });
+  const shown = withPreviewExtras((view?.sections ?? []) as unknown as CimSection[], figures.data?.extraSections);
   const pages = withBrokeragePages(shown, {
     disclaimer: cimDesign.brokerage.showDisclaimerPage !== false,
     contact: cimDesign.brokerage.showContactPage !== false,
@@ -188,6 +192,7 @@ export default function CimPrintPreview() {
                   </div>
                 );
               })()}
+              <FigureLayerProvider layer={figures.data?.layer ?? null} expandNotes>
               <CimSheet className="px-5 py-6 sm:px-12 sm:py-12">
                 {pages.map((item, i) => {
                   const next = pages[i + 1];
@@ -209,6 +214,7 @@ export default function CimPrintPreview() {
                   );
                 })}
               </CimSheet>
+              </FigureLayerProvider>
             </CimDesignProvider>
           </CimMediaProvider>
         )}

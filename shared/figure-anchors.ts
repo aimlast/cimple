@@ -314,3 +314,66 @@ export function scaleOfUnit(unit: unknown): number | null {
   if (/^\$?\s*(?:b|bn|billions?)$/.test(u)) return 1e9;
   return null;
 }
+
+// ── gl contract: earnings-bridge rows tied to a general-ledger line ───────
+
+/** One add-back of the CIM's bridge, as gl ties it to a ledger line (gl §8.1.5). */
+export interface GlBridgeLine {
+  lineId: string;
+  label: string;
+  /** Fiscal year → amount added back. */
+  amounts: Record<string, number>;
+}
+
+const glWords = (t: string): string[] =>
+  t.toLowerCase().replace(/\[\[\/?dd\]\]/g, "").replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 2 && !/^(?:and|the|for|add|back|addback|adjustment|normali[sz]ation|fy\d+|\d+)$/.test(w));
+
+/** The bridge line a row is: its amount equals one of the line's (to the precision shown) and its label shares the line's words. */
+function glLineFor(label: unknown, value: unknown, lines: GlBridgeLine[], unit: number): string | null {
+  const shown = parseShownAmount(value, unit);
+  if (!shown || shown.value === 0) return null;
+  const rowWords = new Set(glWords(str(label)));
+  if (rowWords.size === 0) return null;
+  let best: { id: string; score: number } | null = null;
+  for (const l of lines) {
+    const amountOk = Object.values(l.amounts).some((a) => Math.abs(Math.abs(a) - Math.abs(shown.value)) <= shown.tolerance);
+    if (!amountOk) continue;
+    const lw = glWords(l.label);
+    if (lw.length === 0) continue;
+    const shared = lw.filter((w) => rowWords.has(w)).length;
+    // Most of the line's own words, or every one of a short label.
+    const score = shared / lw.length;
+    if (shared === 0 || score < 0.5) continue;
+    if (!best || score > best.score) best = { id: l.lineId, score };
+  }
+  return best?.id ?? null;
+}
+
+/**
+ * Earnings-bridge rows (waterfall items, also inside a two-column page) that
+ * are a general-ledger add-back line — where gl's "Found in the books" mark
+ * goes (`<GlMark lineId variant="row" />`). Label AND amount must agree, like
+ * every anchor (D3); nothing is guessed.
+ */
+export function glBridgeMarks(section: SectionLike, lines: GlBridgeLine[]): Array<{ pageId: string; block: string; lineId: string }> {
+  if (!section || !isRec(section.layoutData) || lines.length === 0) return [];
+  const out: Array<{ pageId: string; block: string; lineId: string }> = [];
+  const visit = (layoutType: string, data: Rec, prefix: string) => {
+    if (layoutType === "waterfall_chart") {
+      const unit = scaleOfUnit(data.unit) ?? 1;
+      const items = Array.isArray(data.items) ? data.items : [];
+      items.forEach((it, i) => {
+        if (!isRec(it) || it.type === "start" || it.type === "total") return;
+        const id = glLineFor(it.label, it.value, lines, unit);
+        if (id) out.push({ pageId: section.id, block: prefix ? `${prefix}/chart/point:${i}` : `chart/point:${i}`, lineId: id });
+      });
+    } else if (layoutType === "two_column" && !prefix) {
+      for (const side of ["left", "right"] as const) {
+        const col = resolveTwoColumnColumn(data[side]);
+        if (col && isRec(col.content)) visit(col.layoutType, col.content, side);
+      }
+    }
+  };
+  visit(section.layoutType, section.layoutData, "");
+  return out;
+}

@@ -16,13 +16,19 @@ export interface PreviewFigureLayer {
   hasOtherRecords?: boolean;
 }
 
-export function usePreviewFigureLayer(dealId: string | null | undefined, level: string | null | undefined) {
+/**
+ * `audience: "buyer"` = exactly what that version's buyers get (approved notes
+ * only, DD checks only once shown) — the print preview. Default: the broker's
+ * preview with every mark.
+ */
+export function usePreviewFigureLayer(dealId: string | null | undefined, level: string | null | undefined, opts: { audience?: "buyer" | "broker" } = {}) {
   const enabled = !!dealId && !!level && level !== "editor";
+  const audience = opts.audience ?? "broker";
   const q = useQuery<PreviewFigureLayer>({
-    queryKey: ["/api/deals", dealId, "figure-layer", level],
+    queryKey: ["/api/deals", dealId, "figure-layer", level, ...(audience === "buyer" ? ["buyer"] : [])],
     enabled,
     queryFn: async () => {
-      const res = await fetch(`/api/deals/${dealId}/figure-layer?level=${encodeURIComponent(String(level))}`, { credentials: "include" });
+      const res = await fetch(`/api/deals/${dealId}/figure-layer?level=${encodeURIComponent(String(level))}${audience === "buyer" ? "&audience=buyer" : ""}`, { credentials: "include" });
       if (!res.ok) throw new Error(`figure layer ${res.status}`);
       return res.json();
     },

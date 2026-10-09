@@ -26,7 +26,7 @@
  *
  * Pure.
  */
-import { anchorFigures, type Anchor, type FigureRegistry, type RegistryFigure } from "./figure-anchors";
+import { anchorFigures, type Anchor, type FigureRegistry, type RegistryFigure, glBridgeMarks, type GlBridgeLine } from "./figure-anchors";
 import { agrees, dollars, percentOf, signedDollars, type DiffSize } from "./figure-compare";
 import { checkState, type CheckState } from "./figure-states";
 import { blindBasisLabel, changeLine, differsBy, SOURCE_CHECK_TITLE, type NoteBasis } from "./figure-copy";
@@ -176,6 +176,8 @@ export interface FigureInputs {
   idFor?: (figureKey: string) => string;
   /** D23 string pipeline (buyer audiences). */
   screen?: StringScreen | null;
+  /** gl contract: the bridge's add-back lines tied to ledger lines (empty until gl is merged). */
+  glLines?: GlBridgeLine[];
 }
 
 // ── Payload (spec §8.1) ──────────────────────────────────────────────────
@@ -261,6 +263,8 @@ export interface FigureLayer {
   ddChecksOn?: boolean;
   /** DD: the rows/columns of "How the figures check out" (structure only). */
   sourceCheck?: { lines: string[]; years: string[] } | null;
+  /** gl contract (DD + Full): bridge rows that are a general-ledger add-back line → gl's `<GlMark lineId variant="row" />`. */
+  glMarks?: Array<{ pageId: string; block: string; lineId: string }>;
 }
 
 /** The synthetic page's id and layout. */
@@ -520,6 +524,15 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
 
   const summary = dd ? summarise(servedChecks) : undefined;
 
+  // gl contract: "Found in the books" marks on bridge rows (DD and Full; never Blind).
+  const glMarks = mode !== "blind" && (inputs.glLines?.length ?? 0) > 0
+    ? sections.flatMap((s) => glBridgeMarks(s, inputs.glLines!))
+    : [];
+  for (const m of glMarks) {
+    const a = anchors.find((x) => x.pageId === m.pageId && x.block === m.block);
+    if (a && figures[a.figureKey]) figures[a.figureKey].gl = { lineId: m.lineId };
+  }
+
   let layer: FigureLayer = {
     mode,
     audience: inputs.audience,
@@ -530,10 +543,11 @@ export function buildFigureLayer(sections: SectionLike[], inputs: FigureInputs |
     ...(summary ? { summary } : {}),
     ...(dd ? { ddChecksOn: ddOn } : {}),
     ...(dd ? { sourceCheck: broker || (ddOn && (summary?.checked ?? 0) > 0) ? sourceCheck : null } : {}),
+    ...(glMarks.length > 0 ? { glMarks } : {}),
   };
   if (!broker && inputs.screen) layer = screenBuyerStrings(layer, inputs.screen);
   if (!broker) layer = withoutEmptyFigures(layer);
-  const hasAnything = Object.keys(layer.figures).length > 0 || Object.keys(layer.keyTerms ?? {}).length > 0;
+  const hasAnything = Object.keys(layer.figures).length > 0 || Object.keys(layer.keyTerms ?? {}).length > 0 || (layer.glMarks?.length ?? 0) > 0;
   return hasAnything ? layer : null;
 }
 

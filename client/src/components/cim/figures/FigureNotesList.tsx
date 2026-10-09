@@ -20,7 +20,7 @@ function lineFor(f: FigureView, blind: boolean): string {
 export function FigureNotesList({ pageId }: { pageId: string }) {
   const ctx = useFigureLayer();
   const figures = usePageFigures(pageId).filter((f) => !!f.why);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(() => !!ctx?.expandNotes);
   // The check page lists figures shown elsewhere: their notes are listed there, not twice.
   if (!ctx || figures.length === 0 || pageId === DD_SOURCE_CHECK_PAGE_ID) return null;
   const blind = ctx.layer.mode === "blind";

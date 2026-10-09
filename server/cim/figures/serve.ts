@@ -15,6 +15,7 @@
  * note: nothing audience-specific is cached. Serving reads extracted_data
  * and the stored located results — never a document's text.
  */
+import { withGlLines, type BridgeAddback } from "./gl-contract";
 import { createHmac } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { documents, financialAnalyses, type CimFigureNote, type CimFigureQuestion, type CimFigureState, type Deal } from "@shared/schema";
@@ -101,6 +102,8 @@ export interface FigureRaw {
   analysisId: string | null;
   /** Why there is no registry (no analysis / out of date), for the workspace. */
   noFigures: "no_analysis" | "analysis_out_of_date" | null;
+  /** gl contract: the CIM bridge's add-backs (with gl's addbackId once gl is merged). */
+  bridgeLines: BridgeAddback[];
 }
 
 const CACHE_MS = 60_000;
@@ -198,6 +201,9 @@ export function assembleFigureRaw(dealId: string, rows: RawSourceRows, stamp = "
     screen,
     analysisId: fin?.analysisId ?? null,
     noFigures,
+    bridgeLines: fin?.bridge ? [...(fin.bridge.addbacks ?? []), ...(fin.bridge.sdeOnly ?? [])].map((b) => ({
+      label: b.label, amounts: b.amounts, addbackId: (b as { addbackId?: string | null }).addbackId ?? null,
+    })) : [],
   };
 }
 
@@ -333,7 +339,10 @@ export async function buyerFigureInputs(deal: Pick<Deal, "id">, accessLevel: str
   if (isTeaserOnly(accessLevel)) return null;
   try {
     const raw = await loadFigureRaw(deal.id);
-    return figureInputsFor(raw, { audience: "buyer", mode: cimModeForAccessLevel(accessLevel) });
+    const mode = cimModeForAccessLevel(accessLevel);
+    const inputs = figureInputsFor(raw, { audience: "buyer", mode });
+    // gl contract: bridge rows found in the books (DD and Full; empty until gl is merged).
+    return mode === "blind" ? inputs : withGlLines(inputs, deal.id, raw.bridgeLines);
   } catch (err) {
     console.warn(`[figures] buyer inputs failed for deal ${deal.id}:`, (err as Error)?.message);
     return null;

@@ -5,7 +5,8 @@
  * is refreshed in the background); bodies are Zod-validated; bulk calls are
  * bounded (≤ 200 notes, ≤ 300 checks, ≤ 20 questions).
  *
- *   GET  …/figure-layer?level=        the builder's buyer preview (D21)
+ *   GET  …/figure-layer?level=        the builder's buyer preview (D21); &audience=buyer = exactly what
+ *                                     that version's buyers get (the print preview: approved notes only)
  *   GET  …/figures                    the Numbers & sources workspace
  *   GET  …/figures/status[?counts=1]  poll target while a refresh/build runs (+ the CIM tab's counts)
  *   POST …/figures/refresh            deterministic refresh now ($0)
@@ -104,7 +105,10 @@ export function registerFigureRoutes(app: Express): void {
         getFigureState(deal.id),
         refreshFingerprint(deal.id),
       ]);
-      const figures = figureInputsFor(raw, { audience: "broker", mode });
+      const { withGlLines } = await import("../cim/figures/gl-contract");
+      const audience = req.query.audience === "buyer" ? "buyer" : "broker";
+      const base = figureInputsFor(raw, { audience, mode });
+      const figures = mode === "blind" ? base : await withGlLines(base, deal.id, raw.bridgeLines);
       // The level as the client sent it (validated above): legacy keys
       // ("loi", "full") and new ones read the same through the registry.
       const view = buildBuyerCim({

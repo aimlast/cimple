@@ -67,6 +67,36 @@ test("Full CIM: a figure with an approved note gets a trigger; others stay plain
   assert.ok(!html.includes("Side by side"));
 });
 
+test("print preview: the notes list starts open (expandNotes); elsewhere it starts closed", async () => {
+  const note = noteRow({ figureKey: "revenue|2023", kind: "movement", compareKey: "2022", text: "Up $660,000 (11%) from FY2022, mostly HVAC equipment.", blindText: null, valuesSnapshot: { year: "2023", value: 6840000, fromYear: "2022", fromValue: 6180000 } });
+  const { fx, raw } = await fixtureRaw("lakeshore", { notes: [note] });
+  const layer = buildFigureLayer(fx.sections as any, figureInputsFor(raw, { audience: "buyer", mode: "normal" }), "normal")!;
+  const s = { ...fx.sections.find((x) => x.sectionKey === "financial_performance")!, isVisible: true };
+  const inner = h(CimSectionRenderer, { section: s, branding: {} as any });
+  const printed = renderToStaticMarkup(h(FigureLayerProvider, { layer, expandNotes: true }, inner));
+  assert.match(printed, /aria-expanded="true"/);
+  const normal = renderToStaticMarkup(h(FigureLayerProvider, { layer }, inner));
+  assert.match(normal, /aria-expanded="false"/);
+  const page = readFileSync(join(ROOT, "client/src/pages/CimPrintPreview.tsx"), "utf8");
+  assert.match(page, /usePreviewFigureLayer\(dealId, meta\.accessLevel, \{ audience: "buyer" \}\)/);
+  assert.match(page, /<FigureLayerProvider layer=\{figures\.data\?\.layer \?\? null\} expandNotes>/);
+});
+
+test("TwoColumn: a financial table in a column anchors under left/ and its figures get triggers", async () => {
+  const note = noteRow({ figureKey: "revenue|2023", kind: "movement", compareKey: "2022", text: "Up $660,000 (11%) from FY2022, mostly HVAC equipment.", blindText: null, valuesSnapshot: { year: "2023", value: 6840000, fromYear: "2022", fromValue: 6180000 } });
+  const { fx, raw } = await fixtureRaw("lakeshore", { notes: [note] });
+  const table = fx.sections.find((x) => x.sectionKey === "financial_performance")!;
+  const two = {
+    id: "two-col", dealId: table.dealId, sectionKey: "two_col_fin", sectionTitle: "Financials at a glance", order: 99, isVisible: true,
+    layoutType: "two_column",
+    layoutData: { left: { layoutType: "financial_table", content: table.layoutData }, right: { layoutType: "prose_highlight", content: { body: "Revenue grew in every year." } } },
+  };
+  const layer = buildFigureLayer([two] as any, figureInputsFor(raw, { audience: "buyer", mode: "normal" }), "normal")!;
+  assert.ok(layer.anchors.length > 0 && layer.anchors.every((a) => a.block.startsWith("left/")), JSON.stringify(layer.anchors.slice(0, 3)));
+  const html = render(two, layer);
+  assert.equal((html.match(/data-fig=/g) ?? []).length, 1, "the one figure with a note");
+});
+
 test("the compare switch records figure_compare; As Reported/Normalized keeps financial_view", () => {
   assert.ok((READING_INTERACTIONS as readonly string[]).includes("figure_compare"));
   assert.ok((READING_INTERACTIONS as readonly string[]).includes("figure_note"));

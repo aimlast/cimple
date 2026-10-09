@@ -40,6 +40,8 @@ interface Ctx {
   layer: FigureLayer;
   broker: FigureBrokerHooks | null;
   buyer: FigureBuyerHooks | null;
+  /** Print preview: "Notes on these figures" lists start open. */
+  expandNotes: boolean;
   /** pageId|block|cell → figure id. */
   index: Map<string, string>;
   /** pageId → figure ids in reading order. */
@@ -51,8 +53,8 @@ const FigureCtx = createContext<Ctx | null>(null);
 const slot = (pageId: string, block: string, cell: number | null | undefined) => `${pageId}|${block}|${cell ?? ""}`;
 
 export function FigureLayerProvider({
-  layer, broker, buyer, children,
-}: { layer: FigureLayer | null | undefined; broker?: FigureBrokerHooks | null; buyer?: FigureBuyerHooks | null; children: ReactNode }) {
+  layer, broker, buyer, expandNotes = false, children,
+}: { layer: FigureLayer | null | undefined; broker?: FigureBrokerHooks | null; buyer?: FigureBuyerHooks | null; expandNotes?: boolean; children: ReactNode }) {
   const value = useMemo<Ctx | null>(() => {
     if (!layer) return null;
     const index = new Map<string, string>();
@@ -63,8 +65,8 @@ export function FigureLayerProvider({
       if (!list.includes(a.fig)) list.push(a.fig);
       byPage.set(a.pageId, list);
     }
-    return { layer, broker: broker ?? null, buyer: buyer ?? null, index, byPage };
-  }, [layer, broker, buyer]);
+    return { layer, broker: broker ?? null, buyer: buyer ?? null, expandNotes, index, byPage };
+  }, [layer, broker, buyer, expandNotes]);
   return <FigureCtx.Provider value={value}>{children}</FigureCtx.Provider>;
 }
 

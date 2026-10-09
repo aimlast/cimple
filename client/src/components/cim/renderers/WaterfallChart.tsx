@@ -24,6 +24,11 @@ import { axisWidthFor, compactFigure, formatAxisTick, useElementWidth } from "./
 import { parseChartNumber, readChartValue, unitScale } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
 import { useBlockAttrs, useChartPointReporter } from "../blocks";
+// dd: notes on the bridge's figures (tooltip line, click/tap → popover) and gl's "Found in the books" marks.
+import type { FigureView } from "@shared/figure-layer";
+import { ChartFigurePopover, FigureTooltipLine, useChartFigure, useChartPick } from "../figures/ChartFigures";
+import { FigureValue } from "../figures/FigureValue";
+import { GlMarkSlot, useGlLineAt } from "../figures/GlMarkSlot";
 
 /** Below this container width the build-up is drawn as labelled horizontal rows. */
 const NARROW_WIDTH = 520;
@@ -180,9 +185,12 @@ interface CustomTooltipProps {
   payload?: Array<{ payload: WaterfallBarData }>;
   currency?: string;
   unit?: string;
+  /** dd: the figure a bar is, and the gl line it is (both null without a figure layer). */
+  figFor?: (entry: WaterfallBarData) => FigureView | null;
+  glFor?: (entry: WaterfallBarData) => string | null;
 }
 
-function WaterfallTooltip({ active, payload, currency, unit }: CustomTooltipProps) {
+function WaterfallTooltip({ active, payload, currency, unit, figFor, glFor }: CustomTooltipProps) {
   const theme = useCimTheme();
   if (!active || !payload || payload.length === 0) return null;
 
@@ -205,6 +213,7 @@ function WaterfallTooltip({ active, payload, currency, unit }: CustomTooltipProp
           style={{ backgroundColor: colorMap[entry.type] }}
         />
         <span className="font-semibold text-foreground">{entry.name}</span>
+        <GlMarkSlot lineId={glFor?.(entry)} />
       </div>
       <div className="space-y-0.5">
         {entry.type === "add" && (
@@ -228,6 +237,7 @@ function WaterfallTooltip({ active, payload, currency, unit }: CustomTooltipProp
           </div>
         )}
       </div>
+      <FigureTooltipLine fig={figFor?.(entry)} />
     </div>
   );
 }
@@ -237,6 +247,9 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
   const ba = useBlockAttrs();
   const point = useChartPointReporter();
   const { ref: widthRef, width } = useElementWidth<HTMLDivElement>();
+  const figAt = useChartFigure();
+  const glAt = useGlLineAt();
+  const { pick, setPick, onChartClick } = useChartPick(figAt);
   const data: WaterfallLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const items = data.items || [];
 
@@ -279,8 +292,9 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       <div {...ba("chart")}>
       {narrow ? (
-        <WaterfallRows data={waterfallData} colorMap={colorMap} currency={data.currency} unit={data.unit} />
+        <WaterfallRows data={waterfallData} colorMap={colorMap} currency={data.currency} unit={data.unit} glAt={glAt} />
       ) : (
+      <div className="relative">
       <ResponsiveContainer width="100%" height={Math.max(280, waterfallData.length * 32) + lineCount * TICK_LINE_HEIGHT}>
         <BarChart
           data={waterfallData}
@@ -288,6 +302,7 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
           barCategoryGap="25%"
           onMouseMove={(s) => point(s?.activeTooltipIndex)}
           onMouseLeave={() => point(null)}
+          onClick={(s) => onChartClick(s)}
         >
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
@@ -317,7 +332,7 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
             tickFormatter={(v) => formatAxisTick(v, moneyUnit)}
           />
           <Tooltip
-            content={<WaterfallTooltip currency={data.currency} unit={data.unit} />}
+            content={<WaterfallTooltip currency={data.currency} unit={data.unit} figFor={(e) => figAt(waterfallData.indexOf(e))} glFor={(e) => glAt(`chart/point:${waterfallData.indexOf(e)}`)} />}
             cursor={{ fill: theme.stripe, fillOpacity: 0.5 }}
           />
           {/* Invisible base bar */}
@@ -343,6 +358,8 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
           </Bar>
         </BarChart>
       </ResponsiveContainer>
+      <ChartFigurePopover pick={pick} onClose={() => setPick(null)} block="chart" />
+      </div>
       )}
 
       {/* Legend */}
@@ -374,11 +391,13 @@ function WaterfallRows({
   colorMap,
   currency,
   unit,
+  glAt,
 }: {
   data: WaterfallBarData[];
   colorMap: Record<string, string>;
   currency?: string;
   unit?: string;
+  glAt?: (block: string) => string | null;
 }) {
   const lo = Math.min(0, ...data.map((d) => d.base), ...data.map((d) => d.total));
   const hi = Math.max(1, ...data.map((d) => d.base + d.value), ...data.map((d) => d.total));
@@ -394,12 +413,13 @@ function WaterfallRows({
             <div className="flex items-baseline justify-between gap-3 text-xs">
               <span className={emphasis ? "font-semibold text-foreground min-w-0" : "text-foreground/80 min-w-0"}>
                 {d.name}
+                <GlMarkSlot lineId={glAt?.(`chart/point:${i}`)} />
               </span>
               <span
                 className={emphasis ? "font-semibold tabular-nums shrink-0 text-foreground" : "font-medium tabular-nums shrink-0"}
                 style={emphasis ? undefined : { color: colorMap[d.type] }}
               >
-                {amount}
+                <FigureValue block={`chart/point:${i}`}>{amount}</FigureValue>
               </span>
             </div>
             <div className="relative mt-1 h-2 rounded-sm bg-muted/40">
