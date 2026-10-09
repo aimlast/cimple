@@ -757,7 +757,10 @@ export function rankBuyers(items: Array<{ facts: BuyerReadingFacts; insight: Buy
 const QUIET_KINDS = new Set(["heading", "page", "summary", "column", "locked", "point"]);
 
 /** One sentence above a page in the Document view, or null when nothing notable. */
-export function pageHeadline(page: DocumentPage, doc: { pages: DocumentPage[]; openedBy: number }): string | null {
+export function pageHeadline(
+  page: DocumentPage,
+  doc: { pages: DocumentPage[]; openedBy: number; filter?: "one" | "some" | null },
+): string | null {
   if (doc.openedBy === 0) return null;
   const content = doc.pages.filter((p) => p.role !== "front_matter");
   const perReader = page.readers > 0 ? page.attentionMs / page.readers : 0;
@@ -767,6 +770,8 @@ export function pageHeadline(page: DocumentPage, doc: { pages: DocumentPage[]; o
   const top = content.reduce<DocumentPage | null>((m, p) => (p.attentionMs > (m?.attentionMs ?? 0) ? p : m), null);
   if (top && top.pageId === page.pageId && top.part === page.part && page.attentionMs > 0 && content.length > 1) {
     const x = ratio >= 1.5 ? `, ${timesWord(ratio)} its expected reading time` : "";
+    // A view filtered to one buyer (the Buyers view's "See where they read"): their page, not the CIM's.
+    if (doc.filter === "one") return `This buyer's most-read page${x}.`;
     return `Most studied page in the CIM — ${page.readers} of ${plural(doc.openedBy, "buyer")} read it${x}.`;
   }
   if (page.locked) {
@@ -780,7 +785,11 @@ export function pageHeadline(page: DocumentPage, doc: { pages: DocumentPage[]; o
   // buyers read, or never tracked) — nothing to say about how it was read.
   if (page.reachRecorded === false) return null;
   if (page.reachedBy === 0 && page.readers === 0) {
-    return page.role === "front_matter" ? null : "No buyer has reached this page yet.";
+    if (page.role === "front_matter") return null;
+    // Filtered views: other buyers may well have reached it.
+    if (doc.filter === "one") return "This buyer hasn't reached this page.";
+    if (doc.filter === "some") return "No buyer in this view has reached this page.";
+    return "No buyer has reached this page yet.";
   }
   if (page.reachedBy >= 2 && page.readers < page.reachedBy / 2) {
     return `${page.reachedBy} buyers reached this page but ${page.readers === 0 ? "none" : `only ${page.readers}`} stopped to read it.`;

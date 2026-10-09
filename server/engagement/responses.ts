@@ -333,7 +333,8 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
   let lastRecordedIndex: number | null = null;
   if (reachBasis === "old_tracking") for (const p of pages) if (p.reachRecorded) lastRecordedIndex = p.index;
 
-  const doc = { pages, openedBy };
+  const filter = facts.filters.buyers.length === 1 ? "one" as const : facts.filters.buyers.length > 1 || facts.filters.segment !== "all" ? "some" as const : null;
+  const doc = { pages, openedBy, filter };
   for (const pg of pages) pg.headline = pageHeadline(pg, doc);
 
   const reach: ReachPoint[] = pages.map((p) => ({ index: p.index, pageId: p.pageId, part: p.part, label: p.label, title: p.title, buyers: p.reachedBy }));
@@ -365,7 +366,7 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
     reach,
     reachHeadline: reachHeadline(reach, {
       ...(reachBasis === "old_tracking" ? { recorded: new Set(pages.filter((p) => p.reachRecorded).map((p) => p.index)) } : {}),
-      filtered: facts.filters.buyers.length > 0 || facts.filters.segment !== "all",
+      filtered: filter !== null,
     }),
     pages,
     byKind,

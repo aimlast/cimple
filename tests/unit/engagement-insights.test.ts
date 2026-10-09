@@ -356,6 +356,11 @@ await test("page headline templates", () => {
   const q = { id: "q", text: "?", askedAt: at(D), pageId: "cust", status: "pending", answered: false, accessId: "a", name: "A" };
   assert.equal(pageHeadline(dp("cust", { questions: [q] }), { pages: doc, openedBy: 5 }), "1 question asked on this page.");
   assert.equal(pageHeadline(dp("deal", { readers: 0, reachedBy: 0, attentionMs: 0 }), { pages: doc, openedBy: 5 }), "No buyer has reached this page yet.");
+  // Filtered views say so (other buyers may have reached it); a page nobody's reading was recorded on says nothing.
+  assert.equal(pageHeadline(dp("deal", { readers: 0, reachedBy: 0, attentionMs: 0 }), { pages: doc, openedBy: 1, filter: "one" }), "This buyer hasn't reached this page.");
+  assert.equal(pageHeadline(dp("deal", { readers: 0, reachedBy: 0, attentionMs: 0 }), { pages: doc, openedBy: 3, filter: "some" }), "No buyer in this view has reached this page.");
+  assert.equal(pageHeadline(dp("deal", { readers: 0, reachedBy: 7, attentionMs: 0, reachRecorded: false }), { pages: doc, openedBy: 9 }), null);
+  assert.equal(pageHeadline(doc[1], { pages: doc, openedBy: 1, filter: "one" }), "This buyer's most-read page, 3 times its expected reading time.");
   assert.equal(pageHeadline(dp("deal", { readers: 1, reachedBy: 6, attentionMs: 5_000 }), { pages: doc, openedBy: 6 }), "6 buyers reached this page but only 1 stopped to read it.");
   assert.equal(pageHeadline(dp("cust", { readers: 2, attentionMs: 120_000, expectedMs: 30_000 }), { pages: doc, openedBy: 5 }), "Readers spend twice the expected reading time here — 1 min each on average.");
   const blocks = [

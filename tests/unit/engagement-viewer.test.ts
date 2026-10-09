@@ -447,6 +447,8 @@ test("Why? for pages with no reading recorded in between (a rebuild's new pages)
   assert.equal(whyNotes(null, docOf({ reachBasis: "old_tracking", lastRecordedIndex: 9, pages: one }), ctx()).find((n) => n.key === "not_recorded")!.text,
     `Cimple's earlier tracking didn't record page 5 (Page 5), so it's hatched and left out of "how far buyers got".`);
   assert.equal(pageRunsText([1, 3, 5, 7, 9, 11, 13].map((i) => ({ index: i, label: String(i) }))), "1, 3, 5, 7, 9 and 2 more");
+  // "more" counts pages, not runs (here 19, 21 and 25–28 → 6 more).
+  assert.equal(pageRunsText([1, 3, 4, 7, 8, 13, 14, 16, 18, 20, 24, 25, 26, 27].map((i) => ({ index: i, label: String(i + 1) }))), "2, 4–5, 8–9, 14–15, 17 and 6 more");
   assert.equal(pageRunsText([{ index: 2, label: "3" }]), "3");
   assert.equal(pageRunsText([{ index: 2, label: "3" }, { index: 3, label: "4" }]), "3–4");
 });

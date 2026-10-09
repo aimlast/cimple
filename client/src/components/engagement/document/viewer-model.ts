@@ -460,17 +460,20 @@ export function recordedDrop(reach: ReadonlyArray<Pick<ReachPoint, "buyers">>, p
   return d ? { ...d, index: at[d.index] } : null;
 }
 
-/** "4a–4b, 8, 11 and 25–28": viewer pages as runs of neighbouring pages (by index). */
+/** "4a–4b, 8, 11 and 25–28": viewer pages as runs of neighbouring pages (by index); past maxRuns, "… and 7 more". */
 export function pageRunsText(pages: ReadonlyArray<Pick<DocumentPage, "index" | "label">>, maxRuns = 6): string {
   const sorted = [...pages].sort((a, b) => a.index - b.index);
-  const runs: string[] = [];
+  const runs: Array<{ text: string; n: number }> = [];
   for (let i = 0; i < sorted.length; i++) {
     let j = i;
     while (j + 1 < sorted.length && sorted[j + 1].index === sorted[j].index + 1) j++;
-    runs.push(j > i ? `${sorted[i].label}–${sorted[j].label}` : sorted[i].label);
+    runs.push({ text: j > i ? `${sorted[i].label}–${sorted[j].label}` : sorted[i].label, n: j - i + 1 });
     i = j;
   }
-  const shown = runs.length > maxRuns ? [...runs.slice(0, maxRuns - 1), `${runs.length - maxRuns + 1} more`] : runs;
+  // The rest as a count of pages (never of runs).
+  const shown = runs.length > maxRuns
+    ? [...runs.slice(0, maxRuns - 1).map((r) => r.text), `${runs.slice(maxRuns - 1).reduce((s, r) => s + r.n, 0)} more`]
+    : runs.map((r) => r.text);
   return shown.length <= 1 ? shown.join("") : `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
 }
 
