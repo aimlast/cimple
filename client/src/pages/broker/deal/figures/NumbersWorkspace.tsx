@@ -245,6 +245,7 @@ export function NumbersWorkspace() {
         onReview={() => setReviewOpen(true)}
         onTurnOff={() => actions.settings.mutateAsync({ ddChecksOn: false }).then(() => toast({ title: "Checks turned off for due-diligence buyers" })).catch(fail("Couldn't turn the checks off"))}
         busy={actions.settings.isPending}
+        toReview={k.waiting + data.checks.filter((c) => c.group === "difference" && !c.shownToBuyers && !c.refusal).length}
       />
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5" data-testid="figures-kpis">

@@ -11,7 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 import { shortDate } from "./useFigures";
 
-export function StatusPill({ ddShownAt, ddBuyers, onReview, onTurnOff, busy }: { ddShownAt: string | null; ddBuyers: number; onReview: () => void; onTurnOff: () => void; busy?: boolean }) {
+export function StatusPill({ ddShownAt, ddBuyers, onReview, onTurnOff, busy, toReview = 1 }: { ddShownAt: string | null; ddBuyers: number; onReview: () => void; onTurnOff: () => void; busy?: boolean; /** Notes waiting + differences not shown yet (0 = nothing new to show). */ toReview?: number }) {
   const [confirm, setConfirm] = useState(false);
   const on = !!ddShownAt;
   const words = on
@@ -24,7 +24,10 @@ export function StatusPill({ ddShownAt, ddBuyers, onReview, onTurnOff, busy }: {
         {words}
       </p>
       <div className="flex flex-col gap-2 sm:flex-row">
-        <Button size="sm" className="w-full bg-teal text-teal-foreground hover:bg-teal/90 sm:w-auto" onClick={onReview} data-testid="button-review-and-show">Review and show to buyers</Button>
+        {/* The primary action only while there is something to show; once the checks are on and nothing waits, a quiet "Review". */}
+        {on && toReview === 0
+          ? <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={onReview} data-testid="button-review-and-show">Review</Button>
+          : <Button size="sm" className="w-full bg-teal text-teal-foreground hover:bg-teal/90 sm:w-auto" onClick={onReview} data-testid="button-review-and-show">Review and show to buyers</Button>}
         {on && <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => setConfirm(true)} disabled={busy}>Turn off</Button>}
       </div>
       <AlertDialog open={confirm} onOpenChange={setConfirm}>
