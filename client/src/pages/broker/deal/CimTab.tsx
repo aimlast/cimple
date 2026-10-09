@@ -1,6 +1,6 @@
 /**
  * CimTab — the deal's CIM at a glance: status and generation progress, the
- * three versions (Normal / Blind / Due diligence) with previews, the design
+ * three versions (Blind CIM / Full CIM / Due diligence) with previews, the design
  * (template, branding, cover and brokerage pages), what each kind of buyer
  * sees, and the way into the CIM builder. Generate / regenerate
  * follow the same discrepancy gate as everywhere else. The Blind card also
@@ -29,7 +29,8 @@ import { useCimGenerationGate } from "@/hooks/useCimGenerationGate";
 import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
 import { PanelError } from "@/components/deal/PanelError";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
-import { BUYER_ACCESS_LEVELS } from "@shared/cim-layouts";
+import { ACCESS_LEVELS, BLIND_ACCESS_LEVEL, DD_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, isTeaserOnly } from "@shared/access-levels";
+import { PREVIEW_PARAM } from "@/components/cim-builder/CimCanvas";
 import { useBuilderState } from "@/components/cim-builder/CimSummaryCard";
 import { useAiGate } from "@/components/cim-builder/useAiGate";
 import { builderRequest, errorText } from "@/components/cim-builder/api";
@@ -111,7 +112,6 @@ export function CimTab() {
   const sections = data.sections;
   const approved = sections.filter((s) => s.brokerApproved).length;
   const hidden = sections.filter((s) => s.isVisible === false).length;
-  const fullOnly = sections.filter((s) => s.accessTier === "full" && s.isVisible !== false);
   const running = generation.isRunning || generate.isPending;
   const openBuilder = (preview?: string) => navigate(`/deal/${dealId}/design${preview ? `?preview=${preview}` : ""}`);
   // What "Regenerate all" does to buyers who can open the CIM now.
@@ -185,17 +185,9 @@ export function CimTab() {
             <h3 className="text-sm font-semibold">Versions</h3>
             <div className="grid gap-3 sm:grid-cols-3">
               <VersionCard
-                icon={<FileText className="h-4 w-4" />}
-                title="Normal"
-                who="LOI buyers"
-                status={<span className="text-success">Ready</span>}
-                detail="The named CIM — business name, people and places shown."
-                onPreview={() => openBuilder("loi")}
-              />
-              <VersionCard
                 icon={<Lock className="h-4 w-4" />}
-                title="Blind"
-                who="Teaser and Full buyers"
+                title="Blind CIM"
+                who="Blind CIM buyers"
                 status={
                   !data.blind.generated ? <span className="text-amber-500">Not generated yet</span>
                     : data.blind.held > 0 ? <span className="text-red-400 inline-flex items-center gap-1" title={data.blind.error ?? undefined}><AlertTriangle className="h-3 w-3" /> {data.blind.held} section{data.blind.held === 1 ? "" : "s"} held back</span>
@@ -214,12 +206,20 @@ export function CimTab() {
                     <CodenameEditor dealId={dealId} codename={data.blind.codename} onSaved={() => { refetch(); qc.invalidateQueries({ queryKey: ["/api/deals", dealId] }); }} />
                   </>
                 }
-                onPreview={() => openBuilder("teaser")}
+                onPreview={() => openBuilder(PREVIEW_PARAM[BLIND_ACCESS_LEVEL])}
                 action={!data.blind.generated
                   ? { label: "Generate", busy: version.isPending, onClick: () => version.mutate() }
                   : data.blind.held > 0
                     ? { label: "Retry", busy: retryBlind.isPending, onClick: () => retryBlind.mutate() }
                     : undefined}
+              />
+              <VersionCard
+                icon={<FileText className="h-4 w-4" />}
+                title="Full CIM"
+                who="Full CIM buyers"
+                status={<span className="text-success">Ready</span>}
+                detail="The named CIM — business name, people and places shown."
+                onPreview={() => openBuilder(PREVIEW_PARAM[NAMED_ACCESS_LEVEL])}
               />
               <VersionCard
                 icon={<ShieldCheck className="h-4 w-4" />}
@@ -232,7 +232,7 @@ export function CimTab() {
                     : (data.dd.outOfDate ?? 0) > 0
                       ? <span className="text-blue-400">{data.dd.outOfDate} section{data.dd.outOfDate === 1 ? "" : "s"} out of date</span>
                       : <span className="text-success">Ready</span>}
-                detail="The named CIM plus customer names and verification notes."
+                detail="The Full CIM plus customer names and verification notes."
                 extra={!ddRun.busy && data.dd.lastRun && (data.dd.lastRun.error || data.dd.lastRun.warnings.length > 0) ? (
                   <div className="text-[11px] text-amber-500 leading-snug space-y-1" role="status" data-testid="dd-last-run">
                     {data.dd.lastRun.error
@@ -243,7 +243,7 @@ export function CimTab() {
                     {!data.dd.lastRun.error && data.dd.lastRun.warnings.length > 4 && <p>…and {data.dd.lastRun.warnings.length - 4} more.</p>}
                   </div>
                 ) : undefined}
-                onPreview={() => openBuilder("due_diligence")}
+                onPreview={() => openBuilder(PREVIEW_PARAM[DD_ACCESS_LEVEL])}
                 action={{
                   label: data.dd.generated ? "Refresh" : "Generate",
                   busy: ddRun.busy,
@@ -268,35 +268,26 @@ export function CimTab() {
               <button type="button" className="text-xs text-teal hover:underline" onClick={() => navigate(`/deal/${dealId}/buyers`)}>Manage buyer access</button>
             </div>
             <div className="rounded-lg border border-border divide-y divide-border">
-              {BUYER_ACCESS_LEVELS.map((l) => (
+              {ACCESS_LEVELS.map((l) => (
                 <div key={l.key} className="flex items-center gap-3 px-4 py-3">
                   <Users className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium">{l.label}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {l.key === "teaser" && fullOnly.length > 0
-                        ? `Blind CIM; ${fullOnly.length} section${fullOnly.length === 1 ? " is" : "s are"} locked (Full access only).`
-                        : l.description}
-                    </p>
+                    <p className="text-xs text-muted-foreground">{l.description}</p>
                   </div>
                   <span className="text-xs text-muted-foreground tabular-nums shrink-0">
                     {data.buyers.byLevel[l.key] ?? 0} buyer{(data.buyers.byLevel[l.key] ?? 0) === 1 ? "" : "s"}
                   </span>
-                  <Button variant="ghost" size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => openBuilder(l.key)}>
-                    <Eye className="h-3.5 w-3.5" /> Preview
-                  </Button>
+                  {isTeaserOnly(l.key) ? (
+                    <span className="w-[76px] shrink-0" aria-hidden />
+                  ) : (
+                    <Button variant="ghost" size="sm" className="h-7 text-xs gap-1 shrink-0" onClick={() => openBuilder(PREVIEW_PARAM[l.key as keyof typeof PREVIEW_PARAM])}>
+                      <Eye className="h-3.5 w-3.5" /> Preview
+                    </Button>
+                  )}
                 </div>
               ))}
             </div>
-            {fullOnly.length > 0 ? (
-              <p className="text-xs text-muted-foreground">
-                Full access only: {fullOnly.map((s) => `“${s.sectionTitle}”`).join(", ")}.
-              </p>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Every section is visible to teaser buyers. In the builder, mark a section “Full access only” to show it locked until you upgrade a buyer.
-              </p>
-            )}
             {hidden > 0 && (
               <p className="text-xs text-muted-foreground flex items-center gap-1.5">
                 <EyeOff className="h-3.5 w-3.5" /> {hidden} hidden section{hidden === 1 ? " is" : "s are"} never sent to any buyer.
@@ -315,7 +306,7 @@ export function CimTab() {
                 <p>Every section is rebuilt from scratch. These are discarded and can't be undone:</p>
                 <ul className="list-disc pl-5 space-y-1">
                   <li>Sections you added, edited, rewrote or reordered</li>
-                  <li>Approvals, hidden sections and access settings</li>
+                  <li>Approvals and hidden sections</li>
                   <li>The blind and due-diligence versions</li>
                 </ul>
                 <p>To redo one section, open the builder and regenerate just that section.</p>

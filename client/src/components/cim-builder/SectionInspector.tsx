@@ -6,7 +6,7 @@
 import { useEffect, useState } from "react";
 import {
   AlertTriangle, CheckCircle2, ChevronDown, Eye, EyeOff, Lightbulb, Loader2, Lock, RefreshCw,
-  Sparkles, Trash2, Undo2, Users,
+  Sparkles, Trash2, Undo2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -314,28 +314,8 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
       {/* Who can see it */}
       <div className="space-y-2">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Who can see it</p>
-        <div className="grid grid-cols-2 gap-1.5 rounded-md border border-border p-0.5 bg-muted/30">
-          {(["teaser", "full"] as const).map((tier) => (
-            <button
-              key={tier}
-              type="button"
-              aria-pressed={section.accessTier === tier}
-              onClick={() => section.accessTier !== tier && api.patch.mutate({ id: section.id, accessTier: tier })}
-              className={cn(
-                "flex items-center justify-center gap-1.5 rounded px-2 py-1.5 text-[11px] transition-colors",
-                section.accessTier === tier ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-              )}
-              data-testid={`tier-${tier}`}
-            >
-              {tier === "teaser" ? <Users className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-              {tier === "teaser" ? "Every buyer" : "Full access only"}
-            </button>
-          ))}
-        </div>
         <p className="text-[11px] text-muted-foreground leading-snug">
-          {section.accessTier === "full"
-            ? "Teaser buyers see this section's title with a lock. Buyers with Full access or higher see it all."
-            : "Every buyer with access sees this section (blind buyers see the redacted version)."}
+          Every buyer with the CIM sees this section while it's shown (Blind CIM buyers see the redacted version).
         </p>
         <label className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2 cursor-pointer">
           <span className="flex items-center gap-2 text-xs">

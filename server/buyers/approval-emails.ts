@@ -2,8 +2,8 @@
  * The email a buyer receives once the seller approves them (buyer approval
  * workflow). Pure — the route and the unit tests share it.
  *
- * Approved buyers get "full" access, which serves the Blind CIM: until they
- * are moved to LOI / due diligence they must never learn the business's name
+ * Approved buyers get the Blind CIM (BLIND_ACCESS_LEVEL): until they are
+ * moved to the Full CIM / due diligence they must never learn the business's name
  * — not in the subject, not in the body. The deal is named the way
  * buyerFacingDealName names it (project codename, or neutral wording).
  *

@@ -41,6 +41,7 @@ import {
 import { invalidateBrokerEngagement } from "./engagement-insights";
 import { cachedDealReadingFacts, invalidateDealFacts } from "../engagement/facts-cache";
 import { liveRendition } from "../engagement/legacy";
+import { NAMED_ACCESS_LEVEL, normalizeAccessLevel, seesCim } from "@shared/access-levels";
 
 const BASE = "/api/deals/:dealId/engagement";
 
@@ -90,7 +91,11 @@ export function registerEngagementRoutes(app: Express): void {
       if (!row) {
         // Old-tracker reading is drawn on the CIM as it would be served now
         // (server/engagement/legacy.ts): that version isn't stored — rebuild it.
-        const levels = Array.from(new Set([...(await storage.getBuyerAccessByDeal(deal.id)).map((a) => a.accessLevel), "loi"]));
+        // Every CIM level a link on this deal reads (normalised), plus the named CIM.
+        const levels = Array.from(new Set([
+          ...(await storage.getBuyerAccessByDeal(deal.id)).filter((a) => seesCim(a.accessLevel)).map((a) => normalizeAccessLevel(a.accessLevel)),
+          NAMED_ACCESS_LEVEL,
+        ]));
         for (const level of levels) {
           const lr = await liveRendition(deal, level);
           if (lr?.raw.id === rid) { row = lr.row; break; }

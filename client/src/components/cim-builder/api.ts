@@ -8,8 +8,8 @@ import type { CimGenerationStatus, CimSection, CimSectionAiTask } from "@shared/
 export type BlindStatus = "fresh" | "updating" | "held" | "none" | "excluded";
 
 /** A section row as the builder receives it. */
+/** (No access tier: per-section locks are retired — the server doesn't send it.) */
 export interface BuilderSection extends Omit<CimSection, "aiTask" | "contentHistory" | "accessTier" | "figureWarnings"> {
-  accessTier: "teaser" | "full";
   aiTask: CimSectionAiTask | null;
   historyCount: number;
   lastChange: { reason: string; at: string } | null;

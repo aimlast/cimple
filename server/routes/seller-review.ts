@@ -22,6 +22,7 @@ import rateLimit from "express-rate-limit";
 import { storage } from "../storage";
 import { requireBroker, requireOwnedDeal, getOwnedDeal } from "../broker-auth/routes";
 import { buildBuyerCim, cimHeldFromBuyers } from "@shared/cim-buyer-view";
+import { NAMED_ACCESS_LEVEL } from "@shared/access-levels";
 import { discrepancyBlocksCim } from "@shared/discrepancy-gate";
 import {
   sellerApprovalField,
@@ -90,9 +91,9 @@ export function registerSellerReviewRoutes(app: Express) {
         return res.json({ ...base, stage: "not_ready", sections: [], design: null });
       }
       const [sections, media] = await Promise.all([storage.getCimSectionsByDeal(deal.id), loadMediaAssets(deal.id)]);
-      // The named CIM exactly as an LOI buyer would get it (hidden sections,
-      // failed placeholders and AI notes never included).
-      const cim = buildBuyerCim({ deal, accessLevel: "loi", sections, overrides: [], media, askingPrice: listedAskingPrice(deal) });
+      // The named CIM exactly as a Full CIM buyer would get it (hidden
+      // sections, failed placeholders and AI notes never included).
+      const cim = buildBuyerCim({ deal, accessLevel: NAMED_ACCESS_LEVEL, sections, overrides: [], media, askingPrice: listedAskingPrice(deal) });
       const { designPayload } = await import("../cim/templates");
       const design = await designPayload(deal, "normal");
       const openRequests = (await storage.getTasksByDeal(deal.id)).filter(

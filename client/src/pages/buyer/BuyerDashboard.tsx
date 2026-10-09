@@ -27,6 +27,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BuyerNav, readErrorBody } from "./shared";
+import { seesNamedCim } from "@shared/access-levels";
 
 interface DashboardDeal {
   dealId: string;
@@ -75,9 +76,9 @@ function parsePriceToNumber(price: string | null): number {
   return n;
 }
 
-/** Teaser/full access levels see the blind CIM — identity is withheld. */
+/** Anything short of the Full CIM reads anonymously — identity is withheld (shared/access-levels.ts). */
 function isBlindAccess(level: string): boolean {
-  return !["loi", "due_diligence"].includes(String(level || ""));
+  return !seesNamedCim(level);
 }
 
 export default function BuyerDashboard() {

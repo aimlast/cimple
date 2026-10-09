@@ -22,7 +22,10 @@ import {
   type CimSectionSnapshot,
   type InsertCimSection,
 } from "@shared/schema";
-import { CIM_ACCESS_TIERS, defaultLayoutData, isCimFallbackSection, isCimLayoutKey, sameLayoutFamily, sampleDataIn } from "@shared/cim-layouts";
+import { defaultLayoutData, isCimFallbackSection, isCimLayoutKey, sameLayoutFamily, sampleDataIn } from "@shared/cim-layouts";
+
+/** The answer to anything that still sets a section's access tier (retired Oct 2026). */
+export const SECTION_TIERS_RETIRED = "Sections aren't locked by access level any more. Refresh the page.";
 import { keepPublishedBeforeChange, recordPublishedVersions } from "./published-versions";
 import { storage } from "../storage";
 import { carryFigureWarnings } from "./figure-check";
@@ -146,7 +149,6 @@ export function duplicateSectionFields(section: CimSection, opts: { hidden: bool
     brokerApproved: false,
     isVisible: opts.hidden ? false : section.isVisible,
     layoutOverride: section.layoutOverride,
-    accessTier: section.accessTier ?? "teaser",
     // The copy shows the same figures, so it carries the same flags: an
     // untraced figure must not lose its "check these" warning by being
     // copied (then approved with the design and published).
@@ -254,8 +256,8 @@ export function displayedProse(section: Pick<CimSection, "layoutType" | "layoutD
 /**
  * PATCH /api/cim-sections/:sectionId (and the legacy /api/sections/:id).
  * Whitelisted, validated fields only. Content changes push an undo snapshot
- * and invalidate the section's blind version; visibility, approval and
- * access tier don't touch content.
+ * and invalidate the section's blind version; visibility and approval
+ * don't touch content.
  */
 export async function patchCimSection(req: Request, res: Response) {
   try {
@@ -313,10 +315,8 @@ export async function patchCimSection(req: Request, res: Response) {
     }
     // The broker checked the flagged figures and they're right.
     if (body.dismissFigureWarnings === true) set.figureWarnings = null;
-    if (body.accessTier !== undefined) {
-      if (!(CIM_ACCESS_TIERS as readonly unknown[]).includes(body.accessTier)) return bad("Access must be teaser or full");
-      set.accessTier = body.accessTier as string;
-    }
+    // Per-section access tiers are retired: a stale tab that still sends one is told plainly.
+    if (body.accessTier !== undefined) return bad(SECTION_TIERS_RETIRED);
 
     // Photo / video / map sections: valid links only, and only this deal's
     // own uploads (shared/cim-media.ts rules).

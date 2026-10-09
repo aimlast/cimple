@@ -19,6 +19,7 @@ import { matchBuyerToDeal } from "../matching/engine.js";
 import { ndaBlocksBuyer } from "@shared/cim-buyer-view";
 import { dashboardShowsLinkedDeals, viewLinkProblem } from "../buyers/view-access.js";
 import { dealPublishedForBuyers } from "@shared/buyer-publish-gate";
+import { isTeaserOnly, normalizeAccessLevel, seesNamedCim } from "@shared/access-levels";
 
 interface DashboardDeal {
   dealId: string;
@@ -96,6 +97,9 @@ export function registerBuyerDashboardRoutes(app: Express) {
         // Revoked or expired links are not opportunities — the card would
         // link straight into a view room that rejects the token.
         if (viewLinkProblem(access)) continue;
+        // A Teaser link reads the teaser, not the CIM: its card comes with the
+        // teaser document (it needs the teaser to be published, not the CIM).
+        if (isTeaserOnly(access.accessLevel)) continue;
         if (seen.has(access.dealId)) continue;
         seen.add(access.dealId);
 
@@ -150,9 +154,9 @@ export function registerBuyerDashboardRoutes(app: Express) {
           || extracted?.locationSite?.state
           || null;
 
-        // Buyers on teaser/full access see the BLIND CIM — the dashboard card
-        // must not reveal what the view room withholds (name, location, description).
-        const blind = !["loi", "due_diligence"].includes(String(access.accessLevel));
+        // Blind CIM buyers — the dashboard card must not reveal what the view
+        // room withholds (name, location, description).
+        const blind = !seesNamedCim(access.accessLevel);
         dashboardDeals.push({
           dealId: deal.id,
           businessName: blind ? ((deal as any).blindCodename || "Confidential Opportunity") : deal.businessName,
@@ -165,7 +169,7 @@ export function registerBuyerDashboardRoutes(app: Express) {
           description: blind || ndaBlocksBuyer(deal, access) ? null : ((deal as any).description || extracted?.executiveSummary || null),
           brokerFirm,
           accessToken: access.accessToken,
-          accessLevel: access.accessLevel,
+          accessLevel: normalizeAccessLevel(access.accessLevel),
           ndaSigned: !!access.ndaSigned,
           lastAccessedAt: access.lastAccessedAt ? new Date(access.lastAccessedAt).toISOString() : null,
           match,

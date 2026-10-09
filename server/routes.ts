@@ -36,7 +36,8 @@ import { askerScope, MAX_BUYER_QUESTION_CHARS } from "@shared/buyer-qa-scope";
 import { blindLeakTerms, findBlindLeaks } from "@shared/blind-guard";
 import { invalidateBlind, redoLeakedBlind, regenerateAllBlind, regenerateAllBlindInBackground, scheduleBlindRefresh } from "./cim/blind-sync.js";
 import { patchCimSection, reorderDealSections } from "./cim/section-ops.js";
-import { cimModeForAccessLevel, hasSampleData, isBuyerAccessLevel, isCimFallbackSection } from "@shared/cim-layouts";
+import { hasSampleData, isCimFallbackSection } from "@shared/cim-layouts";
+import { ACCESS_LEVEL_INPUT_ERROR, BLIND_ACCESS_LEVEL, cimModeForAccessLevel, isTeaserOnly, normalizeAccessLevel, parseAccessLevelInput, renditionKindFor, sameAccessLevel } from "@shared/access-levels";
 import { withApprovalRuleMark } from "@shared/cim-approvals";
 import multer from "multer";
 import { registerDealListRoutes, loadDealSideFacts, moneyValue, dealNextStep } from "./routes/deal-list.js";
@@ -59,7 +60,7 @@ import { registerEngagementRoutes } from "./routes/engagement.js";
 import { registerEngagementInsightRoutes } from "./routes/engagement-insights.js";
 import { registerDataRoomRoutes } from "./routes/data-room.js";
 import { registerReadingRoutes } from "./routes/reading.js";
-import { recordRendition, variantForAccessLevel } from "./analytics/renditions.js";
+import { recordRendition } from "./analytics/renditions.js";
 import { viewRoomStamp } from "./analytics/reading-ingest.js";
 import { notify, previewRecipients, sendDirectEmail } from "./notifications/service.js";
 import { escapeHtml } from "./notifications/email-escape";
@@ -4722,6 +4723,15 @@ Return JSON only.`,
 
   app.post("/api/deals/:dealId/buyers", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
+      // What the link opens (shared/access-levels.ts). Omitted = the Blind
+      // CIM, which is what every link created before levels were picked here
+      // opened (an old tab sends nothing).
+      const accessLevel = req.body?.accessLevel === undefined ? BLIND_ACCESS_LEVEL : parseAccessLevelInput(req.body.accessLevel);
+      if (!accessLevel) return res.status(400).json({ error: ACCESS_LEVEL_INPUT_ERROR });
+      if (isTeaserOnly(accessLevel)) {
+        // A teaser link needs a published teaser to open.
+        return res.status(409).json({ code: "teaser_not_published", error: "Publish the teaser first." });
+      }
       // A link handed out before publishing would open a draft the seller
       // never approved (the publish step holds those gates).
       if (!dealPublishedForBuyers(await storage.getDeal(req.params.dealId))) {
@@ -4755,9 +4765,11 @@ Return JSON only.`,
         buyerEmail,
         buyerName: body.buyerName || existingAccount?.name || null,
         buyerCompany: body.buyerCompany || existingAccount?.company || null,
+        accessLevel,
         // Security spec: links auto-expire after 30 days unless the broker
         // sets a different expiry (they can extend from the buyers panel).
         expiresAt,
+        accessEvents: [{ type: "granted", at: new Date().toISOString(), accessLevel }] satisfies BuyerAccessEvent[],
       };
       const access = await storage.createBuyerAccess(validatedData);
       res.json(access);
@@ -4813,6 +4825,13 @@ Return JSON only.`,
         return res.status(404).json({ error: "Deal not found" });
       }
 
+      // A Teaser link reads the teaser only — never the CIM, whatever the
+      // CIM's state. (The teaser document is served here once it exists;
+      // until then a teaser link has nothing to read: fail closed.)
+      if (isTeaserOnly(access.accessLevel)) {
+        return res.status(403).json({ code: "not_published", error: "This summary isn't available right now." });
+      }
+
       // Nothing reaches a buyer until the CIM is published (the publish step
       // holds the discrepancy + approval gates). Not a view either: no stamp,
       // so the decision reminders don't start on a CIM nobody could read.
@@ -4842,7 +4861,7 @@ Return JSON only.`,
         dealId: fullAccess.dealId,
         buyerEmail: fullAccess.buyerEmail,
         buyerName: fullAccess.buyerName,
-        accessLevel: fullAccess.accessLevel,
+        accessLevel: normalizeAccessLevel(fullAccess.accessLevel),
         ndaSigned: fullAccess.ndaSigned,
         ndaSignedAt: fullAccess.ndaSignedAt,
         canDownload: fullAccess.canDownload,
@@ -4856,14 +4875,9 @@ Return JSON only.`,
         ndaCopyAvailable: !!fullAccess.ndaSigned && !!((fullAccess.ndaProfile as Record<string, unknown> | null)?.signature),
       });
 
-      // Determine CIM mode from buyer's access level
-      const cimMode = (() => {
-        switch (access.accessLevel) {
-          case "due_diligence": return "dd";
-          case "loi": return "normal";
-          default: return "blind"; // teaser, full → blind by default
-        }
-      })();
+      // Determine CIM mode from buyer's access level (shared/access-levels.ts:
+      // Blind CIM → blind, Full CIM → normal, due diligence → dd).
+      const cimMode = cimModeForAccessLevel(access.accessLevel);
 
       // In blind mode the buyer must never see the real business name — not
       // in the header, the NDA card, or section titles. Use the persisted
@@ -5016,7 +5030,7 @@ Return JSON only.`,
       const ownerPreview = !!req.session?.brokerId && req.session.brokerId === deal.brokerId;
       const reading = buyerCim.sections.length > 0 && !ownerPreview
         ? await recordRendition({
-            dealId: deal.id, mode: cimMode, variant: variantForAccessLevel(access.accessLevel),
+            dealId: deal.id, mode: cimMode, variant: renditionKindFor(access.accessLevel).variant,
             cimLayoutVersion: deal.cimLayoutVersion ?? null, sections: buyerCim.sections, design, live: baseSections,
           })
         : null;
@@ -5218,10 +5232,18 @@ Return JSON only.`,
         accessUpdates.expiresAt = new Date(accessUpdates.expiresAt);
         if (isNaN(accessUpdates.expiresAt.getTime())) return res.status(400).json({ error: "Invalid expiry date" });
       }
-      // Access level decides which CIM version (and which sections) the buyer
-      // sees — only the four known levels are accepted.
-      if (accessUpdates.accessLevel !== undefined && !isBuyerAccessLevel(accessUpdates.accessLevel)) {
-        return res.status(400).json({ error: "Access level must be teaser, full, loi or due_diligence" });
+      // Access level decides what the buyer reads (shared/access-levels.ts):
+      // a new key or a legacy value from a stale tab ("full" = the Blind CIM)
+      // is accepted and stored normalised; anything else is refused.
+      if (accessUpdates.accessLevel !== undefined) {
+        const level = parseAccessLevelInput(accessUpdates.accessLevel);
+        if (!level) return res.status(400).json({ error: ACCESS_LEVEL_INPUT_ERROR });
+        // Back to the teaser only when a teaser is there to read — refused on
+        // the server, not just greyed out in the UI.
+        if (isTeaserOnly(level) && !isTeaserOnly(existingAccess.accessLevel)) {
+          return res.status(409).json({ code: "teaser_not_published", error: "Publish the teaser first." });
+        }
+        accessUpdates.accessLevel = level;
       }
       // Keep a short history of broker actions on the link (buyer profile timeline).
       const history = [...(((existingAccess as any).accessEvents as BuyerAccessEvent[] | null) ?? [])];
@@ -5230,7 +5252,7 @@ Return JSON only.`,
         && (!existingAccess.expiresAt || accessUpdates.expiresAt.getTime() > new Date(existingAccess.expiresAt).getTime())) {
         history.push({ type: "extended", at: nowIso, expiresAt: accessUpdates.expiresAt.toISOString() });
       }
-      if (typeof accessUpdates.accessLevel === "string" && accessUpdates.accessLevel !== existingAccess.accessLevel) {
+      if (typeof accessUpdates.accessLevel === "string" && !sameAccessLevel(accessUpdates.accessLevel, existingAccess.accessLevel)) {
         history.push({ type: "level_changed", at: nowIso, accessLevel: accessUpdates.accessLevel });
       }
       if (history.length !== (((existingAccess as any).accessEvents as unknown[] | null) ?? []).length) accessUpdates.accessEvents = history.slice(-50);
@@ -5256,6 +5278,9 @@ Return JSON only.`,
       const access = await storage.getBuyerAccessByToken(req.params.token);
       const problem = viewLinkProblem(access);
       if (problem || !access) { const e = viewLinkError(problem ?? "not_found"); return res.status(e.status).json({ error: e.error }); }
+      // A Teaser reader hasn't seen the CIM, so there is no CIM decision to
+      // record ("Not for me" on the teaser is its own, separate record).
+      if (isTeaserOnly(access.accessLevel)) return res.status(409).json({ code: "teaser_only", error: "Ask for the CIM first." });
 
       const decisionSchema = z.object({
         decision: z.enum(["interested", "not_interested", "need_more_time"]),
@@ -5676,9 +5701,9 @@ Return JSON only.`,
    * A seller-approved buyer gets access: link or invite their Cimple account,
    * create the access row, email the buyer (broker team CC'd) and tell the
    * broker team. Runs when the seller approves on a published deal, or at
-   * publish for buyers the seller approved earlier. The access is "full" =
-   * the Blind CIM, so every email to the buyer names the deal the way the
-   * view room does: codename or neutral wording, never the business name.
+   * publish for buyers the seller approved earlier. The access is the Blind
+   * CIM (BLIND_ACCESS_LEVEL), so every email to the buyer names the deal the
+   * way the view room does: codename or neutral wording, never the business name.
    */
   async function grantApprovedBuyer(
     request: NonNullable<Awaited<ReturnType<typeof storage.getBuyerApprovalRequest>>>,
@@ -5686,7 +5711,7 @@ Return JSON only.`,
     baseUrl: string,
     review: Record<string, unknown> = {},
   ) {
-    const grantedLevel = "full";
+    const grantedLevel = BLIND_ACCESS_LEVEL;
     const dealLabel = buyerFacingDealName(deal, { accessLevel: grantedLevel });
     const accessToken = crypto.randomUUID();
     const viewUrl = `${baseUrl}/view/${accessToken}`;
@@ -5743,6 +5768,7 @@ Return JSON only.`,
       buyerCompany: request.buyerCompany || null,
       accessLevel: grantedLevel,
       expiresAt: await brokerLinkExpiry(deal.brokerId ?? undefined), // broker's configured default (30 days unless changed)
+      accessEvents: [{ type: "granted", at: new Date().toISOString(), accessLevel: grantedLevel }] satisfies BuyerAccessEvent[],
     } as any);
 
     const updated = await storage.updateBuyerApprovalRequest(request.id, {
@@ -6213,40 +6239,6 @@ Return JSON only.`,
     }
   });
 
-  // Generate teaser
-  app.post("/api/deals/:dealId/generate-teaser", requireBroker, requireOwnedDeal, async (req, res) => {
-    try {
-      const deal = await storage.getDeal(req.params.dealId);
-      if (!deal) {
-        return res.status(404).json({ error: "Deal not found" });
-      }
-      
-      const extractedInfo = deal.extractedInfo as Record<string, any> || {};
-      const businessName = deal.businessName || "The Business";
-      const industry = deal.industry || "Business";
-      
-      const teaser = {
-        headline: `${industry} Business Opportunity`,
-        summary: `Well-established ${industry.toLowerCase()} business with a strong market position and proven track record. ${extractedInfo.competitiveAdvantage ? `Key differentiator: ${extractedInfo.competitiveAdvantage}.` : ''} ${extractedInfo.employees ? `Team of ${extractedInfo.employees} employees in place.` : ''} ${extractedInfo.growthOpportunities ? `Growth opportunities include: ${extractedInfo.growthOpportunities}.` : ''}`,
-        highlights: [
-          extractedInfo.yearsOperating ? `${extractedInfo.yearsOperating} years in operation` : `Established ${industry.toLowerCase()} business`,
-          extractedInfo.employees ? `${extractedInfo.employees} employees` : "Experienced team in place",
-          extractedInfo.competitiveAdvantage || "Strong competitive position",
-          extractedInfo.targetMarket ? `Target market: ${extractedInfo.targetMarket}` : "Established customer base",
-          extractedInfo.growthOpportunities ? `Growth opportunity: ${extractedInfo.growthOpportunities.substring(0, 80)}` : "Significant growth potential",
-        ],
-        askingPrice: listedAskingPrice(deal) || "Contact for details",
-        industry: industry,
-        location: extractedInfo.locations || "Contact for details",
-      };
-      
-      res.json(teaser);
-    } catch (error: any) {
-      console.error("Error generating teaser:", error);
-      res.status(500).json({ error: "Failed to generate teaser" });
-    }
-  });
-
   // Flag missing info after interview
   app.post("/api/deals/:dealId/flag-missing", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
@@ -6386,6 +6378,9 @@ Return JSON only.`,
         const e = viewLinkError(problem ?? "not_found");
         return res.status(e.status).json({ error: e.error });
       }
+      // The teaser page sends only the reading tracker; nothing from a Teaser
+      // link is stored as CIM analytics.
+      if (isTeaserOnly(buyerAccess.accessLevel)) return res.status(204).end();
       if (!dealPublishedForBuyers(await storage.getDeal(buyerAccess.dealId))) return res.status(403).json(notPublishedBody());
 
       const eventSchema = z.object({
@@ -7288,6 +7283,15 @@ Return JSON only.`,
       const roleConfig = teamRoles[role];
       if (!roleConfig) return res.status(400).json({ error: "Invalid role for this team" });
 
+      // A buyer-side seat reads like a buyer link (shared/access-levels.ts):
+      // the Blind CIM unless the broker chose another level. Other teams
+      // have no access level.
+      let memberLevel: string | null = null;
+      if (teamType === "buyer") {
+        memberLevel = accessLevel == null || accessLevel === "" ? BLIND_ACCESS_LEVEL : parseAccessLevelInput(accessLevel);
+        if (!memberLevel) return res.status(400).json({ error: ACCESS_LEVEL_INPUT_ERROR });
+      }
+
       const inviteToken = crypto.randomUUID();
       const deal = await storage.getDeal(dealId);
 
@@ -7302,7 +7306,7 @@ Return JSON only.`,
         inviteToken,
         inviteStatus: "sent",
         invitedAt: new Date(),
-        accessLevel: accessLevel || (teamType === "buyer" ? "full" : null),
+        accessLevel: memberLevel,
         emailNotifications: true,
         smsNotifications: !!phone,
       } as any);
@@ -7355,6 +7359,16 @@ Return JSON only.`,
       const allowed = ["name", "phone", "role", "permissions", "accessLevel", "emailNotifications", "smsNotifications", "canDownload", "watermarkEnabled", "inviteStatus"] as const;
       const memberUpdates: Record<string, unknown> = {};
       for (const k of allowed) if (req.body?.[k] !== undefined) memberUpdates[k] = req.body[k];
+      // Stored normalised (a stale tab may send a legacy value); only a buyer seat has a level.
+      if (memberUpdates.accessLevel !== undefined) {
+        if (existingMember.teamType !== "buyer") {
+          if (memberUpdates.accessLevel !== null) return res.status(400).json({ error: "Only buyer-side team members have an access level" });
+        } else {
+          const level = parseAccessLevelInput(memberUpdates.accessLevel);
+          if (!level) return res.status(400).json({ error: ACCESS_LEVEL_INPUT_ERROR });
+          memberUpdates.accessLevel = level;
+        }
+      }
       // A role change must be a real role for this member's team, and it
       // carries that role's permissions with it (unless the caller set
       // permissions explicitly) — otherwise the badge changes but the
@@ -7454,6 +7468,9 @@ Return JSON only.`,
       if (!access || access.dealId !== dealId || access.revokedAt || (access.expiresAt && new Date(access.expiresAt) < new Date())) {
         return res.status(401).json({ error: "A valid view-room link is required to ask questions" });
       }
+      // A Teaser reader asks for the CIM, not questions about it (the answers
+      // come from the CIM they can't see).
+      if (isTeaserOnly(access.accessLevel)) return res.status(403).json({ code: "teaser_only", error: "Ask for the CIM first." });
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
       if (!dealPublishedForBuyers(deal)) return res.status(403).json(notPublishedBody());
@@ -7463,9 +7480,8 @@ Return JSON only.`,
         return res.status(403).json({ error: "Sign the NDA to ask questions about this business", code: "nda_required" });
       }
       const buyerAccessId = access.id;
-      // Who may later read this answer: a teaser's blind answer → everyone;
-      // a full-access buyer's → full-access buyers and up (it may quote
-      // sections locked for teasers); a named-CIM answer → the asker only.
+      // Who may later read this answer: a Blind CIM buyer's answer → every
+      // CIM buyer; a named-CIM answer (Full CIM, due diligence) → the asker only.
       const scope = askerScope(access.accessLevel);
       // An answer the AI gives on its own is the asker's alone: the buyer's
       // own words (who they are, their strategy, or text planted for other
@@ -7485,8 +7501,8 @@ Return JSON only.`,
       // bespoke CIM, so it is flattened into the context alongside the prose
       // — otherwise "what is the monthly rent?" escalated even though the
       // Facility section shows it. Same authority as the view room
-      // (shared/cim-buyer-view.ts): hidden, locked (above the buyer's tier)
-      // and not-yet-redacted sections never feed the answer. A CIM held for
+      // (shared/cim-buyer-view.ts): hidden and not-yet-redacted sections
+      // never feed the answer. A CIM held for
       // the broker's review answers nothing, not even from earlier answers
       // (it escalates).
       // (While a regenerated CIM waits for review, the kept copy buyers read
@@ -7522,7 +7538,7 @@ Return JSON only.`,
       const changedAt = chatBaseSections.reduce<Date | null>((m, s) => (s.updatedAt && (!m || new Date(s.updatedAt) > m) ? new Date(s.updatedAt) : m), null);
 
       // 1. a published answer this buyer may read (scope + identity check —
-      // a teaser is never answered from a full-access buyer's answer; an AI
+      // a Blind CIM buyer never gets a named-CIM answer; an AI
       // answer nobody reviewed is reused only while it still holds for this
       // CIM — qa/cim-context answerStillHolds — never after the CIM changed,
       // and never from a held CIM);
@@ -7593,6 +7609,8 @@ Return JSON only.`,
       const tok = (req.headers["x-buyer-token"] as string | undefined) || (typeof req.query.token === "string" ? req.query.token : undefined);
       const access = tok ? await storage.getBuyerAccessByToken(tok) : undefined;
       if (!access || access.dealId !== dealId || access.revokedAt || (access.expiresAt && new Date(access.expiresAt) < new Date())) return res.status(401).json({ error: "A valid view-room link is required" });
+      // A Teaser link reads no Q&A (the answers come from the CIM).
+      if (isTeaserOnly(access.accessLevel)) return res.json([]);
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
       if (!dealPublishedForBuyers(deal)) return res.status(403).json(notPublishedBody());
@@ -7866,6 +7884,8 @@ Return JSON only.`,
       const batchToken = (req.body as any)?.accessToken;
       const batchAccess = typeof batchToken === "string" ? await storage.getBuyerAccessByToken(batchToken) : undefined;
       if (!batchAccess || batchAccess.dealId !== dealId || viewLinkProblem(batchAccess)) return res.status(401).json({ error: "Invalid access token" });
+      // Nothing from a Teaser link is CIM analytics (the teaser page sends only the reading tracker).
+      if (isTeaserOnly(batchAccess.accessLevel)) return res.json({ received: 0 });
       const batchDeal = await storage.getDeal(dealId);
       if (!dealPublishedForBuyers(batchDeal)) return res.status(403).json(notPublishedBody());
       // Nothing is recorded before a required NDA is signed (the old client

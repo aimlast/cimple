@@ -31,6 +31,7 @@ import { READING_RULES, type CimMode, type CimVariant, type LegacyUnmatchedReadi
 import type { Deal } from "@shared/schema";
 import { pageRole } from "@shared/cim-page-role";
 import type { RawBlockSum, RawRendition, RawVisit, RawVisitPage, ReadingQuery, RenditionRow } from "./queries";
+import { BLIND_ACCESS_LEVEL, accessLevelRank, normalizeAccessLevel, seesCim } from "@shared/access-levels";
 
 /** A uuid-shaped id derived from a string (stable across runs). */
 export function stableUuid(s: string): string {
@@ -311,11 +312,19 @@ export function remapLegacyReading(
   return { visits, sums, visitPages, unmatched: { attentionMs: pages.reduce((s, p) => s + p.attentionMs, 0), pages } };
 }
 
-/** The access level most of these buyer links have (the version to draw legacy reading on). */
+/**
+ * The access level most of these buyer links have (the version to draw legacy
+ * reading on), normalised (shared/access-levels.ts: legacy "loi" counts as
+ * named). Teaser links read no CIM and don't count; none at all → the Blind CIM.
+ */
 export function mainAccessLevel(levels: ReadonlyArray<string>): string {
   const n = new Map<string, number>();
-  for (const l of levels) n.set(l, (n.get(l) ?? 0) + 1);
-  return Array.from(n.entries()).sort((a, b) => b[1] - a[1] || (a[0] === "teaser" ? 1 : 0) - (b[0] === "teaser" ? 1 : 0))[0]?.[0] ?? "full";
+  for (const l of levels) {
+    if (!seesCim(l)) continue;
+    const k = normalizeAccessLevel(l);
+    n.set(k, (n.get(k) ?? 0) + 1);
+  }
+  return Array.from(n.entries()).sort((a, b) => b[1] - a[1] || accessLevelRank(a[0]) - accessLevelRank(b[0]))[0]?.[0] ?? BLIND_ACCESS_LEVEL;
 }
 
 /**

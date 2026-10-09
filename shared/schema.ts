@@ -792,7 +792,8 @@ export const buyerAccess = pgTable("buyer_access", {
   buyerCompany: text("buyer_company"),
   
   accessToken: text("access_token").notNull().unique(),
-  accessLevel: text("access_level").notNull().default("teaser"), // teaser, full, loi, due_diligence
+  // shared/access-levels.ts: teaser_only | blind | named | due_diligence (legacy teaser/full = blind, loi = named; the default 'teaser' = blind)
+  accessLevel: text("access_level").notNull().default("teaser"),
   
   // NDA
   ndaSigned: boolean("nda_signed").default(false),
@@ -1426,7 +1427,7 @@ export const dealMembers = pgTable("deal_members", {
   lastActiveAt: timestamp("last_active_at"),
 
   // Buyer-specific fields (replaces buyerAccess)
-  accessLevel: text("access_level"), // "teaser" | "full" | "loi" | "due_diligence"
+  accessLevel: text("access_level"), // buyer team only — shared/access-levels.ts (legacy values read as aliases)
   ndaSigned: boolean("nda_signed").default(false),
   ndaSignedAt: timestamp("nda_signed_at"),
   canDownload: boolean("can_download").default(false),
@@ -2309,7 +2310,8 @@ export interface BuyerAiSummary { text: string; at: string; key: string }
 export interface BuyerAccessEvent {
   // "contacted" = the broker's "Mark contacted" on the Engagement tab
   // (POST /api/deals/:dealId/engagement/buyers/:accessId/contacted).
-  type: "extended" | "level_changed" | "revoked" | "reminder_undeliverable" | "contacted";
+  // "granted" = the link was created, at `accessLevel` (shared/access-levels.ts).
+  type: "granted" | "extended" | "level_changed" | "revoked" | "reminder_undeliverable" | "contacted";
   at: string;
   expiresAt?: string | null;
   accessLevel?: string | null;

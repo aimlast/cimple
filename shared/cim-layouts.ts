@@ -16,6 +16,7 @@
  * to compile until CimSectionRenderer has one). Pure — used by server and client.
  */
 import { comparisonAsFinancialTable, comparisonPacksSeries } from "./cim-chart-values";
+import { accessGrantPhrase } from "./access-levels";
 
 export const CIM_LAYOUT_CATEGORIES = [
   { key: "text", label: "Text" },
@@ -601,54 +602,46 @@ export function layoutSpecsForPrompt(layouts: readonly CimLayoutDef[] = plannerL
   return layouts.map((l) => `${l.aiSpec}\n${l.aiUse}`).join("\n\n");
 }
 
-// ── Section access tiers & buyer access levels ─────────────────────────────
+// ── Section access tiers (retired) & buyer access levels ────────────────────
 
 /**
- * Per-section access tier. "teaser" sections are shown to every buyer; "full"
- * sections are shown as locked stubs to buyers whose access level is teaser.
- * A missing value (older rows) means teaser — every existing CIM is unchanged.
+ * @deprecated Per-section "Full access only" locks are retired (Oct 2026): the
+ * teaser is its own document now, and every CIM buyer gets the whole CIM of
+ * their version. `cim_sections.access_tier` is kept as history only — nothing
+ * writes it and buildBuyerCim never reads it. Kept exported for old imports.
  */
 export const CIM_ACCESS_TIERS = ["teaser", "full"] as const;
+/** @deprecated See CIM_ACCESS_TIERS. */
 export type CimAccessTier = (typeof CIM_ACCESS_TIERS)[number];
 
+/** @deprecated See CIM_ACCESS_TIERS (history only). */
 export function sectionTier(section: { accessTier?: string | null }): CimAccessTier {
   return section.accessTier === "full" ? "full" : "teaser";
 }
 
-/** Buyer access levels (buyer_access.access_level) with plain-English meaning. */
-export const BUYER_ACCESS_LEVELS = [
-  { key: "teaser", label: "Teaser", version: "blind", description: "Blind CIM; sections you mark “Full access” show as locked." },
-  { key: "full", label: "Full", version: "blind", description: "Blind CIM with every section unlocked." },
-  { key: "loi", label: "LOI", version: "normal", description: "The named CIM — business name, people and places shown." },
-  { key: "due_diligence", label: "Due diligence", version: "dd", description: "Named CIM plus due-diligence detail (customer names, verification notes)." },
-] as const;
-export type BuyerAccessLevel = (typeof BUYER_ACCESS_LEVELS)[number]["key"];
+/**
+ * Buyer access levels live in shared/access-levels.ts (the registry): Teaser ·
+ * Blind CIM · Full CIM · Due diligence. These re-exports keep older imports
+ * compiling with the new meaning.
+ */
+export {
+  ACCESS_LEVELS as BUYER_ACCESS_LEVELS,
+  type AccessLevel as BuyerAccessLevel,
+  isAccessLevel as isBuyerAccessLevel,
+  accessLevelLabel as buyerAccessLabel,
+  cimModeForAccessLevel,
+  TEASER_ACCESS_LEVEL,
+  BLIND_ACCESS_LEVEL,
+  NAMED_ACCESS_LEVEL,
+  DD_ACCESS_LEVEL,
+} from "./access-levels";
 
-export function isBuyerAccessLevel(v: unknown): v is BuyerAccessLevel {
-  return typeof v === "string" && BUYER_ACCESS_LEVELS.some((l) => l.key === v);
-}
-
-/** Buyer-facing name of an access level ("Full CIM", "LOI", "Due diligence") — never the raw key. */
-export function buyerAccessLabel(level: string | null | undefined): string {
-  if (level === "full") return "Full CIM";
-  const known = BUYER_ACCESS_LEVELS.find((l) => l.key === level);
-  if (known) return known.label;
-  const s = String(level ?? "").replace(/_/g, " ").trim();
-  return s ? s.charAt(0).toUpperCase() + s.slice(1) : "—";
-}
-
-/** The same name inside a sentence: "Given LOI access", "Given due diligence access", "Given full CIM access". */
+/**
+ * @deprecated Use accessGrantPhrase / accessChangePhrase from shared/access-levels.
+ * The level inside a sentence: "the Blind CIM", "the Full CIM", "due-diligence access".
+ */
 export function buyerAccessPhrase(level: string | null | undefined): string {
-  const label = buyerAccessLabel(level);
-  // Keep acronyms ("LOI"); lower-case the first letter of words.
-  return /^[A-Z]{2,}\b/.test(label) ? label : label.charAt(0).toLowerCase() + label.slice(1);
-}
-
-/** Which CIM version a buyer access level sees. */
-export function cimModeForAccessLevel(level: string | null | undefined): "blind" | "normal" | "dd" {
-  if (level === "due_diligence") return "dd";
-  if (level === "loi") return "normal";
-  return "blind"; // teaser, full (and anything unknown) → blind
+  return accessGrantPhrase(level).replace(/^(Given|Sent) /, "");
 }
 
 /**

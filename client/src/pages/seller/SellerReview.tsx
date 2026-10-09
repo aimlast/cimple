@@ -4,8 +4,8 @@
  *
  * Before this page, "Seller approved" was a step nobody could take but the
  * broker ("Approve as Seller"), so a CIM could reach buyers without the
- * seller reading it. The seller sees the named CIM exactly as an LOI buyer
- * would, once the broker has approved it (content, then design).
+ * seller reading it. The seller sees the named CIM exactly as a Full CIM
+ * buyer would, once the broker has approved it (content, then design).
  */
 import { useState } from "react";
 import { Link, useParams } from "wouter";

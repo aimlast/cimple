@@ -24,7 +24,7 @@
  * follow-up). Rows are still inserted ON CONFLICT DO NOTHING. No AI.
  */
 import { sql } from "drizzle-orm";
-import { cimModeForAccessLevel } from "@shared/cim-layouts";
+import { cimModeForAccessLevel, normalizeAccessLevel } from "@shared/access-levels";
 import { blindSectionKey } from "@shared/cim-buyer-view";
 import { legacyKeyResolver, legacySessions, type LegacyExit, type LegacySection, type LegacySession } from "./legacy";
 
@@ -92,7 +92,7 @@ export function planLegacyRows(
   for (const s of sessions) {
     const a = byAccess.get(s.accessId)!;
     visits.push({
-      id: s.visitId, accessId: s.accessId, mode: cimModeForAccessLevel(a.accessLevel), accessLevel: a.accessLevel,
+      id: s.visitId, accessId: s.accessId, mode: cimModeForAccessLevel(a.accessLevel), accessLevel: normalizeAccessLevel(a.accessLevel),
       startedAt: s.startedAt, lastSeenAt: s.lastSeenAt, wallMs: s.wallMs, activeMs: s.activeMs,
       path: s.path.map(([t, key]) => [t, pageKey(key)] as [number, string]),
     });

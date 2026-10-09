@@ -25,7 +25,7 @@ import {
   FUNDING_OPTIONS, NDA_BUYER_TYPES, OPERATE_OPTIONS, PROOF_OF_FUNDS_OPTIONS, TIMELINE_OPTIONS, formatPrice,
   type NdaBuyerProfile,
 } from "@shared/nda-buyer-profile";
-import { buyerAccessPhrase } from "@shared/cim-layouts";
+import { accessChangePhrase, accessGrantPhrase, accessLevelLabel, normalizeAccessLevel } from "@shared/access-levels";
 import { storage } from "../storage";
 import { calculateQualifiedLeadScore } from "../scoring/buyer-score";
 import {
@@ -172,7 +172,7 @@ function dealRows(ctx: Ctx) {
       dealId: a.dealId,
       businessName: deal?.businessName ?? "Deal",
       accessId: a.id,
-      accessLevel: a.accessLevel,
+      accessLevel: normalizeAccessLevel(a.accessLevel),
       status: accessStatus(a),
       grantedAt: a.createdAt,
       expiresAt: a.expiresAt,
@@ -219,7 +219,7 @@ export function summaryInput(ctx: Ctx) {
   const { display, fundsMasked } = mergedForBroker(ctx.buyer, ctx.contact, ctx.scope);
   const crm = (ctx.contact?.crmProfile as CrmBuyerProfile | null) ?? null;
   const deals = dealRows(ctx).map((d) => ({
-    deal: d.businessName, access: d.accessLevel, status: d.status, views: d.views, minutes: Math.round(d.seconds / 60),
+    deal: d.businessName, access: accessLevelLabel(d.accessLevel), status: d.status, views: d.views, minutes: Math.round(d.seconds / 60),
     sections: d.topSections.map((s) => s.title), questions: d.questions, ndaSigned: !!d.ndaSignedAt,
     decision: d.decision, nextStep: d.decisionNextStep, reason: d.decisionReason,
     aiFit: d.deepCheck ? `${d.deepCheck.verdict} (${d.deepCheck.fitScore}) — ${d.deepCheck.whyFit}` : null,
@@ -388,10 +388,14 @@ export async function buildBuyerTimeline(brokerId: string, buyerId: string): Pro
   for (const a of ctx.accesses) {
     const d = dealName(a.dealId);
     const eng = ctx.engagement.get(a.id);
-    push({ id: `grant-${a.id}`, at: a.createdAt, kind: "access_granted", title: `Given ${buyerAccessPhrase(a.accessLevel)} access`, dealId: a.dealId, dealName: d });
-    ((a.accessEvents as BuyerAccessEvent[] | null) ?? []).forEach((e, i) => {
+    const events = (a.accessEvents as BuyerAccessEvent[] | null) ?? [];
+    // The level the link was created at (recorded since Oct 2026); older links
+    // show the level they have now.
+    const grantedLevel = events.find((e) => e.type === "granted")?.accessLevel ?? a.accessLevel;
+    push({ id: `grant-${a.id}`, at: a.createdAt, kind: "access_granted", title: accessGrantPhrase(grantedLevel), dealId: a.dealId, dealName: d });
+    events.forEach((e, i) => {
       if (e.type === "extended") push({ id: `ext-${a.id}-${i}`, at: e.at, kind: "access_extended", title: "Access extended", detail: e.expiresAt ? `Now expires ${new Date(e.expiresAt).toDateString()}` : null, dealId: a.dealId, dealName: d });
-      if (e.type === "level_changed") push({ id: `lvl-${a.id}-${i}`, at: e.at, kind: "access_level", title: e.accessLevel ? `Access changed to ${buyerAccessPhrase(e.accessLevel)}` : "Access level changed", dealId: a.dealId, dealName: d });
+      if (e.type === "level_changed") push({ id: `lvl-${a.id}-${i}`, at: e.at, kind: "access_level", title: e.accessLevel ? accessChangePhrase(e.accessLevel) : "Access level changed", dealId: a.dealId, dealName: d });
       if (e.type === "reminder_undeliverable") {
         push({
           id: `undeliv-${a.id}-${i}`, at: e.at, kind: "email", tone: "negative",

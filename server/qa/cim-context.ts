@@ -525,9 +525,8 @@ export async function readerCim(deal: QaDeal, reader: QaReader): Promise<ReaderC
 
 /**
  * Published rows another buyer's question may be answered from, or shown
- * to `reader` in the feed: within the answer's scope (a teaser never gets
- * an answer drawn from full-access sections; nobody gets another buyer's
- * named-CIM answer), for a Blind reader free of anything that identifies
+ * to `reader` in the feed: within the answer's scope (a Teaser link reads
+ * no Q&A at all; nobody gets another buyer's named-CIM answer), for a Blind reader free of anything that identifies
  * the business (shared/buyer-qa-scope.ts), and — for an unreviewed AI
  * answer — still true of the CIM this reader gets now (answerStillHolds).
  * `cim` is the reader's CIM when the caller already has it.

@@ -30,10 +30,16 @@ import {
 } from "@shared/cim-blocks";
 import type { CimMode, CimVariant, RenditionBlock, RenditionPage, ViewRoomReading } from "@shared/analytics-v2";
 import type { BuyerSection } from "@shared/cim-buyer-view";
+import { renditionKindFor } from "@shared/access-levels";
 
-/** teaser buyers get locked stubs; every other level is the "full" variant of its mode. */
+/**
+ * The rendition variant a level reads (shared/access-levels.ts renditionKindFor):
+ * "teaser" = the Teaser document (teaser_only); every CIM level is the "full"
+ * variant of its mode. (Renditions recorded before Oct 2026 as
+ * {blind, teaser} were the Blind CIM — the same document as {blind, full}.)
+ */
 export function variantForAccessLevel(level: string | null | undefined): CimVariant {
-  return level === "teaser" ? "teaser" : "full";
+  return renditionKindFor(level).variant;
 }
 
 /** The design flags the view room reads for the brokerage pages. */
@@ -229,7 +235,7 @@ export async function servedCimFor(
     import("../cim/templates"),
     import("../cim/media-store"),
     import("../information/deal-mirror"),
-    import("@shared/cim-layouts"),
+    import("@shared/access-levels"),
     import("../cim/published-snapshot"),
   ]);
   if (cimHeldFromBuyers(deal)) return null;

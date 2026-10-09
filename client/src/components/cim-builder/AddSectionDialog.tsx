@@ -4,7 +4,7 @@
  * information or it starts blank.
  */
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Lock, PenLine, Sparkles, Users } from "lucide-react";
+import { Loader2, PenLine, Sparkles } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,7 +38,6 @@ export function AddSectionDialog({ open, onOpenChange, sections, afterSectionId,
   const [position, setPosition] = useState<string>(END);
   const [mode, setMode] = useState<"ai" | "blank">("ai");
   const [brief, setBrief] = useState("");
-  const [tier, setTier] = useState<"teaser" | "full">("teaser");
   const bodyRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -49,7 +48,6 @@ export function AddSectionDialog({ open, onOpenChange, sections, afterSectionId,
     setLayoutType("prose_highlight");
     setTitle("");
     setBrief("");
-    setTier("teaser");
     setMode(aiBlockedReason ? "blank" : "ai");
     setPosition(afterSectionId === undefined ? END : afterSectionId === null ? START : afterSectionId);
   }, [open, afterSectionId, aiBlockedReason]);
@@ -72,7 +70,6 @@ export function AddSectionDialog({ open, onOpenChange, sections, afterSectionId,
       brief: mode === "ai" && brief.trim() ? brief.trim() : undefined,
       position: position === START ? "start" : position === END ? "end" : undefined,
       afterSectionId: position !== START && position !== END ? position : null,
-      accessTier: tier,
     });
   };
 
@@ -184,14 +181,6 @@ export function AddSectionDialog({ open, onOpenChange, sections, afterSectionId,
                 testId="choice-blank"
               />
             </div>
-
-            <div className="space-y-2">
-              <Label className="text-xs">Who can see it</Label>
-              <div className="grid grid-cols-2 gap-2">
-                <TierButton selected={tier === "teaser"} onClick={() => setTier("teaser")} icon={<Users className="h-3.5 w-3.5" />} label="Every buyer" hint="Teaser and up" />
-                <TierButton selected={tier === "full"} onClick={() => setTier("full")} icon={<Lock className="h-3.5 w-3.5" />} label="Full access only" hint="Locked for teaser buyers" />
-              </div>
-            </div>
           </form>
         </div>
 
@@ -236,18 +225,3 @@ function ChoiceCard({
   );
 }
 
-function TierButton({ selected, onClick, icon, label, hint }: { selected: boolean; onClick: () => void; icon: React.ReactNode; label: string; hint: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "rounded-lg border px-3 py-2 text-left transition-colors",
-        selected ? "border-teal bg-teal/10" : "border-border hover:bg-muted/40",
-      )}
-    >
-      <span className="flex items-center gap-1.5 text-sm font-medium">{icon}{label}</span>
-      <span className="block text-[11px] text-muted-foreground mt-0.5">{hint}</span>
-    </button>
-  );
-}
