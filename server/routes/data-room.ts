@@ -30,6 +30,7 @@
  *   GET    …/data-room/items/:itemId/view|pages/:n|sheet|html|text|download   (?as=<accessId>)
  *   GET    …/data-room/preview/:accessId[/items/:itemId]  what one buyer sees
  *   GET    …/data-room/activity?item=                     one document's readers (the drawer)
+ *   GET    …/data-room/resolve?documentIds=               citation chips in the broker's CIM preview
  */
 import type { Express, NextFunction, Request, Response } from "express";
 import fs from "fs";
@@ -86,6 +87,8 @@ import { cleanCopyPath, cleanCopyRelPath, newPrivateName, removeCleanCopy, remov
 import { decisionFor, docHtml, docText, kickPrepare, manifestFor, pageImage, ServeError, sheetRows, defaultServeDeps, type ServeDeps } from "../vdr/serve";
 import { brokerChecks, documentCimLinks, documentFacts, documentQuestions, keyFigureRank, privateMattersByDocument, sectionText } from "../vdr/analysis";
 import { ddCitedDocumentIds, ddDocumentChecks } from "../vdr/dd-adapter";
+import { parseDocumentIds, replacementsFor, resolveForBroker } from "../vdr/resolve";
+import { locateInItem } from "../vdr/locate";
 import { askSeller, brokerRequestRows, declineRequests, markShared, parseNeededBy, type RequestDeps } from "../vdr/requests";
 import { askerLabel } from "../vdr/todo";
 import { activityByBuyer, activityByDocument, activityCsv, activityLog, findTrace, labelForKey, LOG_ACTION_FILTERS, type LogFilter, type ReportContext } from "../vdr/activity-report";
@@ -1136,6 +1139,23 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
     }
   });
 
+  // ── Citations in the broker's CIM preview (vdr spec §11.1.2): always the document's own name ──
+
+  app.get(`${BASE}/resolve`, ...guard, async (req, res) => {
+    try {
+      const d = await deps();
+      const deal = res.locals.deal as Deal;
+      const ids = parseDocumentIds(req.query.documentIds);
+      if (!ids) throw bad("Malformed");
+      const snap = await loadRoom(d.store, deal.id);
+      const replacements = await replacementsFor(d.store, deal.id);
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ documents: resolveForBroker(ids, deal.id, snap.docs, snap, replacements) });
+    } catch (err) {
+      send(res, err, "look up the documents");
+    }
+  });
+
   // ── Viewing (broker, or "View as a buyer" with ?as=<accessId>) ─────────
 
   /** Resolves `as=`: a gate for that buyer's link (same checks the buyer gets), and that item decided for them. */
@@ -1166,12 +1186,14 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
         const { gate, decided } = await asBuyer(d, deal, req.query.as);
         const one = itemFor(decided, String(req.params.itemId), { allowNotReady: true });
         if (!one.item.prepared || one.item.prepared.status !== "ready") kickPrepare(one.item.id);
-        return res.json(manifestFor(one.item, one.doc, decisionFor(one.item, one.item.prepared ?? null, !!gate.setting?.allowDownloads), "buyer"));
+        const focusPage = req.query.needle != null && one.visibility.visible ? await locateInItem(one.item, req.query.needle, d.store).catch(() => null) : null;
+        return res.json({ ...manifestFor(one.item, one.doc, decisionFor(one.item, one.item.prepared ?? null, !!gate.setting?.allowDownloads), "buyer"), focusPage });
       }
       const item = await dealItem(d, deal.id, req.params.itemId);
       const doc = item.documentId ? await d.store.getDocument(item.documentId) : null;
       if (!item.prepared || item.prepared.status !== "ready") kickPrepare(item.id);
-      res.json(manifestFor(item, doc, { allowed: true, as: "pages_pdf" }, "broker"));
+      const focusPage = req.query.needle != null ? await locateInItem(item, req.query.needle, d.store).catch(() => null) : null;
+      res.json({ ...manifestFor(item, doc, { allowed: true, as: "pages_pdf" }, "broker"), focusPage });
     } catch (err) {
       send(res, err, "open the document");
     }

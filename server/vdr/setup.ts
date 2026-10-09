@@ -233,7 +233,7 @@ export async function markReplacement(previousDocumentId: string, newDocumentId:
     }
     if (!next) return null;
     await deps.store.updateItem(prev.id, { replacedByItemId: next.id });
-    await logVdrQuietly(deps.store, logRow(prev.dealId, "new_version", { actorKind: "seller", itemId: next.id, folderId: prev.folderId, detail: { replaces: prev.id } }));
+    await logVdrQuietly(deps.store, logRow(prev.dealId, "new_version", { actorKind: "seller", itemId: next.id, folderId: prev.folderId, detail: { replaces: prev.id, replacesDocumentId: previousDocumentId } }));
     return next;
   } catch (err: any) {
     console.warn(`[vdr] couldn't place the new version ${newDocumentId}:`, err?.message ?? err);

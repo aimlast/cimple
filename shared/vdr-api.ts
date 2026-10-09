@@ -201,6 +201,8 @@ export type NewlyVisible = { accessId: string; label: string };
 // ── Viewer (broker and buyer) ─────────────────────────────────────────────
 
 export type VdrManifest = {
+  /** Broker view with `?needle=`: the page that prints it (PDFs only). */
+  focusPage?: number | null;
   status: "ready" | "pending" | "failed";
   kind: VdrPreparedKind | null;
   pages: Array<{ w: number; h: number }>;
@@ -270,6 +272,8 @@ export type BuyerItemAbout = {
   nextId: string | null;
   /** Buyer-safe figures from this document (pass 3; absent on older payloads). */
   keyFigures?: Array<{ label: string; value: string }>;
+  /** Opened from a citation with `?needle=`: the page that prints it (PDFs only), else null. */
+  focusPage?: number | null;
   /** Due diligence only: what it was checked against (dd's checks; a counterpart the reader can't open is "another document"). */
   checks?: Array<{ ok: boolean; text: string }>;
   /** Memorandum pages that use its figures (none for a team member). */
@@ -472,3 +476,15 @@ export type ItemNotesPayload = {
     note: string | null;
   };
 };
+
+// ── Pass 4: citations (vdr spec §6.6, §11.1) ──
+
+export type ResolvedDocument =
+  | { available: true; itemId: string; title: string; number: string | null; replaced?: true }
+  | { available: false };
+export type ResolvePayload = { documents: Record<string, ResolvedDocument> };
+
+export type BrokerResolvedDocument =
+  | { available: true; documentId: string; title: string; itemId: string | null; number: string | null; inRoom: boolean; brokerOnly: boolean; replaced?: true }
+  | { available: false };
+export type BrokerResolvePayload = { documents: Record<string, BrokerResolvedDocument> };

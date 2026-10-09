@@ -20,13 +20,18 @@
  *   GET  /items/:itemId/sheet|html|text
  *   GET  /items/:itemId/download    ?v=<viewId>
  *   GET  /search                    ?q=
+ *   GET  /resolve                   ?documentIds=a,b,c  (the DD CIM's citation chips; ≤ 50)
+ *   GET  /ledger/:documentId/rows   gl's ledger rows, behind assertBuyerDocumentAccess
  */
 import express, { type Express, type Request, type Response } from "express";
 import type { BuyerQuestion, InsertBuyerQuestion } from "@shared/schema";
 import { watermarkFooter, watermarkLine, VDR_LIMITS, fileSizeLabel } from "@shared/vdr";
 import type { ViewStart } from "@shared/vdr-api";
 import { logVdrQuietly } from "../vdr/store";
-import { decideForGate, defaultGateDeps, itemFor, listedItems, vdrBuyerGate, VdrHttpError, type GateDeps, type VdrGate } from "../vdr/access";
+import { assertBuyerDocumentAccess, decideForGate, defaultGateDeps, itemFor, listedItems, vdrBuyerGate, VdrHttpError, type GateDeps, type VdrGate } from "../vdr/access";
+import { parseDocumentIds, replacementsFor, resolveForReader } from "../vdr/resolve";
+import { locateInItem } from "../vdr/locate";
+import { ledgerRowsForBuyer } from "../vdr/gl-adapter";
 import { buyerAboutExtras, buyerItemAbout, buyerItems, buyerRoomPayload } from "../vdr/buyer-room";
 import { parseBuyerRequest, requestRows } from "../vdr/requests";
 import { dataRoomLevelRule, buyerKey } from "@shared/vdr";
@@ -148,7 +153,9 @@ export function registerDataRoomBuyerRoutes(app: Express, overrides?: Partial<Bu
       if (!one.item.prepared || one.item.prepared.status !== "ready") kickPrepare(one.item.id);
       res.setHeader("Cache-Control", "no-store");
       const extras = await buyerAboutExtras(d, gate, snap, decided, one, { preview: ownerPreview(req, gate) });
-      res.json({ ...buyerItemAbout(gate, snap, decided, one), ...extras });
+      // A citation without a page: the page that prints its figure (served text only).
+      const focusPage = req.query.needle != null && one.visibility.visible ? await locateInItem(one.item, req.query.needle, d.store).catch(() => null) : null;
+      res.json({ ...buyerItemAbout(gate, snap, decided, one), ...extras, focusPage });
     } catch (err) {
       send(res, err, "item");
     }
@@ -362,6 +369,40 @@ export function registerDataRoomBuyerRoutes(app: Express, overrides?: Partial<Bu
       res.json({ ok: true, id: q.id });
     } catch (err) {
       send(res, err, "question");
+    }
+  });
+
+  // ── Pass 4: the DD CIM's citations and gl's ledger rows (the contracts) ──
+
+  app.get(`${BASE}/resolve`, async (req, res) => {
+    try {
+      const ids = parseDocumentIds(req.query.documentIds);
+      if (!ids) return res.status(400).json({ error: "Malformed" });
+      const { d, gate, snap, decided } = await gateAndItems(req);
+      const replacements = await replacementsFor(d.store, gate.deal.id);
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json({ documents: resolveForReader(ids, snap, decided, replacements) });
+    } catch (err) {
+      // No room for this reader (or any refusal): every id reads as not available — same shape, nothing named.
+      const noRoom = new Set(["no_room_access", "room_none", "room_closed", "nda_required", "ack_required", "team_ended"]);
+      if (err instanceof VdrHttpError && noRoom.has(String(err.body.code ?? ""))) {
+        const ids = parseDocumentIds(req.query.documentIds) ?? [];
+        return res.json({ documents: Object.fromEntries(ids.map((id) => [id, { available: false }])) });
+      }
+      send(res, err, "resolve");
+    }
+  });
+
+  app.get(`${BASE}/ledger/:documentId/rows`, async (req, res) => {
+    try {
+      const ctx = await assertBuyerDocumentAccess(req, String(req.params.token), String(req.params.documentId), await deps());
+      const rows = await ledgerRowsForBuyer(ctx, String(req.params.documentId), req.query as Record<string, unknown>);
+      if (rows == null) return res.status(404).json({ error: "Not found" });
+      ctx.logView({ ledger: true });
+      res.setHeader("Cache-Control", "private, no-store");
+      res.json(rows);
+    } catch (err) {
+      send(res, err, "ledger rows");
     }
   });
 

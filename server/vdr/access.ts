@@ -34,7 +34,7 @@ import {
   type VdrFlagKey,
   type Visibility,
 } from "@shared/vdr";
-import { dbVdrStore, type VdrStore } from "./store";
+import { dbVdrStore, logVdrQuietly, type VdrStore } from "./store";
 import { servedFilePath } from "./files";
 import { isGlDocument } from "./gl-adapter";
 import { uploadsRoot } from "../documents/document-path";
@@ -264,4 +264,78 @@ export async function decideForGate(deps: Pick<GateDeps, "store" | "root">, gate
   const { privateMattersByDocument } = await import("./analysis");
   const pm = privateMattersByDocument(gate.deal, snap.items.filter((i) => !i.removedAt && i.documentId).map((i) => i.documentId!));
   return { snap, decided: decideItems(snap, gate.reader, deps.root, { privateMatters: pm, fileExists }) };
+}
+
+// ── The buyer-document context for other streams (gl's ledger rows; INTEGRATION §2.6, vdr spec §11.2.7) ──
+
+/** Everything a stream needs to serve one document to one reader, after the gate and the one rule. */
+export interface VdrBuyerDocCtx {
+  /** The principal's link (also for a team member). */
+  access: BuyerAccess;
+  deal: Deal;
+  item: VdrItem;
+  mode: "normal" | "dd";
+  viewer: { kind: "buyer" | "team"; teamMemberId: string | null; name: string | null; email: string };
+  watermark: { name: string | null; email: string; trace: string; at: string };
+  /** The owning broker opening a buyer's link (nothing they do is logged as the buyer). */
+  preview: boolean;
+  /** Records `buyer_opened_item` (deduped per reader + item per 30 min; never for a preview). */
+  logView(detail?: Record<string, unknown>): void;
+}
+
+const OPEN_DEDUP_MS = 30 * 60_000;
+const openedAt = new Map<string, number>();
+
+/**
+ * The ONLY path to a document's rows or bytes for another stream: the gate
+ * (link, NDA, room, the buyer's room access — re-read on every call), then
+ * the document's live room item, then `itemVisibility` (not shared,
+ * broker-only, hidden from them, `dd_only`, `ledger_pending`, held for a
+ * check, unknown → the same 404). The watermark's trace comes from a
+ * server-issued view (the reader's latest of this item within 30 minutes,
+ * else a new one), so a leaked screenshot of a ledger finds the reader too.
+ * Throws VdrHttpError.
+ */
+export async function assertBuyerDocumentAccess(
+  req: { session?: { brokerId?: string | null } | null; ip?: string; socket?: { remoteAddress?: string | null } },
+  token: string,
+  documentId: string,
+  depsIn?: Pick<GateDeps, "store" | "accessByToken" | "accessRowsForDeal" | "getDeal" | "now" | "root">,
+): Promise<VdrBuyerDocCtx> {
+  if (typeof documentId !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(documentId)) throw NOT_FOUND();
+  const deps = depsIn ?? (await defaultGateDeps());
+  const gate = await vdrBuyerGate(deps, token);
+  const { decided } = await decideForGate(deps, gate);
+  const one = decided.find((d) => d.item.documentId === documentId && d.visibility.visible);
+  if (!one) throw NOT_FOUND();
+  const preview = !!req.session?.brokerId && req.session.brokerId === gate.deal.brokerId;
+  const { startView, ipHashFor, buyerLog } = await import("./activity");
+  const now = deps.now();
+  const views = await deps.store.listViews(gate.deal.id);
+  const recent = views
+    .filter((v) => v.itemId === one.item.id && v.buyerAccessId === gate.access.id && (v.teamMemberId ?? null) === (gate.viewer.teamMemberId ?? null) && (v.source === "preview") === preview)
+    .filter((v) => now.getTime() - new Date(v.lastSeenAt).getTime() < OPEN_DEDUP_MS)
+    .sort((a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime())[0];
+  const ipHash = ipHashFor(gate.deal.id, req);
+  // A new view logs `buyer_opened_item` itself (startView); a reused one doesn't log again.
+  const view = recent ?? (await startView(deps.store, gate, { id: one.item.id, documentId: one.item.documentId, fileVersion: one.item.fileVersion ?? 1 }, { source: "room", preview, ipHash }, now)).view;
+  const key = `${gate.deal.id}|${gate.reader.buyerEmail}|${gate.viewer.teamMemberId ?? ""}|${one.item.id}`;
+  if (!recent) openedAt.set(key, now.getTime());
+  return {
+    access: gate.access,
+    deal: gate.deal,
+    item: one.item,
+    mode: gate.mode,
+    viewer: gate.viewer,
+    watermark: { name: gate.viewer.name, email: gate.viewer.email, trace: view.trace, at: new Date(view.startedAt).toISOString() },
+    preview,
+    logView(detail?: Record<string, unknown>) {
+      if (preview) return;
+      const t = deps.now().getTime();
+      if ((openedAt.get(key) ?? 0) > t - OPEN_DEDUP_MS) return;
+      openedAt.set(key, t);
+      if (openedAt.size > 20_000) openedAt.clear();
+      void logVdrQuietly(deps.store, buyerLog(gate, "buyer_opened_item", { itemId: one.item.id, detail: { viewId: view.id, ...(detail ?? {}) }, ipHash }));
+    },
+  };
 }

@@ -4,8 +4,8 @@
  * ┌──────────────────────────────────────────────────────────────────────────┐
  * │ INTEGRATOR, at the gl merge (INTEGRATION §6 step 7): replace the bodies  │
  * │ below with gl's exports —                                                │
- * │   export { isGlDocument, ledgerStatusForVdr, ledgerSummaryForVdr }       │
- * │     from "../gl/viewer";                                                  │
+ * │   export { isGlDocument, ledgerStatusForVdr, ledgerSummaryForVdr,        │
+ * │     ledgerRowsForBuyer } from "../gl/viewer";                            │
  * │   export { withHeavySheetSlot } from "../documents/heavy-sheet";          │
  * │ and have gl call setup.ts onLedgerStatusChanged(documentId).            │
  * └──────────────────────────────────────────────────────────────────────────┘
@@ -35,4 +35,13 @@ export async function ledgerSummaryForVdr(_documentId: string): Promise<string> 
 /** gl's heavy-spreadsheet slot (C19): one heavy sheet parse at a time across gl, the parser and the vdr child. */
 export async function withHeavySheetSlot<T>(fn: () => Promise<T>): Promise<T> {
   return fn();
+}
+
+/**
+ * gl's ledger rows for a buyer (INTEGRATION §2.6): 404 unless a ready ledger
+ * of ctx.deal, buyer-visible, ctx.mode === "dd" (gl's own second lock).
+ * Not merged yet → null, and the route answers 404 "Not found".
+ */
+export async function ledgerRowsForBuyer(_ctx: import("./access").VdrBuyerDocCtx, _documentId: string, _query: Record<string, unknown>): Promise<unknown | null> {
+  return null;
 }
