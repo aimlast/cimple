@@ -198,8 +198,9 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
     const isHeld = held.has(key) || (!!prev && held.has(prev.key));
     const q = prev ? questionsBy.get(`${key}|movement|${prev.year}`) : undefined;
     const delta = prev ? Math.abs(fig.value) - Math.abs(prev.value) : null;
-    const place = placeOf(key);
     const status = moveStatus(note, isHeld, served ? { now: nowVersions, later: laterVersions } : null);
+    // A note buyers read now on a figure no page shows by itself is read under its total (DD "what's in it").
+    const place = status === "shown" && placeOf(key) !== "page" ? "inside_total" : placeOf(key);
     // D9a: nothing measured from or to a held figure is offered for buyers — fix it first.
     const hint = isHeld || (note && note.status === "approved") ? null : hints[key] ?? null;
     const answer = q ? answerFor(facts, q.captureKey) : null;
@@ -216,7 +217,7 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
       place,
       status,
       ...(status === "not_served" ? { unservedWhy: place === "inside_total"
-        ? (ddOn ? "A line inside a total that no page buyers read shows." : "A line inside a total: due-diligence buyers see it once the checks are on.")
+        ? (ddOn ? "Inside a total; buyers don't see this line on any page." : "A line inside a total: due-diligence buyers see it once the checks are on.")
         : "No page buyers read shows this figure right now." } : {}),
       note: note ? workspaceNote(note, raw) : null,
       hint,

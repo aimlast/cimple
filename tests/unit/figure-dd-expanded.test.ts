@@ -14,6 +14,7 @@ import { buildFigureLayer } from "../../shared/figure-layer";
 import { ExpandableSection } from "../../client/src/components/cim/ExpandableSection";
 import { FigureLayerProvider } from "../../client/src/components/cim/figures/FigureLayerContext";
 import { formatLike } from "../../client/src/components/cim/figures/figurePaint";
+import { latestYearWithDifference } from "../../client/src/components/cim/figures/DdCompareTable";
 
 (globalThis as any).window ??= { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), innerWidth: 1440, addEventListener() {}, removeEventListener() {} };
 const h = React.createElement;
@@ -68,6 +69,14 @@ test("the tax return's figure reads like the CIM cell beside it (F5)", async () 
   const layer = buildFigureLayer([paren], figureInputsFor(raw, { audience: "buyer", mode: "dd" }), "dd");
   const html2 = renderToStaticMarkup(h(FigureLayerProvider, { layer }, h(ExpandableSection, { section: paren, branding: {} as any })));
   assert.ok(html2.includes("($268,000)") && html2.includes("($301,000)"), "both in parentheses");
+});
+
+test("on a phone the compare table opens on the latest year with a difference (Pacific: FY2023 interest), not a year with none", () => {
+  const fig = (state: string) => ({ id: "f", year: "y", display: "$1", checks: [{ id: "c", kindLabel: "Tax return (T2)", value: "$1", difference: null, differencePct: null, state, size: "match", note: null, citation: null }] }) as any;
+  // FY2022 and FY2023 interest differ (grouped differently); FY2024 has no tax-return figure.
+  const rows = [[fig("match"), fig("match"), fig("match")], [fig("regrouped"), fig("regrouped"), null]];
+  assert.equal(latestYearWithDifference(rows, 3), 1);
+  assert.equal(latestYearWithDifference([[fig("match"), fig("match")]], 2), 1, "no difference: the latest year");
 });
 
 await run("figure-dd-expanded (DD opens on the differences; one money format)");

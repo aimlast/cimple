@@ -283,7 +283,8 @@ export function reviewItems(ws: FiguresWorkspace): ReviewItems {
       id: n.id, label, text: n.text, fingerprint: n.fingerprint, ticked: !n.internalOnly,
       why: n.internalOnly ? "Based only on your internal note. Check it first."
         : place === "update_only" ? "Buyers read it once you publish the update." : null,
-      versions: n.blindText ? "Full · Blind · DD" : "Full · DD",
+      // A line inside a total is on no page of its own: due-diligence buyers read it under the total.
+      versions: place === "inside_total" ? "DD · under its total" : n.blindText ? "Full · Blind · DD" : "Full · DD",
     });
   };
   // Held moves (D9a) are never offered: nothing measured from a figure that disagrees with the statements.

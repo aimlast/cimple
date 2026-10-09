@@ -98,6 +98,14 @@ function CimCell({ fig, text }: { fig: FigureView | null; text: string | null })
   );
 }
 
+/** The column the phone table opens on: the latest year with a difference, else the latest year. */
+export function latestYearWithDifference(figsByRow: Array<Array<FigureView | null>>, years: number): number {
+  for (let j = years - 1; j >= 0; j--) {
+    if (figsByRow.some((r) => (otherRecordCheck(r[j])?.state ?? "match") !== "match")) return j;
+  }
+  return Math.max(0, years - 1);
+}
+
 const cellTint = (check: FigureCheckView | null) => {
   if (!check) return undefined;
   const p = STATE_PAINT[check.state];
@@ -108,9 +116,13 @@ export function DdCompareTable({ table, labelHeader, lookup, onlyDifferences, on
   const { columns, rows } = table;
   const ba = useBlockAttrs();
   const { ref, layout } = useMeasuredLayout(columns.length);
-  const [year, setYear] = useState(Math.max(0, columns.length - 1));
+  const [yearPick, setYear] = useState<number | null>(null);
 
   const figsByRow = useMemo(() => rows.map((_r, i) => columns.map((_c, j) => lookup(`row:${i}`, j))), [rows, columns, lookup]);
+  // Phone (one year at a time): open on the latest year with a difference, so the first screen shows one
+  // (checker r1 F4) — else the latest year.
+  const defaultYear = useMemo(() => latestYearWithDifference(figsByRow, columns.length), [figsByRow, columns.length]);
+  const year = yearPick ?? defaultYear;
   const otherLabel = useMemo(() => {
     for (const r of figsByRow) for (const f of r) { const c = otherRecordCheck(f); if (c) return c.kindLabel; }
     return "Tax return";
