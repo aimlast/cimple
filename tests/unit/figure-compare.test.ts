@@ -128,6 +128,9 @@ test("D9 pre-ticking and paint: every state has an icon and words", () => {
   }
   assert.equal(STATE_PAINT.ask.tint, "#F3E3C3");
   assert.equal(STATE_PAINT.explained.tint, "#E4E8EC");
+  // Founder decision 3: every figure that differs is highlighted — a worked-out grouping too (paler), never a match.
+  assert.ok(STATE_PAINT.regrouped.tint && STATE_PAINT.regrouped.tint !== STATE_PAINT.explained.tint);
+  assert.equal(STATE_PAINT.match.tint, "");
   assert.equal(STATE_PAINT.match.ink, "#2F6B4F");
   assert.match(STATE_WORDS.ask, /ask the broker/i);
 });
