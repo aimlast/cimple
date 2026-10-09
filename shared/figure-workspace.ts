@@ -230,8 +230,10 @@ export interface FiguresWorkspace {
 
 /**
  * "needs" (the default): what needs the broker — a note waiting for an OK, one
- * that needs a look, and a figure with no reason where there is something to
- * do (Cimple's hint, a question to ask, the seller's answer to use).
+ * that needs a look, and a figure with no reason where something is READY to
+ * use (Cimple's hint, a prepared question, the seller's answer). A plain
+ * figure with nothing on file is under "No reason on file", not here
+ * (checker r2 R2-8: the default list was a wall of "no reason" rows).
  */
 export type MoveFilter = "needs" | "all" | "waiting" | "none" | "shown" | "publish" | "look" | "hidden";
 
@@ -239,7 +241,7 @@ export type MoveFilter = "needs" | "all" | "waiting" | "none" | "shown" | "publi
 export function moveNeedsYou(m: WorkspaceMove): boolean {
   if (m.status === "waiting" || m.status === "stale_figures" || m.status === "stale_seller") return true;
   if (m.status !== "none") return false;
-  return !!m.hint || !!m.answer || (m.askable && (!m.question || m.question.status === "suggested" || m.question.status === "answered"));
+  return !!m.hint || !!m.answer || (!!m.question && (m.question.status === "suggested" || m.question.status === "answered"));
 }
 
 export function moveMatches(m: WorkspaceMove, f: MoveFilter, opts: { all?: boolean } = {}): boolean {

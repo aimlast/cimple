@@ -16,7 +16,7 @@ import { useMemo } from "react";
 import { CheckCircle2, CircleDashed, Clock, EyeOff, Lightbulb, MessageCircleQuestion, PauseCircle, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { moveCounts, moveMatches, type MoveFilter, type MoveStatus, type WorkspaceMove } from "@shared/figure-workspace";
+import { moveCounts, moveMatches, moveNeedsYou, type MoveFilter, type MoveStatus, type WorkspaceMove } from "@shared/figure-workspace";
 import { money, signedMoney } from "./useFigures";
 
 /** "the CIM" while it isn't published yet, else "the update". */
@@ -170,6 +170,8 @@ export function MovesTab({
   // figures with no reason, held years, what reaches buyers later, and what buyers already see.
   const rows = moves.filter((m) => moveMatches(m, filter, { all: showAll })).sort((a, b) =>
     STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || Math.abs(b.delta ?? 0) - Math.abs(a.delta ?? 0));
+  // On "Needs you": the changes with nothing on file and nothing ready are one quiet line, not a wall of rows.
+  const quietNone = filter === "needs" ? moves.filter((m) => moveMatches(m, "none", { all: showAll }) && !moveNeedsYou(m)).length : 0;
   const waiting = moves.filter((m) => m.note && m.note.status === "suggested" && !m.note.staleReason && m.status === "waiting");
   const bulk = waiting.filter((m) => !m.note!.internalOnly);
   const internal = waiting.length - bulk.length;
@@ -284,6 +286,12 @@ export function MovesTab({
             ))}
           </div>
         </>
+      )}
+      {quietNone > 0 && (
+        <p className="text-xs text-muted-foreground" data-testid="moves-quiet-none">
+          {quietNone === 1 ? "1 other change has" : `${quietNone} other changes have`} no reason on file and nothing to suggest yet.{" "}
+          <button type="button" className="text-teal hover:underline" onClick={() => onFilter("none")}>See {quietNone === 1 ? "it" : "them"}</button>
+        </p>
       )}
       {foldToggle}
     </div>

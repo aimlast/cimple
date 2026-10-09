@@ -60,10 +60,22 @@ test("F10: derived totals and tax lines with nothing to do are folded and left o
   }
   for (const k of ["netIncome|2023", "ebitda|2024", "incomeTaxes|2023"]) assert.ok(folded.some((m) => m.figureKey === k), k);
   assert.equal(w.kpis.changesTotal, w.moves.filter((m) => m.status !== "hidden" && !m.folded).length);
-  // "Needs you": the facility-rent hint and the lines the seller can be asked about — never a folded total.
+  // "Needs you": the facility-rent hint — rows with something ready — never a folded total.
   const needs = w.moves.filter((m) => moveMatches(m, "needs"));
   assert.ok(needs.some((m) => /^line:facility-rent/.test(m.figureKey)));
   assert.ok(!needs.some((m) => m.folded || m.status === "shown"));
+  // Checker r2 R2-8: a plain askable line with nothing on file is NOT "needs you" — it is under "No reason on file".
+  for (const m of needs) assert.ok(m.status !== "none" || m.hint || m.answer || (m.question && ["suggested", "answered"].includes(m.question.status)), m.figureKey);
+  const plain = w.moves.filter((m) => m.status === "none" && !m.folded && !m.hint && !m.answer && !m.question);
+  assert.ok(plain.length >= 5, `Pacific has a run of plain rows (${plain.length})`);
+  for (const m of plain) {
+    assert.equal(moveMatches(m, "needs"), false, m.figureKey);
+    assert.equal(moveMatches(m, "none"), true, m.figureKey);
+  }
+  assert.ok(needs.length < w.moves.filter((m) => !m.folded).length / 2, `"Needs you" is the short list (${needs.length})`);
+  // A question Cimple prepared puts the row back on "Needs you".
+  const withQ = { ...plain[0], question: { id: "q1", status: "suggested" } };
+  assert.equal(moveMatches(withQ, "needs"), true);
   // A folded total with a note waiting is not folded (it needs the broker).
   const waitingNote = noteRow({ figureKey: "netIncome|2024", kind: "movement", compareKey: "2023", status: "suggested", origin: "ai", text: "A reason.", valuesSnapshot: { year: "2024", value: 972960, fromYear: "2023", fromValue: 665915 } });
   const w2 = await ws("pacific", { notes: [waitingNote] });
