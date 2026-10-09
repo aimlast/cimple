@@ -787,7 +787,9 @@ export function pageHeadline(page: DocumentPage, doc: { pages: DocumentPage[]; o
   }
   // A section buyers first saw collapsed: its opened parts count only once someone opened it.
   const collapsedOnly = page.blocks.some((bl) => bl.key === "summary") && (page.interactions.expand ?? 0) <= 0;
-  if (page.readers >= 2 && !page.pageLevelOnly && !collapsedOnly) {
+  // Only where every reader's time is placed on the parts (a page total can't say a part went unread).
+  const partsOnly = page.heat ? page.heat.basis === "parts" : !page.pageLevelOnly;
+  if (page.readers >= 2 && partsOnly && !collapsedOnly) {
     const unread = page.blocks
       .filter((bl) => !QUIET_KINDS.has(bl.kind) && bl.attentionMs < READING_RULES.unreadBlockMs && bl.visibleMs < READING_RULES.readerMinMs)
       .sort((a, b) => kindWeight(b.kind) - kindWeight(a.kind));

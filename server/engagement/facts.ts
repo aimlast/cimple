@@ -197,7 +197,7 @@ export async function loadTitleSources(
   indexes: Map<string, RenditionPage[]>,
 ): Promise<TitleSources> {
   const kept = await (source.keptCopyTitles?.(deal.id) ?? Promise.resolve(null)).catch(() => null);
-  const named = [...stored].filter((r) => r.mode !== "blind" && r.variant !== "teaser").sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null;
+  const named = [...stored].filter((r) => r.mode === "normal" || r.mode === "dd").sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null;
   const namedServed = new Map<string, string>();
   if (named) {
     const index = indexes.get(named.id) ?? (await source.pageIndexes([named.id]).catch(() => new Map<string, RenditionPage[]>())).get(named.id) ?? [];

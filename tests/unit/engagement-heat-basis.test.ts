@@ -110,6 +110,26 @@ test("part rows + old page totals → 'mixed', with the counts; the part tint us
   assert.deepEqual(p2.buyers.map((x) => [x.accessId, !!x.pageOnly]), [["A", false], ["B", true]]);
   assert.equal(p2.pageLevelOnly, false);
 });
+test("a mixed page never claims 'Nobody stopped on' a part (the page totals can't say)", () => {
+  const a = visit("A", { legacy: false, renditionId: "r1" }), b = visit("B"), c = visit("C", { legacy: false, renditionId: "r1" });
+  const rows = (bTotal: boolean) => base({
+    accesses: [acc("A"), acc("B"), acc("C")],
+    visits: [a, b, c],
+    sums: [
+      sum("A", "p1", 400_000, { renditionId: "r1", blockKey: "metric:0" }),
+      sum("A", "p2", 5_000, { renditionId: "r1", blockKey: "metric:0" }),
+      sum("C", "p2", 5_000, { renditionId: "r1", blockKey: "metric:1" }),
+      ...(bTotal ? [sum("B", "p2", 6_000)] : []),
+    ],
+    visitPages: [vp("A", a.id, "p1", 1, "r1"), vp("A", a.id, "p2", 1, "r1"), vp("C", c.id, "p2", 1, "r1"), vp("B", b.id, "p2", 1)],
+  });
+  const mixed = page(buildDocumentResponse(assembleFacts(rows(true))), "p2");
+  assert.equal(mixed.heat.basis, "mixed");
+  assert.doesNotMatch(mixed.headline ?? "", /Nobody stopped/);
+  const parts = page(buildDocumentResponse(assembleFacts(rows(false))), "p2");
+  assert.equal(parts.heat.basis, "parts");
+  assert.match(parts.headline ?? "", /Nobody stopped on/);
+});
 test("page-only time under 5 % → 'parts'", () => {
   const a = visit("A", { legacy: false, renditionId: "r1" }), b = visit("B");
   const doc = buildDocumentResponse(assembleFacts(base({
