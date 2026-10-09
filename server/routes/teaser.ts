@@ -74,7 +74,7 @@ import { servedCodenameFor, teaserState, teaserSummary } from "../teaser/summary
 import { buyerTeaserFor, linkOpenForBuyer } from "../teaser/serve";
 import { teaserEngagement } from "../teaser/engagement";
 import { SellerCheckError, sendSellerCheck, sellerOwner } from "../teaser/seller-check";
-import { TemplateLimitError, deleteTeaserTemplate, getTeaserSettings, listTeaserTemplates, patchTeaserSettings, renameTeaserTemplate, saveTeaserTemplate } from "../teaser/templates-store";
+import { TemplateLimitError, deleteTeaserTemplate, getTeaserSettings, listTeaserTemplates, patchTeaserSettings, renameTeaserTemplate, saveTeaserTemplate, templateScrubFor } from "../teaser/templates-store";
 import { requireEmailCheck, sendEmailCode, verifyEmailCode } from "../teaser/email-check";
 import { TeaserRequestError, ensureTeaserRequest, recordFreshLinkRequest, recordTeaserPass, requestStateFor, updateRequestNote } from "../teaser/requests";
 import { teaserFigures } from "../teaser/key-numbers";
@@ -149,7 +149,7 @@ async function fixedBlockFor(deal: Deal, row: TeaserRow, slot: string, templateK
   const slotDef = def.slots.find((s) => s.slot === slot);
   if (!slotDef || slotDef.src === "ai") return null;
   const f = await teaserFigures(deal);
-  const one = assembleTeaserDoc({ def: { ...def, slots: [slotDef] }, figures: f, numbers: row.numbers, showAskingPrice: row.showAskingPrice, wording: await getTeaserSettings(deal.brokerId), written: null });
+  const one = assembleTeaserDoc({ def: { ...def, slots: [slotDef] }, figures: f, numbers: row.numbers, showAskingPrice: row.showAskingPrice, wording: await getTeaserSettings(deal.brokerId), written: null, codename: row.codenameUsed ?? (await servedCodenameFor(deal)) });
   const b = one.blocks[0];
   return b && !b.placeholder ? b : null;
 }
@@ -744,8 +744,10 @@ export function registerTeaserRoutes(app: Express, deps: TeaserRouteDeps = {}): 
       const body = z.object({ name: z.string().min(1).max(200), makeDefault: z.boolean().optional() }).strict().parse(req.body ?? {});
       const row = await requireRow(deal);
       const basedOn = isBuiltInTeaserTemplate(row.templateKey) ? row.templateKey : null;
-      const template = await saveTeaserTemplate(deal.brokerId, { name: body.name, basedOn, doc: row.draft, settings: { pageSize: row.pageSize, numbers: row.numbers, showAskingPrice: row.showAskingPrice }, makeDefault: body.makeDefault });
-      res.json({ template });
+      // Nothing of this deal travels: titles/wording are checked against its identity and figures, its codename becomes {codename}.
+      const scrub = await templateScrubFor(deal, [row.codenameUsed]);
+      const { leftOut, ...template } = await saveTeaserTemplate(deal.brokerId, { name: body.name, basedOn, doc: row.draft, settings: { pageSize: row.pageSize, numbers: row.numbers, showAskingPrice: row.showAskingPrice }, makeDefault: body.makeDefault, scrub, sourceDealId: deal.id });
+      res.json({ template, leftOut });
     } catch (err) {
       await sendError(res, err, deal, "Couldn't save the template");
     }

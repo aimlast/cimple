@@ -1,7 +1,9 @@
 /**
  * SaveTeaserTemplateDialog — "Save as my teaser template": the blocks, their
  * order and titles, and the broker's own wording — never this deal's
- * information. "Use it for new teasers" makes it the default.
+ * information (the server leaves out anything naming it or quoting its
+ * figures and says what in the toast). "Use it for new teasers" makes it the
+ * default.
  */
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
@@ -32,7 +34,7 @@ export function SaveTeaserTemplateDialog({ api, open, onOpenChange }: { api: Tea
         <form onSubmit={submit} className="space-y-4">
           <DialogHeader>
             <DialogTitle>Save as my teaser template</DialogTitle>
-            <DialogDescription>Saves the blocks, their order and titles, and your own wording — not this deal's information.</DialogDescription>
+            <DialogDescription>Saves the blocks, their order and titles, and your own wording — not this deal's information. Anything that names this business, its people or its town, or quotes its figures, is left out; its codename becomes the new deal's codename.</DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">
             <Label htmlFor="teaser-template-name" className="text-xs">Name</Label>

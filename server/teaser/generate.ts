@@ -35,7 +35,8 @@ import {
   type TeaserLayout,
 } from "@shared/teaser";
 import { figuresOutsideAllowed, guardTeaserText, pinpointWarnings, processWordsIn } from "@shared/teaser-guard";
-import { DEFAULT_TEASER_WORDING, TEASER_TEMPLATES, templateDef, type TeaserSlotDef, type TeaserTemplateDef } from "@shared/teaser-templates";
+import { DEFAULT_TEASER_WORDING, TEASER_TEMPLATES, templateDef, withCodenameFilled, type TeaserSlotDef, type TeaserTemplateDef } from "@shared/teaser-templates";
+import { NO_CODENAME } from "@shared/teaser-view";
 import { isBuiltInTeaserTemplate } from "@shared/teaser";
 import { agentConfig } from "../interview/config/load-config";
 import { withAiRetry, describeAiFailure } from "../ai-retry";
@@ -402,6 +403,8 @@ export interface AssembleInput {
   now?: Date;
   /** Keep these ids per slot (a re-run over an existing draft keeps block ids → analytics lineage). */
   idForSlot?: (slot: string) => string | undefined;
+  /** The codename the teaser is written under: fills a saved template's {codename}. */
+  codename?: string | null;
 }
 
 const nowIso = (d?: Date) => (d ?? new Date()).toISOString();
@@ -442,7 +445,8 @@ const lines = (list: string[]) => list.filter(Boolean).join("\n");
 
 /** Assemble a TeaserDoc from the template, the figures and the (guarded) AI output. Pure. */
 export function assembleTeaserDoc(input: AssembleInput): TeaserDoc {
-  const { def, figures, written } = input;
+  const { figures, written } = input;
+  const def = withCodenameFilled(input.def, input.codename || NO_CODENAME);
   const at = nowIso(input.now);
   const w = written?.out ?? null;
   const failed = written?.failed ?? new Set<string>();
@@ -666,7 +670,7 @@ export async function writeTeaser(
   if (opts.mode === "template") {
     // No AI at all: no review call, no narrative — the fixed blocks from code, AI slots left to the broker.
     const [figures, codename] = await Promise.all([briefDeps.figures(deal), briefDeps.codename(deal)]);
-    const doc = assembleTeaserDoc({ def, figures, numbers: opts.numbers, showAskingPrice: opts.showAskingPrice, wording, written: null, idForSlot: opts.idForSlot });
+    const doc = assembleTeaserDoc({ def, figures, numbers: opts.numbers, showAskingPrice: opts.showAskingPrice, wording, written: null, idForSlot: opts.idForSlot, codename });
     doc.header = assembleHeader(figures, null);
     const { codenameProblem } = await import("../cim/codenames");
     const problem = codenameProblem(deal as never, codename);
@@ -729,7 +733,7 @@ export async function writeTeaser(
       gen.error = SENTENCES.model;
     }
   }
-  const doc = assembleTeaserDoc({ def, figures: brief.figures, numbers: opts.numbers, showAskingPrice: opts.showAskingPrice, wording, written, idForSlot: opts.idForSlot });
+  const doc = assembleTeaserDoc({ def, figures: brief.figures, numbers: opts.numbers, showAskingPrice: opts.showAskingPrice, wording, written, idForSlot: opts.idForSlot, codename: brief.codename });
   doc.header = assembleHeader(brief.figures, written);
   gen.finishedAt = new Date().toISOString();
   return { doc, generation: gen, codename: brief.codename };

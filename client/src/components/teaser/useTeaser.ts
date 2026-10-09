@@ -216,12 +216,18 @@ export function useTeaser(dealId: string) {
   const sellerCheck = stateMutation<void>("Couldn't send the teaser to the seller", () => teaserRequest("POST", `${base}/seller-check`, { rev }), () =>
     toast({ title: "Sent to the seller", description: "They'll see it on their review page. Nothing goes to buyers until you publish." }),
   );
-  const saveTemplate = useMutation<{ template: SavedTemplateItem }, unknown, { name: string; makeDefault?: boolean }>({
+  const saveTemplate = useMutation<{ template: SavedTemplateItem; leftOut?: string[] }, unknown, { name: string; makeDefault?: boolean }>({
     mutationFn: (v) => teaserRequest("POST", `${base}/save-template`, v),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: teaserTemplatesKey });
       qc.invalidateQueries({ queryKey: teaserKey(dealId) });
-      toast({ title: `Saved “${r.template.name}”`, description: "It's in “Your templates” the next time you start a teaser." });
+      const left = r.leftOut ?? [];
+      toast({
+        title: `Saved “${r.template.name}”`,
+        description: left.length === 0
+          ? "It's in “Your templates” the next time you start a teaser."
+          : `Left out because it belongs to this deal: ${left.slice(0, 3).join("; ")}${left.length > 3 ? `; and ${left.length - 3} more` : ""}. Everything else is in “Your templates”.`,
+      });
     },
     onError: (err) => toast({ title: "Couldn't save the template", description: err instanceof Error ? err.message : undefined, variant: "destructive" }),
   });

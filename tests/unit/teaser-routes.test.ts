@@ -98,10 +98,13 @@ async function main() {
   await check("a saved template: save, then start from it (no AI) — its blocks and the broker's wording", async () => {
     const st = await call("GET", "/api/deals/D-PAC/teaser", undefined, broker);
     const conf = st.json.teaser.draft.blocks.find((b: { slot: string }) => b.slot === "confidentiality");
-    const e = await call("PATCH", `/api/deals/D-PAC/teaser/blocks/${conf.id}`, { rev: st.json.teaser.draftRev, body: "Confidential. Ask Brassline, never the business." }, broker);
+    const e = await call("PATCH", `/api/deals/D-PAC/teaser/blocks/${conf.id}`, { rev: st.json.teaser.draftRev, body: "Confidential. Ask Brassline, never the business. Harjit won't take calls from buyers." }, broker);
     assert.equal(e.status, 200, e.text);
     const sv = await call("POST", "/api/deals/D-PAC/teaser/save-template", { name: "Brassline house style", makeDefault: true }, broker);
     assert.equal(sv.status, 200, sv.text);
+    // The sentence naming this deal's owner stays behind, and the broker is told.
+    assert.deepEqual(sv.json.leftOut, ["A sentence in the confidentiality note: it names “Harjit” (a person)"]);
+    assert.ok(!JSON.stringify(sv.json).includes("sourceDealId"), "the source deal stays on the server");
     const list = await call("GET", "/api/broker/teaser-templates", undefined, broker);
     assert.equal(list.json.defaultTemplate, sv.json.template.key);
     const ft = await call("POST", "/api/deals/D-PAC/teaser/from-template", { templateKey: sv.json.template.key, replace: true }, broker);

@@ -6,6 +6,10 @@
  *  - employees and years are always ranges, whatever the number style;
  *  - a saved template keeps the block order, titles and the broker's own
  *    wording — never the deal's text; applying it reproduces them;
+ *  - a template saved on deal A and used on deal B never carries A's name,
+ *    town, people, codename or figures (titles fall back to the built-in
+ *    title, sentences that name A are left out and reported); using it
+ *    re-checks against deal A as it is now;
  *  - a 21st saved template is refused; another broker's template is not found.
  *
  *   DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=disabled npx tsx tests/unit/teaser-templates.test.ts
@@ -20,7 +24,10 @@ async function check(name: string, fn: () => void | Promise<void>) {
 }
 
 async function main() {
-  const { TEASER_TEMPLATES, LISTING_FIELDS, templateFromSaved, slotsFor } = await import("../../shared/teaser-templates");
+  const { TEASER_TEMPLATES, LISTING_FIELDS, templateFromSaved, slotsFor, CODENAME_TOKEN } = await import("../../shared/teaser-templates");
+  const { teaserTerms, buildBuyerTeaser } = await import("../../shared/teaser-view");
+  const { guardTeaserText } = await import("../../shared/teaser-guard");
+  const { readFileSync } = await import("node:fs");
   const kn = await import("../../server/teaser/key-numbers");
   const ts = await import("../../server/teaser/templates-store");
   const { assembleTeaserDoc } = await import("../../server/teaser/generate");
@@ -134,8 +141,12 @@ async function main() {
     conf.layoutData = { body: conf.body };
     doc.blocks.push({ id: "cust-1", slot: "custom", title: "Why now", layoutType: "prose_highlight", layoutData: { body: "Barrie HVAC demand is surging." }, body: "Barrie HVAC demand is surging.", hidden: false, origin: "ai", facts: [], updatedAt: new Date().toISOString() });
 
+    const barrieDeal = { id: "D-BAR", businessName: "Northbeam Heating & Cooling Ltd.", industry: "HVAC services", extractedInfo: { locationSite: "Barrie, Ontario", ownerName: "Gord Ellison" } };
+    const barrieScrub = { terms: teaserTerms(barrieDeal, "Project Kestrel"), codenames: ["Project Kestrel"] };
+
     await check("a saved template keeps order, titles and the broker's wording — never the deal's text", async () => {
-      const saved = await ts.saveTeaserTemplate("B1", { name: "Brassline house style", basedOn: "one_page", doc, settings: { numbers: "ranges", pageSize: "letter", showAskingPrice: true }, makeDefault: true });
+      const saved = await ts.saveTeaserTemplate("B1", { name: "Brassline house style", basedOn: "one_page", doc, settings: { numbers: "ranges", pageSize: "letter", showAskingPrice: true }, makeDefault: true, scrub: barrieScrub });
+      assert.deepEqual(saved.leftOut, [], "nothing of the deal in the broker's wording here");
       const row = mem.rows.find((r) => r.id === saved.id)!;
       const json = JSON.stringify(row.blocks);
       for (const dealText of ["4.8", "1.3", "$", "Barrie", "25–49", "surging", "{price}"]) assert.ok(!json.includes(dealText), `${dealText} leaked into the template`);
@@ -151,8 +162,8 @@ async function main() {
     });
 
     await check("a 21st template is refused; another broker's template is not found", async () => {
-      for (let i = mem.rows.length; i < ts.TEMPLATE_LIMIT; i++) await ts.saveTeaserTemplate("B1", { name: `T${i}`, basedOn: "two_page", doc, settings: {} });
-      await assert.rejects(ts.saveTeaserTemplate("B1", { name: "One too many", basedOn: null, doc, settings: {} }), ts.TemplateLimitError);
+      for (let i = mem.rows.length; i < ts.TEMPLATE_LIMIT; i++) await ts.saveTeaserTemplate("B1", { name: `T${i}`, basedOn: "two_page", doc, settings: {}, scrub: barrieScrub });
+      await assert.rejects(ts.saveTeaserTemplate("B1", { name: "One too many", basedOn: null, doc, settings: {}, scrub: barrieScrub }), ts.TemplateLimitError);
       assert.equal(await ts.renameTeaserTemplate("B2", mem.rows[0].id, { name: "Mine now" }), null);
       assert.equal(await ts.deleteTeaserTemplate("B2", mem.rows[0].id), false);
       assert.equal(await ts.savedTemplateDef(`saved:${mem.rows[0].id}`, "B2"), null);
@@ -160,6 +171,101 @@ async function main() {
       // Deleting the default clears it.
       assert.equal(await ts.deleteTeaserTemplate("B1", mem.rows[0].id), true);
       assert.equal((await ts.getTeaserSettings("B1")).defaultTemplate, null);
+    });
+    mem.rows.splice(0, mem.rows.length);
+  }
+
+  _crossDeal: {
+    // Deal A = the Pacific fixture (Pacific Coast Logistics, Surrey, Harjit Sandhu, Project Coastline).
+    const dealA = JSON.parse(readFileSync(new URL("../fixtures/teaser/pacific-deal.json", import.meta.url), "utf8"));
+    const termsA = teaserTerms(dealA, "Project Coastline");
+    const scrubA = ts.templateScrubOf(dealA, "Project Coastline", [dealA.blindCodename]);
+    assert.ok(ts.givenNamesOf(termsA).includes("Harjit") && ts.givenNamesOf(termsA).includes("Manpreet"), "the owner's and staff's given names are template terms");
+    // Deal B = a Lakeshore-like HVAC business.
+    const dealB = { id: "D-LAK", businessName: "Lakeshore Home Comfort Ltd.", industry: "Home Services", extractedInfo: { businessLocation: "Barrie, Ontario", ownerName: "Gord Ellison" } };
+
+    const mem = ts.memoryTemplatesStore();
+    ts._setTemplatesStoreForTests(mem);
+    const settings: Record<string, unknown> = {};
+    ts._setTeaserSettingsStoreForTests({ async get() { return settings; }, async set(_b, v) { Object.assign(settings, v); } });
+    ts._setTemplateSourceScrubForTests(async () => null);
+
+    const docA = assembleTeaserDoc({ def: TEASER_TEMPLATES.one_page, figures: base, numbers: "ranges", showAskingPrice: true, wording: {}, written: null, codename: "Project Coastline" });
+    const at = new Date().toISOString();
+    // The broker retitled a built-in block with the business's name.
+    docA.blocks.find((b) => b.slot === "highlights")!.title = "Why Pacific Coast Logistics?";
+    // Their own next steps (one names the owner) and confidentiality line (uses the codename).
+    const next = docA.blocks.find((b) => b.slot === "next_step")!;
+    next.origin = "broker";
+    next.layoutData = { ordered: true, items: [{ title: "Ask {firm} for the CIM" }, { title: "Call Harjit directly for a site tour" }, { title: "Questions? {contact}" }] };
+    const conf = docA.blocks.find((b) => b.slot === "confidentiality")!;
+    conf.origin = "broker";
+    conf.body = "Project Coastline is strictly confidential. All questions go to {firm}.";
+    conf.layoutData = { body: conf.body };
+    // A custom block of their own: the checker's case, plus a figure and a clean sentence.
+    const customBody = "Pacific Coast Logistics in Surrey, run by Harjit Sandhu. Revenue grew 12% last year. We welcome serious, funded buyers.";
+    docA.blocks.push({ id: "cust-a1b2c3d4", slot: "custom", title: "About Harjit", layoutType: "prose_highlight", layoutData: { body: customBody }, body: customBody, hidden: false, origin: "broker", facts: [], updatedAt: at });
+    docA.blocks.push({ id: "cust-e5f6a7b8", slot: "custom", title: "Why Project Coastline", layoutType: "prose_highlight", layoutData: { body: "Project Coastline suits an operator who wants scale." }, body: "Project Coastline suits an operator who wants scale.", hidden: false, origin: "broker", facts: [], updatedAt: at });
+
+    const leakTermsA = ["Pacific Coast", "Surrey", "Harjit", "Sandhu", "Coastline", "12%"];
+
+    await check("saving on deal A: nothing that names deal A (or its codename or figures) is stored, and the broker is told what was left out", async () => {
+      const saved = await ts.saveTeaserTemplate("B1", { name: "House style", basedOn: "one_page", doc: docA, settings: {}, scrub: scrubA, sourceDealId: "D-PAC" });
+      const row = mem.rows.find((r) => r.id === saved.id)!;
+      const json = JSON.stringify(row.blocks);
+      for (const t of leakTermsA) assert.ok(!json.includes(t), `${t} travelled into the template: ${json}`);
+      assert.equal(guardTeaserText(json, termsA).leaks.length, 0);
+      const blocks = row.blocks as Array<{ slot: string; title: string; fixedText?: string }>;
+      assert.equal(blocks.find((b) => b.slot === "highlights")!.title, "Investment highlights", "a title naming the business falls back to the built-in title");
+      assert.equal(blocks.find((b) => b.slot === "next_step")!.fixedText, "Ask {firm} for the CIM", "the line naming the owner is left out, the rest kept");
+      assert.equal(blocks.find((b) => b.slot === "confidentiality")!.fixedText, `${CODENAME_TOKEN} is strictly confidential. All questions go to {firm}.`, "the codename becomes {codename}");
+      const about = blocks.find((b) => b.slot === "custom_cust-a1b")!;
+      assert.equal(about.title, "", "the custom title naming the owner is dropped");
+      assert.equal(about.fixedText, "We welcome serious, funded buyers.", "only the sentence without A's name or figures travels");
+      assert.equal(blocks.find((b) => b.slot === "custom_cust-e5f")!.title, `Why ${CODENAME_TOKEN}`);
+      assert.ok(saved.leftOut.some((l) => l.startsWith("The title “Why Pacific Coast Logistics?”") && l.includes("Investment highlights")), saved.leftOut.join(" | "));
+      assert.ok(saved.leftOut.some((l) => l.startsWith("The title “About Harjit”")));
+      assert.ok(saved.leftOut.some((l) => l === "A sentence in the block titled “About Harjit”: it has a figure from this deal (“12%”)"), saved.leftOut.join(" | "));
+      assert.ok(saved.leftOut.some((l) => l === "A line in “Interested?”: it names “Harjit” (a person)"));
+      assert.ok(saved.leftOut.some((l) => /names “Pacific Coast Logistics/.test(l)));
+      assert.ok(!("sourceDealId" in saved.settings), "the source deal id stays on the server");
+      assert.equal((row.settings as { sourceDealId?: string }).sourceDealId, "D-PAC");
+    });
+
+    await check("used on deal B: deal B's buyers see the broker's wording under B's codename and nothing of deal A", async () => {
+      const key = `saved:${mem.rows[0].id}`;
+      const def = await ts.savedTemplateDef(key, "B1");
+      assert.ok(def);
+      const docB = assembleTeaserDoc({ def: def!, figures: base, numbers: "ranges", showAskingPrice: true, wording: {}, written: null, codename: "Project Drift" });
+      for (const b of docB.blocks) if (b.slot.startsWith("custom_")) { b.hidden = false; b.placeholder = undefined; }
+      const served = buildBuyerTeaser({ deal: dealB, doc: docB, codename: "Project Drift", codenameUsed: "Project Drift", askingPrice: "$4,800,000", showAskingPrice: true, numbers: "ranges", contact: { firm: "Brassline Advisory", name: "Morgan Ellis", email: null, phone: null } });
+      const json = JSON.stringify(served);
+      for (const t of leakTermsA) assert.ok(!json.includes(t), `${t} reached deal B's buyers`);
+      assert.equal(guardTeaserText(json, termsA).leaks.length, 0, "deal A's identity check finds nothing in what deal B's buyers get");
+      assert.ok(json.includes("Project Drift is strictly confidential. All questions go to Brassline Advisory."));
+      assert.ok(json.includes("Project Drift suits an operator who wants scale."));
+      assert.ok(json.includes("We welcome serious, funded buyers."));
+      assert.ok(!json.includes(CODENAME_TOKEN), "{codename} is always filled");
+      assert.ok(served.blocks.some((b) => b.title === "Investment highlights") || docB.blocks.some((b) => b.slot === "highlights" && b.title === "Investment highlights"));
+    });
+
+    await check("using a template re-checks against deal A as it is now (a name added after saving)", async () => {
+      // Saved while deal A's facts didn't yet name the dispatcher "Rajveer".
+      const docLate = assembleTeaserDoc({ def: TEASER_TEMPLATES.one_page, figures: base, numbers: "ranges", showAskingPrice: true, wording: {}, written: null, codename: "Project Coastline" });
+      const c = docLate.blocks.find((b) => b.slot === "confidentiality")!;
+      c.origin = "broker";
+      c.body = "Please keep this private. Rajveer Gill can show you the yard.";
+      c.layoutData = { body: c.body };
+      const saved = await ts.saveTeaserTemplate("B1", { name: "Late", basedOn: "one_page", doc: docLate, settings: {}, scrub: scrubA, sourceDealId: "D-PAC" });
+      assert.deepEqual(saved.leftOut, []);
+      const before = await ts.savedTemplateDef(saved.key, "B1");
+      assert.equal(before!.fixedText!.confidentiality, "Please keep this private. Rajveer Gill can show you the yard.");
+      // Deal A's facts now name him.
+      const dealANow = { ...dealA, extractedInfo: { ...dealA.extractedInfo, keyEmployees: `${dealA.extractedInfo.keyEmployees}; Rajveer Gill (Yard Manager)` } };
+      ts._setTemplateSourceScrubForTests(async (dealId, brokerId) => (dealId === "D-PAC" && brokerId === "B1" ? ts.templateScrubOf(dealANow, "Project Coastline", []) : null));
+      const after = await ts.savedTemplateDef(saved.key, "B1");
+      assert.equal(after!.fixedText!.confidentiality, "Please keep this private.");
+      ts._setTemplateSourceScrubForTests(null);
     });
   }
 

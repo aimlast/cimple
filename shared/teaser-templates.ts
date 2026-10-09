@@ -158,6 +158,24 @@ export function templateDef(key: string, saved?: TeaserTemplateDef | null): Teas
   return saved ?? TEASER_TEMPLATES.one_page;
 }
 
+/**
+ * In a saved template, where the deal it was saved from used its codename:
+ * filled with the new deal's codename when the template is used (never
+ * served as it is — assembly always fills it).
+ */
+export const CODENAME_TOKEN = "{codename}";
+
+/** A saved template's titles and wording with {codename} filled in. */
+export function withCodenameFilled(def: TeaserTemplateDef, codename: string): TeaserTemplateDef {
+  if (!def.saved) return def;
+  const fill = (s: string) => s.split(CODENAME_TOKEN).join(codename);
+  return {
+    ...def,
+    slots: def.slots.map((s) => (s.title.includes(CODENAME_TOKEN) ? { ...s, title: fill(s.title) } : s)),
+    fixedText: def.fixedText ? Object.fromEntries(Object.entries(def.fixedText).map(([k, v]) => [k, fill(v)])) : def.fixedText,
+  };
+}
+
 /** "saved:<id>" for a saved template. */
 export const SAVED_PREFIX = "saved:";
 export function savedTemplateKey(id: string): string {
