@@ -2497,15 +2497,18 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
               seller's checklist moved to Data room › To do › Seller checklist. */}
           <DocumentsSummaryCard dealId={dealId} />
           <DocumentUploadCard openSignal={uploadSignal} />
-          <IntegrationPromptCard
-            onOpenTranscripts={() =>
-              setUploadSignal({
-                kind: "call",
-                tab: "paste",
-                nonce: Date.now(),
-              })
-            }
-          />
+          {/* "Before the interview" — only while information is being collected (release review UX-F13). */}
+          {currentPhaseIdx <= getPhaseIndex("phase2_platform_intake") && (
+            <IntegrationPromptCard
+              onOpenTranscripts={() =>
+                setUploadSignal({
+                  kind: "call",
+                  tab: "paste",
+                  nonce: Date.now(),
+                })
+              }
+            />
+          )}
         </div>
       )}
 
