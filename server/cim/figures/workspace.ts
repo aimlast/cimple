@@ -137,6 +137,8 @@ export interface WorkspaceInput {
    * working copy stands in (tests, or when it couldn't be worked out).
    */
   served?: ServedFigures | null;
+  /** Documents shared with due-diligence buyers in the data room (server/vdr/dd-adapter ddSharedDocumentIds); null = no room. */
+  ddSharedDocumentIds?: ReadonlySet<string> | null;
 }
 
 export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
@@ -377,7 +379,7 @@ export function buildWorkspace(input: WorkspaceInput): FiguresWorkspace {
       waiting,
       withSeller: raw.questions.filter((q) => q.status === "ask_seller").length,
       documentsCited: cited.size,
-      documentsShared: null,
+      documentsShared: input.ddSharedDocumentIds ? Array.from(cited).filter((id) => input.ddSharedDocumentIds!.has(id)).length : null,
     },
     fixFirst,
     moves,

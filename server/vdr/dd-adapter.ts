@@ -166,3 +166,31 @@ export async function ddCitedSections(dealId: string, documentId: string, depsIn
     return [];
   }
 }
+
+/**
+ * The deal's documents shared with due-diligence buyers in the data room —
+ * a live item with a level share for Due diligence (the same rule as the
+ * Data room tab's "DD cited · not shared", broker-room.ts). Null when the
+ * deal has no data room (dd's "Documents cited" KPI then shows no "shared"
+ * line). Release fix (security-integration F2): the KPI's documentsShared was
+ * a hard-coded null. Never throws.
+ */
+export async function ddSharedDocumentIds(dealId: string, storeIn?: Pick<import("./store").VdrStore, "getRoom" | "listItems" | "listShares">): Promise<Set<string> | null> {
+  try {
+    const store = storeIn ?? (await import("./store")).dbVdrStore;
+    const room = await store.getRoom(dealId);
+    if (!room) return null;
+    const [items, shares] = await Promise.all([store.listItems(dealId), store.listShares(dealId)]);
+    const { DD_ACCESS_LEVEL } = await import("@shared/access-levels");
+    const { shareSummary } = await import("@shared/vdr");
+    const out = new Set<string>();
+    for (const it of items) {
+      if (it.removedAt || !it.documentId) continue;
+      if (shareSummary(shares.filter((s) => s.itemId === it.id) as any).levels.includes(DD_ACCESS_LEVEL as any)) out.add(it.documentId);
+    }
+    return out;
+  } catch (err: any) {
+    console.warn(`[vdr] couldn't read the shared documents for ${dealId}:`, err?.message ?? err);
+    return null;
+  }
+}

@@ -24,6 +24,7 @@ import { nothingServedLine, publishTarget, type FiguresWorkspace } from "@shared
 import { BLIND_ACCESS_LEVEL, DD_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, type AccessLevel } from "@shared/access-levels";
 import { figuresKey, figuresRequest, type FiguresStatus } from "./useFigures";
 import { ReviewSheet } from "./ReviewSheet";
+import { DD_ON_CHECK_PAGE, ddOffPageWords } from "@shared/figure-copy";
 
 function useWorkspace(dealId: string) {
   return useQuery<FiguresWorkspace>({ queryKey: figuresKey(dealId), queryFn: () => figuresRequest("GET", `/api/deals/${dealId}/figures`), staleTime: 30_000 });
@@ -131,12 +132,15 @@ export function FigureVersionLines({ dealId, mode }: { dealId: string; mode: "no
   const differences = s ? s.regrouped + s.differing : d.kpis.differences;
   const explained = s ? s.regrouped + s.explained : d.kpis.differencesExplained;
   const pending = d.checks.filter((c) => c.group === "difference" && !c.shownToBuyers && c.onBuyerPage && !c.refusal && c.decision !== "left_out" && c.decision !== "shown").length;
+  // Numbers & sources counts every check; the page keeps some off (a year to fix first) — say so, never two bare numbers.
+  const offPage = s ? Math.max(0, d.kpis.differences - differences) : 0;
   const mismatches = d.fixFirst.filter((f) => f.kind === "mismatch");
   return (
     <div className="space-y-1 text-[11px]" data-testid="figure-lines-dd">
       {d.status.hasOtherRecords ? (
         <p className="text-muted-foreground">
-          <Calculator className="mr-1 inline h-3 w-3" />{checked} {checked === 1 ? "figure" : "figures"} checked · {differences} {differences === 1 ? "difference" : "differences"} ({explained === differences && differences > 0 ? "all explained" : `${explained} explained`})
+          <Calculator className="mr-1 inline h-3 w-3" />{s ? `${DD_ON_CHECK_PAGE}: ` : ""}{checked} {checked === 1 ? "figure" : "figures"} checked · {differences} {differences === 1 ? "difference" : "differences"} ({explained === differences && differences > 0 ? "all explained" : `${explained} explained`})
+          {offPage > 0 && <> · <button type="button" className="text-teal hover:underline" onClick={() => open("checks")} data-testid="figure-lines-off-page">{ddOffPageWords(offPage)}</button></>}
           {pending > 0 && <> · <button type="button" className="text-teal hover:underline" onClick={() => open("checks")}>{pending} more {pending === 1 ? "waits" : "wait"} for your OK</button></>}
         </p>
       ) : (

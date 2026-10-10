@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { moveCounts, nothingServedLine, publishTarget, type CheckGroup, type MoveFilter, type WorkspaceCheck, type WorkspaceMove, type WorkspaceQuestion } from "@shared/figure-workspace";
 import { useDeal } from "@/contexts/DealContext";
 import { vdrBrokerHref } from "@shared/vdr";
+import { ddDifferencesKpiSub } from "@shared/figure-copy";
 import { figuresErrorText, useFigureActions, useFiguresWorkspace, FiguresError } from "./useFigures";
 import { StatusPill } from "./StatusPill";
 import { FixFirst } from "./FixFirst";
@@ -182,6 +183,8 @@ export function NumbersWorkspace({ embedded = false }: { embedded?: boolean } = 
 
   const build = data.status.build;
   const k = data.kpis;
+  // What the buyers' check page counts (Numbers & sources counts every check — release fix F1).
+  const buyersPage = data.served ? data.served.dd.summary ?? data.served.dd.summaryIfOn : null;
   const interviewDone = !!deal?.interviewCompleted;
 
   const moveActions = {
@@ -276,7 +279,7 @@ export function NumbersWorkspace({ embedded = false }: { embedded?: boolean } = 
         <Kpi
           label="Differences"
           value={`${k.differences}`}
-          sub={k.differences === 0 ? "none found" : k.differencesExplained === k.differences ? "all explained" : `${k.differencesExplained} explained`}
+          sub={ddDifferencesKpiSub({ all: k.differences, explained: k.differencesExplained, onPage: buyersPage ? buyersPage.regrouped + buyersPage.differing : null })}
           onClick={() => setParams({ tab: "checks", group: data.checks.some((c) => c.group === "difference") ? "difference" : data.checks.some((c) => c.group === "regrouped") ? "regrouped" : "difference", note: null })}
           testId="kpi-differences"
         />

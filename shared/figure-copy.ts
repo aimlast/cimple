@@ -26,6 +26,21 @@ export const DD_VERSION_DETAIL = "The Full CIM plus figure checks against the ta
 export const DD_STATUS_NAMES_PENDING = "Ready · names not revealed yet";
 export const DD_NAMES_PENDING_NOTE = "Due-diligence buyers already get the Full CIM, the figure checks and the data room. Customer, supplier and landlord names still read as in the Full CIM (“Customer A”) until you generate the due-diligence version.";
 export const DD_NAMES_PENDING_GRANT = "Customer names aren't revealed yet — generate the due-diligence version on the CIM tab.";
+/**
+ * The two difference counts, labelled (release fix F1): the CIM tab's
+ * Versions card counts the buyers' check page; Numbers & sources counts every
+ * check — a year to fix first, or a figure Cimple couldn't find, is kept off
+ * the buyers' page. Each count says which it is.
+ */
+export const DD_ON_CHECK_PAGE = "On the buyers' check page";
+export function ddOffPageWords(n: number): string {
+  return `${n} more kept off it until fixed or checked`;
+}
+export function ddDifferencesKpiSub(i: { all: number; explained: number; onPage: number | null }): string {
+  if (i.all === 0) return "none found";
+  if (i.onPage !== null && i.onPage < i.all) return `${i.onPage} on the buyers' page · ${i.all - i.onPage} kept off until fixed or checked`;
+  return i.explained === i.all ? "all explained" : `${i.explained} explained`;
+}
 export const DD_BANNER_TITLE = "Due-diligence version.";
 export const DD_BANNER_POINTER = "Figures are checked against the company's tax returns and other records. Hover or click a figure to see how it compares and why.";
 export const DD_BANNER_TOUCH = "Figures are checked against the company's tax returns and other records. Tap a figure to see how it compares and why.";

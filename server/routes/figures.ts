@@ -157,9 +157,11 @@ export function registerFigureRoutes(app: Express): void {
       // What buyers of each version are actually served (the kept copy while an update waits) —
       // "Shown to buyers" and the counts read that, never the working copy alone (checker r1 F3).
       const { servedFigures } = await import("../cim/figures/served");
-      const served = await servedFigures(deal, raw);
+      const { ddSharedDocumentIds } = await import("../vdr/dd-adapter");
+      const [served, ddShared] = await Promise.all([servedFigures(deal, raw), ddSharedDocumentIds(deal.id)]);
       const ws = buildWorkspace({
         served,
+        ddSharedDocumentIds: ddShared,
         raw,
         sections: (sections as CimSection[]).filter((s) => s.isVisible !== false),
         build: effectiveBuild(state?.build ?? null, figureBuildRunning(deal.id)),
