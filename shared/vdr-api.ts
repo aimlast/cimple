@@ -521,7 +521,8 @@ export type ItemNotesPayload = {
 // ── Pass 4: citations (vdr spec §6.6, §11.1) ──
 
 export type ResolvedDocument =
-  | { available: true; itemId: string; title: string; number: string | null; replaced?: true }
+  /** `preparing`: shared with this reader, still "Getting it ready…" — the chip opens it and the viewer waits. */
+  | { available: true; itemId: string; title: string; number: string | null; replaced?: true; preparing?: true }
   | { available: false };
 export type ResolvePayload = { documents: Record<string, ResolvedDocument> };
 

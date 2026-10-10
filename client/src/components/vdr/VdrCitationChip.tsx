@@ -4,7 +4,9 @@
  *
  * It takes NO title: the text always comes from the data room.
  *  - The reader can open the document → the room's title (+ " · p. 3"),
- *    and a click opens it beside the CIM (VdrViewerDrawer).
+ *    and a click opens it beside the CIM (VdrViewerDrawer). One shared with
+ *    them that is still being prepared reads "· getting it ready" and opens
+ *    the same way (the viewer waits for it) — never the lock.
  *  - Anything else (not shared, no data room, private, unknown, a ledger
  *    that isn't ready, a new version not shared yet) → the neutral label from
  *    a fixed vocabulary ("Tax return 2023", else "A supporting document")
@@ -57,6 +59,7 @@ export function VdrCitationChip({ docRef, className }: { docRef: VdrDocRef; clas
         <FileText className="h-3 w-3 shrink-0" />
         <span className="truncate">{visibleChipText(res.title, docRef.page, res.replaced)}</span>
         {res.replaced && <span style={{ color: MUTED }}>· updated</span>}
+        {res.preparing && <span className="shrink-0" style={{ color: MUTED }} data-testid="vdr-citation-preparing">· getting it ready</span>}
       </button>
     );
   }

@@ -27,7 +27,7 @@
 import fs from "fs";
 import path from "path";
 import { createHash } from "crypto";
-import { extensionOf, fileKindFor, isLedgerDoc, preparedErrorCopy, presetFolder, VDR_LIMITS, type VdrPrepared } from "@shared/vdr";
+import { extensionOf, fileKindFor, isLedgerDoc, preparedErrorCopy, presetFolder, VDR_LIMITS, VDR_TICK_BEFORE_PREPARED, type VdrPrepared } from "@shared/vdr";
 import { personalRecordsHint } from "@shared/vdr-sensitive";
 import { uploadsRoot } from "../documents/document-path";
 import { dbVdrStore, type VdrStore } from "./store";
@@ -86,7 +86,15 @@ export async function prepareItem(itemId: string, opts: { force?: boolean } = {}
   if (!doc || doc.dealId !== item.dealId) return null;
   const now = deps.now();
   const save = async (prepared: VdrPrepared, extra: Record<string, unknown> = {}) => {
-    await store.updateItem(item.id, { prepared, ...extra } as any);
+    // A tick given before the first preparation (shared/vdr tickFileFor)
+    // carries to the file now prepared. Read again: the broker may have
+    // ticked while the file was being read.
+    let carry: Record<string, unknown> = {};
+    if (prepared.status === "ready") {
+      const latest = await store.getItem(item.id).catch(() => null);
+      if ((latest ?? item).checkedForFile === VDR_TICK_BEFORE_PREPARED) carry = { checkedForFile: prepared.forFile };
+    }
+    await store.updateItem(item.id, { prepared, ...extra, ...carry } as any);
     return prepared;
   };
 

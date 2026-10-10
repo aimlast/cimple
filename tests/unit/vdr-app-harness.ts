@@ -21,6 +21,8 @@ export async function vdrTestApp(i: {
   requirements?: any[];
   discrepancies?: any[];
   sections?: any[];
+  /** Records the buyer routes' background preparation requests (default: the real queue, a no-op under DISABLE_SCHEDULERS=1). */
+  enqueuePrepare?: (itemId: string) => void;
 }) {
   const f = fakeVdrStore({ documents: i.docs });
   const deals = new Map(i.deals.map((d) => [d.id, d]));
@@ -78,6 +80,7 @@ export async function vdrTestApp(i: {
     createQuestion: async (row: any) => { const q = { id: randomUUID(), createdAt: i.now, updatedAt: i.now, aiAnswer: null, brokerDraft: null, sellerApproved: false, publishedAnswer: null, ...row }; questions.push(q); return q; },
     notifyBroker: async (...args: any[]) => { alerts.push(args); },
     servedSections: async () => (i.sections ?? []).map((x: any) => ({ id: x.id, title: x.sectionTitle, text: [x.aiDraftContent ?? "", JSON.stringify(x.layoutData ?? "")].join("\n") })),
+    ...(i.enqueuePrepare ? { enqueuePrepare: i.enqueuePrepare } : {}),
   });
   const server = app.listen(0, "127.0.0.1");
   await new Promise((r) => server.once("listening", r));

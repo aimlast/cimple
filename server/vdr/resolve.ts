@@ -7,6 +7,9 @@
  *
  *   buyer  → `{ available: true, itemId, title, number, replaced? }` for a
  *            document they can open now (the room's own title and number),
+ *            `preparing: true` when it is shared with them and listed in
+ *            their room as "Getting it ready…" (the chip opens it; opening
+ *            starts the preparation and the viewer waits for it),
  *            else `{ available: false }` — the SAME shape for broker-only,
  *            unknown, not shared, ledger not ready, due-diligence-only or no
  *            access, so the cases can't be told apart and no name leaks.
@@ -17,14 +20,14 @@
  * No AI, no writes.
  */
 import type { Document, VdrItem } from "@shared/schema";
-import { indexNumbers } from "@shared/vdr";
+import { indexNumbers, listedForReader } from "@shared/vdr";
 import type { ReaderItem, RoomSnapshot } from "./access";
 import type { VdrStore } from "./store";
 
 export const RESOLVE_MAX = 50;
 
 export type ResolvedForBuyer =
-  | { available: true; itemId: string; title: string; number: string | null; replaced?: true }
+  | { available: true; itemId: string; title: string; number: string | null; replaced?: true; preparing?: true }
   | { available: false };
 
 export type ResolvedForBroker =
@@ -77,6 +80,11 @@ export function latestVersion(items: ReadonlyArray<Pick<VdrItem, "id" | "replace
 }
 
 /** What a buyer (or team member) gets for each id — see the file comment. */
+/** Item ids resolved as `preparing` (the route queues their preparation). */
+export function preparingItemIds(resolved: Record<string, ResolvedForBuyer>): string[] {
+  return Array.from(new Set(Object.values(resolved).flatMap((r) => (r.available && r.preparing ? [r.itemId] : []))));
+}
+
 export function resolveForReader(
   ids: ReadonlyArray<string>,
   snap: Pick<RoomSnapshot, "folders" | "items">,
@@ -84,19 +92,24 @@ export function resolveForReader(
   replacements: ReadonlyMap<string, string>,
 ): Record<string, ResolvedForBuyer> {
   const numbers = indexNumbers(snap.folders, snap.items).items;
-  const visible = new Map(decided.filter((d) => d.visibility.visible).map((d) => [d.item.id, d.item]));
+  // Listed to this reader: open now, or shared and still being prepared
+  // ("Getting it ready…" in their room — same rule as the room's list).
+  const listed = decided.filter((d) => listedForReader(d.visibility));
+  const visible = new Map(listed.map((d) => [d.item.id, d.item]));
+  const preparing = new Set(listed.filter((d) => !d.visibility.visible && d.item.prepared?.status !== "failed").map((d) => d.item.id));
   const byDoc = new Map<string, VdrItem>();
   for (const it of Array.from(visible.values())) if (it.documentId) byDoc.set(it.documentId, it);
   const out: Record<string, ResolvedForBuyer> = {};
+  const extra = (itemId: string) => (preparing.has(itemId) ? { preparing: true as const } : {});
   for (const id of ids) {
     const direct = byDoc.get(id);
     if (direct) {
-      out[id] = { available: true, itemId: direct.id, title: direct.title, number: numbers.get(direct.id) ?? null };
+      out[id] = { available: true, itemId: direct.id, title: direct.title, number: numbers.get(direct.id) ?? null, ...extra(direct.id) };
       continue;
     }
     const via = replacements.get(id);
     const newest = via ? visible.get(latestVersion(snap.items, via)) : undefined;
-    out[id] = newest ? { available: true, itemId: newest.id, title: newest.title, number: numbers.get(newest.id) ?? null, replaced: true } : { available: false };
+    out[id] = newest ? { available: true, itemId: newest.id, title: newest.title, number: numbers.get(newest.id) ?? null, replaced: true, ...extra(newest.id) } : { available: false };
   }
   return out;
 }

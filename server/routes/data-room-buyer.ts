@@ -31,7 +31,8 @@ import { watermarkFooter, watermarkLine, VDR_LIMITS, fileSizeLabel, questionPage
 import type { ViewStart } from "@shared/vdr-api";
 import { logVdrQuietly } from "../vdr/store";
 import { assertBuyerDocumentAccess, decideForGate, defaultGateDeps, itemFor, listedItems, vdrBuyerGate, VdrHttpError, type GateDeps, type VdrGate } from "../vdr/access";
-import { parseDocumentIds, replacementsFor, resolveForReader } from "../vdr/resolve";
+import { parseDocumentIds, preparingItemIds, replacementsFor, resolveForReader } from "../vdr/resolve";
+import { enqueuePrepare } from "../vdr/prepare";
 import { focusFor } from "../vdr/locate";
 import { ledgerRowsForBuyer } from "../vdr/gl-adapter";
 import { parseTeamInput, principalCompanyOf, teamAddProblem, TEAM_ROLE_LABEL, type TeamRole } from "../vdr/team";
@@ -54,6 +55,8 @@ export type BuyerRouteDeps = GateDeps & {
   notifyBroker: (dealId: string, title: string, body: string, actionUrl: string, businessName: string | null) => Promise<unknown>;
   /** The CIM sections a buyer is served ("Used in the memorandum"); tests stub it. */
   servedSections?: typeof import("../vdr/analysis").servedSectionsFor;
+  /** Background preparation of shared documents not ready yet (default: the prepare queue; tests record). */
+  enqueuePrepare?: (itemId: string) => void;
 };
 
 async function defaultBuyerDeps(): Promise<BuyerRouteDeps> {
@@ -125,6 +128,9 @@ export function registerDataRoomBuyerRoutes(app: Express, overrides?: Partial<Bu
         const brand = await d.brand(gate.deal.brokerId ?? null).catch(() => ({ firmName: null, logoUrl: null }));
         return res.status(403).json({ code: "ack_required", principalCompany: gate.access.buyerCompany || gate.access.buyerName || null, role: gate.member.role, name: gate.member.name, firmName: brand.firmName });
       }
+      // Listed as "Getting it ready…" and never prepared (rows written without
+      // the broker routes' queue): queue them now.
+      for (const x of decided) if (x.visibility.visible === false && x.visibility.reason === "not_ready" && !x.item.prepared) (d.enqueuePrepare ?? enqueuePrepare)(x.item.id);
       res.json(await buyerRoomPayload({ store: d.store, brand: d.brand, now: d.now }, gate, snap, decided, { preview: ownerPreview(req, gate), ipHash: ipHashFor(gate.deal.id, req) }));
     } catch (err) {
       send(res, err, "room");
@@ -430,8 +436,13 @@ export function registerDataRoomBuyerRoutes(app: Express, overrides?: Partial<Bu
       if (!ids) return res.status(400).json({ error: "Malformed" });
       const { d, gate, snap, decided } = await gateAndItems(req);
       const replacements = await replacementsFor(d.store, gate.deal.id);
+      const documents = resolveForReader(ids, snap, decided, replacements);
+      // A cited document shared but not prepared yet (rows written by the
+      // demo seed or a share before a restart) is queued now, so the chip
+      // opens a ready document a moment later instead of a lock.
+      for (const itemId of preparingItemIds(documents)) (d.enqueuePrepare ?? enqueuePrepare)(itemId);
       res.setHeader("Cache-Control", "private, no-store");
-      res.json({ documents: resolveForReader(ids, snap, decided, replacements) });
+      res.json({ documents });
     } catch (err) {
       // No room for this reader (or any refusal): every id reads as not available — same shape, nothing named.
       const noRoom = new Set(["no_room_access", "room_none", "room_closed", "nda_required", "ack_required", "team_ended"]);

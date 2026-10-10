@@ -477,13 +477,35 @@ export function itemFlags(
   return out;
 }
 
+/**
+ * The file a broker's "I've checked it" tick is given for
+ * (vdr_items.checked_for_file). A document not prepared yet ("Getting it
+ * ready…", or its file not found) has no prepared fingerprint: the tick is
+ * recorded as VDR_TICK_BEFORE_PREPARED, it counts while the document is
+ * being prepared, and the first preparation carries it to the prepared file
+ * (server/vdr/prepare.ts) — a tick given early is never lost, and a file
+ * changed afterwards still needs a fresh one. Every writer of a tick
+ * (the plan, "I've checked it", sharing, the demo seed) uses this.
+ */
+export const VDR_TICK_BEFORE_PREPARED = "before-prepared";
+export function tickFileFor(prepared: VdrPrepared | null | undefined): string {
+  if (!prepared || prepared.errorCode === "file_missing") return VDR_TICK_BEFORE_PREPARED;
+  return prepared.forFile;
+}
+/** Does a stored tick count for the item's current file? */
+export function tickApplies(checkedForFile: string | null | undefined, prepared: VdrPrepared | null | undefined): boolean {
+  if (!checkedForFile) return false;
+  if (checkedForFile === VDR_TICK_BEFORE_PREPARED) return !prepared || prepared.status !== "ready";
+  return !!prepared && checkedForFile === prepared.forFile;
+}
+
 /** Needs-a-look flags the broker hasn't ticked for the CURRENT served file. */
 export function uncheckedLookFlags(
   flags: ReadonlyArray<VdrFlag>,
   item: { checkedFlags?: ReadonlyArray<string> | null; checkedForFile?: string | null },
   prepared: VdrPrepared | null,
 ): VdrFlagKey[] {
-  const ticked = item.checkedForFile && prepared && item.checkedForFile === prepared.forFile ? new Set(item.checkedFlags ?? []) : new Set<string>();
+  const ticked = tickApplies(item.checkedForFile, prepared) ? new Set(item.checkedFlags ?? []) : new Set<string>();
   return flags.filter((f) => f.look && !ticked.has(f.key)).map((f) => f.key);
 }
 

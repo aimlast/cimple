@@ -58,6 +58,9 @@ import {
   ineligibleCopy,
   isNewForBuyer,
   roomIneligibleReason,
+  tickApplies,
+  tickFileFor,
+  VDR_TICK_BEFORE_PREPARED,
   type VdrAction,
   type VdrFlagKey,
 } from "@shared/vdr";
@@ -399,7 +402,7 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       const now = d.now();
       for (const [itemId, flags] of Array.from(ticks.entries())) {
         const it = live.find((i) => i.id === itemId)!;
-        await d.store.updateItem(itemId, { checkedAt: now, checkedBy: by(req), checkedFlags: flags, checkedForFile: it.prepared?.forFile ?? null });
+        await d.store.updateItem(itemId, { checkedAt: now, checkedBy: by(req), checkedFlags: flags, checkedForFile: tickFileFor(it.prepared) });
       }
       for (const c of choice) {
         await d.store.updateFolder(c.folderId, { shareHint: c.levels.length ? { levels: c.levels } : null });
@@ -664,10 +667,11 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       const look = new Set(flags.filter((f) => f.look).map((f) => f.key));
       const asked = Array.isArray(req.body?.flags) ? (req.body.flags as unknown[]).filter((x): x is string => typeof x === "string" && look.has(x as VdrFlagKey)) : Array.from(look);
       if (asked.length === 0) throw bad("There's nothing to check on this document.");
-      const forFile = item.prepared?.forFile ?? null;
-      const prev = item.checkedForFile && item.checkedForFile === forFile ? ((item.checkedFlags as string[] | null) ?? []) : [];
+      // A tick on a document still "Getting it ready…" counts and carries to
+      // its first prepared file (shared/vdr tickFileFor) — never lost.
+      const prev = tickApplies(item.checkedForFile, item.prepared) ? ((item.checkedFlags as string[] | null) ?? []) : [];
       const merged = Array.from(new Set([...prev, ...asked]));
-      await d.store.updateItem(item.id, { checkedAt: d.now(), checkedBy: by(req), checkedFlags: merged, checkedForFile: forFile });
+      await d.store.updateItem(item.id, { checkedAt: d.now(), checkedBy: by(req), checkedFlags: merged, checkedForFile: tickFileFor(item.prepared) });
       await logVdrQuietly(d.store, brokerLog(req, dealId, "checked_by_broker", { itemId: item.id, detail: { flags: asked } }));
       res.json({ checked: merged });
     } catch (err) {
@@ -775,7 +779,8 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.renameSync(req.file.path, dest);
       const old = item.cleanCopyPath;
-      await d.store.updateItem(item.id, { cleanCopyPath: rel, cleanCopyMime: req.file.mimetype || null, cleanCopyName: String(req.file.originalname).slice(0, 200), cleanCopyAt: d.now(), prepared: null });
+      // A tick given before preparation was for the old file: the clean copy needs its own.
+      await d.store.updateItem(item.id, { cleanCopyPath: rel, cleanCopyMime: req.file.mimetype || null, cleanCopyName: String(req.file.originalname).slice(0, 200), cleanCopyAt: d.now(), prepared: null, ...(item.checkedForFile === VDR_TICK_BEFORE_PREPARED ? { checkedForFile: null } : {}) });
       if (old) await removeCleanCopy(old, item.dealId, d.root());
       await removeItemCache(item.dealId, item.id, null, d.root());
       await d.store.deletePageText(item.id);
@@ -794,7 +799,7 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
       const item = await dealItem(d, req.params.dealId, req.params.itemId);
       if (!item.cleanCopyPath) return res.json({ ok: true });
       await removeCleanCopy(item.cleanCopyPath, item.dealId, d.root());
-      await d.store.updateItem(item.id, { cleanCopyPath: null, cleanCopyMime: null, cleanCopyName: null, cleanCopyAt: null, prepared: null });
+      await d.store.updateItem(item.id, { cleanCopyPath: null, cleanCopyMime: null, cleanCopyName: null, cleanCopyAt: null, prepared: null, ...(item.checkedForFile === VDR_TICK_BEFORE_PREPARED ? { checkedForFile: null } : {}) });
       await removeItemCache(item.dealId, item.id, null, d.root());
       await d.store.deletePageText(item.id);
       await logVdrQuietly(d.store, brokerLog(req, item.dealId, "clean_copy_removed", { itemId: item.id }));
@@ -850,9 +855,8 @@ export function registerDataRoomRoutes(app: Express, overrides?: Partial<DataRoo
     const stamp = d.now();
     for (const c of changes) {
       if (!c.tick.length) continue;
-      const forFile = c.item.prepared?.forFile ?? null;
-      const prev = c.item.checkedForFile && c.item.checkedForFile === forFile ? ((c.item.checkedFlags as string[] | null) ?? []) : [];
-      await d.store.updateItem(c.item.id, { checkedAt: stamp, checkedBy: by(req), checkedFlags: Array.from(new Set([...prev, ...c.tick])), checkedForFile: forFile });
+      const prev = tickApplies(c.item.checkedForFile, c.item.prepared) ? ((c.item.checkedFlags as string[] | null) ?? []) : [];
+      await d.store.updateItem(c.item.id, { checkedAt: stamp, checkedBy: by(req), checkedFlags: Array.from(new Set([...prev, ...c.tick])), checkedForFile: tickFileFor(c.item.prepared) });
     }
     await logVdrQuietly(d.store, logs);
     return newly;

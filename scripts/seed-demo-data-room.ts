@@ -50,7 +50,7 @@ import {
   type Deal,
 } from "@shared/schema";
 import { DD_ACCESS_LEVEL, cimModeForAccessLevel } from "@shared/access-levels";
-import { buyerKey, hasRoomAccess, presetFolder, type RoomAccessSetting } from "@shared/vdr";
+import { buyerKey, hasRoomAccess, presetFolder, tickFileFor, type RoomAccessSetting } from "@shared/vdr";
 
 const SEED = "demo-seed";
 const REAL_DEAL_NAMES = /\b(amlin|sari\s*knot\s*sari|sariknotsari|180\s*smoke)\b/i;
@@ -257,7 +257,10 @@ async function main() {
       if (shareRows.length) await tx.insert(vdrShares).values(shareRows.map((r) => ({ dealId: deal.id, itemId: r.itemId, audience: "level", accessLevel: r.accessLevel, buyerEmail: null, effect: "allow", createdBy: SEED }))).onConflictDoNothing();
       for (const [itemId, flags] of toTick) {
         const it = live.find((i) => i.id === itemId)!;
-        await tx.update(vdrItems).set({ checkedAt: new Date(), checkedBy: SEED, checkedFlags: flags, checkedForFile: it.prepared?.forFile ?? null }).where(eq(vdrItems.id, itemId));
+        // Items aren't prepared at seed time: the tick is recorded "before
+        // prepared" and carried to the first prepared file (shared/vdr
+        // tickFileFor) — the DD demo buyers keep the statements and returns.
+        await tx.update(vdrItems).set({ checkedAt: new Date(), checkedBy: SEED, checkedFlags: flags, checkedForFile: tickFileFor(it.prepared) }).where(eq(vdrItems.id, itemId));
       }
       for (const it of live) {
         if (it.buyerSummaryStatus === "accepted") continue;
