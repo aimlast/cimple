@@ -230,6 +230,40 @@ test("tile lines: notes per version, the DD checks shown or not yet — never mo
   assert.ok(slots.tileLinesFor(DD_ACCESS_LEVEL, [live, { [DD_ACCESS_LEVEL]: [{ key: "a", text: "vdr 1" }, { key: "b", text: "vdr 2" }] }]).length === 2);
 });
 
+// ── buildBuyerCim with both extras (INTEGRATION §2.2 steps 3–7, §6 "after wave 3") ──
+test("buildBuyerCim with BOTH extras: gl's page after the bridge, dd's check page after its table; one anchor reads anchor → check → gl; none outside DD", async () => {
+  const { fixtureRaw: fxRaw } = await import("./helpers/figure-test");
+  const { figureInputsFor } = await import("../../server/cim/figures/serve");
+  const { buildBuyerCim } = await import("../../shared/cim-buyer-view");
+  const { DD_SOURCE_CHECK_PAGE_ID } = await import("../../shared/figure-layer");
+  const { glEvidenceAnchor } = await import("../../shared/gl-evidence");
+  const { fx, raw } = await fxRaw("lakeshore", { ddShownAt: new Date() });
+  const sections = fx.sections.map((x) => ({ ...x, isVisible: true, aiDraftContent: null, brokerEditedContent: null })) as any[];
+  const glEvidence: any = {
+    mode: "dd", publishedAt: "2026-10-01T00:00:00.000Z", pageId: "glsec_0123456789ab",
+    summary: { total: 1, found: 1, partly: 0, notFound: 0, document: 0, statement: 0 }, note: null,
+    lines: [{ lineId: "aaaaaaaaaaaa", status: "found", mark: true, label: "Owner vehicles", years: [] }],
+  };
+  const dd = buildBuyerCim({ deal: fx.deal as any, accessLevel: DD_ACCESS_LEVEL, sections, overrides: [], figures: figureInputsFor(raw, { audience: "buyer", mode: "dd" }), glEvidence });
+  const ids = dd.sections.map((x) => x.id);
+  const iCheck = ids.indexOf(DD_SOURCE_CHECK_PAGE_ID);
+  const iGl = ids.indexOf(glEvidence.pageId);
+  assert.ok(iCheck > 0 && iGl > 0, "both pages are served to a due-diligence buyer");
+  assert.ok(dd.figureLayer && dd.glEvidence === glEvidence);
+  assert.equal(dd.figureLayerDropped, null);
+  assert.ok(["financial_table", "comparison_table"].includes(dd.sections[iCheck - 1].layoutType), "the check page follows its table");
+  const glAnchorId = sections[glEvidenceAnchor(sections)].id;
+  const before = dd.sections[iGl - 1];
+  assert.ok(before.id === glAnchorId || (before.id === DD_SOURCE_CHECK_PAGE_ID && dd.sections[iGl - 2].id === glAnchorId), "gl's page follows its anchor (or the check page on the same anchor)");
+  // Orders stay strictly increasing (renderers and the reading tracker sort by them).
+  for (let k = 1; k < dd.sections.length; k++) assert.ok(dd.sections[k].order > dd.sections[k - 1].order, `order rises at ${k}`);
+  // Full CIM: neither page; Teaser: nothing at all.
+  const full = buildBuyerCim({ deal: fx.deal as any, accessLevel: NAMED_ACCESS_LEVEL, sections, overrides: [], figures: figureInputsFor(raw, { audience: "buyer", mode: "normal" }), glEvidence });
+  assert.ok(!full.sections.some((x) => x.id === DD_SOURCE_CHECK_PAGE_ID || x.id === glEvidence.pageId));
+  const teaser = buildBuyerCim({ deal: fx.deal as any, accessLevel: "teaser_only", sections, overrides: [], figures: figureInputsFor(raw, { audience: "buyer", mode: "dd" }), glEvidence });
+  assert.deepEqual([teaser.sections.length, teaser.figureLayer, teaser.glEvidence], [0, null, null]);
+});
+
 await run("dd-merge-wiring");
 _setFollowUpPathForTests(null);
 _setSittingEndHooksForTests(null);
