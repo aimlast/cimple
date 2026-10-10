@@ -305,6 +305,7 @@ export function HaveTeaserStage({
 
       {giveFor && (
         <GiveCimDialog
+          dealId={dealId}
           buyer={giveFor}
           cimLive={cimLive}
           onClose={() => setGiveFor(null)}
@@ -331,7 +332,7 @@ export function HaveTeaserStage({
 }
 
 /** "Give the CIM…" for a teaser reader: the level, then the same link opens the CIM (30 days from today). */
-function GiveCimDialog({ buyer, cimLive, onClose, onDone, onSeeHaveCim }: { buyer: TeaserEngagementBuyer; cimLive: boolean; onClose: () => void; onDone: () => void; onSeeHaveCim: () => void }) {
+function GiveCimDialog({ dealId, buyer, cimLive, onClose, onDone, onSeeHaveCim }: { dealId: string; buyer: TeaserEngagementBuyer; cimLive: boolean; onClose: () => void; onDone: () => void; onSeeHaveCim: () => void }) {
   const { toast } = useToast();
   const [level, setLevel] = useState<AccessLevel>(BLIND_ACCESS_LEVEL);
   const who = buyer.name?.split(/\s+/)[0] || buyer.email;
@@ -360,6 +361,7 @@ function GiveCimDialog({ buyer, cimLive, onClose, onDone, onSeeHaveCim }: { buye
           value={level}
           onChange={setLevel}
           options={[BLIND_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, DD_ACCESS_LEVEL].map((l) => ({ level: l, line: LEVEL_TERMS[l] }))}
+          dealId={dealId}
         />
         <p className="text-xs text-muted-foreground">{cimLive ? "Their link will then last 30 days from today." : "The CIM isn't live yet — they'll get it when you publish it."}</p>
         <DialogFooter className="gap-2 sm:gap-0">

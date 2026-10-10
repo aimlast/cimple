@@ -17,6 +17,15 @@ export const DD_BADGE = "Due-diligence version";
  * notes.") takes this line (checker r1 F8).
  */
 export const DD_VERSION_DETAIL = "The Full CIM plus figure checks against the tax returns, the documents behind them and customer names.";
+/**
+ * The DD version before its names pass (server/cim/dd-enrichment.ts) has run
+ * (release fix F9): due-diligence buyers already get the Full CIM, the figure
+ * checks and the data room — only customer, supplier and landlord names still
+ * read as in the Full CIM ("Customer A"). Never "Not made yet".
+ */
+export const DD_STATUS_NAMES_PENDING = "Ready · names not revealed yet";
+export const DD_NAMES_PENDING_NOTE = "Due-diligence buyers already get the Full CIM, the figure checks and the data room. Customer, supplier and landlord names still read as in the Full CIM (“Customer A”) until you generate the due-diligence version.";
+export const DD_NAMES_PENDING_GRANT = "Customer names aren't revealed yet — generate the due-diligence version on the CIM tab.";
 export const DD_BANNER_TITLE = "Due-diligence version.";
 export const DD_BANNER_POINTER = "Figures are checked against the company's tax returns and other records. Hover or click a figure to see how it compares and why.";
 export const DD_BANNER_TOUCH = "Figures are checked against the company's tax returns and other records. Tap a figure to see how it compares and why.";

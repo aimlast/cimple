@@ -54,7 +54,7 @@ import { TeaserPanel } from "@/components/teaser/TeaserPanel";
 import { useTeaserSummary } from "@/components/teaser/useTeaserSummary";
 import { shortDay, type TeaserSummary } from "@/components/teaser/api";
 import type { CimSection } from "@shared/schema";
-import { DD_VERSION_DETAIL } from "@shared/figure-copy";
+import { DD_NAMES_PENDING_NOTE, DD_STATUS_NAMES_PENDING, DD_VERSION_DETAIL } from "@shared/figure-copy";
 import {
   ACCESS_TILE_LINES, ATTENTION_GROUPS, CIM_PUBLISH_NOTES, EXTRA_CIM_TAB_VIEWS, VERSION_CARD_EXTRAS, tileLinesFor, useViewBadge,
   type CimTabViewProps, type TileLine,
@@ -233,7 +233,8 @@ export function CimTab() {
   const byLevel = (l: AccessLevel) => data.buyers.byLevel[l] ?? 0;
   // Made, but buyers can't open it until the CIM is published.
   const readyWord: TileModel["status"] = deal.isLive ? { text: "Ready", tone: "ok" } : { text: "Ready · not live yet", tone: "amber" };
-  const ddStatusWord = ddRun.busy ? "Writing" : !data.dd.generated ? "Not made yet" : (data.dd.outOfDate ?? 0) > 0 ? `${data.dd.outOfDate} section${data.dd.outOfDate === 1 ? "" : "s"} out of date` : "Ready";
+  // Before the names pass DD buyers already read the Full CIM + figure checks + data room: "Ready", with what's missing in words (release fix F9).
+  const ddStatusWord = ddRun.busy ? "Writing" : !data.dd.generated ? DD_STATUS_NAMES_PENDING : (data.dd.outOfDate ?? 0) > 0 ? `${data.dd.outOfDate} section${data.dd.outOfDate === 1 ? "" : "s"} out of date` : "Ready";
 
   // ── The four tiles ─────────────────────────────────────────────────────
   const tiles: TileModel[] = [
@@ -273,7 +274,10 @@ export function CimTab() {
     },
     {
       level: DD_ACCESS_LEVEL,
-      status: !hasSections ? { text: "No CIM yet", tone: "muted" } : ddStatusWord === "Ready" ? readyWord : { text: ddStatusWord, tone: ddRun.busy ? "amber" : (data.dd.outOfDate ?? 0) > 0 ? "blue" : "muted" },
+      status: !hasSections ? { text: "No CIM yet", tone: "muted" }
+        : ddStatusWord === "Ready" ? readyWord
+        : ddStatusWord === DD_STATUS_NAMES_PENDING ? (deal.isLive ? { text: DD_STATUS_NAMES_PENDING, tone: "amber" } : readyWord)
+        : { text: ddStatusWord, tone: ddRun.busy ? "amber" : (data.dd.outOfDate ?? 0) > 0 ? "blue" : "muted" },
       count: byLevel(DD_ACCESS_LEVEL),
       desc: "+ DD detail and the data room",
       onOpen: () => setView("versions"),
@@ -465,13 +469,16 @@ export function CimTab() {
                   status={ddRun.busy
                     ? <span className="text-amber-500 inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Writing</span>
                     : !data.dd.generated
-                      ? <span className="text-muted-foreground">Not generated</span>
+                      ? <span className="text-amber-500" data-testid="dd-names-pending">{DD_STATUS_NAMES_PENDING}</span>
                       : (data.dd.outOfDate ?? 0) > 0
                         ? <span className="text-blue-400">{data.dd.outOfDate} section{data.dd.outOfDate === 1 ? "" : "s"} out of date</span>
                         : <span className="text-success">Ready</span>}
                   detail={DD_VERSION_DETAIL}
                   extra={(
                     <>
+                      {!ddRun.busy && !data.dd.generated && (
+                        <p className="text-[11px] leading-snug text-amber-500" data-testid="dd-names-pending-note">{DD_NAMES_PENDING_NOTE}</p>
+                      )}
                       {!ddRun.busy && data.dd.lastRun && (data.dd.lastRun.error || data.dd.lastRun.warnings.length > 0) ? (
                         <div className="text-[11px] text-amber-500 leading-snug space-y-1" role="status" data-testid="dd-last-run">
                           {data.dd.lastRun.error

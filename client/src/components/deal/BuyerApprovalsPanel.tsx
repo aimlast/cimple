@@ -295,6 +295,7 @@ export function BuyerApprovalsPanel({
 
       {reviewing && (
         <ReviewDialog
+          dealId={dealId}
           request={reviewing}
           onClose={() => setReviewing(null)}
           onDone={() => {
@@ -838,8 +839,8 @@ function Field({
 // ─────────────────────────────────────────────────────────────────────
 
 function ReviewDialog({
-  request, onClose, onDone,
-}: { request: ApprovalRequest; onClose: () => void; onDone: () => void }) {
+  dealId, request, onClose, onDone,
+}: { dealId: string; request: ApprovalRequest; onClose: () => void; onDone: () => void }) {
   const { toast } = useToast();
   const [notes, setNotes] = useState("");
   const [level, setLevel] = useState<AccessLevel>(BLIND_ACCESS_LEVEL);
@@ -899,7 +900,7 @@ function ReviewDialog({
           )}
           <div className="space-y-1.5">
             <p className="text-xs font-medium">What will they get once the seller approves?</p>
-            <LevelRadio name="What will they get" columns={1} options={CIM_LEVEL_OPTIONS} value={level} onChange={setLevel} />
+            <LevelRadio name="What will they get" columns={1} options={CIM_LEVEL_OPTIONS} value={level} onChange={setLevel} dealId={dealId} />
           </div>
           <Textarea
             placeholder="Review notes (optional)"
@@ -1092,7 +1093,7 @@ function TeaserRequestDialog({
             </p>
           )}
           {kind !== "decline" && (
-            <LevelRadio name="What they get" columns={1} options={REQUEST_LEVEL_OPTIONS} value={level} onChange={setLevel} />
+            <LevelRadio name="What they get" columns={1} options={REQUEST_LEVEL_OPTIONS} value={level} onChange={setLevel} dealId={dealId} />
           )}
           {kind === "give" && (
             <>

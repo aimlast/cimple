@@ -421,7 +421,7 @@ export function BuyersTab() {
             >
               <div className="space-y-1.5">
                 <Label className="text-xs">What should they get?</Label>
-                <LevelRadio name="What should they get" options={levelOptions} value={grantLevel} onChange={setGrantLevel} />
+                <LevelRadio name="What should they get" options={levelOptions} value={grantLevel} onChange={setGrantLevel} dealId={dealId} />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="grant-email" className="text-xs">Buyer email</Label>

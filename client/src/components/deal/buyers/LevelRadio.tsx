@@ -4,7 +4,9 @@
  * and lines come from the access-level registry (shared/access-levels.ts);
  * a level that can't be given right now is disabled with the reason.
  */
-import { ACCESS_LEVELS, type AccessLevel } from "@shared/access-levels";
+import { ACCESS_LEVELS, DD_ACCESS_LEVEL, type AccessLevel } from "@shared/access-levels";
+import { DD_NAMES_PENDING_GRANT } from "@shared/figure-copy";
+import { useBuilderState } from "@/components/cim-builder/CimSummaryCard";
 import { cn } from "@/lib/utils";
 
 export interface LevelOption {
@@ -17,14 +19,18 @@ export interface LevelOption {
 }
 
 export function LevelRadio({
-  options, value, onChange, columns = 2, name,
+  options, value, onChange, columns = 2, name, dealId,
 }: {
   options: LevelOption[];
   value: AccessLevel | null;
   onChange: (l: AccessLevel) => void;
   columns?: 1 | 2 | 3;
   name: string;
+  /** The deal: Due diligence says in words when its names aren't revealed yet (release fix F9). */
+  dealId?: string;
 }) {
+  const builder = useBuilderState(dealId ?? "");
+  const ddNote = dealId && builder.data && builder.data.sections.length > 0 && !builder.data.dd?.generated ? DD_NAMES_PENDING_GRANT : null;
   return (
     <div
       role="radiogroup"
@@ -59,6 +65,9 @@ export function LevelRadio({
               <span className="text-sm font-medium">{def.label}</span>
             </span>
             <span className="mt-0.5 block pl-5 text-xs text-muted-foreground">{o.disabled ?? o.line}</span>
+            {!off && o.level === DD_ACCESS_LEVEL && ddNote && (
+              <span className="mt-0.5 block pl-5 text-xs text-amber-500" data-testid="level-dd-names-pending">{ddNote}</span>
+            )}
             {off && o.action && (
               <button type="button" className="mt-0.5 block pl-5 text-xs text-teal hover:underline" onClick={(e) => { e.stopPropagation(); o.action!.onClick(); }}>
                 {o.action.label}
