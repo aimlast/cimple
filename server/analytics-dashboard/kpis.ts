@@ -477,6 +477,31 @@ export function computeKpis(inputs: BrokerInputs, opts: KpiOptions): { kpis: Kpi
 
 // ── Heads-up lines ────────────────────────────────────────────────────────
 
+/**
+ * One name per buyer, in order (release review UX-F10: "Natalie Vasconcelos,
+ * Natalie Vasconcelos and 4 more"): links of the same person (same email) are
+ * grouped — "Natalie Vasconcelos (2 deals)" — and two different people with
+ * the same name are told apart by the deal ("Sam Lee (Beacon Specialty
+ * Pharmacy)"). Pure.
+ */
+export function buyerNameList(rows: ReadonlyArray<CimBuyer>): string[] {
+  const groups: Array<{ name: string; email: string; deals: string[]; dealNames: string[] }> = [];
+  for (const { b, item } of rows) {
+    const email = (b.email ?? "").trim().toLowerCase();
+    const g = groups.find((x) => (email ? x.email === email : x.name === b.name));
+    if (g) {
+      if (!g.deals.includes(item.deal.id)) { g.deals.push(item.deal.id); g.dealNames.push(item.deal.businessName); }
+      continue;
+    }
+    groups.push({ name: b.name, email, deals: [item.deal.id], dealNames: [item.deal.businessName] });
+  }
+  return groups.map((g) => {
+    if (g.deals.length > 1) return `${g.name} (${g.deals.length} deals)`;
+    const twin = groups.some((o) => o !== g && o.name === g.name);
+    return twin ? `${g.name} (${g.dealNames[0]})` : g.name;
+  });
+}
+
 function namesWords(names: string[]): string {
   if (names.length <= 1) return names[0] ?? "";
   if (names.length === 2) return `${names[0]} and ${names[1]}`;
@@ -525,8 +550,8 @@ export function headsUp(inputs: Pick<BrokerInputs, "items">, now: Date, extra: H
   const sets = noticeSets(inputs, now);
   const out: HeadsUp[] = [...extra];
   if (sets.expiring.length > 0) {
-    const names = sets.expiring.map(({ b }) => b.name);
-    const n = names.length;
+    const names = buyerNameList(sets.expiring);
+    const n = sets.expiring.length;
     out.push({
       id: "expiring",
       count: n,
@@ -542,7 +567,7 @@ export function headsUp(inputs: Pick<BrokerInputs, "items">, now: Date, extra: H
       id: "not_opened",
       count: n,
       text: `${n} buyer${n === 1 ? " hasn't" : "s haven't"} opened their link ${HEADS_UP_NOT_OPENED_DAYS} days after you gave it.`,
-      names: sets.not_opened.map(({ b }) => b.name).slice(0, 20),
+      names: buyerNameList(sets.not_opened).slice(0, 20),
       link: "/broker/analytics?tab=buyers&notice=not_opened",
       ids: sets.not_opened.map(({ b }) => b.accessId),
     });
