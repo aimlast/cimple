@@ -34,9 +34,19 @@ import type { NewQuestion, QuestionStatus } from "./store";
 /**
  * Deals created before this moment start with "Ask during the interview
  * automatically" OFF (D13: no change to live interviews on deploy).
- * INTEGRATOR: set this to the release's deploy date.
+ * The release's ship day (release review security-integration F3: was a
+ * placeholder ten days out). If the deploy slips past it, set the Railway
+ * variable FIGURES_AUTO_ASK_SINCE to the deploy time (ISO) — no code change —
+ * so deals created before the deploy keep it off.
  */
-export const AUTO_ASK_SINCE = "2026-10-20T00:00:00.000Z";
+export const AUTO_ASK_SINCE = "2026-10-11T00:00:00.000Z";
+
+/** The moment in force: FIGURES_AUTO_ASK_SINCE when it is a valid date, else AUTO_ASK_SINCE. */
+export function autoAskSince(env: Record<string, string | undefined> = process.env): number {
+  const v = env.FIGURES_AUTO_ASK_SINCE?.trim();
+  const t = v ? Date.parse(v) : NaN;
+  return Number.isFinite(t) ? t : Date.parse(AUTO_ASK_SINCE);
+}
 
 export const MAX_OPEN_QUESTIONS = 6;
 export const MAX_AUTO_ROUTED = 3;
@@ -46,7 +56,7 @@ export function autoAskEffective(chosen: boolean | null | undefined, dealCreated
   if (typeof chosen === "boolean") return chosen;
   if (!dealCreatedAt) return false;
   const t = new Date(dealCreatedAt as any).getTime();
-  return Number.isFinite(t) && t >= Date.parse(AUTO_ASK_SINCE);
+  return Number.isFinite(t) && t >= autoAskSince();
 }
 
 const OPEN: ReadonlySet<string> = new Set(["suggested", "ask_seller"]);

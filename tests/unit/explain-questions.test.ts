@@ -19,7 +19,7 @@ import { fixtureRaw, run, test } from "./helpers/figure-test";
 import { anchorFigures } from "../../shared/figure-anchors";
 import { hintsFor } from "../../server/cim/figures/hints";
 import {
-  AUTO_ASK_SINCE, MAX_AUTO_ROUTED, MAX_OPEN_QUESTIONS, autoAskEffective, explainQuestionDiscussed, explainRequestsOf, handBackPlan, planQuestions,
+  AUTO_ASK_SINCE, autoAskSince, MAX_AUTO_ROUTED, MAX_OPEN_QUESTIONS, autoAskEffective, explainQuestionDiscussed, explainRequestsOf, handBackPlan, planQuestions,
   questionDisplay, valuesSentence, type PlanInput,
 } from "../../server/cim/figures/requests";
 import { askableLine, discrepancyAbout } from "../../server/cim/figures/candidates";
@@ -124,6 +124,23 @@ test("auto-ask: the broker's choice wins; otherwise only deals created since the
   assert.equal(autoAskEffective(true, before), true);
   assert.equal(autoAskEffective(false, after), false);
   assert.equal(autoAskEffective(null, null), false);
+});
+
+test("SEC-F3: the threshold is the ship day (not a placeholder); FIGURES_AUTO_ASK_SINCE moves it without a code change", () => {
+  assert.equal(AUTO_ASK_SINCE, "2026-10-11T00:00:00.000Z");
+  assert.equal(autoAskSince({}), Date.parse(AUTO_ASK_SINCE));
+  assert.equal(autoAskSince({ FIGURES_AUTO_ASK_SINCE: "2026-10-14T09:30:00Z" }), Date.parse("2026-10-14T09:30:00Z"));
+  assert.equal(autoAskSince({ FIGURES_AUTO_ASK_SINCE: "not a date" }), Date.parse(AUTO_ASK_SINCE), "a bad value is ignored");
+  assert.equal(autoAskSince({ FIGURES_AUTO_ASK_SINCE: "  " }), Date.parse(AUTO_ASK_SINCE));
+  // A deal created before a later deploy keeps auto-ask off when the variable says so.
+  const prev = process.env.FIGURES_AUTO_ASK_SINCE;
+  process.env.FIGURES_AUTO_ASK_SINCE = "2026-10-14T00:00:00Z";
+  try {
+    assert.equal(autoAskEffective(null, new Date("2026-10-12T00:00:00Z")), false);
+    assert.equal(autoAskEffective(null, new Date("2026-10-15T00:00:00Z")), true);
+  } finally {
+    if (prev === undefined) delete process.env.FIGURES_AUTO_ASK_SINCE; else process.env.FIGURES_AUTO_ASK_SINCE = prev;
+  }
 });
 
 test("hand-back: answered this session / asked / an auto-routed one never raised returns to suggested", () => {
