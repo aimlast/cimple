@@ -9,7 +9,8 @@ import assert from "node:assert/strict";
 import { test, done } from "./_harness";
 import { fakeWorld, fakeDeal, cleanup } from "./_fake-storage";
 import { storage } from "../../server/storage";
-import { sendTraceQuestion } from "../../server/gl/notify";
+import { sendTraceQuestion, _setGlNotificationRoutingForTests } from "../../server/gl/notify";
+import { glRecipients } from "../../server/gl/broker-view";
 import { NOTIFICATION_ROUTING } from "../../shared/schema";
 
 const w = fakeWorld();
@@ -38,7 +39,15 @@ await test("under the fallback event (routing lines removed) a question with no 
   assert.equal(notes[0].type, "seller_followup_questions");
 });
 
-await test("stored recipients are used as they are; no owner on the deal → nobody is emailed", async () => {
+await test("Q21 off (as shipped): 'Ask the seller…' offers only people whose link opens the books — the owner, never the representative", async () => {
+  const people = await glRecipients(deal.id);
+  assert.ok(people.length >= 1);
+  assert.ok(people.every((p) => p.role === "owner" || p.role === "accountant"), JSON.stringify(people.map((p) => p.role)));
+  assert.ok(!people.some((p) => p.role === "representative"));
+});
+
+await test("(switched on — Q21's yes) stored recipients are used as they are; no owner on the deal → nobody is emailed", async () => {
+  _setGlNotificationRoutingForTests(true);
   notes.length = 0;
   await sendTraceQuestion(deal.id, "Golf club dues", "t1", ["m-own"]);
   assert.deepEqual(notes.map((n) => n.recipientId), ["m-own"]);
@@ -52,6 +61,7 @@ await test("stored recipients are used as they are; no owner on the deal → nob
   w.invites = w.invites.filter((i) => i.id !== "i-own");
   await sendTraceQuestion(deal.id, "Golf club dues", "t1", []);
   assert.equal(notes.length, 0);
+  _setGlNotificationRoutingForTests(null);
 });
 
 cleanup(w);

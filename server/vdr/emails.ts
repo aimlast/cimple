@@ -17,8 +17,14 @@
  */
 import { NOTIFICATION_ROUTING } from "@shared/schema";
 
-/** Q21 switch: use the data room's own seller routing key when it exists. */
-export const VDR_SELLER_DOCUMENT_REQUEST_KEY = true;
+/**
+ * Q21 switch: use the data room's own seller routing key when it exists. OFF
+ * until the founder says yes (CLAUDE.md: routing changes need the founder's
+ * explicit instruction; release review security-integration F1) — the email
+ * goes as seller_followup_questions (owner, representative). After a
+ * recorded yes, set this to true.
+ */
+export const VDR_SELLER_DOCUMENT_REQUEST_KEY: boolean = false;
 
 /** The notification event the seller's checklist email goes out as. */
 export function sellerDocumentRequestEvent(routing: Record<string, unknown> = NOTIFICATION_ROUTING, enabled: boolean = VDR_SELLER_DOCUMENT_REQUEST_KEY): string {

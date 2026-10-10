@@ -18,7 +18,7 @@ import { gateFrom, assertGlGate, isGlTraceRequiredError, DD_GATE_MESSAGE } from 
 import { glExtrasFrom } from "../../server/gl/progress";
 import { phaseChecklist, computeNextStep, glNextStep } from "../../shared/deal-progress";
 import { GL_INTERVIEW_BLOCK } from "../../server/gl/progress";
-import { glBrokerEvent, glSellerEvent, GL_NOTIFICATION_ROUTING, requestEmailCopy, brokerNoticeCopy } from "../../server/gl/notify";
+import { glBrokerEvent, glSellerEvent, GL_NOTIFICATION_ROUTING, requestEmailCopy, brokerNoticeCopy, _setGlNotificationRoutingForTests } from "../../server/gl/notify";
 import { NOTIFICATION_ROUTING, type GlAddbackTrace } from "../../shared/schema";
 
 const B = brightwater();
@@ -162,10 +162,15 @@ await test("the interview's mention: deterministic, no MANDATORY line, never lis
   assert.match(GL_INTERVIEW_BLOCK, /Do not list the costs, their amounts or how they are treated, and do not discuss add-backs/);
 });
 
-await test("Q21: the two new routing keys sit behind one switch, with a fallback to the existing events", () => {
-  assert.equal(GL_NOTIFICATION_ROUTING, true);
+await test("Q21: the two new routing keys sit behind one switch, OFF until the founder's yes — the existing events go out", () => {
+  // Release review security-integration F1: CLAUDE.md — routing changes need the founder's explicit instruction.
+  assert.equal(GL_NOTIFICATION_ROUTING, false, "off until the founder says yes");
   assert.deepEqual(NOTIFICATION_ROUTING.seller_gl_request, { teams: ["seller"], roles: ["owner", "accountant"] });
   assert.deepEqual(NOTIFICATION_ROUTING.gl_needs_broker, { teams: ["broker"], roles: ["lead", "associate"] });
+  assert.equal(glSellerEvent(), "seller_followup_questions", "switched off → the follow-up event (owner + representative; the accountant isn't emailed)");
+  assert.equal(glBrokerEvent(), "seller_followups_answered");
+  // With the founder's yes (switched on): the new keys.
+  _setGlNotificationRoutingForTests(true);
   assert.equal(glSellerEvent(), "seller_gl_request");
   assert.equal(glBrokerEvent(), "gl_needs_broker");
   const saved = { a: NOTIFICATION_ROUTING.seller_gl_request, b: NOTIFICATION_ROUTING.gl_needs_broker };
@@ -175,6 +180,7 @@ await test("Q21: the two new routing keys sit behind one switch, with a fallback
   assert.equal(glBrokerEvent(), "seller_followups_answered");
   (NOTIFICATION_ROUTING as any).seller_gl_request = saved.a;
   (NOTIFICATION_ROUTING as any).gl_needs_broker = saved.b;
+  _setGlNotificationRoutingForTests(null);
   // No existing event's recipients changed.
   assert.deepEqual(NOTIFICATION_ROUTING.seller_followup_questions, { teams: ["seller"], roles: ["owner", "representative"] });
 });

@@ -19,19 +19,30 @@
 import { storage } from "../storage";
 import { NOTIFICATION_ROUTING } from "@shared/schema";
 
-/** Q21 — the founder's yes is pending; the integrator flips this to false (or deletes the two routing lines) if they decline. */
-export const GL_NOTIFICATION_ROUTING = true;
+/**
+ * Q21 — OFF until the founder says yes (CLAUDE.md: the routing config is not
+ * changed without the founder's explicit instruction; release review
+ * security-integration F1). Off, these emails go as the existing follow-up
+ * events (owner + representative; lead + associate) — nobody new is emailed.
+ * After a recorded yes, set this to true.
+ */
+export const GL_NOTIFICATION_ROUTING: boolean = false;
+let glRoutingOn = GL_NOTIFICATION_ROUTING;
+/** Tests only: exercise the switched-on routing (the founder's yes) without shipping it on. */
+export function _setGlNotificationRoutingForTests(on: boolean | null): void {
+  glRoutingOn = on ?? GL_NOTIFICATION_ROUTING;
+}
 
 const FALLBACK_SELLER_EVENT = "seller_followup_questions";
 const FALLBACK_BROKER_EVENT = "seller_followups_answered";
 
 /** The seller-facing event in use. */
 export function glSellerEvent(): string {
-  return GL_NOTIFICATION_ROUTING && NOTIFICATION_ROUTING.seller_gl_request ? "seller_gl_request" : FALLBACK_SELLER_EVENT;
+  return glRoutingOn && NOTIFICATION_ROUTING.seller_gl_request ? "seller_gl_request" : FALLBACK_SELLER_EVENT;
 }
 /** The broker-facing event in use. */
 export function glBrokerEvent(): string {
-  return GL_NOTIFICATION_ROUTING && NOTIFICATION_ROUTING.gl_needs_broker ? "gl_needs_broker" : FALLBACK_BROKER_EVENT;
+  return glRoutingOn && NOTIFICATION_ROUTING.gl_needs_broker ? "gl_needs_broker" : FALLBACK_BROKER_EVENT;
 }
 
 const firstName = (s: string | null | undefined) => (s ?? "").trim().split(/\s+/)[0] || "";

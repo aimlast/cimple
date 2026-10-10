@@ -138,7 +138,10 @@ export async function glRecipients(dealId: string, members?: DealMember[], invit
     const viaInvite = !m ? inv.find((i) => i.id === r.recipientId) : undefined;
     const role = m?.role ?? (viaInvite ? sellerLinkRights(viaInvite, ms).role : "owner");
     return { id: r.recipientId, name: r.name, email: r.email, role, via: r.via, muted: !!r.muted };
-  });
+  })
+    // Only people whose link opens the books page (owner, accountant): under the
+    // fallback event a representative is routed, and their link can't open it.
+    .filter((r) => r.role === "owner" || r.role === "accountant");
 }
 
 const LABEL_STOP = new Set(["the", "and", "for", "owner", "owners", "expenses", "expense", "costs", "cost", "personal", "one", "time"]);

@@ -84,7 +84,8 @@ assert.equal(requirementCategoryFor("Warehouse lease amendment"), "legal");
 assert.equal(requirementCategoryFor("Something else entirely"), "operational");
 assert.equal(parseNeededBy("2026-10-01", now).ok, false, "a date that passed");
 assert.equal((parseNeededBy("2026-10-20", now) as any).at.toISOString().slice(0, 10), "2026-10-20");
-assert.equal(sellerDocumentRequestEvent(), "seller_document_request", "the additive routing key (Q21)");
+assert.equal(sellerDocumentRequestEvent(), "seller_followup_questions", "Q21 is off until the founder's yes (security-integration F1): the existing event");
+assert.equal(sellerDocumentRequestEvent(undefined, true), "seller_document_request", "switched on: the additive routing key (Q21)");
 assert.equal(sellerDocumentRequestEvent({}, true), "seller_followup_questions", "without the key: the fallback");
 assert.equal(sellerDocumentRequestEvent({ seller_document_request: {} }, false), "seller_followup_questions", "the switch off: the fallback");
 const mail = sellerRequestEmail([{ documentName: "AR aging <June>", notes: "Most recent month", neededBy: "2026-10-20T12:00:00Z" }, { documentName: "Bank statements" }]);
@@ -171,7 +172,7 @@ r = await call("POST", `${R}/requests/email-seller`, { requirementIds: [r.json.r
 assert.equal(r.status, 200, JSON.stringify(r.json));
 assert.equal(r.json.count, 4, "the other recent asks go in the same email");
 assert.equal(app.sellerEmails.length, 1, "one email");
-assert.equal(app.sellerEmails[0].event, "seller_document_request");
+assert.equal(app.sellerEmails[0].event, "seller_followup_questions", "Q21 off: the existing follow-up event");
 assert.equal(app.sellerEmails[0].path, "documents");
 assert.match(app.sellerEmails[0].title, /added 4 documents/);
 reqs = await call("GET", `${R}/requests`, undefined, "b1");

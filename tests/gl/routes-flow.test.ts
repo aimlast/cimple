@@ -19,6 +19,10 @@ import { brightwater } from "./_brightwater";
 import { applyGlRateLimits, registerGlRoutes } from "../../server/routes/gl";
 import { onGlSupportDocumentRead } from "../../server/gl/support-docs";
 import { refreshGl } from "../../server/gl/service";
+import { _setGlNotificationRoutingForTests } from "../../server/gl/notify";
+// The switched-on routing (founder question Q21's yes): the owner AND the accountant are asked.
+// It ships OFF (security-integration F1); the OFF mode is tested in gate-progress and question-recipients.
+_setGlNotificationRoutingForTests(true);
 
 const express = (await import("express")).default;
 const B = brightwater({ brokerId: "b1" } as any);
