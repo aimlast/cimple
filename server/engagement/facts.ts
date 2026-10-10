@@ -296,6 +296,9 @@ export function chooseRendition(renditions: RawRendition[], visits: RawVisit[], 
     || b.createdAt.getTime() - a.createdAt.getTime())[0];
 }
 
+/** Pages only the due-diligence version has (shared/cim-layouts: planner:false, never outside DD). */
+const DD_ONLY_LAYOUTS = new Set(["dd_source_check", "gl_evidence"]);
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 /** The registry's words per version: blind → "Blind CIM", normal → "Full CIM", dd → "Due diligence", teaser → "Teaser". */
 const MODE_LABEL: Record<string, string> = Object.fromEntries(ACCESS_LEVELS.map((l) => [l.cimMode ?? "teaser", l.label]));
@@ -418,6 +421,16 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
       const ids = drawnIds.filter((id) => served.has(id));
       if (ids.length > 0 && ids.length < drawnIds.length) buyers.get(accessId)!.servedPageIds = ids;
     });
+    // Old tracking names no version, but the link's level does: a buyer who
+    // isn't a due-diligence buyer never had a due-diligence-only page (the
+    // figure check page, the add-backs-in-the-books page).
+    const ddOnly = new Set(pages.filter((p) => DD_ONLY_LAYOUTS.has(p.layoutType)).map((p) => p.pageId));
+    if (ddOnly.size > 0) {
+      buyers.forEach((b) => {
+        if (b.servedPageIds || b.mode === "dd") return;
+        b.servedPageIds = drawnIds.filter((id) => !ddOnly.has(id));
+      });
+    }
   }
 
   // Reading per block → per viewer page part.

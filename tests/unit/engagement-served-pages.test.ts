@@ -102,9 +102,16 @@ test("one denominator: the Buyers tab's 'of N pages' = Analytics' content pages 
   }
 });
 
-test("old tracking (no version on a visit) still counts every drawn page", () => {
+test("old tracking (no version on a visit): every drawn page — except a due-diligence-only page for a buyer who isn't DD", () => {
   const facts = assembleFacts(input({ visits: [{ ...visit("v1", "travis", "r-blind", 2), renditionId: null, legacy: true } as any, visit("v3", "dd", "r-dd", 3)] }));
-  assert.equal(facts.buyers.find((b) => b.accessId === "travis")!.servedPageIds, undefined);
+  // The DD check page here is a dd_source_check layout: never in a Blind buyer's version.
+  assert.deepEqual(facts.buyers.find((b) => b.accessId === "travis")!.servedPageIds, ["fin", "grid", "team"]);
+  assert.equal(facts.buyers.find((b) => b.accessId === "dd")!.servedPageIds, undefined, "the DD buyer keeps every page");
+  const cards = buildBuyersResponse(facts).buyers;
+  assert.ok(!cards.find((c) => c.accessId === "travis")!.pageStrip.some((c) => c.pageId === "check"));
+  // A drawing with no DD-only page: old tracking counts every page.
+  const blindDrawn = assembleFacts(input({ chosen: blindR, visits: [{ ...visit("v1", "travis", "r-blind", 2), renditionId: null, legacy: true } as any] }));
+  assert.equal(blindDrawn.buyers.find((b) => b.accessId === "travis")!.servedPageIds, undefined);
 });
 
 console.log(`engagement-served-pages: ${passed} passed`);
