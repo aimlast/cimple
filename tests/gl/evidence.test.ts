@@ -299,5 +299,51 @@ await test("GL-R2-08: the broker's verdict words match what buyers read (a T4-pr
   assert.equal(verdictWords("found", "found"), VERDICT_WORDS.found);
 });
 
+await test("F7: owner pay shows the whole pay AND what is added back (pay less the market salary), on the DD page and the broker grid", async () => {
+  const { ownerPaySplits, traceCandidates } = await import("../../server/gl/traces");
+  const { ownerPayAddedBackWords } = await import("../../shared/gl-copy");
+  const { buildBrokerView } = await import("../../server/gl/broker-view");
+  // The trace still claims the whole pay (what the pay slips show) — matching is unchanged.
+  const { analysisForTraces } = await import("../../server/gl/service");
+  const norm = (await analysisForTraces(dealId))!.normalization;
+  const owner = traceCandidates(norm).find((c) => c.ownerPay)!;
+  assert.equal(owner.amounts["2024"], 240000);
+  const split = ownerPaySplits(norm).get(owner.addbackKey)!;
+  assert.deepEqual(split.addedBack, { "2022": 13000000, "2023": 13000000, "2024": 13000000 });
+  assert.deepEqual(split.market, { "2022": 11000000, "2023": 11000000, "2024": 11000000 });
+  // No market part recorded: the analysis's marketSalary figure is used.
+  const noMarket = ownerPaySplits({ addbacks: (norm!.addbacks ?? []).filter((a) => a.ownerCompPart !== "market") }).get(owner.addbackKey)!;
+  assert.equal(noMarket.market["2024"], 11000000);
+  // The words.
+  assert.deepEqual(ownerPayAddedBackWords(28_500_000, 16_500_000, 12_000_000), {
+    short: "added back $165,000",
+    why: "Pay less a $120,000 market salary for the role (that part is added back for SDE only).",
+  });
+  assert.equal(ownerPayAddedBackWords(16_500_000, 16_500_000, 0), null, "nothing split → no extra words");
+  // The published DD page.
+  await publishEvidence(dealId, { versions: { dd: true, normal: true, blind: true }, leaveOut: ["golf club dues"] }, "broker-1");
+  const p = (await buildEvidence(dealId, "dd", "published"))!;
+  const payLine = p.lines.find((l) => l.pay && /Owner compensation/.test(l.label ?? ""))!;
+  assert.ok(payLine, "the owner's pay line is on the DD page");
+  const y = payLine.years!.find((x) => x.year === "2024")!;
+  assert.equal(y.claimed, 240000, "Pay $240,000 (the slips)");
+  assert.equal(y.addedBack, 130000, "added back $130,000 (the bridge)");
+  assert.equal(y.marketSalary, 110000);
+  // Full and Blind never carry the split (Full: counts; Blind: constants).
+  const full = (await buildEvidence(dealId, "normal", "published"))!;
+  assert.ok(!JSON.stringify(full).includes("addedBack"));
+  // The broker's grid gets the same numbers.
+  const view = await buildBrokerView(await loadGlContext(dealId));
+  const bt = view.traces.find((t) => t.addbackKey === owner.addbackKey)!;
+  assert.equal(bt.claims["2024"], 24000000);
+  assert.equal(bt.ownerPay?.addedBack["2024"], 13000000);
+  assert.ok(view.traces.filter((t) => t.addbackKey !== owner.addbackKey && t.ownerPay).length === 0, "only owner pay carries a split");
+  // The client renders the shared words (source check: one wording on both sides).
+  const fs = await import("node:fs");
+  const block = fs.readFileSync(new URL("../../client/src/components/cim/gl/GlEvidenceBlock.tsx", import.meta.url), "utf8");
+  const grid = fs.readFileSync(new URL("../../client/src/components/gl/AddbackGrid.tsx", import.meta.url), "utf8");
+  assert.ok(block.includes("ownerPayAddedBackWords(") && grid.includes("ownerPayAddedBackWords("));
+});
+
 cleanup(B.w);
 done("evidence");

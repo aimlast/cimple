@@ -22,7 +22,7 @@ import {
   GL_BUYER_STATUS_WORDS, GL_EVIDENCE_FIRST_ENTRIES, glConfirmationText, glIntroText, glOlderBridgeText, glShareText, glTieOutLines, isGlEvidencePayload,
   type GlBuyerStatus, type GlEvidenceEntry, type GlEvidenceLine, type GlEvidencePayload, type GlEvidenceYear,
 } from "@shared/gl-evidence";
-import { accountPath, formatDay } from "@shared/gl-copy";
+import { accountPath, formatDay, ownerPayAddedBackWords } from "@shared/gl-copy";
 import { useBlockAttrs } from "../blocks";
 import { useGlLinks } from "./GlLinks";
 import { GL_FOUND_INK } from "./GlMark";
@@ -271,11 +271,15 @@ function YearBlock({ line, year: y, defaultOpen }: { line: GlEvidenceLine; year:
   const diffPct = y.target ? Math.abs(y.difference) / Math.abs(y.target) : 0;
   const noSupport = y.entryCount === 0 && (line.docs ?? []).filter((d) => d.year === y.year).length === 0;
   const docs = (line.docs ?? []).filter((d) => d.year === y.year);
+  // Owner pay: the slips show the whole pay; the bridge adds back the part above a market salary.
+  const split = line.pay && typeof y.addedBack === "number" ? ownerPayAddedBackWords(Math.round(y.claimed * 100), Math.round(y.addedBack * 100), y.marketSalary ? Math.round(y.marketSalary * 100) : null) : null;
   return (
     <div data-testid={`gl-year-${y.year}`}>
       <p className="text-sm font-medium text-[hsl(var(--cim-ink))]">
         {y.yearLabel || y.year} <span className="font-normal text-[hsl(var(--cim-ink-muted))]">· {line.pay ? "Pay" : "Added back"} {money(y.claimed)}</span>
+        {split && <span className="font-medium text-[hsl(var(--cim-ink))]" data-testid={`gl-added-back-${y.year}`}> · {split.short}</span>}
       </p>
+      {split && <p className="mt-0.5 text-xs text-[hsl(var(--cim-ink-muted))]">{split.why}</p>}
       {hasShare && line.share && (
         <p className="mt-0.5 text-xs text-[hsl(var(--cim-ink-muted))]">{glShareText(line.label ?? "The cost's", line.share, y.target, y.claimed, money)}</p>
       )}

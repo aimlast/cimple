@@ -218,3 +218,24 @@ export function verdictWords(verdict: "found" | "partly_found" | "not_found", ov
 export function addbackKeyFor(label: string): string {
   return String(label ?? "").replace(/\s+—\s+market salary$/i, "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
+
+/**
+ * The owner's pay as the add-back counts it (release fix F7) — one wording
+ * for the DD page, the broker's grid and the publish preview. The pay slips
+ * show the whole pay; EBITDA adds back only the pay above a market salary
+ * for the role; the market salary is added back for SDE only.
+ *   ownerPayAddedBackWords(28_500_000, 16_500_000, 12_000_000)
+ *   → { short: "added back $165,000", why: "Pay less a $120,000 market salary for the role (that part is added back for SDE only)." }
+ * Cents in. Null when nothing is split (the whole amount is the add-back).
+ */
+export function ownerPayAddedBackWords(payCents: number, addedBackCents: number | null | undefined, marketCents?: number | null): { short: string; why: string } | null {
+  if (addedBackCents === null || addedBackCents === undefined || !Number.isFinite(addedBackCents)) return null;
+  if (Math.round(addedBackCents / 100) === Math.round(payCents / 100)) return null;
+  const market = marketCents && marketCents > 0 ? marketCents : Math.max(0, payCents - addedBackCents);
+  return {
+    short: `added back ${wholeDollars(addedBackCents)}`,
+    why: market > 0
+      ? `Pay less a ${wholeDollars(market)} market salary for the role (that part is added back for SDE only).`
+      : "Pay less a market salary for the role (that part is added back for SDE only).",
+  };
+}

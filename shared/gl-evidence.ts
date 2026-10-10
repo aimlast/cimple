@@ -76,6 +76,10 @@ export interface GlEvidenceYear {
   entriesOnRequest?: boolean;
   /** DD: how many of `entryCount` are held (the rest are in `entries`). */
   entriesHeld?: number;
+  /** DD, owner pay split by the analysis: dollars added back for EBITDA (`claimed` is the whole pay). */
+  addedBack?: number;
+  /** DD, with `addedBack`: the market salary for the role (added back for SDE only). */
+  marketSalary?: number;
 }
 
 export interface GlEvidenceLine {
@@ -186,6 +190,9 @@ export interface GlSnapshotYear {
   status: GlYearStatus;
   entries: GlSnapshotEntry[];
   docs: GlSnapshotDoc[];
+  /** Owner pay split by the analysis: what EBITDA adds back (the excess), and the market salary (added back for SDE only). claimedCents is the whole pay. */
+  addedBackCents?: number;
+  marketCents?: number;
 }
 
 export interface GlSnapshotLine {

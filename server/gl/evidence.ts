@@ -39,6 +39,7 @@ import { isBuyerVisibleLedger } from "./audience";
 import { personsFor } from "./match-run";
 import type { Person } from "./match";
 import { maskForBuyer, type BuyerMaskContext } from "./sensitive";
+import { ownerPaySplits, type OwnerPaySplit } from "./traces";
 import { screenForBuyers, screenForBuyersWith } from "./screen";
 import { mentionsHeldPerson, neutralBridgeLabel } from "../cim/sensitive-facts";
 import { gateFrom, type GlGate } from "./gate";
@@ -81,6 +82,8 @@ export interface EvidenceState {
   heldNames: string[];
   ownerText: string;
   payShort: string;
+  /** Owner pay the analysis splits (excess / market salary), by add-back key (traces.ts ownerPaySplits). */
+  ownerPay?: Map<string, OwnerPaySplit>;
 }
 
 /** Documents that may be cited to buyers: present, shared, a real file (not an email, a call, the CRM). */
@@ -130,10 +133,14 @@ export async function loadEvidenceState(dealId: string): Promise<EvidenceState> 
   const citableDocIds = new Set(c.docs.filter((d) => citableForBuyers(d as any)).map((d) => d.id));
   const names = await heldNamesFor(c.deal);
   const { jurisdictionOf } = await import("../interview/reply-guards");
+  // What the bridge adds back of the owner's pay (the trace claims the whole pay).
+  const { analysisForTraces } = await import("./service");
+  const analysis = await analysisForTraces(dealId).catch(() => null);
   return {
     dealId, deal: c.deal, c, tracing: tracing ?? c.tracing, traces, links, buyerLedgers, citableDocIds,
     staffNames: names.staff, heldNames: names.held, ownerText: ownerNamesText(c.deal),
     payShort: payDocWords(jurisdictionOf(c.deal?.location ?? null)).short,
+    ownerPay: ownerPaySplits(analysis?.normalization ?? null),
   };
 }
 
@@ -212,6 +219,7 @@ export async function snapshotFromState(
     };
     const buyerComputed = reconcileTrace(input, mine, buyerCtx);
     const labels = (t.yearLabels as Record<string, string> | null) ?? {};
+    const isPay = t.proof === "payroll" || t.category === "owner_comp";
     const snapYears: GlSnapshotYear[] = years.map((y) => {
       const cy = buyerComputed.byYear[y];
       const entries: GlSnapshotEntry[] = mine
@@ -224,9 +232,11 @@ export async function snapshotFromState(
       const docs = mine
         .filter((k) => k.fiscalYear === y && k.documentId && supportIds.has(k.documentId))
         .map((k) => ({ documentId: k.documentId!, label: supportLabel(t.proof, y, s.payShort), year: y, amountCents: Math.abs(Number(k.amountCents)), check: ((k.docAmountCheck as GlEvidenceDoc["check"]) ?? "unreadable") }));
+      const split = isPay ? s.ownerPay?.get(t.addbackKey) : undefined;
       return {
         year: y, yearLabel: labels[y] ?? y, claimedCents: cy?.claimedCents ?? Number(input.claims[y] ?? 0), targetCents: cy?.targetCents ?? 0,
         documentCents: cy?.documentCents ?? 0, status: (cy?.status ?? "not_started") as GlYearStatus, entries, docs,
+        ...(split && split.addedBack[y] !== undefined ? { addedBackCents: split.addedBack[y], ...(split.market[y] ? { marketCents: split.market[y] } : {}) } : {}),
       };
     });
     const ownParties = personsFor(t, s.ownerText);
@@ -241,7 +251,7 @@ export async function snapshotFromState(
       status: buyerStatusFor(t, buyerComputed),
       parties: ownParties.map((p) => ({ first: p.first, last: p.last })),
       personal: PERSONAL_CATEGORY.has(t.category ?? "") || PERSONAL_LABEL.test(t.label),
-      pay: t.proof === "payroll" || t.category === "owner_comp",
+      pay: isPay,
       share,
       why: screenForBuyersWith(t.buyerReason, info, s.heldNames),
       brokerNote: t.brokerNoteShown ? screenForBuyersWith(t.brokerNote, info, s.heldNames) : null,
@@ -549,6 +559,7 @@ export function projectEvidence(snap: GlPublishedEvidence, mode: GlEvidenceMode,
         difference: dollars(found - y.targetCents), status: y.status, entryCount: y.entries.length, entries,
         moreEntries: Math.max(0, allowed.length - shown.length),
         ...(heldBack > 0 ? { entriesOnRequest: true, entriesHeld: heldBack } : {}),
+        ...(l.pay && typeof y.addedBackCents === "number" ? { addedBack: dollars(y.addedBackCents), ...(y.marketCents ? { marketSalary: dollars(y.marketCents) } : {}) } : {}),
       };
     });
     // The ledger most of this line's entries come from.

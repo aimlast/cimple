@@ -16,6 +16,7 @@ import { ONE_OFF_TERMS, possibleAddbacks, possibleOneOffs, type PossibleAddback 
 import type { GlDealContext } from "./context";
 import { glSellerEvent } from "./notify";
 import { assistantWords, glAssistantState } from "./rank-ai";
+import { ownerPaySplits, type NormLike, type OwnerPaySplit } from "./traces";
 
 export interface BrokerTraceView {
   id: string;
@@ -56,6 +57,8 @@ export interface BrokerTraceView {
   assistant: { state: string; words: string } | null;
   /** An add-back no longer in the analysis whose ticked entries look like they belong here ("Move the ticked entries to…"). */
   moveFrom: { traceId: string; label: string; count: number } | null;
+  /** Owner pay the analysis splits: `claims` is the whole pay; per fiscal year, cents added back for EBITDA and the market salary (SDE only). */
+  ownerPay: OwnerPaySplit | null;
 }
 
 export interface GlRecipient { id: string; name: string | null; email: string; role: string; via: "members" | "seller_invite"; muted: boolean }
@@ -101,7 +104,7 @@ const TONE: Record<string, "good" | "close" | "warn" | "muted"> = {
   found: "good", document: "good", close: "close", short: "warn", over: "warn", not_started: "muted", not_in_ledger: "muted", statement: "muted", left_out: "muted",
 };
 
-export function brokerTraceView(t: GlAddbackTrace, links: GlTraceLink[], docShort: string): BrokerTraceView {
+export function brokerTraceView(t: GlAddbackTrace, links: GlTraceLink[], docShort: string, ownerPay?: OwnerPaySplit | null): BrokerTraceView {
   const computed = (t.computed as GlTraceComputed | null) ?? null;
   const cells: BrokerTraceView["cells"] = {};
   for (const [y, c] of Object.entries(computed?.byYear ?? {})) {
@@ -119,6 +122,7 @@ export function brokerTraceView(t: GlAddbackTrace, links: GlTraceLink[], docShor
     buyerReason: t.buyerReason, leftOut: (t.leftOut as any) ?? null, includeInCim: t.includeInCim, computed, cells, proposedYears,
     assistant: (() => { const a = glAssistantState(t.id); const words = assistantWords(a); return a && words ? { state: a.state, words } : null; })(),
     moveFrom: null,
+    ownerPay: (t.proof === "payroll" || t.category === "owner_comp") && ownerPay ? ownerPay : null,
   };
 }
 
@@ -186,6 +190,11 @@ export async function buildBrokerView(c: GlDealContext): Promise<BrokerGlView> {
   ]);
   const tr = tracing ?? c.tracing;
   const live = traces.filter((t) => !t.removedAt);
+  // The owner's pay as the bridge counts it (the trace claims the whole pay).
+  const { pickAnalysisForCim } = await import("../cim/cim-financials");
+  const { normalizeFinancialAnalysisRow } = await import("../financial/shape");
+  const picked = pickAnalysisForCim(analyses);
+  const splits = ownerPaySplits(picked ? ((normalizeFinancialAnalysisRow(picked as Record<string, any>).normalization as NormLike | null) ?? null) : null);
   const { jurisdictionOf } = await import("../interview/reply-guards");
   const pay = payDocWords(jurisdictionOf(c.deal?.location ?? null));
   const accepted = (tr.tieOutAccepted as Record<string, { note: string; at: string; by: string }> | null) ?? {};
@@ -226,7 +235,7 @@ export async function buildBrokerView(c: GlDealContext): Promise<BrokerGlView> {
       publishedAt: iso(tr.publishedAt),
     },
     traces: live.map((t) => {
-      const v = brokerTraceView(t, links, pay.short);
+      const v = brokerTraceView(t, links, pay.short, splits.get(t.addbackKey) ?? null);
       const removed = traces.filter((x) => x.removedAt);
       return removed.length ? { ...v, moveFrom: moveSuggestion(t, removed, links) } : v;
     }),

@@ -45,6 +45,8 @@ export interface NormAddback {
   privateEvidence?: boolean;
   ownerCompPart?: "excess" | "market";
   ownerActualComp?: Record<string, number>;
+  /** The market salary for the role (one figure or per year) — the part of owner pay added back for SDE only. */
+  marketSalary?: number | Record<string, number>;
 }
 export interface NormLike {
   years?: string[];
@@ -128,6 +130,40 @@ export function traceCandidates(norm: NormLike | null | undefined): TraceCandida
   const byKey = new Map<string, TraceCandidate>();
   for (const c of out) if (c.addbackKey && !byKey.has(c.addbackKey)) byKey.set(c.addbackKey, c);
   return Array.from(byKey.values());
+}
+
+/**
+ * The owner-pay add-back as the bridge counts it (release fix F7): the trace
+ * claims the owner's WHOLE pay (what the pay slips show), but EBITDA adds
+ * back only the excess over a market salary for the role; the market salary
+ * is added back for SDE only. Per add-back key → fiscal year → cents. Pure.
+ * Only owner-pay pairs the analysis split (an excess part) are returned.
+ */
+export interface OwnerPaySplit {
+  /** fiscal year key → cents added back for EBITDA (the excess). */
+  addedBack: Record<string, number>;
+  /** fiscal year key → cents of the market salary (added back for SDE only). */
+  market: Record<string, number>;
+}
+export function ownerPaySplits(norm: NormLike | null | undefined): Map<string, OwnerPaySplit> {
+  const out = new Map<string, OwnerPaySplit>();
+  const all = Array.isArray(norm?.addbacks) ? norm!.addbacks! : [];
+  for (const excess of all) {
+    if (!excess || excess.ownerCompPart !== "excess") continue;
+    const marketPart = all.find((x) => x?.ownerCompPart === "market" && x.id === `${excess.id}_market`);
+    const addedBack = claimsOf(excess.amounts ?? {}).claims;
+    let market = marketPart ? claimsOf(marketPart.amounts ?? {}).claims : {};
+    if (Object.keys(market).length === 0) {
+      // No market part: the market salary the analysis recorded (one figure, or per year).
+      const ms = excess.marketSalary;
+      if (typeof ms === "number" && ms > 0) market = Object.fromEntries(Object.keys(addedBack).map((y) => [y, Math.round(ms * 100)]));
+      else if (ms && typeof ms === "object") market = claimsOf(ms).claims;
+    }
+    if (Object.keys(addedBack).length === 0) continue;
+    const key = addbackKeyOf(excess.label);
+    if (!out.has(key)) out.set(key, { addedBack, market });
+  }
+  return out;
 }
 
 // ── Per add-back rules ───────────────────────────────────────────────────

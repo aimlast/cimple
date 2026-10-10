@@ -13,10 +13,25 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { BrokerTrace } from "@/lib/gl-api";
 import { Pill, dollars, statusTone } from "./gl-ui";
-import { verdictWords, yearsWords } from "@shared/gl-copy";
+import { ownerPayAddedBackWords, verdictWords, wholeDollars, yearsWords } from "@shared/gl-copy";
 import { traceHasActivity } from "@shared/gl-reconcile";
 
 const verdictTone = (v: string | null) => (v === "found" ? "good" : v === "partly_found" ? "close" : "warn") as "good" | "close" | "warn";
+
+/** Owner pay: "Pay $285,000 · added back $165,000" for a year (null when the bridge doesn't split it). */
+export function ownerPayCellWords(t: Pick<BrokerTrace, "claims" | "ownerPay">, y: string): string | null {
+  const pay = t.claims[y];
+  const added = t.ownerPay?.addedBack?.[y];
+  if (typeof pay !== "number" || typeof added !== "number") return null;
+  const w = ownerPayAddedBackWords(pay, added, t.ownerPay?.market?.[y] ?? null);
+  return w ? `Pay ${wholeDollars(pay)} · ${w.short}` : null;
+}
+/** The one-line why under an owner-pay row (the latest year's market salary). */
+function ownerPayWhy(t: Pick<BrokerTrace, "claims" | "ownerPay">): string | null {
+  const ys = Object.keys(t.ownerPay?.addedBack ?? {}).filter((y) => typeof t.claims[y] === "number").sort();
+  const y = ys[ys.length - 1];
+  return y ? ownerPayAddedBackWords(t.claims[y], t.ownerPay!.addedBack[y], t.ownerPay?.market?.[y] ?? null)?.why ?? null : null;
+}
 
 function yearsOf(traces: BrokerTrace[]): string[] {
   const ys = new Set<string>();
@@ -58,6 +73,7 @@ export function AddbackGrid({ traces, onOpen, onReview, busy }: {
                       {t.question?.answer && <Pill tone="brass">Seller answered</Pill>}
                       {t.sellerNote && <Pill tone="brass">Seller's note</Pill>}
                     </span>
+                    {ownerPayWhy(t) && <span className="mt-1 block text-2xs text-muted-foreground" data-testid="gl-owner-pay-why">{ownerPayWhy(t)}</span>}
                   </button>
                 </td>
                 {years.map((y) => {
@@ -67,6 +83,7 @@ export function AddbackGrid({ traces, onOpen, onReview, busy }: {
                       {cell ? (
                         <button type="button" onClick={() => onOpen(t, y)} className="text-left">
                           <Pill tone={statusTone(cell.status)} testId={`gl-cell-${y}`}>{cell.words}</Pill>
+                          {ownerPayCellWords(t, y) && <span className="mt-1 block text-2xs text-muted-foreground whitespace-nowrap" data-testid={`gl-owner-pay-${y}`}>{ownerPayCellWords(t, y)}</span>}
                           {t.proposedYears.includes(y) && cell.status === "not_started" && (
                             <span className="mt-1 flex items-center gap-1 text-2xs text-muted-foreground"><Search className="h-2.5 w-2.5" /> Likely entries found</span>
                           )}
@@ -92,6 +109,7 @@ export function AddbackGrid({ traces, onOpen, onReview, busy }: {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium break-words">{t.label}</p>
                 <p className="text-2xs text-muted-foreground mt-0.5">{t.proofLabel}{t.sharePct ? ` · ${t.sharePct}% added back` : ""}{t.privateEvidence ? " · From your private notes" : ""}</p>
+                {ownerPayWhy(t) && <p className="text-2xs text-muted-foreground mt-0.5">{ownerPayWhy(t)}</p>}
                 {t.proposedYears.length > 0 && Object.values(t.cells).some((c) => c.status === "not_started") && (
                   <p className="text-2xs text-teal mt-0.5 flex items-center gap-1"><Search className="h-2.5 w-2.5" /> Cimple found likely entries for {yearsWords(t.proposedYears)}</p>
                 )}
@@ -100,7 +118,7 @@ export function AddbackGrid({ traces, onOpen, onReview, busy }: {
             </button>
             <div className="px-3 pb-2 flex flex-wrap gap-1.5">
               {Object.keys(t.cells).sort().map((y) => (
-                <Pill key={y} tone={statusTone(t.cells[y].status)}>{y} · {t.cells[y].words}</Pill>
+                <Pill key={y} tone={statusTone(t.cells[y].status)}>{y} · {t.cells[y].words}{ownerPayCellWords(t, y) ? ` · ${ownerPayCellWords(t, y)}` : ""}</Pill>
               ))}
             </div>
             <div className="px-3 pb-3 flex justify-end">
