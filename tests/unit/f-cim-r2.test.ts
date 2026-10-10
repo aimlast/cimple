@@ -301,6 +301,13 @@ await test("the CIM tab is told about a stored codename that points at the busin
   assert.match(b, /codenameProblem: deal\.blindCodename \? codenameProblem\(deal, deal\.blindCodename\) : null/);
   assert.match(src("client/src/pages/broker/deal/CimTab.tsx"), /data-testid="codename-problem"/);
 });
+await test("release review SEC-F6: the codename blind buyers still read (the kept copy's) is checked too and listed under Needs attention", () => {
+  const b = src("server/routes/cim-builder.ts");
+  assert.match(b, /servedCodenameProblem: servedCodename && servedCodename !== deal\.blindCodename \? codenameProblem\(deal, servedCodename\) : null/);
+  const tab = src("client/src/pages/broker/deal/CimTab.tsx");
+  assert.match(tab, /data-testid="cim-attention-served-codename"/);
+  assert.match(tab, /const servedCodename = data\.blind\.servedCodenameProblem \? 1 : 0;/, "it counts toward Needs attention");
+});
 
 // ── Charts: totals from the facts, unit-less splits, short of the total ──
 console.log("charts — stated totals restored from the facts; shares only of a stated whole");

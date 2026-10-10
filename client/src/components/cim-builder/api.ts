@@ -73,6 +73,8 @@ export interface BuilderState {
     generated: boolean; codename: string | null; codenameProblem?: string | null; running: boolean; error: string | null; updating: number; held: number;
     /** The codename blind buyers read now while a CIM update is under review (the kept copy's), else null. */
     servedCodename?: string | null;
+    /** Why the codename blind buyers still read (the kept copy's) could point at the business; null when neutral or the same as `codename`. */
+    servedCodenameProblem?: string | null;
   };
   /** outOfDate: sections whose DD version is stale or missing; running: a refresh is under way. */
   dd: {

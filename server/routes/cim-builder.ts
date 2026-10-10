@@ -269,22 +269,26 @@ export function registerCimBuilderRoutes(app: Express): void {
       const byLevel = Object.fromEntries(ACCESS_LEVELS.map((l) => [l.key, 0])) as Record<AccessLevel, number>;
       for (const b of active) byLevel[normalizeAccessLevel(b.accessLevel)] += 1;
       const blind = summarizeBlindRows(deal.id, rows);
+      // The codename blind buyers read now: the kept copy's while a CIM update is under review, else null (= codename).
+      const servedCodename = await (async () => {
+        try {
+          const { servedBlindCodename } = await import("../cim/published-snapshot");
+          return await servedBlindCodename(deal);
+        } catch {
+          return null;
+        }
+      })();
       res.json({
         sections: rows,
         blind: {
           generated: blindGenerated,
           codename: deal.blindCodename ?? null,
           /** The codename blind buyers read now: the kept copy's while a CIM update is under review, else null (= codename). */
-          servedCodename: await (async () => {
-            try {
-              const { servedBlindCodename } = await import("../cim/published-snapshot");
-              return await servedBlindCodename(deal);
-            } catch {
-              return null;
-            }
-          })(),
+          servedCodename,
           /** Why the codename (chosen before a stricter check, or before a fact changed) would point at the business; null when it is neutral. */
           codenameProblem: deal.blindCodename ? codenameProblem(deal, deal.blindCodename) : null,
+          /** The same for the codename blind buyers still read in the kept copy, when it differs (release review security-integration F6). */
+          servedCodenameProblem: servedCodename && servedCodename !== deal.blindCodename ? codenameProblem(deal, servedCodename) : null,
           running: blind.running,
           error: blind.error,
           /** Sections waiting for their redaction (not held back). */

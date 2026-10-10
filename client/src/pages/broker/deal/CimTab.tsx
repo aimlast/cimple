@@ -165,8 +165,9 @@ export function CimTab() {
     const served = (review?.privateStaffServed?.length ?? 0) > 0;
     const heldPrivateProblems = ((heldPrivate?.servedShowing?.length ?? 0) > 0 ? 1 : 0);
     const teaserHeld = teaser?.heldBlocks ?? [];
+    const servedCodename = data.blind.servedCodenameProblem ? 1 : 0;
     const count = (review?.heldFromBuyers ? 1 : 0) + groups.length + (privateStaff ? 1 : 0) + (served ? 1 : 0) + heldPrivateProblems
-      + teaserHeld.length + (review?.facts ? 1 : 0) + extraGroups.filter((g) => g.counts).length;
+      + teaserHeld.length + (review?.facts ? 1 : 0) + extraGroups.filter((g) => g.counts).length + servedCodename;
     return { count, teaserHeld };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, teaser, heldPrivate, dealId, dismissTick, extraGroups.length]);
@@ -399,6 +400,17 @@ export function CimTab() {
             )}
             {/* Private staff matters held out of every version — each with an Include switch. */}
             <HeldPrivateCard dealId={dealId} />
+            {/* Blind buyers still read the kept copy's codename, which could point at the business (release review F6). */}
+            {data.blind.servedCodenameProblem && data.blind.servedCodename && (
+              <div className="flex flex-wrap items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3.5 py-3 text-sm" data-testid="cim-attention-served-codename">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                <p className="min-w-0 flex-1">
+                  <span className="font-medium">Blind buyers still read the codename “{data.blind.servedCodename}”:</span>{" "}
+                  <span className="text-muted-foreground">{data.blind.servedCodenameProblem} Publish the update so they read “{data.blind.codename}” — the teaser can't be published until then.</span>
+                </p>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => navigate(`/deal/${dealId}/overview`)}>Publish the update</Button>
+              </div>
+            )}
             {attention.teaserHeld.map((h) => (
               <div key={h.blockId} className="flex flex-wrap items-start gap-2.5 rounded-lg border border-red-500/30 bg-red-500/5 px-3.5 py-3 text-sm" data-testid="cim-attention-teaser-held">
                 <Megaphone className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
