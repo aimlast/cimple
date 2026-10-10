@@ -211,6 +211,32 @@ export function designApprovalState(
   return { brokerApproved, sellerApproved, ready: brokerApproved && sellerApproved };
 }
 
+/**
+ * The server's publish gate on the design approvals — the SAME rule as
+ * designApprovalState above, so "Ready to publish the update — All approvals
+ * received" on the Overview is never answered with a 409. A request may
+ * record an approval itself (`patch`); otherwise the stored flag counts, and
+ * a CIM that is already live counts as approved (publishing an update of it).
+ * Per-section approvals are checked separately (server/cim/approvals
+ * sectionsBlockingPublish), exactly as the client's sectionsAwaitingApproval.
+ */
+export function designApprovalsMissing(
+  patch: { designApprovedByBroker?: unknown; designApprovedBySeller?: unknown },
+  current: { designApprovedByBroker?: boolean | null; designApprovedBySeller?: boolean | null; isLive?: boolean | null } | null | undefined,
+): Array<"broker" | "seller"> {
+  // Per side: the flag in this request or stored, else the live CIM — unless
+  // this same request withdraws that side's approval.
+  const approved = (k: "designApprovedByBroker" | "designApprovedBySeller") => {
+    if (patch[k] === false) return false;
+    const live = designApprovalState({ [k]: patch[k] === true || current?.[k] === true, isLive: current?.isLive }, 0);
+    return k === "designApprovedByBroker" ? live.brokerApproved : live.sellerApproved;
+  };
+  const missing: Array<"broker" | "seller"> = [];
+  if (!approved("designApprovedByBroker")) missing.push("broker");
+  if (!approved("designApprovedBySeller")) missing.push("seller");
+  return missing;
+}
+
 /* ─── Can the AI write the CIM now? ──────────────────────────────────── */
 
 /**

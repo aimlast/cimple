@@ -27,7 +27,7 @@ import type { InterviewCall, InterviewBot } from "@shared/schema";
 import { ndaBuyerProfileSchema, hasMatchableProfile } from "@shared/nda-buyer-profile";
 import { isRecallConfigured, isSupportedMeetingUrl, newWebhookToken, createBot, getBot, leaveCall, latestStatus, pushBotLine, setBotStatus, readBotLines, clearBotBuffer, lineFromWebhook } from "./calls/recall.js";
 import { computeCimReadiness } from "@shared/cim-readiness";
-import { DEAL_PHASES, isDealPhase, phaseIndex } from "@shared/deal-progress";
+import { DEAL_PHASES, designApprovalsMissing, isDealPhase, phaseIndex } from "@shared/deal-progress";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 import { buildBuyerCim, cimHeldFromBuyers, ndaBlocksBuyer, realSectionKeyMap } from "@shared/cim-buyer-view";
@@ -2931,12 +2931,11 @@ Return JSON only.`,
       // record the seller's approval on their behalf (same request or before).
       if (dealPatch.isLive === true) {
         const current = await storage.getDeal(req.params.id);
-        const approved = (k: "designApprovedByBroker" | "designApprovedBySeller") =>
-          dealPatch[k] === true || (dealPatch[k] === undefined && current?.[k] === true);
-        const missing = [
-          !approved("designApprovedByBroker") ? "broker" : null,
-          !approved("designApprovedBySeller") ? "seller" : null,
-        ].filter((m): m is string => !!m);
+        // One rule with the Overview's checklist (shared/deal-progress
+        // designApprovalState): a CIM already live counts as approved, so
+        // "Publish update" works when the checklist says every approval is in.
+        // Changed sections still need the broker's approval (below).
+        const missing = designApprovalsMissing(dealPatch, current);
         if (missing.length > 0) {
           return res.status(409).json({
             error: "Both design approvals are needed before publishing",
