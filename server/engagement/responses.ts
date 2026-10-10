@@ -21,6 +21,7 @@ import {
   blockId,
   engagementViewScope,
   firstViewCounts,
+  pagesServedTo,
   viewerPageKey,
   type BlockAttention,
   type BuyerEngagementCard,
@@ -176,6 +177,10 @@ export function unrecordedPageIds(facts: DealReadingFacts, basis: ReachBasis = r
 
 // ── Buyers (call list) ─────────────────────────────────────────────────────
 
+/** The pages "x of y pages" counts — the same as Analytics (insights.ts readingSummary): content, not locked. */
+const isCountedPage = (p: Pick<FactPage, "role" | "locked">) => p.role !== "front_matter" && !p.locked;
+
+
 export function buildBuyersResponse(facts: DealReadingFacts): EngagementBuyersResponse {
   const ctx = insightContext(facts);
   const shown = facts.buyers.filter((b) => openedForCounts(b, facts.filters));
@@ -184,7 +189,9 @@ export function buildBuyersResponse(facts: DealReadingFacts): EngagementBuyersRe
   const unrecorded = unrecordedPageIds(facts);
   const buyers: BuyerEngagementCard[] = ranked.map(({ facts: b, insight }, rank) => {
     const furthest = furthestViewerIndex(b, facts.pages);
-    const pageStrip: PageStripCell[] = facts.pages.map((p) => {
+    // Only the pages of the version this buyer was given (a Blind buyer never had a DD page).
+    const theirPages = pagesServedTo(b, facts.pages);
+    const pageStrip: PageStripCell[] = theirPages.map((p) => {
       const key = viewerPageKey(p.pageId, p.part);
       const att = attentionOn(b, p);
       const reached = p.index <= furthest;
@@ -215,8 +222,9 @@ export function buildBuyersResponse(facts: DealReadingFacts): EngagementBuyersRe
       visits: b.visits.length,
       firstSeenAt: firstSeen,
       lastSeenAt: lastSeen,
-      pagesReached: pageStrip.filter((c) => c.reached).length,
-      totalPages: facts.pages.length,
+      // Out of the content pages of their own version — the denominator Analytics uses (insights.ts readingSummary).
+      pagesReached: pageStrip.filter((c, i) => c.reached && isCountedPage(theirPages[i])).length,
+      totalPages: theirPages.filter(isCountedPage).length,
       pageStrip,
       signals: insight.signals,
       talkingPoints: insight.talkingPoints,
@@ -264,7 +272,8 @@ export function buildDocumentResponse(facts: DealReadingFacts): EngagementDocume
 
   const pages: DocumentPage[] = facts.pages.map((p) => {
     const recorded = !unrecorded?.has(p.pageId);
-    const reachedBuyers = readersOf.filter((b) => (furthest.get(b.accessId) ?? -1) >= p.index);
+    // A buyer whose version doesn't have this page never reached (or skipped) it.
+    const reachedBuyers = readersOf.filter((b) => (furthest.get(b.accessId) ?? -1) >= p.index && (!b.servedPageIds || b.servedPageIds.includes(p.pageId)));
     const perBuyer = readersOf.map((b) => ({ b, att: attentionOn(b, p), skim: b.pages[viewerPageKey(p.pageId, p.part)]?.skimMs ?? 0 }));
     const attentionMs = perBuyer.reduce((s, x) => s + x.att, 0);
     const skimMs = perBuyer.reduce((s, x) => s + x.skim, 0);

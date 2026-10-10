@@ -164,7 +164,13 @@ export async function loadDealReadingFacts(
     visitPages: [...visitPagesStored, ...legacy.visitPages],
   };
   let renditions = renditionsStored;
-  let chosen = chooseRendition(renditions, unplaced.visits, filters.rendition);
+  // Drawn on the version most buyers in view were given (release fix F8): a
+  // due-diligence buyer's visit must not put every Blind buyer on the DD
+  // pages ("skipped" on a page they never had).
+  const readingIds = new Set(unplaced.visits.map((v) => v.accessId));
+  const withReading = listed.filter((a) => readingIds.has(a.id));
+  const preferMode = cimModeForAccessLevel(mainAccessLevel((withReading.length ? withReading : listed).map((a) => a.accessLevel)));
+  let chosen = chooseRendition(renditions, unplaced.visits, filters.rendition, preferMode);
   const liveIndexes = new Map<string, RenditionPage[]>();
   const legacyVisits = unplaced.visits.filter((v) => v.legacy);
   if (!chosen && legacyVisits.length > 0) {
@@ -261,8 +267,12 @@ function segmentMatches(a: BuyerAccess, f: EngagementFilters): boolean {
  * with reading in this filter, else the latest. One publish produces a
  * version per access level at about the same time (blind, named, teaser),
  * so among those the full (not teaser) one most buyers read wins.
+ * `preferMode` (the version most buyers in view were given — release fix
+ * F8): versions of that kind come first; failing that, anything but the
+ * due-diligence version (its extra pages would read as "skipped" for
+ * everyone else).
  */
-export function chooseRendition(renditions: RawRendition[], visits: RawVisit[], asked: string | null): RawRendition | null {
+export function chooseRendition(renditions: RawRendition[], visits: RawVisit[], asked: string | null, preferMode?: string | null): RawRendition | null {
   if (asked) {
     const r = renditions.find((x) => x.id === asked);
     if (r) return r;
@@ -270,7 +280,13 @@ export function chooseRendition(renditions: RawRendition[], visits: RawVisit[], 
   const readBy = new Map<string, number>();
   for (const v of visits) if (v.renditionId) readBy.set(v.renditionId, (readBy.get(v.renditionId) ?? 0) + 1);
   const withReading = renditions.filter((r) => readBy.has(r.id));
-  const pool = withReading.length ? withReading : renditions;
+  let pool = withReading.length ? withReading : renditions;
+  if (preferMode) {
+    const preferred = pool.filter((r) => r.mode === preferMode);
+    const notDd = pool.filter((r) => r.mode !== "dd");
+    if (preferred.length) pool = preferred;
+    else if (preferMode !== "dd" && notDd.length) pool = notDd;
+  }
   if (pool.length === 0) return null;
   const latest = Math.max(...pool.map((r) => r.createdAt.getTime()));
   const sameGeneration = pool.filter((r) => latest - r.createdAt.getTime() <= 86_400_000);
@@ -382,6 +398,26 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
     const b = buyers.get(v.accessId);
     if (!b) continue;
     b.visits.push(visitFacts(v, indexes, mapPage, orderOf));
+  }
+
+  // The drawn pages each buyer's own version has (release fix F8): a Blind
+  // buyer never had the due-diligence pages, so they are never "skipped" or
+  // counted for them. Only known when every visit names its version;
+  // otherwise (old tracking) every drawn page counts.
+  {
+    const drawnIds = Array.from(new Set(pages.map((p) => p.pageId)));
+    const visitsOf = new Map<string, RawVisit[]>();
+    for (const v of input.visits) if (buyers.has(v.accessId)) visitsOf.set(v.accessId, [...(visitsOf.get(v.accessId) ?? []), v]);
+    visitsOf.forEach((vs, accessId) => {
+      if (vs.some((v) => !v.renditionId || (indexes.get(v.renditionId)?.length ?? 0) === 0)) return;
+      const served = new Set<string>();
+      for (const v of vs) for (const rp of indexes.get(v.renditionId!)!) {
+        const t = mapPage(rp.pageId, rp.lineageId);
+        if (t) served.add(t.pageId);
+      }
+      const ids = drawnIds.filter((id) => served.has(id));
+      if (ids.length > 0 && ids.length < drawnIds.length) buyers.get(accessId)!.servedPageIds = ids;
+    });
   }
 
   // Reading per block → per viewer page part.

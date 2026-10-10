@@ -547,6 +547,20 @@ export interface BuyerReadingFacts {
   blocks: Record<string, BlockCounters>;
   events: Array<ReadingInteraction & { visitId: string }>;
   questions: BuyerQuestionRef[];
+  /**
+   * The drawn pages (pageIds) that are in a version this buyer was served —
+   * a Blind CIM buyer never had a due-diligence page. Absent = every drawn
+   * page (unknown, e.g. old tracking). Pages outside it are left out of the
+   * buyer's strip and counts, never "skipped" (release fix F8).
+   */
+  servedPageIds?: string[];
+}
+
+/** The drawn pages a buyer's own version has (BuyerReadingFacts.servedPageIds; absent = all). */
+export function pagesServedTo<T extends { pageId: string }>(b: Pick<BuyerReadingFacts, "servedPageIds">, pages: readonly T[]): T[] {
+  if (!b.servedPageIds) return [...pages];
+  const s = new Set(b.servedPageIds);
+  return pages.filter((p) => s.has(p.pageId));
 }
 
 export interface DealReadingFacts {

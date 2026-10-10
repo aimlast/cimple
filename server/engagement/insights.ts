@@ -26,6 +26,7 @@ import {
   BUYER_STATUS_TEXT,
   READING_RULES,
   formatReadingTime,
+  pagesServedTo,
   viewerPageKey,
   type BlockAttention,
   type BuyerInsight,
@@ -190,7 +191,8 @@ interface PageRow {
 function pageRows(b: BuyerReadingFacts, pages: FactPage[]): PageRow[] {
   const order = pageOrder(pages);
   const furthest = b.visits.reduce((m, v) => Math.max(m, v.maxPageIndex ?? -1), -1);
-  return pages.map((page) => {
+  // Only the pages of the buyer's own version (a Blind buyer never had a DD page); order stays the drawing's.
+  return pagesServedTo(b, pages).map((page) => {
     const r = readingOf(b, page);
     const attention = r?.attentionMs ?? 0;
     const onScreen = !!r && r.attentionMs + r.skimMs + r.visibleMs > 0;
