@@ -106,6 +106,11 @@ const UNTITLED_BY_LAYOUT: Record<string, string> = {
   numbered_list: "Next steps",
 };
 
+/** The teaser's trailing confidentiality line: an untitled, short prose block at the very end. */
+export function isTrailingFootnote(p: Pick<RenditionPage, "servedTitle" | "layoutType" | "expectedMs">): boolean {
+  return !(p.servedTitle ?? "").trim() && p.layoutType === "prose_highlight" && (p.expectedMs ?? 0) <= 8_000;
+}
+
 /** Pure: the funnel, per buyer and per block. */
 export function computeTeaserEngagement(input: ComputeInput): TeaserEngagement {
   const now = input.now ?? Date.now();
@@ -121,7 +126,12 @@ export function computeTeaserEngagement(input: ComputeInput): TeaserEngagement {
   const lastIndex = new Map<string, number>();
   const pageOrder: string[] = [];
   input.pageIndexes.forEach((pages, rid) => {
-    lastIndex.set(rid, pages.length - 1);
+    // The end is the last block a reader is meant to reach: the trailing
+    // one-line confidentiality note (untitled, short) isn't it — a buyer
+    // who reached "Interested?" read to the end (release review UX-F11).
+    let end = pages.length - 1;
+    while (end > 0 && isTrailingFootnote(pages[end])) end--;
+    lastIndex.set(rid, end);
     for (const p of pages) {
       if (!pageTitle.has(p.pageId)) {
         pageTitle.set(p.pageId, p.pageId === "teaser_header" ? "Header" : p.servedTitle || UNTITLED_BY_LAYOUT[p.layoutType] || "A block without a heading");
@@ -180,7 +190,8 @@ export function computeTeaserEngagement(input: ComputeInput): TeaserEngagement {
       lastOpenedAt: last?.toISOString() ?? null,
       activeMs,
       furthestBlock: far.title,
-      readToEnd: far.toEnd,
+      // Asking for the CIM means they reached the teaser's call to action.
+      readToEnd: far.toEnd || (!!first && req.state !== "none"),
       request: {
         state: req.state,
         at: req.at,
@@ -223,7 +234,8 @@ export function computeTeaserEngagement(input: ComputeInput): TeaserEngagement {
     },
     buyers,
     blocks,
-    openedToday: buyers.filter((b) => b.lastOpenedAt && now - Date.parse(b.lastOpenedAt) < DAY).length,
+    // Links still at the teaser only — the same set the "Have the teaser" stage counts (UX-F4).
+    openedToday: buyers.filter((b) => b.active && b.lastOpenedAt && now - Date.parse(b.lastOpenedAt) < DAY).length,
   };
 }
 
