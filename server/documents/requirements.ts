@@ -919,3 +919,46 @@ export function withoutUnreadableNote(notes: string | null | undefined): string 
   const rest = (notes ?? "").replace(UNREADABLE_NOTE_RE, "").trim();
   return rest || null;
 }
+
+/**
+ * Checklist rows credited to a source the current rules would never credit
+ * (release review UX-F14 — Lakeshore's seller saw "Tax Returns (3 Years) —
+ * Email - RE: Document request …" and "Bank Statements (3 Months) —
+ * Compiled financial statements FY2023", credits written by older code):
+ *   not_a_document  an e-mail, call, CRM record or web page (working
+ *                   material, never a checklist document — and its subject
+ *                   reached the seller's page)
+ *   name_mismatch   a document the row's own name never matches on upload
+ *                   (findMatchingRequirement) — possibly a broker's
+ *                   deliberate link, so the repair applies it only when asked
+ * Each with what the row would hold after the repair: another source on the
+ * deal that IS the document (replacementDocumentFor), else nothing
+ * ("missing"). The general-ledger row is never touched. Pure.
+ */
+export function wrongChecklistCredits<
+  R extends { id: string; documentName: string; category: string; status: string; uploadedFileId?: string | null; source?: string | null },
+  D extends ChecklistSource,
+>(rows: ReadonlyArray<R>, docs: ReadonlyArray<D>, opts: { includeNameMismatch?: boolean } = {}): Array<{ row: R; doc: D; reason: "not_a_document" | "name_mismatch"; replacement: D | null }> {
+  const byId = new Map(docs.map((d) => [d.id, d]));
+  const docCategory = (c: string | null | undefined) => (c && KNOWN_DOC_CATEGORIES.has(c) ? c : "other");
+  const wrong: Array<{ row: R; doc: D; reason: "not_a_document" | "name_mismatch" }> = [];
+  for (const r of rows) {
+    if (!r.uploadedFileId || isGlRequirement(r)) continue;
+    const doc = byId.get(r.uploadedFileId);
+    if (!doc) continue;
+    if (!autoLinkableKind(doc.sourceKind)) { wrong.push({ row: r, doc, reason: "not_a_document" }); continue; }
+    if (findMatchingRequirement([{ ...r, status: "missing" }], doc.name, docCategory(doc.category)) === undefined) {
+      wrong.push({ row: r, doc, reason: "name_mismatch" });
+    }
+  }
+  const fixing = new Set(wrong.filter((w) => w.reason === "not_a_document" || opts.includeNameMismatch).map((w) => w.row.id));
+  // Credits that stay keep their documents; a replacement is never one of them.
+  const credited = new Set(rows.filter((r) => r.uploadedFileId && !fixing.has(r.id)).map((r) => r.uploadedFileId as string));
+  return wrong.map((w) => {
+    if (!fixing.has(w.row.id)) return { ...w, replacement: null };
+    const remaining = docs.filter((d) => d.id !== w.doc.id && (d as { visibility?: string | null }).visibility !== "broker_only");
+    const replacement = replacementDocumentFor(w.row, remaining as D[], credited) ?? null;
+    if (replacement) credited.add(replacement.id);
+    return { ...w, replacement };
+  });
+}
