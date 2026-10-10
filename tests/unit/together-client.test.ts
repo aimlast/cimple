@@ -78,6 +78,15 @@ import("../../client/src/components/coverage/CoverageItemRow").then(({ primaryAc
   assert.equal(primaryActionFor(base, "checklist"), "add", "checklist: Add answer (no conversation)");
   assert.equal(primaryActionFor({ ...base, status: "verify", reason: { code: "estimate" } }, "live"), "confirm");
   assert.equal(primaryActionFor({ ...base, members: [{ key: "sde", label: "SDE", writable: false }] }, "live"), null);
-  ok("the live row's one button: ✓ Answered; verify → ✓ Confirmed; the broker's own calculation → none");
+  ok("the live row's one button: ✓ Answered; verify → ✓ Confirm; the broker's own calculation → none");
   console.log(`\n${n} checks passed`);
+}).catch((e) => { console.error(e); process.exit(1); });
+
+// Release review UX-F12: one action label for "confirm" on every screen ("✓ Confirmed" read like a status on desktop; the phone said "Confirm").
+import("../../client/src/components/coverage/CoverageItemRow").then(async ({ PRIMARY_LABEL }) => {
+  const fs = await import("node:fs");
+  assert.equal(PRIMARY_LABEL.confirm, "✓ Confirm");
+  const live = fs.readFileSync(new URL("../../client/src/components/together/LivePanel.tsx", import.meta.url), "utf8");
+  assert.ok(!live.includes("✓ Confirmed") && live.includes("{PRIMARY_LABEL.confirm}"), "the live panel uses the same label");
+  console.log("UX-F12: one Confirm label — ok");
 }).catch((e) => { console.error(e); process.exit(1); });

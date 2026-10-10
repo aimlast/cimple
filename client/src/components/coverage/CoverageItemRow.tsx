@@ -75,7 +75,8 @@ export const PRIMARY_LABEL: Record<Exclude<PrimaryAction, null>, string> = {
   add: "Add answer",
   answered: "✓ Answered",
   file_it: "✓ File it",
-  confirm: "✓ Confirmed",
+  // An action, the same word on every screen (release review UX-F12: "✓ Confirmed" read like a status).
+  confirm: "✓ Confirm",
   resolve: "Resolve…",
 };
 

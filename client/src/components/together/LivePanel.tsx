@@ -23,6 +23,7 @@ import { InPersonCard, CimpleCallCard, NotetakerCard } from "./ModeCards";
 import { SpeakerChips } from "./SpeakerChips";
 import { SuggestNext } from "./SuggestNext";
 import { StatusIcon } from "@/components/coverage/StatusIcon";
+import { PRIMARY_LABEL } from "@/components/coverage/CoverageItemRow";
 import { listenCopy, isNotetakerVia, type BrokerUnconfirmedView, type CaptureHints, type SpeakerMap, type SpeakerRole, type TogetherLineView, type TogetherSittingView } from "@shared/together";
 import { lineRole, speakerDisplay, speakerKind } from "@shared/together-speakers";
 import { filedEntryText, filedInSitting, type CoverageBoard, type CoverageItem, type NextToAskContext, type SessionFiledEntry } from "@shared/coverage-board";
@@ -363,7 +364,7 @@ function FilingLine({ sitting, filing, filed, now, ended, held = 0, onFileNow }:
   );
 }
 
-/** "You said August 2028 — the seller didn't confirm." with ✓ Confirmed (or the editor, in the broker's own words). */
+/** "You said August 2028 — the seller didn't confirm." with ✓ Confirm (or the editor, in the broker's own words). */
 function UnconfirmedRow({ dealId, board, b, onShowItem, onDismiss }: { dealId: string; board: CoverageBoard; b: BrokerUnconfirmedView; onShowItem: (itemId: string, sectionKey?: string) => void; onDismiss: () => void }) {
   const { toast } = useToast();
   const [editing, setEditing] = useState(false);
@@ -423,7 +424,7 @@ function UnconfirmedRow({ dealId, board, b, onShowItem, onDismiss }: { dealId: s
         </div>
       ) : (
         <div className="flex gap-1.5">
-          <Button size="sm" variant="outline" className="h-6 text-[11px] border-teal/40 text-teal hover:bg-teal/10 hover:text-teal" disabled={busy} onClick={() => void confirm()}>✓ Confirmed</Button>
+          <Button size="sm" variant="outline" className="h-6 text-[11px] border-teal/40 text-teal hover:bg-teal/10 hover:text-teal" disabled={busy} onClick={() => void confirm()}>{PRIMARY_LABEL.confirm}</Button>
           <Button size="sm" variant="ghost" className="h-6 text-[11px] text-muted-foreground" onClick={onDismiss}>Dismiss</Button>
         </div>
       )}
