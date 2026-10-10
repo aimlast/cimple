@@ -77,6 +77,12 @@ export interface CimPnlYear {
 export interface CimBridgeLine {
   label: string;
   amounts: Record<string, number>;
+  /**
+   * gl: the analysis add-back this line is (the owner-pay market line carries
+   * the excess line's id) — the dd stream maps a bridge figure to its
+   * "Found in the books" mark through server/gl/evidence.ts glLineIdsForDeal.
+   */
+  addbackId?: string;
 }
 
 export interface CimFinancials {
@@ -415,7 +421,14 @@ function bridgeOf(n: UiNormalization) {
     return out;
   };
   const adjusted = total(n.netIncome ?? {}, applies);
-  const line = (a: UiAddback): CimBridgeLine => ({ label: a.label, amounts: { ...a.amounts } });
+  // gl: each line keeps its add-back's id; the owner's market-salary line shares the excess line's.
+  const excessIdFor = (a: UiAddback): string | undefined => {
+    if ((a as { ownerCompPart?: string }).ownerCompPart !== "market") return a.id;
+    const base = a.label.replace(/\s+—\s+market salary$/i, "").trim();
+    const all = (n.addbacks ?? []) as UiAddback[];
+    return all.find((x) => (x as { ownerCompPart?: string }).ownerCompPart === "excess" && x.label.trim() === base)?.id ?? a.id;
+  };
+  const line = (a: UiAddback): CimBridgeLine => ({ label: a.label, amounts: { ...a.amounts }, ...(excessIdFor(a) ? { addbackId: excessIdFor(a) } : {}) });
   return {
     metric,
     years,

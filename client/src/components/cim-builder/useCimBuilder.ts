@@ -25,7 +25,6 @@ export interface AddSectionInput {
   brief?: string;
   afterSectionId?: string | null;
   position?: "start" | "end";
-  accessTier?: "teaser" | "full";
 }
 
 export function useCimBuilder(dealId: string) {

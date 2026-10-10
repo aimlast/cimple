@@ -18,8 +18,8 @@
 import { storage } from "../storage";
 import { CIM_PRESENTATION_KEYS } from "@shared/cim-layouts";
 import { blindLeakTerms } from "@shared/blind-guard";
-import { readerMaySeeRow, rowScope } from "@shared/buyer-qa-scope";
-import type { BuyerQuestion } from "@shared/schema";
+import { readerMaySeeRow, roomRowsFor, rowScope } from "@shared/buyer-qa-scope";
+import type { BuyerQuestion, Deal } from "@shared/schema";
 import { normalizeFinancialTable } from "@shared/financial-table";
 import { formatSqft, rentLabel, splitLeaseType } from "@shared/cim-location";
 import { buildBuyerCim, cimHeldFromBuyers } from "@shared/cim-buyer-view";
@@ -505,29 +505,36 @@ export async function readerCim(deal: QaDeal, reader: QaReader): Promise<ReaderC
   ]);
   const changedAt = latestChange(rows.sections);
   if (rows.missing) return { text: "", changedAt, held: true };
+  const readerDeal = codename ? { ...deal, blindCodename: codename } : deal;
+  // One extras helper for every buyer path (INTEGRATION §2.2): gl's add-back evidence (with this
+  // reader's data-room deny tightening) and dd's approved figure notes join the answer context.
+  // A failure leaves the extras out — the chatbot still answers from the CIM.
+  const { buyerCimExtras } = await import("../cim/buyer-extras");
+  const extras = await buyerCimExtras(readerDeal as any, reader.accessLevel, reader.id ?? null).catch(() => null);
   const cim = buildBuyerCim({
-    deal: codename ? { ...deal, blindCodename: codename } : deal,
+    deal: readerDeal,
     accessLevel: reader.accessLevel,
     sections: rows.sections,
     overrides: rows.overrides,
     media,
     askingPrice: listedAskingPrice(deal as Parameters<typeof listedAskingPrice>[0]),
     published: rows.published,
+    ...(extras ?? {}),
   });
-  const text = stripDdMarkers(buildAnswerContext(cim.sections.filter((s) => !s.locked).map((s) => ({
+  const { figureNotesContext } = await import("../cim/figures/qa-context");
+  const text = stripDdMarkers(buildAnswerContext(cim.sections.filter((s) => !s.locked && s.layoutType !== "dd_source_check").map((s) => ({
     title: s.sectionTitle,
     body: s.brokerEditedContent || s.aiDraftContent || "",
     layoutType: s.layoutType,
     layoutData: s.layoutData,
-  }))));
+  })))) + figureNotesContext(cim.figureLayer, cim.sections);
   return { text, changedAt, held: false };
 }
 
 /**
  * Published rows another buyer's question may be answered from, or shown
- * to `reader` in the feed: within the answer's scope (a teaser never gets
- * an answer drawn from full-access sections; nobody gets another buyer's
- * named-CIM answer), for a Blind reader free of anything that identifies
+ * to `reader` in the feed: within the answer's scope (a Teaser link reads
+ * no Q&A at all; nobody gets another buyer's named-CIM answer), for a Blind reader free of anything that identifies
  * the business (shared/buyer-qa-scope.ts), and — for an unreviewed AI
  * answer — still true of the CIM this reader gets now (answerStillHolds).
  * `cim` is the reader's CIM when the caller already has it.
@@ -551,6 +558,18 @@ export async function publishedQuestionsFor(deal: QaDeal, reader: QaReader, cim?
     const scope = rowScope(q, q.buyerAccessId && levelOf.has(q.buyerAccessId) ? levelOf.get(q.buyerAccessId) : false);
     return readerMaySeeRow(q, scope, reader, terms);
   });
+  // Data-room questions (vdr spec §9.9): another buyer's answer the broker
+  // shared with the document's readers ("room") reaches this reader only
+  // while they can open that document right now — never a teaser or Blind
+  // CIM reader, never after it's unshared. The chatbot's knowledge base
+  // reads this function, so it inherits the rule.
+  const candidates = roomRowsFor(all, reader.id, new Set(all.map((q) => q.vdrItemId).filter((x): x is string => !!x)));
+  if (candidates.length > 0) {
+    const link = accesses.find((a) => a.id === reader.id);
+    const { itemIdsVisibleToLink } = await import("../vdr/access");
+    const open = link ? await itemIdsVisibleToLink(deal as unknown as Deal, link) : new Set<string>();
+    inScope.push(...roomRowsFor(candidates, reader.id, open));
+  }
   if (!inScope.some(isUnreviewedAiAnswer)) return inScope;
   const current = cim ?? (await readerCim(deal, reader));
   return inScope.filter((q) => answerStillHolds(q, current));
@@ -594,6 +613,10 @@ export function faqKnowledgeRows(
       // Not asked on any page of a served CIM (reading analytics).
       sectionId: null,
       renditionId: null,
+      // Not about a data-room document.
+      vdrItemId: null,
+      vdrPage: null,
+      vdrTeamMemberId: null,
       createdAt: f.createdAt,
       updatedAt: f.updatedAt,
     }));

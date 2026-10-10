@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowUpRight, CornerDownRight, Flag, MessageCircleQuestion, Monitor, Smartphone, Tablet } from "lucide-react";
 import { formatReadingTime, type EngagementFilters, type JourneyVisit } from "@shared/analytics-v2";
+import { brokerZoneLabel, dayHeading, timeOfDay } from "@shared/analytics-dashboard";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBuyerJourney } from "@/hooks/useEngagement";
@@ -35,9 +36,9 @@ const DECISION_WORD: Record<string, string> = {
   under_review: "Still deciding",
 };
 
+/** "Wed 23 Sept · 3:12 pm" — the broker's calendar and clock (Toronto), like every engagement screen. */
 function when(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return `${dayHeading(iso)} · ${timeOfDay(iso)}`;
 }
 
 export function JourneyDrawer({
@@ -56,12 +57,14 @@ export function JourneyDrawer({
   useEffect(() => setPicked(null), [accessId]);
   const visit = visits.find((v) => v.id === picked) ?? visits[0] ?? null;
   const maxActive = Math.max(0, ...visits.map((v) => v.activeMs));
+  // "Toronto time" beside the visits when this computer's clock is elsewhere.
+  const zone = useMemo(() => brokerZoneLabel(), []);
 
   return (
     <Sheet open={!!accessId} onOpenChange={(o) => { if (!o) onClose(); }}>
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-lg" data-testid="engagement-journey">
         <SheetHeader className="text-left">
-          <SheetTitle>{data?.name ?? "Visits"}</SheetTitle>
+          <SheetTitle className="flex items-center gap-2">{data?.name ?? "Visits"}{data?.sampleReading && <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-medium text-muted-foreground" title="This is an example deal: its buyers and their reading are made up." data-testid="journey-sample-chip">Sample</span>}</SheetTitle>
           <SheetDescription>
             {data?.company ? `${data.company} · ` : ""}
             {visits.length} visit{visits.length === 1 ? "" : "s"}
@@ -88,7 +91,10 @@ export function JourneyDrawer({
             )}
 
             <section>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Visits</h4>
+              <h4 className="mb-2 flex items-baseline gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Visits
+                {zone && <span className="font-normal normal-case tracking-normal" title="Times are Toronto time." data-testid="journey-zone">{zone}</span>}
+              </h4>
               <ul className="space-y-1.5">
                 {visits.map((v, i) => {
                   const Icon = DEVICE_ICON[v.device] ?? Monitor;

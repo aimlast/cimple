@@ -158,6 +158,8 @@ import { ensureSectionImportance } from "./section-importance";
 import { ensureInterviewPlan } from "./interview-plan";
 import { ensureDealDocumentRequirements } from "../documents/requirements";
 import { turnFloorFor, notifyBrokerFollowUpsAnswered } from "./seller-followups";
+import { explainRequestsFor, markExplainQuestionsRaised, planExplainQuestions } from "../cim/figures/requests";
+import { scheduleFigureBuild } from "../cim/figures/build";
 import { generateSellerProfile, sellerProfileRetryDue, noteSellerProfileFailure, clearSellerProfileFailure } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
 import { isInterviewHiddenFact } from "../information/deal-mirror";
@@ -205,6 +207,9 @@ import {
 } from "./turn-release";
 import { withRewrittenHead, type StreamHead } from "./stream-head";
 import { notifyInterviewComplete, shouldAnnounceInterviewComplete } from "../notifications/interview-complete";
+import { activeMarksForDeal, confirmedKeys, sellerSummaryFromTurn } from "./coverage-board";
+import type { CoverageSummary } from "@shared/coverage-board";
+import { followUpItemsRaised, openFollowUpItems } from "./outline";
 
 // =====================
 // Types
@@ -270,6 +275,12 @@ export interface TurnResult {
     updatedFields: string[];
     changes: FieldChange[];
   };
+  /**
+   * The coverage board's numbers for the seller (shared/coverage-board.ts):
+   * the seller's interview header shows "{p}% collected · {quality}" — the
+   * same numbers as their progress page and "What we've covered".
+   */
+  coverageSummary?: CoverageSummary;
   /** Current section coverage snapshot */
   sectionCoverage: Array<{
     key: string;
@@ -546,7 +557,28 @@ async function startOrResumeSessionOnce(
   // started, closed or asked. (A sitting gone quiet for longer is closed
   // below, as before.)
   if (mode === "seller") {
+    // (An "Interview together" sitting on the coverage board — live, with
+    // something said in the last 30 minutes — counts the same way; a paused
+    // or ended sitting never locks. specs/together.md §7.4.)
+    const { liveSittingFor } = await import("../together/sittings");
+    const sitting = await liveSittingFor(dealId).catch(() => null);
     const live = inLine.find((s) => togetherSessionLive(s, Date.now(), deal as TogetherCallState));
+    if (sitting && !live) {
+      const latest = inLine[0] ?? null;
+      const kb = assembleKnowledgeBase(deal, documents, tasks, latest, resolvedDiscrepancies, { sessions: inView, currentSessionId: latest?.id ?? null });
+      console.log(`[session-manager] Seller opened the interview on deal ${dealId} while "Interview together" sitting ${sitting.id} is live — nothing started`);
+      return {
+        message: "",
+        suggestedAnswers: [],
+        sessionId: "",
+        captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
+        sectionCoverage: (kb.recordedCoverage ?? kb.sectionCoverage).map(coverageForClient),
+        industryContext: extractIndustryContextForFrontend(null),
+        deferredTopics: [],
+        shouldEnd: false,
+        status: "together_live",
+      };
+    }
     if (live) {
       const kb = assembleKnowledgeBase(deal, documents, tasks, live, resolvedDiscrepancies, {
         sessions: inView,
@@ -933,6 +965,10 @@ async function startOrResumeSessionOnce(
   // opening's basis (reusableOpening).
   const openingMode: ConductedBy = mode;
   kb.conductedBy = openingMode;
+  // dd: questions about the numbers — plan in the background (never blocks
+  // the opener), and hand the interview the ones already routed (optional block).
+  void planExplainQuestions(dealId);
+  kb.explainRequests = await explainRequestsFor(dealId, openingMode);
 
   // The prior session's ledger (carried over — see below) and the items the
   // sources put on the agenda (conflicts, flagged risks), so the opening can
@@ -1228,7 +1264,15 @@ async function processTurnLocked(
   const sessionsInView = conductedBy === "broker" ? dealSessions : contextSessions(dealSessions, sessionId);
   // (Nor the to-dos the broker's own session wrote, unless the broker is here.)
   const tasks = conductedBy === "broker" ? dealTasks : sellerSideTasks(dealTasks);
-  const kbExtras = { sessions: sessionsInView, currentSessionId: sessionId, openDiscrepancies };
+  // The broker's confirmations on the coverage board (read-side overlay —
+  // knowledge-base.ts confirmedByBroker). Fails soft to none.
+  const coverageMarksNow = await activeMarksForDeal(dealId);
+  const kbExtras = {
+    sessions: sessionsInView,
+    currentSessionId: sessionId,
+    openDiscrepancies,
+    confirmedByBroker: confirmedKeys(coverageMarksNow, ((deal.extractedInfo as Record<string, unknown> | null) || {})),
+  };
   // A source added mid-interview gets its conflicts reviewed for later turns.
   ensureSourceReview(deal, documents);
 
@@ -1328,6 +1372,8 @@ async function processTurnLocked(
     ...(kb.priorExchanges ?? []).map((x) => ({ question: x.question, answer: x.answer })),
     ...thisSessionQA,
   ];
+  // dd: the routed questions about the numbers (optional — never a blocker).
+  kb.explainRequests = await explainRequestsFor(dealId, conductedBy);
   kb.wrapUpBlockers = completionBlockers({
     sectionCoverage: kb.sectionCoverage,
     criticalSections: criticalSectionSet(kb),
@@ -1351,7 +1397,7 @@ async function processTurnLocked(
   })?.catch(() => {});
 
   // Build the system prompt with current knowledge base
-  const systemBlocks = await buildInterviewSystemBlocks(kb);
+  const systemBlocks = await buildInterviewSystemBlocks(kb, { dealId: deal.id });
   timer.mark("prompt");
 
   // Seller turns so far, including this one — drives completion governance
@@ -2104,7 +2150,11 @@ async function processTurnLocked(
             onFileTopics: prospectiveKb.onFileTopics,
             // The broker's routed questions this session hasn't raised yet
             // (a follow-up session has no turn floor — INT-RC-3).
-            routedQuestions: routedQuestionsRaised(kb.askSellerDiscrepancies ?? [], existingMessages),
+            // (Plus the follow-ups the broker sent from a session together.)
+            routedQuestions: [
+              ...routedQuestionsRaised(kb.askSellerDiscrepancies ?? [], existingMessages),
+              ...followUpItemsRaised(openFollowUpItems(kb.outline, (k) => hasFactValue((kb.extractedInfo as Record<string, unknown>)[k])), existingMessages),
+            ],
             // A deferral or "resolved" the agent records in this very turn
             // counts only if this turn's exchange was about it — parking
             // every open item in the goodbye message is not covering it.
@@ -3576,6 +3626,10 @@ async function processTurnLocked(
     // A follow-up on a finished interview sends no "interview finished"
     // email — the broker is told what came of their questions instead.
     if (deal.interviewCompleted && handedBack.handedBack > 0) void notifyBrokerFollowUpsAnswered(dealId, handedBack);
+    // dd: questions about the numbers come back too (answered / asked; an
+    // auto-routed one never raised goes back to "suggested"); answers feed the next build.
+    const explained = await markExplainQuestionsRaised(dealId, sessionId, updatedMessages, { completedInterview: true });
+    if (explained.answered > 0) scheduleFigureBuild(dealId, "interview_answers");
 
     // What this session answered counts as on file for the next one — built
     // now, in the background, so a returning seller's opening already has it.
@@ -3622,6 +3676,19 @@ async function processTurnLocked(
       changes,
     },
     sectionCoverage: (updatedKb.recordedCoverage ?? updatedKb.sectionCoverage).map(coverageForClient),
+    ...(conductedBy !== "broker"
+      ? {
+          coverageSummary: coverageSummaryOf({
+            deal: updatedDeal!,
+            kb: updatedKb,
+            documents,
+            discrepancies: allDiscrepancies,
+            ledger,
+            marks: coverageMarksNow,
+            sessionIds: sessionsInView.map((x) => x.id),
+          }),
+        }
+      : {}),
     industryContext: extractIndustryContextForFrontend(updatedIndustryContext),
     // Derived from the durable ledger — stable and append-only until
     // resolved, so the broker-facing panel no longer flickers or loses items.
@@ -3690,7 +3757,7 @@ export function routedDiscrepancyNote(discussed: boolean, date: string): string 
  * interview actually brought it up). Called when an interview ends — by
  * the AI or with the seller's "End Overview". Returns the number of rows updated.
  */
-async function markRoutedDiscrepanciesRaised(
+export async function markRoutedDiscrepanciesRaised(
   dealId: string,
   transcript: Pick<ConversationMessage, "role" | "content">[] = [],
 ): Promise<{ handedBack: number; discussed: number }> {
@@ -4089,6 +4156,46 @@ export async function parkTogetherSessions(dealId: string, at: Date = new Date()
 }
 
 /**
+ * The completion half of ending an interview (shared by "End Overview" and
+ * the end of an "Interview together" session — specs/together.md §7.3):
+ * the deal's interview is complete (phase 1 → 2), the deal's broker is told
+ * when the seller finished (never for a broker-led session), and the
+ * discrepancies the broker routed to the seller come back to the broker,
+ * worded by whether the conversation raised them. The learning loop is the
+ * caller's (an AI session runs it; a session together doesn't).
+ */
+export async function completeDealInterview(
+  dealId: string,
+  opts: {
+    mode: ConductedBy;
+    messages: Pick<ConversationMessage, "role" | "content">[];
+    byDealBroker?: boolean;
+    /** Interview together hands routed questions back itself (it always does, complete or not). */
+    skipHandBack?: boolean;
+  },
+): Promise<void> {
+  const dealRow = await storage.getDeal(dealId);
+  await storage.updateDeal(dealId, {
+    interviewCompleted: true,
+    ...(dealRow?.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
+  });
+  // Tell the deal's broker (once per finish; not for a broker-led session).
+  if (shouldAnnounceInterviewComplete({ wasCompleted: dealRow?.interviewCompleted, conductedBy: opts.mode, byDealBroker: opts.byDealBroker })) {
+    notifyInterviewComplete(dealId, "seller_ended").catch((err) => console.warn("[session-manager] interview-complete email failed:", err));
+  }
+  if (opts.skipHandBack) return;
+  // Discrepancies the broker routed to the seller come back to the broker,
+  // as when the AI ends the interview — before this, "End Overview" left a
+  // routed critical conflict "with the seller" forever, and the CIM could be
+  // generated without the broker ever reviewing it.
+  const handedBack = await markRoutedDiscrepanciesRaised(dealId, opts.messages).catch((err) => {
+    console.error(`[session-manager] Could not hand routed discrepancies back for deal ${dealId}:`, err);
+    return { handedBack: 0, discussed: 0 };
+  });
+  if (dealRow?.interviewCompleted && handedBack.handedBack > 0) void notifyBrokerFollowUpsAnswered(dealId, handedBack);
+}
+
+/**
  * Ends a session at the seller's explicit request (the "End Overview"
  * button). Previously this was client-side only: the session stayed
  * "active" forever, deal.interviewCompleted stayed false (so the seller's
@@ -4126,25 +4233,14 @@ export async function endSessionManually(
   const mode = sessionModeOf(session);
   const completes = endingCompletesInterview(mode);
   if (completes) {
-    const dealRow = await storage.getDeal(dealId);
-    await storage.updateDeal(dealId, {
-      interviewCompleted: true,
-      ...(dealRow?.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
-    });
-    // Tell the deal's broker (once per finish; not for a broker-led session).
-    if (shouldAnnounceInterviewComplete({ wasCompleted: dealRow?.interviewCompleted, conductedBy: mode, byDealBroker: opts.byDealBroker })) {
-      notifyInterviewComplete(dealId, "seller_ended").catch((err) => console.warn("[session-manager] interview-complete email failed:", err));
-    }
-
-    // Discrepancies the broker routed to the seller come back to the broker,
-    // as when the AI ends the interview — before this, "End Overview" left a
-    // routed critical conflict "with the seller" forever, and the CIM could be
-    // generated without the broker ever reviewing it.
-    const handedBack = await markRoutedDiscrepanciesRaised(dealId, (session.messages as ConversationMessage[]) ?? []).catch((err) => {
-      console.error(`[session-manager] Could not hand routed discrepancies back for deal ${dealId}:`, err);
-      return { handedBack: 0, discussed: 0 };
-    });
-    if (dealRow?.interviewCompleted && handedBack.handedBack > 0) void notifyBrokerFollowUpsAnswered(dealId, handedBack);
+    // (The announce site is in completeDealInterview.)
+    const byDealBroker = opts.byDealBroker;
+    const messages = (session.messages as ConversationMessage[]) ?? [];
+    await completeDealInterview(dealId, { mode, messages, byDealBroker });
+    // dd: the questions about the numbers, as when the AI ends it (after the
+    // routed discrepancies are handed back inside completeDealInterview).
+    const explained = await markExplainQuestionsRaised(dealId, sessionId, messages, { completedInterview: true });
+    if (explained.answered > 0) scheduleFigureBuild(dealId, "interview_answers");
   }
 
   // The next session reads what this one answered as on file (background).
@@ -4691,6 +4787,37 @@ export function exchangesOf(messages: Array<Pick<ConversationMessage, "role" | "
 }
 
 /** Section coverage as the client reads it (status, importance and item counts). */
+/**
+ * The seller's coverage-board numbers for a turn's result (the seller's
+ * header), built from what the turn already loaded. Never throws — a missing
+ * summary only means the header waits for the next one.
+ */
+function coverageSummaryOf(args: {
+  deal: Deal;
+  kb: KnowledgeBase;
+  documents: DealDocument[];
+  discrepancies: Discrepancy[];
+  ledger: unknown;
+  marks: Awaited<ReturnType<typeof activeMarksForDeal>>;
+  sessionIds?: string[];
+}): CoverageSummary | undefined {
+  try {
+    return sellerSummaryFromTurn({
+      deal: args.deal,
+      documents: args.documents,
+      coverageView: withHeldFacts(args.kb.extractedInfo as Record<string, unknown>),
+      confidence: args.kb.fieldConfidence,
+      ledger: args.ledger,
+      openDiscrepancies: args.discrepancies,
+      marks: args.marks,
+      ...(args.sessionIds ? { sessionIds: args.sessionIds } : {}),
+    });
+  } catch (err) {
+    console.warn(`[session-manager] coverage summary skipped: ${(err as Error).message}`);
+    return undefined;
+  }
+}
+
 function coverageForClient(s: SectionCoverage) {
   return {
     key: s.key,

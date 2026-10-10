@@ -1,0 +1,86 @@
+,Date,Transaction Type,Num,Product/Service,Memo/Description,Qty,Sales Price,Amount,Balance
+Acme Corp
+,01/15/2024,Invoice,1001,Service,Monthly service,1,3736.93,3736.93,3736.93
+,02/15/2024,Invoice,1002,Service,Monthly service,1,7715.95,7715.95,11452.88
+,03/15/2024,Invoice,1003,Service,Monthly service,1,3189.73,3189.73,14642.61
+,04/15/2024,Invoice,1004,Service,Monthly service,1,8624.76,8624.76,23267.37
+,05/15/2024,Invoice,1005,Service,Monthly service,1,4486.12,4486.12,27753.49
+,06/15/2024,Invoice,1006,Service,Monthly service,1,5347.96,5347.96,33101.45
+,07/15/2024,Invoice,1007,Service,Monthly service,1,8188.36,8188.36,41289.81
+,08/15/2024,Invoice,1008,Service,Monthly service,1,1094.13,1094.13,42383.94
+,09/15/2024,Invoice,1009,Service,Monthly service,1,3299.67,3299.67,45683.61
+,10/15/2024,Invoice,1010,Service,Monthly service,1,7973.00,7973.00,53656.61
+,11/15/2024,Invoice,1011,Service,Monthly service,1,7430.16,7430.16,61086.77
+,12/15/2024,Invoice,1012,Service,Monthly service,1,7866.61,7866.61,68953.38
+Total for Acme Corp,,,,,,,,68953.38,
+Beta Logistics
+,01/15/2024,Invoice,1001,Service,Monthly service,1,6427.10,6427.10,6427.10
+,02/15/2024,Invoice,1002,Service,Monthly service,1,8329.42,8329.42,14756.52
+,03/15/2024,Invoice,1003,Service,Monthly service,1,7721.14,7721.14,22477.66
+,04/15/2024,Invoice,1004,Service,Monthly service,1,3106.34,3106.34,25584.00
+,05/15/2024,Invoice,1005,Service,Monthly service,1,8710.49,8710.49,34294.49
+,06/15/2024,Invoice,1006,Service,Monthly service,1,3047.50,3047.50,37341.99
+,07/15/2024,Invoice,1007,Service,Monthly service,1,3559.84,3559.84,40901.83
+,08/15/2024,Invoice,1008,Service,Monthly service,1,8774.28,8774.28,49676.11
+,09/15/2024,Invoice,1009,Service,Monthly service,1,1781.53,1781.53,51457.64
+,10/15/2024,Invoice,1010,Service,Monthly service,1,6278.75,6278.75,57736.39
+,11/15/2024,Invoice,1011,Service,Monthly service,1,6100.04,6100.04,63836.43
+,12/15/2024,Invoice,1012,Service,Monthly service,1,8174.05,8174.05,72010.48
+Total for Beta Logistics,,,,,,,,72010.48,
+Coastal Foods
+,01/15/2024,Invoice,1001,Service,Monthly service,1,3247.48,3247.48,3247.48
+,02/15/2024,Invoice,1002,Service,Monthly service,1,7797.80,7797.80,11045.28
+,03/15/2024,Invoice,1003,Service,Monthly service,1,3010.09,3010.09,14055.37
+,04/15/2024,Invoice,1004,Service,Monthly service,1,2465.90,2465.90,16521.27
+,05/15/2024,Invoice,1005,Service,Monthly service,1,2660.06,2660.06,19181.33
+,06/15/2024,Invoice,1006,Service,Monthly service,1,5088.10,5088.10,24269.43
+,07/15/2024,Invoice,1007,Service,Monthly service,1,7184.21,7184.21,31453.64
+,08/15/2024,Invoice,1008,Service,Monthly service,1,1136.80,1136.80,32590.44
+,09/15/2024,Invoice,1009,Service,Monthly service,1,8903.88,8903.88,41494.32
+,10/15/2024,Invoice,1010,Service,Monthly service,1,1245.46,1245.46,42739.78
+,11/15/2024,Invoice,1011,Service,Monthly service,1,3027.52,3027.52,45767.30
+,12/15/2024,Invoice,1012,Service,Monthly service,1,2792.57,2792.57,48559.87
+Total for Coastal Foods,,,,,,,,48559.87,
+Delta Grocers
+,01/15/2024,Invoice,1001,Service,Monthly service,1,3478.45,3478.45,3478.45
+,02/15/2024,Invoice,1002,Service,Monthly service,1,6957.09,6957.09,10435.54
+,03/15/2024,Invoice,1003,Service,Monthly service,1,7819.92,7819.92,18255.46
+,04/15/2024,Invoice,1004,Service,Monthly service,1,7877.07,7877.07,26132.53
+,05/15/2024,Invoice,1005,Service,Monthly service,1,6516.10,6516.10,32648.63
+,06/15/2024,Invoice,1006,Service,Monthly service,1,8118.19,8118.19,40766.82
+,07/15/2024,Invoice,1007,Service,Monthly service,1,3822.97,3822.97,44589.79
+,08/15/2024,Invoice,1008,Service,Monthly service,1,4903.96,4903.96,49493.75
+,09/15/2024,Invoice,1009,Service,Monthly service,1,4774.78,4774.78,54268.53
+,10/15/2024,Invoice,1010,Service,Monthly service,1,1974.92,1974.92,56243.45
+,11/15/2024,Invoice,1011,Service,Monthly service,1,2808.32,2808.32,59051.77
+,12/15/2024,Invoice,1012,Service,Monthly service,1,8157.42,8157.42,67209.19
+Total for Delta Grocers,,,,,,,,67209.19,
+Evergreen Farms
+,01/15/2024,Invoice,1001,Service,Monthly service,1,4542.30,4542.30,4542.30
+,02/15/2024,Invoice,1002,Service,Monthly service,1,3783.15,3783.15,8325.45
+,03/15/2024,Invoice,1003,Service,Monthly service,1,3494.09,3494.09,11819.54
+,04/15/2024,Invoice,1004,Service,Monthly service,1,4650.87,4650.87,16470.41
+,05/15/2024,Invoice,1005,Service,Monthly service,1,7065.54,7065.54,23535.95
+,06/15/2024,Invoice,1006,Service,Monthly service,1,2286.62,2286.62,25822.57
+,07/15/2024,Invoice,1007,Service,Monthly service,1,6971.57,6971.57,32794.14
+,08/15/2024,Invoice,1008,Service,Monthly service,1,8509.75,8509.75,41303.89
+,09/15/2024,Invoice,1009,Service,Monthly service,1,1908.91,1908.91,43212.80
+,10/15/2024,Invoice,1010,Service,Monthly service,1,6016.19,6016.19,49228.99
+,11/15/2024,Invoice,1011,Service,Monthly service,1,3564.19,3564.19,52793.18
+,12/15/2024,Invoice,1012,Service,Monthly service,1,8184.49,8184.49,60977.67
+Total for Evergreen Farms,,,,,,,,60977.67,
+Fraser Valley Markets
+,01/15/2024,Invoice,1001,Service,Monthly service,1,4042.65,4042.65,4042.65
+,02/15/2024,Invoice,1002,Service,Monthly service,1,1662.76,1662.76,5705.41
+,03/15/2024,Invoice,1003,Service,Monthly service,1,5919.74,5919.74,11625.15
+,04/15/2024,Invoice,1004,Service,Monthly service,1,8484.02,8484.02,20109.17
+,05/15/2024,Invoice,1005,Service,Monthly service,1,3528.11,3528.11,23637.28
+,06/15/2024,Invoice,1006,Service,Monthly service,1,1029.79,1029.79,24667.07
+,07/15/2024,Invoice,1007,Service,Monthly service,1,2792.10,2792.10,27459.17
+,08/15/2024,Invoice,1008,Service,Monthly service,1,8422.86,8422.86,35882.03
+,09/15/2024,Invoice,1009,Service,Monthly service,1,7584.66,7584.66,43466.69
+,10/15/2024,Invoice,1010,Service,Monthly service,1,8555.20,8555.20,52021.89
+,11/15/2024,Invoice,1011,Service,Monthly service,1,5565.30,5565.30,57587.19
+,12/15/2024,Invoice,1012,Service,Monthly service,1,7938.60,7938.60,65525.79
+Total for Fraser Valley Markets,,,,,,,,65525.79,
+TOTAL,,,,,,,,0,

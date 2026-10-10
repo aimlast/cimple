@@ -305,6 +305,12 @@ async function renameUnlocked(
     await db.update(dealOutreach).set({ subject, body, updatedAt: new Date() }).where(eq(dealOutreach.id, d.id));
     updated++;
   }
+  // The teaser: its draft, published copy and the seller-check copy (server/teaser/store.ts).
+  const { renameTeaserCodename } = await import("../teaser/store");
+  updated += await renameTeaserCodename(deal.id, swap, v.codename).catch((err) => {
+    console.warn(`[codename] teaser rename skipped for deal ${deal.id}:`, (err as Error)?.message);
+    return 0;
+  });
   return { ok: true, codename: v.codename, updated };
 }
 

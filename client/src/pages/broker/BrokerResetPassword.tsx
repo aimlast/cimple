@@ -9,6 +9,7 @@ import { useState } from "react";
 import { Link, useParams, useLocation } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { CimpleWordmark } from "@/components/brand/CimpleLogo";
 
 export default function BrokerResetPassword() {
   const { token } = useParams<{ token: string }>();
@@ -61,22 +62,7 @@ export default function BrokerResetPassword() {
     <div className="min-h-screen w-full flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-6">
-          <div
-            role="img"
-            aria-label="Cimple"
-            className="h-6 w-24"
-            style={{
-              backgroundColor: "hsl(162, 65%, 38%)",
-              WebkitMaskImage: "url('/cimple-text.png')",
-              WebkitMaskSize: "contain",
-              WebkitMaskRepeat: "no-repeat",
-              WebkitMaskPosition: "center",
-              maskImage: "url('/cimple-text.png')",
-              maskSize: "contain",
-              maskRepeat: "no-repeat",
-              maskPosition: "center",
-            }}
-          />
+          <CimpleWordmark className="h-6" />
         </div>
 
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm">

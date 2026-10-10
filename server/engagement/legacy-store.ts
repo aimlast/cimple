@@ -24,9 +24,11 @@
  * follow-up). Rows are still inserted ON CONFLICT DO NOTHING. No AI.
  */
 import { sql } from "drizzle-orm";
-import { cimModeForAccessLevel } from "@shared/cim-layouts";
+import { cimModeForAccessLevel, normalizeAccessLevel } from "@shared/access-levels";
 import { blindSectionKey } from "@shared/cim-buyer-view";
 import { legacyKeyResolver, legacySessions, type LegacyExit, type LegacySection, type LegacySession } from "./legacy";
+import { firstTrackedVisitSql } from "./queries";
+import { sampleColumns } from "./demo-columns";
 
 const BLIND_KEY_RE = /^s_[a-z0-9]{4,}$/i;
 
@@ -92,7 +94,7 @@ export function planLegacyRows(
   for (const s of sessions) {
     const a = byAccess.get(s.accessId)!;
     visits.push({
-      id: s.visitId, accessId: s.accessId, mode: cimModeForAccessLevel(a.accessLevel), accessLevel: a.accessLevel,
+      id: s.visitId, accessId: s.accessId, mode: cimModeForAccessLevel(a.accessLevel), accessLevel: normalizeAccessLevel(a.accessLevel),
       startedAt: s.startedAt, lastSeenAt: s.lastSeenAt, wallMs: s.wallMs, activeMs: s.activeMs,
       path: s.path.map(([t, key]) => [t, pageKey(key)] as [number, string]),
     });
@@ -139,10 +141,13 @@ async function db() {
 /** A deal's old section exits that no part-by-part visit covers (every one — stored or not). */
 async function loadExits(dealId: string): Promise<LegacyExit[]> {
   const { asDate } = await import("../analytics/reading-ingest");
+  // The cutoff is the first REAL part-by-part CIM visit: a sample visit (an
+  // example deal's demo reading) or a teaser visit never ends the old reading.
+  const sc = await sampleColumns();
   const rows = (await (await db()).execute(sql`
     SELECT e.buyer_access_id, e.section_key, e.time_spent_seconds, e.created_at FROM analytics_events e
     WHERE e.deal_id = ${dealId} AND e.event_type = 'section_exit' AND e.buyer_access_id IS NOT NULL AND e.section_key IS NOT NULL
-      AND e.created_at < COALESCE((SELECT MIN(v.started_at) FROM buyer_visits v WHERE v.deal_id = ${dealId} AND NOT v.legacy AND NOT v.self_view), 'infinity'::timestamp)
+      AND e.created_at < COALESCE(${firstTrackedVisitSql(dealId, { sampleColumns: sc })}, 'infinity'::timestamp)
     ORDER BY e.buyer_access_id, e.created_at
     LIMIT 50000`)) as unknown as Array<Record<string, unknown>>;
   return rows.map((r) => ({ accessId: String(r.buyer_access_id), key: String(r.section_key), seconds: Number(r.time_spent_seconds ?? 0) || 0, at: asDate(r.created_at) }));

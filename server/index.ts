@@ -5,6 +5,9 @@ import pg from "pg";
 import path from "path";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import { applyAnalyticsRateLimits } from "./analytics-dashboard/limits";
+import { applyTogetherRateLimits } from "./together/limits";
+import { applyVdrRateLimits } from "./vdr/rate-limits";
 import { createHash } from "crypto";
 import * as Sentry from "@sentry/node";
 import { registerRoutes } from "./routes";
@@ -13,6 +16,8 @@ import { startReminderScheduler } from "./reminders/decision-reminders";
 import { formatRequestLogLine, scrubSentryEvent } from "./log-redact";
 import { AI_LIMIT, applyInterviewRateLimits } from "./rate-limit-scope";
 import { applyBulkRateLimits } from "./security/bulk-limits";
+import { applyTeaserRateLimits } from "./routes/teaser";
+import { applyGlRateLimits } from "./routes/gl";
 
 // Error monitoring — activates only when SENTRY_DSN is set (free tier is
 // plenty for beta). Without it this is a no-op.
@@ -188,6 +193,14 @@ app.use("/api/deals/:dealId/buyer-fit/:accessId/ai", aiLimiter);
 // view room's reading tracker (a flush every ~15 s per tab) gets its own
 // roomy per-link ceiling, keyed by a hash of the link — never the AI limiter.
 app.use("/api/deals/:dealId/engagement/buyers/:accessId/brief", aiLimiter);
+// ── teaser limiters ──
+// The AI limiter on the model-running teaser routes only (server/routes/teaser.ts);
+// the buyer's request steps are limited per link inside those routes.
+applyTeaserRateLimits(app, aiLimiter);
+// ── together limiters ── (Interview together + the coverage board: server/together/limits.ts)
+applyTogetherRateLimits(app, aiLimiter);
+// ── dd limiters ── (figure notes: the AI pass that reads for reasons)
+app.use("/api/deals/:dealId/figures/build", aiLimiter);
 app.use("/api/view/:token/reading", rateLimit({
   windowMs: 60 * 1000,
   limit: 120,
@@ -196,6 +209,19 @@ app.use("/api/view/:token/reading", rateLimit({
   keyGenerator: (req) => `reading:${createHash("sha256").update(String(req.params.token ?? "")).digest("hex").slice(0, 32)}`,
   message: { error: "Too many requests" },
 }));
+// ── analytics limiters ──
+// The analytics dashboards (sidebar Analytics, the deal Engagement tab's
+// numbers): read-only, 120 a minute per IP (server/analytics-dashboard/limits.ts).
+applyAnalyticsRateLimits(app);
+
+// ── vdr limiters ── the data room's buyer routes (per link), the broker's upload, emails and "Draft again" (server/vdr/rate-limits.ts).
+applyVdrRateLimits(app, aiLimiter);
+
+// ── gl limiters (Add-backs in the books) ──
+// Ledger uploads: 20 an hour per IP (broker and seller GL upload routes
+// together), checked before a byte is written; seller GL routes keyed by a
+// hash of the link. Defined in server/routes/gl.ts (applyGlRateLimits).
+applyGlRateLimits(app, aiLimiter);
 
 // Session type augmentation
 declare module "express-session" {
@@ -282,6 +308,14 @@ app.use((req, res, next) => {
       import("./crm/buyer-sync").then((m) => m.startBuyerSyncScheduler()).catch((err) => console.error("[buyer-sync] scheduler failed to start:", err));
       // Sources a redeploy cut off mid-read are marked "couldn't read" (with "Read it again").
       import("./documents/ingest").then((m) => m.startInterruptedReadRecovery()).catch((err) => console.error("[ingest] interrupted-read recovery failed:", err));
+      // ── together recovery ── Interview together: sessions a restart cut off are picked up again; parts that waited for the AI are retried (only where live filing runs).
+      import("./together/recovery").then((m) => m.startTogetherRecovery()).catch((err) => console.error("[together] recovery failed to start:", err));
+      // ── vdr: data-room documents a restart left unprepared go back in the (one-at-a-time) queue ──
+      import("./vdr/prepare").then((m) => m.startPrepareQueue()).catch((err) => console.error("[vdr] prepare queue failed to start:", err));
+      // ── vdr: buyer descriptions waiting to be drafted (persisted queue; per-deal daily cap) ──
+      import("./vdr/buyer-summary").then((m) => m.startSummaryQueue()).catch((err) => console.error("[vdr] description queue failed to start:", err));
+      // ── gl: ledger reads a restart cut off are queued again (twice at most) ──
+      import("./gl/ingest").then((m) => m.startLedgerReadRecovery()).catch((err) => console.error("[gl] ledger read recovery failed:", err));
       // Once per volume: files earlier deletes left behind (no row points at them) leave the volume.
       if (process.env.NODE_ENV === "production") {
         // First what deleted deals left (their rows made their files look in use), then files no row points at.

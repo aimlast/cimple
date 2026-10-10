@@ -18,6 +18,7 @@
 import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
+import { isTogetherSitting } from "../together/transcript";
 import { extractTextWithPages, isPdfSource, UnreadableFormatError } from "./parser";
 import { newDocumentFileName, resolveDocumentPath } from "./document-path";
 import {
@@ -34,7 +35,8 @@ import {
   type TextLayout,
 } from "./extractor";
 import { releaseRequirementsFor } from "./requirements";
-import { recordFactSpeakers } from "../interview/fact-guards";
+import { applySellerRetractions, recordFactConfidence, recordFactExcerpts, recordFactSpeakers, type Retraction } from "../interview/fact-guards";
+import { addSellerKeepOut, type SellerKeepOutEntry } from "../interview/seller-keep-out";
 import {
   addPrivateNote,
   isSourceKind,
@@ -46,6 +48,7 @@ import {
 } from "../interview/info-merger";
 import type { Document, DocumentSourceMeta } from "@shared/schema";
 import { isHousekeepingNote, noteRecordedAsFact } from "@shared/private-notes";
+import { isImageMime } from "@shared/vdr";
 import { withDealFactsLock } from "./facts-lock";
 import { normalisePeriod, stampSourceDetails, type MergeConflict, type MergeContext } from "./merge-policy";
 import { applyRosterCounts, recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
@@ -427,12 +430,33 @@ export function startReadHeartbeat(
 export async function ingestDocument(documentId: string): Promise<IngestResult> {
   const doc = await storage.getDocument(documentId);
   if (!doc) return { status: "missing", fieldsWritten: [] };
+  // 1. An "Interview together" transcript is filed live, answer by answer,
+  // through the interview's guards — it is never read again from its text
+  // (specs/together.md §5.8; hook order: INTEGRATION §2.17).
+  if (isTogetherSitting(doc)) return { status: "extracted", fieldsWritten: [] };
   const kind = documentKind(doc);
   // Already being read (a second "parse" while the first read runs): one read at a time.
   if (activeReads.has(doc.id)) return { status: "busy", fieldsWritten: [] };
   activeReads.add(doc.id);
   const stopHeartbeat = startReadHeartbeat(doc.id);
   try {
+    // A general ledger (INTEGRATION §2.17, top step 2) is read entry by entry
+    // by the ledger reader (server/gl/ingest.ts) — never by the extractor,
+    // never merged as facts; a PDF/Word ledger is stored with a note. $0.
+    const { ingestLedgerFromDocument } = await import("../gl/ingest");
+    const asLedger = await ingestLedgerFromDocument(doc);
+    if (asLedger) return asLedger;
+    // The data room (INTEGRATION §2.17, top step 3): a picture is never read
+    // (it has no text and Cimple never sends pictures to the AI), and a file
+    // the broker chose to "Just store in the data room" isn't read until
+    // they ask. No text, no AI.
+    const storedOnly = !!(doc.sourceMeta as DocumentSourceMeta | null)?.readSkipped;
+    if (isImageMime(doc.mimeType) || storedOnly) {
+      const meta: DocumentSourceMeta = { ...(((doc.sourceMeta as DocumentSourceMeta | null) ?? {}) as DocumentSourceMeta) };
+      if (!storedOnly) meta.readFailed = { at: new Date().toISOString(), reason: "a picture has no text to read", retryable: false };
+      await storage.updateDocument(doc.id, { status: "extracted", isProcessed: false, sourceMeta: meta } as any);
+      return { status: "extracted", fieldsWritten: [] };
+    }
     await storage.updateDocument(doc.id, { status: "parsing" } as any);
     let text = "";
     // How the text was laid out (a PDF's pages) — tells a scan from a readable file.
@@ -499,6 +523,16 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
   } finally {
     stopHeartbeat();
     activeReads.delete(doc.id);
+    // INTEGRATION §2.17 finally step 1: an add-back's supporting document (a T4,
+    // an invoice) was read — the amounts the seller typed are looked for in it.
+    if (doc.subcategory === "addback_support") {
+      void import("../gl/support-docs").then((m) => m.onGlSupportDocumentRead(doc.id)).catch(() => undefined);
+    }
+    // The data room (INTEGRATION §2.17, finally step 2): a new room document is
+    // filed into its folder, unshared, when the room adds new documents.
+    void import("../vdr/setup").then((m) => m.autoFileIfRoom(doc.id)).catch(() => undefined);
+    // dd (INTEGRATION §2.17, finally step 3 — last): the figure checks re-read the deal's documents.
+    void import("../cim/figures/refresh").then((m) => m.invalidateAndRefreshFigures(doc.dealId, "documents")).catch(() => {});
   }
 }
 
@@ -508,13 +542,32 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
  * extraction). Serialised per deal; material conflicts still standing after
  * the merge become discrepancies.
  */
-export async function mergeExtractionIntoDeal(doc: Document, extracted: ExtractedDocumentData): Promise<IngestResult> {
+/**
+ * Options for a live "Interview together" filing (specs/together.md §5.7);
+ * existing callers pass none and behave exactly as before.
+ *  - keepOut: what the seller asked on the call to keep out of the book;
+ *  - retractions: values the seller withdrew on the call;
+ *  - beforeSave: called INSIDE the facts lock after every merge step and
+ *    before the save — the capture records its undo snapshots and its
+ *    "applied" marker in the same save (or returns "skip": already applied);
+ *  - reviewNotes: false skips the private-notes review (no model call on a
+ *    local replay server).
+ */
+export interface MergeExtractionOptions {
+  keepOut?: SellerKeepOutEntry[];
+  retractions?: Retraction[];
+  beforeSave?: (merged: Record<string, unknown>, before: Record<string, unknown>) => "skip" | void;
+  reviewNotes?: boolean;
+}
+
+export async function mergeExtractionIntoDeal(doc: Document, extracted: ExtractedDocumentData, opts: MergeExtractionOptions = {}): Promise<IngestResult> {
   // Serialised per deal: several sources finishing at once (a CRM import
   // ingests a few in parallel) must not overwrite each other's facts.
   const conflicts: MergeConflict[] = [];
   let saved: Record<string, unknown> = {};
   const documents = await storage.getDocumentsByDeal(doc.dealId);
   let gone = false;
+  let skippedSave = false;
   const result = await withDealFactsLock(doc.dealId, async () => {
     // The source was deleted while it was being read (the broker's Delete on
     // a "Reading…" source, a seller replacing an upload): its facts must not
@@ -526,6 +579,8 @@ export async function mergeExtractionIntoDeal(doc: Document, extracted: Extracte
     const deal = await storage.getDeal(doc.dealId);
     if (!deal) return { status: "extracted" as const, fieldsWritten: [] };
     const before = (deal.extractedInfo as Record<string, unknown>) || {};
+    // (A live filing's undo snapshot: the facts exactly as they were — merge helpers may share nested maps.)
+    const pristine = opts.beforeSave ? structuredClone(before) : before;
     const ctx: MergeContext = { conflicts, lookup: sourceRowLookup(documents) };
     // Every source entry carries its row's visibility (older entries too),
     // so the CIM writers and the deal list can tell broker-only years apart.
@@ -534,6 +589,11 @@ export async function mergeExtractionIntoDeal(doc: Document, extracted: Extracte
       documents,
     );
     recordFactSpeakers(merged, extracted._speakers, doc.id); // who said it, on calls
+    // Live capture: how sure the seller was, a guard's verify flag, their words.
+    recordFactConfidence(merged, (extracted as Record<string, unknown>)._confidence, doc.id, (extracted as Record<string, unknown>)._verify);
+    recordFactExcerpts(merged, (extracted as Record<string, unknown>)._excerpts, doc.id);
+    if (opts.retractions && opts.retractions.length > 0) applySellerRetractions(merged as never, opts.retractions, { turn: 0 });
+    if (opts.keepOut && opts.keepOut.length > 0) addSellerKeepOut(merged, opts.keepOut);
     // Head counts by role: the roster is the authority (decision A), across facts.
     applyRosterCounts(merged, documents);
     // A note that only repeats a business fact this source recorded is not a note.
@@ -544,6 +604,10 @@ export async function mergeExtractionIntoDeal(doc: Document, extracted: Extracte
     const fieldsWritten = Object.keys(merged).filter(
       (k) => !k.startsWith("_") && JSON.stringify(merged[k]) !== JSON.stringify(before[k]),
     );
+    if (opts.beforeSave && opts.beforeSave(merged, pristine) === "skip") {
+      skippedSave = true;
+      return { status: "extracted" as const, fieldsWritten: [] };
+    }
     await storage.updateDeal(doc.dealId, { extractedInfo: merged, ...columnPatch } as any);
     saved = merged;
     return { status: "extracted" as const, fieldsWritten };
@@ -552,6 +616,8 @@ export async function mergeExtractionIntoDeal(doc: Document, extracted: Extracte
     console.log(`[ingest] doc ${doc.id} was deleted while it was being read — its facts were not merged`);
     return result;
   }
+  // (A live filing already applied — nothing was saved, nothing to settle.)
+  if (skippedSave) return result;
   // Material conflicts still standing after the merge become discrepancies (deduplicated).
   await recordMergeConflicts(doc.dealId, conflicts, documents, saved).catch((err) =>
     console.error(`[ingest] recording merge conflicts failed for doc ${doc.id}:`, err));
@@ -560,6 +626,6 @@ export async function mergeExtractionIntoDeal(doc: Document, extracted: Extracte
   await settleMergeRowsQuietly(doc.dealId, "ingest");
   // New private notes are consolidated with the deal's others shortly after
   // (several sources finishing together → one review).
-  if (extracted._privateNotes) scheduleNotesReview(doc.dealId);
+  if (extracted._privateNotes && opts.reviewNotes !== false) scheduleNotesReview(doc.dealId);
   return result;
 }

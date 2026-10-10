@@ -1,0 +1,1 @@
+{ "content": [{ "type": "tool_use", "id": "toolu_fixture", "name": "keep_out_review", "input": { "holds": [] } }], "usage": { "input_tokens": 900, "output_tokens": 20 } }

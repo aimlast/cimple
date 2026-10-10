@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, integer, boolean, bigint, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, integer, boolean, bigint, index, uniqueIndex, numeric } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -98,6 +98,10 @@ export interface InterviewPlanItem {
   critical: boolean;
   /** An existing extractedInfo key whose value already answers this item (set when the checklist is built). */
   answeredByKey?: string | null;
+  /** A suggested way to ask it aloud, one plain sentence (the checklist phrasing pass; never a fact or a figure). */
+  askAs?: string;
+  /** Why buyers care, ≤ 18 words (the checklist phrasing pass). */
+  whyItMatters?: string;
 }
 
 /** Industry-specific data checklist for a deal, keyed to the industry it was built for. */
@@ -113,6 +117,10 @@ export interface InterviewPlan {
   items: InterviewPlanItem[];
   /** The last time the checklist changed without a broker edit (new checklist rules) — shown on the outline. */
   revision?: { at: string; reason: "rules"; previousItemCount: number; removed: string[]; added: string[] };
+  /** When the suggested ways to ask (askAs / whyItMatters) were written. */
+  phrasedAt?: string;
+  /** Item keys already sent to the phrasing pass for this build (a refused phrasing keeps the template — never sent again). */
+  phrasingTried?: string[];
 }
 
 /** The notetaker bot on an external call (Recall.ai). */
@@ -125,6 +133,18 @@ export interface InterviewBot {
   endedAt?: string;
 }
 
+/** One data point the broker asked to be raised first in the seller's next session. */
+export interface OutlineFollowUpItem {
+  itemId: string;
+  key: string;
+  sectionKey: string;
+  label: string;
+  ask: string;
+  addedAt: string;
+  sittingId?: string;
+  askedAt?: string;
+}
+
 /** Broker's plain-language adjustments to the interview plan for one deal. */
 export interface InterviewOutline {
   updatedAt: string;
@@ -132,8 +152,14 @@ export interface InterviewOutline {
   /** CIM section keys the broker removed from this interview. */
   excludedSections: string[];
   emphasis: OutlineEmphasis[];
-  /** Data points the broker added to a section ("also get the chair count"). */
-  addedItems?: { sectionKey: string; key: string; label: string }[];
+  /** Data points the broker added to a section ("also get the chair count"), or that a session together noted ("noted"). */
+  addedItems?: { sectionKey: string; key: string; label: string; origin?: "broker" | "noted" }[];
+  /**
+   * Data points the broker wants the seller to answer next (the end of an
+   * "Interview together" session). Label and a screened ask only — never a
+   * note. Cleared per item once it is on file.
+   */
+  followUpItems?: OutlineFollowUpItem[];
   /** Data point keys the broker removed from the checklist. */
   removedItems?: string[];
   /** Most recent instructions applied (newest first, capped). */
@@ -716,6 +742,13 @@ export const buyerQuestions = pgTable("buyer_questions", {
   // "cim-disclaimer"/"cim-contact") and the rendition they were reading.
   sectionId: text("section_id"),
   renditionId: text("rendition_id"),
+  // @anchor:buyer-questions-cols:vdr
+  // A question asked about a data-room document (vdr spec §9.9): the room
+  // item, the page in view, and the buyer's team member who asked (null =
+  // the buyer). Such rows skip the AI and keep a "private" / "room" scope.
+  vdrItemId: varchar("vdr_item_id"),
+  vdrPage: integer("vdr_page"),
+  vdrTeamMemberId: varchar("vdr_team_member_id"),
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -792,7 +825,8 @@ export const buyerAccess = pgTable("buyer_access", {
   buyerCompany: text("buyer_company"),
   
   accessToken: text("access_token").notNull().unique(),
-  accessLevel: text("access_level").notNull().default("teaser"), // teaser, full, loi, due_diligence
+  // shared/access-levels.ts: teaser_only | blind | named | due_diligence (legacy teaser/full = blind, loi = named; the default 'teaser' = blind)
+  accessLevel: text("access_level").notNull().default("teaser"),
   
   // NDA
   ndaSigned: boolean("nda_signed").default(false),
@@ -992,6 +1026,10 @@ export const brandingSettings = pgTable("branding_settings", {
   // broker switches them on (legacy rows hold untouched schema defaults).
   useBrandColors: boolean("use_brand_colors").notNull().default(false),
   useBrandFonts: boolean("use_brand_fonts").notNull().default(false),
+  // @anchor:branding-cols:teaser
+  // Brokerage-wide teaser wording (server/teaser/*): {defaultTemplate,
+  // confidentiality, nextStep}. Fixed teaser blocks use it when set.
+  teaserSettings: jsonb("teaser_settings"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1426,7 +1464,7 @@ export const dealMembers = pgTable("deal_members", {
   lastActiveAt: timestamp("last_active_at"),
 
   // Buyer-specific fields (replaces buyerAccess)
-  accessLevel: text("access_level"), // "teaser" | "full" | "loi" | "due_diligence"
+  accessLevel: text("access_level"), // buyer team only — shared/access-levels.ts (legacy values read as aliases)
   ndaSigned: boolean("nda_signed").default(false),
   ndaSignedAt: timestamp("nda_signed_at"),
   canDownload: boolean("can_download").default(false),
@@ -1655,6 +1693,13 @@ export const NOTIFICATION_ROUTING: Record<string, { teams: string[]; roles?: str
   // The seller's answer on the CIM review page (/seller/:token/review).
   cim_seller_approved: { teams: ["broker"], roles: ["lead", "associate"] },
   cim_changes_requested: { teams: ["broker"], roles: ["lead", "associate"] },
+  // gl (Add-backs in the books) — founder question Q21; behind GL_NOTIFICATION_ROUTING (server/gl/notify.ts), which falls back to the follow-up events when these two lines are removed.
+  seller_gl_request: { teams: ["seller"], roles: ["owner", "accountant"] },
+  gl_needs_broker: { teams: ["broker"], roles: ["lead", "associate"] },
+  // vdr (founder Q21, additive — no existing event changes): "Your broker added documents to your
+  // checklist", sent only on the broker's click. To drop it, delete this line; server/vdr/emails.ts
+  // then uses seller_followup_questions (owner, representative) instead.
+  seller_document_request: { teams: ["seller"], roles: ["owner", "representative", "accountant"] },
 };
 
 // Buyer decision next-step options (shown after "interested in moving forward")
@@ -1808,6 +1853,21 @@ export const buyerApprovalRequests = pgTable("buyer_approval_requests", {
   // Once approved, this links to the granted buyerAccess row
   grantedBuyerAccessId: varchar("granted_buyer_access_id"),
   grantedAt: timestamp("granted_at"),
+
+  // @anchor:approval-requests-cols:teaser
+  // A buyer who asked for the CIM from the teaser (server/teaser/requests.ts).
+  // 'teaser_request' | null (= put forward by the broker).
+  source: text("source"),
+  // The teaser link (buyer_access.id) an approval upgrades in place.
+  buyerAccessId: varchar("buyer_access_id"),
+  // The level the broker chose (shared/access-levels.ts; null = the Blind CIM).
+  grantAccessLevel: text("grant_access_level"),
+  // broker | seller | auto — who opened the CIM for them.
+  grantedBy: text("granted_by"),
+  // The buyer's own note to the broker (≤ 1,000 characters).
+  buyerNote: text("buyer_note"),
+  // {linkName, linkEmail, signerName, emailCheck: "code"|"account"|"demo", mismatch}
+  teaserRequest: jsonb("teaser_request"),
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -2055,6 +2115,10 @@ export const dealOutreach = pgTable("deal_outreach", {
   // Failure tracking
   errorMessage: text("error_message"),
 
+  // @anchor:outreach-cols:teaser
+  // The teaser link (buyer_access.id) this email carried (set server-side only).
+  teaserAccessId: varchar("teaser_access_id"),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -2103,6 +2167,11 @@ export const dealDocumentRequirements = pgTable("deal_document_requirements", {
   // Broker can add context, e.g., "Need the last 3 years, not just current"
 
   sortOrder: integer("sort_order").notNull().default(0),
+
+  // @anchor:document-requirements-cols:vdr
+  // When the broker needs it by (a buyer's data-room request asked of the
+  // seller, source "buyer_request"; vdr spec §5.8). Shown to the seller.
+  neededBy: timestamp("needed_by"),
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -2166,6 +2235,8 @@ export interface DocumentSourceMeta {
   readFailed?: { at: string; reason: string; retryable?: boolean };
   /** A long source read only in part (some parts failed, or it is longer than Cimple reads). */
   partialRead?: { at: string; reason: string; readParts: number; parts: number; readChars: number; totalChars: number; retryable?: boolean };
+  /** vdr: the broker chose "Just store them in the data room" — not read for facts until "Read again". */
+  readSkipped?: boolean;
 }
 
 // @anchor:schema-tail:crm
@@ -2309,10 +2380,23 @@ export interface BuyerAiSummary { text: string; at: string; key: string }
 export interface BuyerAccessEvent {
   // "contacted" = the broker's "Mark contacted" on the Engagement tab
   // (POST /api/deals/:dealId/engagement/buyers/:accessId/contacted).
-  type: "extended" | "level_changed" | "revoked" | "reminder_undeliverable" | "contacted";
+  // "granted" = the link was created, at `accessLevel` (shared/access-levels.ts).
+  // Teaser (server/teaser/*): "cim_requested" = asked for the CIM from the
+  // teaser; "teaser_passed" = "Not for me" (`reasons`, `note`; never the CIM
+  // decision); "fresh_link_requested" = asked for a new link after expiry.
+  type: "granted" | "extended" | "level_changed" | "revoked" | "reminder_undeliverable" | "contacted"
+    | "cim_requested" | "teaser_passed" | "fresh_link_requested";
   at: string;
   expiresAt?: string | null;
   accessLevel?: string | null;
+  /** granted: how the link was handed over ("outreach" = in an outreach email). */
+  via?: string | null;
+  /** extended: why ("upgrade" = the CIM was opened on a teaser link). */
+  by?: string | null;
+  /** teaser_passed: the buyer's reasons (size | location | industry | price | timing | other). */
+  reasons?: string[] | null;
+  /** teaser_passed: the buyer's optional note. */
+  note?: string | null;
   /** reminder_undeliverable: which email, and the email service's HTTP status. */
   stage?: "reminder" | "warning";
   status?: number | null;
@@ -2723,6 +2807,8 @@ export const cimRenditions = pgTable("cim_renditions", {
   design: jsonb("design"),                // the view room's `design` payload
   pageIndex: jsonb("page_index").notNull().$type<import("./analytics-v2").RenditionPage[]>(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  // @anchor:cim-renditions-cols:heatmap
+  demoSeed: text("demo_seed"),            // inserted by the sample-reading seed (scripts/seed-demo-reading.ts); null = recorded by the view room
 }, (t) => [
   index("cim_renditions_deal_created_idx").on(t.dealId, t.createdAt),
 ]);
@@ -2767,6 +2853,9 @@ export const buyerVisits = pgTable("buyer_visits", {
   clamped: boolean("clamped").notNull().default(false),      // scaled to the server's elapsed time
   legacy: boolean("legacy").notNull().default(false),        // backfilled from section_exit events
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  // @anchor:buyer-visits-cols:heatmap
+  demoSeed: text("demo_seed"),          // sample reading (scripts/seed-demo-reading.ts); null = real. Every reader of visits must also filter superseded_by.
+  supersededBy: text("superseded_by"),  // hidden while sample reading with this tag replaces it; null = shown
 }, (t) => [
   index("buyer_visits_deal_seen_idx").on(t.dealId, t.lastSeenAt),
   index("buyer_visits_access_idx").on(t.buyerAccessId),
@@ -2829,3 +2918,780 @@ export const readingBenchmarks = pgTable("reading_benchmarks", {
   index("reading_benchmarks_industry_idx").on(t.industry, t.pageRole),
 ]);
 export type ReadingBenchmark = typeof readingBenchmarks.$inferSelect;
+
+// @anchor:schema-tail:oct-teaser
+// ── The teaser (server/teaser/*, shared/teaser*.ts) ─────────────────────────
+// A short anonymous summary sent before the NDA. One row per deal: a draft
+// and the published snapshot (TeaserDoc JSON: a header plus blocks). Deleted
+// with the deal (DEAL_CHILD_TABLES).
+export const dealTeasers = pgTable("deal_teasers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  // A built-in key (shared/teaser-templates.ts) or "saved:<teaser_templates.id>".
+  templateKey: text("template_key").notNull().default("one_page"),
+  // null = the same look as the CIM.
+  designTemplateId: varchar("design_template_id"),
+  pageSize: text("page_size").notNull().default("letter"),          // letter | a4
+  numbers: text("numbers").notNull().default("ranges"),             // ranges | rounded
+  showAskingPrice: boolean("show_asking_price").notNull().default(true),
+  linkLifetime: text("link_lifetime").notNull().default("until_offline"), // until_offline | 30 | 90
+  autoGrant: text("auto_grant").notNull().default("off"),           // off | blind | named
+  draft: jsonb("draft").notNull().default(sql`'{"blocks":[],"header":null}'::jsonb`),
+  draftRev: integer("draft_rev").notNull().default(0),
+  history: jsonb("history").notNull().default(sql`'[]'::jsonb`),    // ≤ 20 {at, reason, doc}
+  generation: jsonb("generation"),
+  codenameUsed: text("codename_used"),
+  reviewConfirmed: jsonb("review_confirmed"),                       // {by, at}
+  sellerCheck: jsonb("seller_check"),
+  published: jsonb("published"),
+  publishedRev: integer("published_rev").notNull().default(0),
+  publishedAt: timestamp("published_at"),
+  unpublishedAt: timestamp("unpublished_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("deal_teasers_deal_uq").on(t.dealId),
+]);
+export type DealTeaser = typeof dealTeasers.$inferSelect;
+export type InsertDealTeaser = typeof dealTeasers.$inferInsert;
+
+/** A broker's saved teaser templates (no deal text: block skeletons + their own wording). */
+export const teaserTemplates = pgTable("teaser_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brokerId: varchar("broker_id").notNull(),
+  name: text("name").notNull(),
+  basedOn: text("based_on"),
+  blocks: jsonb("blocks").notNull(),
+  settings: jsonb("settings").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("teaser_templates_broker_idx").on(t.brokerId),
+]);
+export type TeaserTemplateRow = typeof teaserTemplates.$inferSelect;
+
+/**
+ * The 6-digit email check on a buyer link (server/teaser/email-check.ts):
+ * only the address the broker sent the link to can ask for the CIM. The
+ * code is stored as an HMAC, never as typed. Deleted with the deal.
+ */
+export const buyerLinkEmailChecks = pgTable("buyer_link_email_checks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  buyerAccessId: varchar("buyer_access_id").notNull(),
+  codeHash: text("code_hash").notNull(),
+  sentAt: timestamp("sent_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  verifiedAt: timestamp("verified_at"),
+  method: text("method").notNull().default("code"),                 // code | account | demo
+}, (t) => [
+  index("buyer_link_email_checks_access_idx").on(t.buyerAccessId),
+]);
+export type BuyerLinkEmailCheck = typeof buyerLinkEmailChecks.$inferSelect;
+
+// @anchor:schema-tail:oct-together
+// ── Interview together: the live coverage board (specs/together.md §6) ────
+// A sitting = one "Interview together" session (in person, Cimple call or a
+// Zoom / Meet / Teams notetaker). Its lines are the conversation as text
+// (no audio is ever stored); chunks are the parts Cimple read and filed.
+// coverage_marks are the broker's marks on board items. All deal-scoped,
+// deleted with the deal (server/deals/delete-deal.ts).
+
+export const togetherSittings = pgTable("together_sittings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  brokerId: varchar("broker_id").notNull(),
+  via: text("via").notNull(),                       // person | cimple | zoom | meet | teams
+  status: text("status").notNull().default("live"), // live | paused | ended
+  startedAt: timestamp("started_at").defaultNow().notNull(),
+  pausedAt: timestamp("paused_at"),
+  endedAt: timestamp("ended_at"),
+  lastLineAt: timestamp("last_line_at"),
+  consentAt: timestamp("consent_at"),               // the broker confirmed the seller knows Cimple is taking notes
+  lineSeq: integer("line_seq").notNull().default(0),
+  chunkNo: integer("chunk_no").notNull().default(0),
+  transcriptDocumentId: varchar("transcript_document_id"),
+  botId: text("bot_id"),                            // the Recall bot started for this sitting
+  speakers: jsonb("speakers").notNull().default(sql`'{}'::jsonb`),
+  sellerSeesScreen: boolean("seller_sees_screen").notNull().default(false),
+  captureEnv: text("capture_env").notNull(),        // production | local
+  captureOwner: text("capture_owner"),
+  captureLeaseUntil: timestamp("capture_lease_until"),
+  captureState: jsonb("capture_state").notNull().default(sql`'{}'::jsonb`),
+  summary: jsonb("summary"),
+  interviewCompleted: boolean("interview_completed").notNull().default(false),
+}, (t) => [
+  index("together_sittings_deal_status_idx").on(t.dealId, t.status),
+]);
+export type TogetherSitting = typeof togetherSittings.$inferSelect;
+export type InsertTogetherSitting = typeof togetherSittings.$inferInsert;
+
+export const togetherLines = pgTable("together_lines", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sittingId: varchar("sitting_id").notNull(),
+  dealId: varchar("deal_id").notNull(),
+  seq: integer("seq").notNull(),
+  speaker: text("speaker").notNull(),
+  text: text("text").notNull(),
+  source: text("source").notNull(),                 // deepgram | daily | recall | browser | typed
+  clientId: text("client_id"),
+  clientSeq: integer("client_seq"),
+  attestedSellerAt: timestamp("attested_seller_at"),
+  at: timestamp("at").defaultNow().notNull(),
+  chunkId: varchar("chunk_id"),
+}, (t) => [
+  uniqueIndex("together_lines_sitting_seq_uq").on(t.sittingId, t.seq),
+  uniqueIndex("together_lines_sitting_client_uq").on(t.sittingId, t.clientId, t.clientSeq),
+  index("together_lines_deal_idx").on(t.dealId),
+]);
+export type TogetherLine = typeof togetherLines.$inferSelect;
+export type InsertTogetherLine = typeof togetherLines.$inferInsert;
+
+export const togetherChunks = pgTable("together_chunks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sittingId: varchar("sitting_id").notNull(),
+  dealId: varchar("deal_id").notNull(),
+  chunkNo: integer("chunk_no").notNull(),
+  seqFrom: integer("seq_from").notNull(),
+  seqTo: integer("seq_to").notNull(),
+  reason: text("reason").notNull(),
+  focusItemId: text("focus_item_id"),
+  status: text("status").notNull(),                 // queued | running | applying | done | held | failed | waiting | skipped
+  attempts: integer("attempts").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  startedAt: timestamp("started_at"),
+  doneAt: timestamp("done_at"),
+  appliedAt: timestamp("applied_at"),
+  error: text("error"),
+  usage: jsonb("usage"),
+  delta: jsonb("delta"),
+  result: jsonb("result"),
+}, (t) => [
+  uniqueIndex("together_chunks_sitting_no_uq").on(t.sittingId, t.chunkNo),
+  index("together_chunks_sitting_status_idx").on(t.sittingId, t.status),
+]);
+export type TogetherChunk = typeof togetherChunks.$inferSelect;
+export type InsertTogetherChunk = typeof togetherChunks.$inferInsert;
+
+export const coverageMarks = pgTable("coverage_marks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  itemId: text("item_id").notNull(),                // section:key, doc:<requirementId> or routed:<discrepancyId>
+  sectionKey: text("section_key"),
+  kind: text("kind").notNull(),                     // verify_later | note | asked | not_known | confirmed | doc_promised
+  note: text("note"),
+  valueHash: text("value_hash"),                    // confirmed only: hash of the value it confirmed
+  sittingId: varchar("sitting_id"),
+  createdBy: varchar("created_by").notNull(),       // broker id, or "system"
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  clearedAt: timestamp("cleared_at"),
+}, (t) => [
+  index("coverage_marks_deal_cleared_idx").on(t.dealId, t.clearedAt),
+]);
+export type CoverageMarkRow = typeof coverageMarks.$inferSelect;
+export type InsertCoverageMark = typeof coverageMarks.$inferInsert;
+
+// @anchor:schema-tail:oct-vdr
+// ── Data room (VDR) — vdr spec §8 ───────────────────────────────────────────
+// Every table carries deal_id and is deleted with the deal (DEAL_CHILD_TABLES).
+// Pure rules live in shared/vdr.ts; DB access in server/vdr/store.ts.
+
+/** One row per deal that has a data room. */
+export const vdrRooms = pgTable("vdr_rooms", {
+  dealId: varchar("deal_id").primaryKey(),
+  status: text("status").notNull().default("open"),            // open | closed
+  autoAddNew: boolean("auto_add_new").notNull().default(true),
+  planAppliedAt: timestamp("plan_applied_at"),                 // set-up step 2 confirmed
+  setUpAt: timestamp("set_up_at").defaultNow().notNull(),
+  setUpBy: varchar("set_up_by"),                               // users.id | "demo-seed"
+  closedAt: timestamp("closed_at"),
+  summaryBudgetDay: text("summary_budget_day"),                // "2026-10-09" (AI cap, §9.8)
+  summaryBudgetUsed: integer("summary_budget_used").notNull().default(0),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+export type VdrRoom = typeof vdrRooms.$inferSelect;
+export type InsertVdrRoom = typeof vdrRooms.$inferInsert;
+
+/** A folder of the room's index. Numbers are computed (shared/vdr.ts indexNumbers), never stored. */
+export const vdrFolders = pgTable("vdr_folders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  parentId: varchar("parent_id"),                              // null = top level
+  name: text("name").notNull(),                                // ≤ 120 chars
+  position: integer("position").notNull().default(0),
+  presetKey: text("preset_key"),                               // "financial.tax" … null for broker folders
+  shareHint: jsonb("share_hint").$type<{ levels: string[] } | null>(),  // the plan's choice; only ever a suggestion
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("vdr_folders_deal_parent_idx").on(t.dealId, t.parentId, t.position),
+  uniqueIndex("vdr_folders_deal_preset_uq").on(t.dealId, t.presetKey).where(sql`${t.presetKey} IS NOT NULL`),
+]);
+export type VdrFolder = typeof vdrFolders.$inferSelect;
+export type InsertVdrFolder = typeof vdrFolders.$inferInsert;
+
+/** A deal document placed in the room (or its tombstone once the source is gone). */
+export const vdrItems = pgTable("vdr_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  folderId: varchar("folder_id").notNull(),
+  documentId: varchar("document_id"),                          // null once the source is gone (tombstone)
+  title: text("title").notNull(),                              // the room's name (≤ 200); defaults to documents.name
+  position: integer("position").notNull().default(0),
+  addedBy: text("added_by").notNull().default("broker"),       // auto | broker | seller | demo-seed
+  addedAt: timestamp("added_at").defaultNow().notNull(),
+  downloadable: boolean("downloadable").notNull().default(false),
+  downloadOriginal: boolean("download_original").notNull().default(false),  // §4.3
+  // Broker's cleaned copy, served instead of the original. Private:
+  // "private-vdr/<dealId>/<random>.<ext>" under UPLOADS_DIR. Never read into the deal's facts.
+  cleanCopyPath: text("clean_copy_path"),
+  cleanCopyMime: text("clean_copy_mime"),
+  cleanCopyName: text("clean_copy_name"),
+  cleanCopyAt: timestamp("clean_copy_at"),
+  buyerSummary: text("buyer_summary"),
+  buyerSummaryPoints: jsonb("buyer_summary_points").$type<string[]>(),
+  buyerSummarySource: text("buyer_summary_source"),           // ai | broker | basic
+  buyerSummaryStatus: text("buyer_summary_status"),           // pending | drafted | accepted | failed (null = none yet)
+  buyerSummaryHidden: boolean("buyer_summary_hidden").notNull().default(false),
+  buyerSummaryAt: timestamp("buyer_summary_at"),
+  prepared: jsonb("prepared").$type<import("./vdr").VdrPrepared>(),
+  checkedAt: timestamp("checked_at"),                          // §4.9 "I've checked it"
+  checkedBy: varchar("checked_by"),
+  checkedFlags: jsonb("checked_flags").$type<string[]>(),
+  checkedForFile: text("checked_for_file"),                    // prepared.forFile at the time of the tick
+  fileVersion: integer("file_version").notNull().default(1),
+  fileChangedAt: timestamp("file_changed_at"),
+  removedAt: timestamp("removed_at"),
+  removedReason: text("removed_reason"),                       // source_deleted | seller_removed | made_private | broker
+  replacedByItemId: varchar("replaced_by_item_id"),
+  replacesItemId: varchar("replaces_item_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("vdr_items_deal_folder_idx").on(t.dealId, t.folderId, t.position),
+  uniqueIndex("vdr_items_document_live_uq").on(t.documentId).where(sql`${t.documentId} IS NOT NULL AND ${t.removedAt} IS NULL`),
+]);
+export type VdrItem = typeof vdrItems.$inferSelect;
+export type InsertVdrItem = typeof vdrItems.$inferInsert;
+
+/** Who may open an item: an access level or one buyer (by email), allow or deny. */
+export const vdrShares = pgTable("vdr_shares", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  itemId: varchar("item_id").notNull(),
+  audience: text("audience").notNull(),                        // level | buyer
+  accessLevel: text("access_level"),                           // audience = level: normalizeAccessLevel() output
+  buyerEmail: text("buyer_email"),                             // audience = buyer: buyerKey(email) (V17)
+  viaAccessId: varchar("via_access_id"),                       // the link the broker picked (display only)
+  effect: text("effect").notNull().default("allow"),           // allow | deny (deny only with audience = buyer)
+  createdBy: varchar("created_by"),                            // users.id | "plan" | "demo-seed"
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("vdr_shares_item_level_uq").on(t.itemId, t.accessLevel).where(sql`${t.audience} = 'level'`),
+  uniqueIndex("vdr_shares_item_buyer_uq").on(t.itemId, t.buyerEmail).where(sql`${t.audience} = 'buyer'`),
+  index("vdr_shares_deal_idx").on(t.dealId),
+  index("vdr_shares_deal_buyer_idx").on(t.dealId, t.buyerEmail),
+]);
+export type VdrShare = typeof vdrShares.$inferSelect;
+export type InsertVdrShare = typeof vdrShares.$inferInsert;
+
+/** Per buyer (by email) per deal: room access, downloads, visit stamps (V17). */
+export const vdrBuyerSettings = pgTable("vdr_buyer_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),   // surrogate key: schema.ts uses no composite keys today
+  dealId: varchar("deal_id").notNull(),
+  buyerEmail: text("buyer_email").notNull(),                   // buyerKey(email)
+  roomAccess: text("room_access").notNull().default("auto"),   // auto | on | off
+  allowDownloads: boolean("allow_downloads").notNull().default(false),
+  lastVisitAt: timestamp("last_visit_at"),
+  previousVisitAt: timestamp("previous_visit_at"),
+  updatedBy: varchar("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [uniqueIndex("vdr_buyer_settings_deal_buyer_uq").on(t.dealId, t.buyerEmail)]);
+export type VdrBuyerSettings = typeof vdrBuyerSettings.$inferSelect;
+export type InsertVdrBuyerSettings = typeof vdrBuyerSettings.$inferInsert;
+
+/** A buyer's request for a document (or for the room). */
+export const vdrRequests = pgTable("vdr_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  buyerAccessId: varchar("buyer_access_id").notNull(),         // the principal's link
+  buyerEmail: text("buyer_email").notNull(),
+  teamMemberId: varchar("team_member_id"),                     // set when a team member asked
+  listId: varchar("list_id"),                                  // groups a pasted list
+  kind: text("kind").notNull(),                                // document | room_access (team requests live in vdr_team_members)
+  itemId: varchar("item_id"),
+  documentId: varchar("document_id"),                          // a DD citation's document (never echoed to the buyer)
+  text: text("text").notNull(),                                // ≤ 500 chars
+  status: text("status").notNull().default("open"),            // open | asked_seller | ready_to_share | shared | declined
+  requirementId: varchar("requirement_id"),
+  readyDocumentId: varchar("ready_document_id"),               // the seller upload that answers it
+  brokerNote: text("broker_note"),                             // shown to the buyer
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: varchar("resolved_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("vdr_requests_deal_status_idx").on(t.dealId, t.status),
+  index("vdr_requests_buyer_idx").on(t.dealId, t.buyerEmail),
+  index("vdr_requests_requirement_idx").on(t.requirementId),
+]);
+export type VdrRequest = typeof vdrRequests.$inferSelect;
+export type InsertVdrRequest = typeof vdrRequests.$inferInsert;
+
+/** One opening of a document. The id is SERVER-issued (POST …/views/start). */
+export const vdrViews = pgTable("vdr_views", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  buyerAccessId: varchar("buyer_access_id").notNull(),
+  buyerEmail: text("buyer_email").notNull(),
+  teamMemberId: varchar("team_member_id"),
+  itemId: varchar("item_id").notNull(),
+  documentId: varchar("document_id"),
+  fileVersion: integer("file_version").notNull().default(1),
+  trace: text("trace").notNull(),                              // 6 chars, §9.7; unique per deal in practice
+  source: text("source"),                                      // room | search | new | cim | question | preview | demo
+  startedAt: timestamp("started_at").defaultNow().notNull(),
+  lastSeenAt: timestamp("last_seen_at").defaultNow().notNull(),
+  activeMs: integer("active_ms").notNull().default(0),
+  pageMs: jsonb("page_ms").$type<Record<string, number>>().default(sql`'{}'::jsonb`), // "3" → ms; "s:<sheet>" for sheets
+  maxPage: integer("max_page"),
+  deviceClass: text("device_class"),                           // desktop | tablet | phone
+  downloaded: boolean("downloaded").notNull().default(false),
+}, (t) => [
+  index("vdr_views_deal_seen_idx").on(t.dealId, t.lastSeenAt),
+  index("vdr_views_buyer_idx").on(t.dealId, t.buyerEmail),
+  index("vdr_views_item_idx").on(t.itemId),
+  index("vdr_views_trace_idx").on(t.dealId, t.trace),
+]);
+export type VdrView = typeof vdrViews.$inferSelect;
+export type InsertVdrView = typeof vdrViews.$inferInsert;
+
+/** Append-only audit log. No update/delete route; removed only with the deal. */
+export const vdrActivity = pgTable("vdr_activity", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  at: timestamp("at").defaultNow().notNull(),
+  actorKind: text("actor_kind").notNull(),                     // broker | buyer | team | seller | system
+  actorId: varchar("actor_id"),                                // users.id | buyer_access.id | vdr_team_members.id | seller_invites.id
+  action: text("action").notNull(),                            // VdrAction (shared/vdr.ts)
+  itemId: varchar("item_id"),
+  folderId: varchar("folder_id"),
+  buyerEmail: text("buyer_email"),                             // the buyer acted on / acting
+  detail: jsonb("detail"),                                     // small, no document text
+  ipHash: text("ip_hash"),                                     // keyed HMAC (as buyer_visits.ip_hash); never the raw IP
+}, (t) => [
+  index("vdr_activity_deal_at_idx").on(t.dealId, t.at),
+  index("vdr_activity_item_idx").on(t.itemId),
+  index("vdr_activity_buyer_idx").on(t.dealId, t.buyerEmail),
+]);
+export type VdrActivity = typeof vdrActivity.$inferSelect;
+export type InsertVdrActivity = typeof vdrActivity.$inferInsert;
+
+/** Text of the SERVED file (covered, hidden words dropped), per page or chunk — search + locating figures. */
+export const vdrPageText = pgTable("vdr_page_text", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  itemId: varchar("item_id").notNull(),
+  page: integer("page").notNull(),                             // PDF page; sheet chunk ordinal; 1 for docx/text
+  label: text("label").notNull(),                              // "Page 3" | "Sheet 'Customers', rows 1–1,000"
+  text: text("text").notNull(),                                // ≤ 200 KB per row
+  forFile: text("for_file").notNull(),                         // prepared.forFile it was built from
+}, (t) => [
+  uniqueIndex("vdr_page_text_item_page_uq").on(t.itemId, t.page),
+  index("vdr_page_text_deal_idx").on(t.dealId),
+]);
+export type VdrPageText = typeof vdrPageText.$inferSelect;
+export type InsertVdrPageText = typeof vdrPageText.$inferInsert;
+
+/** A buyer's team member (V18). The token is stored hashed. */
+export const vdrTeamMembers = pgTable("vdr_team_members", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  principalEmail: text("principal_email").notNull(),           // buyerKey of the buyer they work for
+  addedViaAccessId: varchar("added_via_access_id").notNull(),
+  name: text("name").notNull(),                                // ≤ 120
+  email: text("email").notNull(),                              // lower-cased
+  role: text("role").notNull(),                                // accountant | lawyer | lender | adviser | colleague
+  status: text("status").notNull().default("requested"),       // requested | active | declined | removed
+  tokenHash: text("token_hash"),                               // sha256(token) hex; set when activated
+  ackAt: timestamp("ack_at"),
+  ackName: text("ack_name"),
+  ackIpHash: text("ack_ip_hash"),
+  lastVisitAt: timestamp("last_visit_at"),
+  previousVisitAt: timestamp("previous_visit_at"),
+  linkSentAt: timestamp("link_sent_at"),
+  createdBy: text("created_by").notNull(),                     // broker | buyer
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("vdr_team_members_token_uq").on(t.tokenHash).where(sql`${t.tokenHash} IS NOT NULL`),
+  uniqueIndex("vdr_team_members_deal_email_uq").on(t.dealId, t.principalEmail, t.email),
+]);
+export type VdrTeamMember = typeof vdrTeamMembers.$inferSelect;
+export type InsertVdrTeamMember = typeof vdrTeamMembers.$inferInsert;
+
+// @anchor:schema-tail:oct-gl
+// ── General ledger: add-backs found in the books (server/gl/*, shared/gl-types.ts) ──
+// A seller's (or broker's) general-ledger export is read deterministically
+// into one row per entry; each add-back the broker kept is traced to the
+// entries (or the T4 / invoice) that make it up. All five tables carry
+// deal_id and go with the deal (DEAL_CHILD_TABLES). Nothing here reaches a
+// buyer except through the broker's published snapshot (gl_tracing.published).
+
+/** One ledger file (a documents row with subcategory general_ledger) and how it was read. */
+export const glLedgers = pgTable("gl_ledgers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  documentId: varchar("document_id").notNull(),            // documents.id (subcategory general_ledger)
+  role: text("role").notNull().default("ledger"),           // ledger | adjustments (accountant's year-end entries)
+  status: text("status").notNull().default("reading"),      // reading | needs_columns | ready | failed
+  software: text("software"),                                // quickbooks_online | quickbooks_desktop | xero | sage50 | wave | freshbooks | other
+  basis: text("basis"),                                      // accrual | cash | null (from title/footer rows)
+  layout: jsonb("layout").$type<import("./gl-types").GlLayout>(),
+  layoutBy: text("layout_by"),                               // detector | ai | broker
+  headerFingerprint: text("header_fingerprint"),
+  fiscalYearEndUsed: text("fiscal_year_end_used").notNull().default("12-31"), // the deal's FYE when rows were assigned (audit)
+  periodStart: text("period_start"),
+  periodEnd: text("period_end"),
+  years: jsonb("years").$type<Record<string, import("./gl-types").GlYearSummary>>(),
+  rowCount: integer("row_count").notNull().default(0),
+  accountCount: integer("account_count").notNull().default(0),
+  duplicateCount: integer("duplicate_count").notNull().default(0),
+  skippedCount: integer("skipped_count").notNull().default(0),
+  progress: jsonb("progress").$type<{ rowsRead: number; rowsSaved: number; at: string }>(),
+  attempts: integer("attempts").notNull().default(0),        // automatic re-reads after an interrupted read (max 2)
+  problems: jsonb("problems").$type<import("./gl-types").GlProblem[]>().default(sql`'[]'::jsonb`),
+  failure: text("failure"),
+  uploadedBy: text("uploaded_by").notNull().default("broker"), // broker | seller
+  sharedWithSellerByBroker: boolean("shared_with_seller_by_broker").notNull().default(false), // D25 (CRM ledger made seller-visible)
+  showStaffNames: boolean("show_staff_names").notNull().default(false),
+  allowOriginalDownload: boolean("allow_original_download").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("gl_ledgers_deal_idx").on(t.dealId),
+  uniqueIndex("gl_ledgers_document_uq").on(t.documentId),
+]);
+export type GlLedger = typeof glLedgers.$inferSelect;
+export type InsertGlLedger = typeof glLedgers.$inferInsert;
+
+/** One ledger entry (one line of the file). amount_cents = debit − credit. */
+export const glTransactions = pgTable("gl_transactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ledgerId: varchar("ledger_id").notNull(),
+  dealId: varchar("deal_id").notNull(),
+  rowNo: integer("row_no").notNull(),          // 1-based line in the file (across sheets) — the citation
+  sheet: text("sheet"),
+  txnDate: text("txn_date").notNull(),         // YYYY-MM-DD
+  fiscalYear: text("fiscal_year").notNull(),   // "2024" = the fiscal year ENDING in 2024
+  account: text("account").notNull(),          // with parent path ("Automobile Expense:Fuel")
+  accountKey: text("account_key").notNull(),   // lower-case, number prefix and punctuation stripped
+  accountNumber: text("account_number"),
+  accountType: text("account_type"),           // when the export has an account-type column (Xero, some QBO)
+  name: text("name"),
+  memo: text("memo"),
+  txnType: text("txn_type"),
+  txnNumber: text("txn_number"),
+  debitCents: bigint("debit_cents", { mode: "number" }),
+  creditCents: bigint("credit_cents", { mode: "number" }),
+  amountCents: bigint("amount_cents", { mode: "number" }).notNull(), // debit − credit
+  duplicate: boolean("duplicate").notNull().default(false),
+  sensitiveHint: text("sensitive_hint"),       // null | personal | staff — ingest-time hint only; buyers are masked at serve time
+}, (t) => [
+  uniqueIndex("gl_transactions_ledger_row_uq").on(t.ledgerId, t.rowNo),
+  index("gl_transactions_deal_year_account_idx").on(t.dealId, t.fiscalYear, t.accountKey),
+  index("gl_transactions_deal_amount_idx").on(t.dealId, t.amountCents),
+]);
+export type GlTransaction = typeof glTransactions.$inferSelect;
+export type InsertGlTransaction = typeof glTransactions.$inferInsert;
+
+/** One row per deal: the fiscal year end, the request to the seller, tie-out, publish state and AI day counters. */
+export const glTracing = pgTable("gl_tracing", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  fiscalYearEnd: text("fiscal_year_end").notNull().default("12-31"), // the one place (D26)
+  fiscalYearEndByBroker: boolean("fiscal_year_end_by_broker").notNull().default(false), // false = follows the facts/statements
+  analysisId: varchar("analysis_id"),
+  syncedFingerprint: text("synced_fingerprint"),          // analysis id + updatedAt + FYE: skip identical syncs
+  requestedAt: timestamp("requested_at"),
+  requestedBy: varchar("requested_by"),
+  recipients: jsonb("recipients").$type<Array<{ memberId: string | null; inviteId: string | null; role: string }>>(),
+  sellerMessage: text("seller_message"),
+  lastRemindedAt: timestamp("last_reminded_at"),
+  withdrawnAt: timestamp("withdrawn_at"),
+  sellerDoneAt: timestamp("seller_done_at"),
+  sellerConfirmation: jsonb("seller_confirmation").$type<{ role: "owner" | "accountant"; memberId: string | null; name: string | null; at: string } | null>(),
+  cantGetLedger: jsonb("cant_get_ledger").$type<{ reason: string; note?: string; at: string } | null>(),
+  accountantRequest: jsonb("accountant_request").$type<{ memberId: string; name: string; email: string; at: string; sentAt?: string; declinedAt?: string } | null>(),
+  sellerSuggestions: jsonb("seller_suggestions").$type<import("./gl-types").GlSellerSuggestion[]>().default(sql`'[]'::jsonb`),
+  emailLinkSends: jsonb("email_link_sends").$type<{ day: string; count: number } | null>(),
+  tieOut: jsonb("tie_out").$type<Record<string, import("./gl-types").GlTieOutYear>>(),
+  tieOutAccepted: jsonb("tie_out_accepted").$type<Record<string, { note: string; at: string; by: string }>>().default(sql`'{}'::jsonb`),
+  accountClasses: jsonb("account_classes").$type<Record<string, "revenue" | "expense" | "balance_sheet">>().default(sql`'{}'::jsonb`),
+  waived: jsonb("waived").$type<{ reason: string; at: string; by: string } | null>(), // "go ahead without the ledger"
+  reviewedAt: timestamp("reviewed_at"),
+  requireBeforeCim: boolean("require_before_cim").notNull().default(false), // hold the whole CIM (D16)
+  published: jsonb("published").$type<import("./gl-types").GlPublishedEvidence | null>(),
+  publishedAt: timestamp("published_at"),
+  publishedBy: varchar("published_by"),
+  aiDay: text("ai_day"),                                   // UTC day of the counters below
+  aiBrokerMapping: integer("ai_broker_mapping").notNull().default(0),
+  aiBrokerRanking: integer("ai_broker_ranking").notNull().default(0),
+  aiSellerMapping: integer("ai_seller_mapping").notNull().default(0),
+  aiSellerRanking: integer("ai_seller_ranking").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [uniqueIndex("gl_tracing_deal_uq").on(t.dealId)]);
+export type GlTracing = typeof glTracing.$inferSelect;
+export type InsertGlTracing = typeof glTracing.$inferInsert;
+
+/** One add-back the broker kept, as traced in the books (keyed by its normalised label — analysis ids change per run). */
+export const glAddbackTraces = pgTable("gl_addback_traces", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  addbackKey: text("addback_key").notNull(),     // normalizeLabel(baseLabel(label))
+  analysisId: varchar("analysis_id"),
+  analysisAddbackId: varchar("analysis_addback_id"),
+  label: text("label").notNull(),
+  category: text("category"),
+  proof: text("proof").notNull().default("ledger"),  // ledger | payroll | one_off | statement
+  proofByBroker: boolean("proof_by_broker").notNull().default(false),
+  sharePct: integer("share_pct"),
+  shareBasis: text("share_basis"),                // estimate | documented
+  shareBasisDoc: text("share_basis_doc"),
+  claims: jsonb("claims").$type<Record<string, number>>().notNull(), // fiscalYearKey → cents (owner pay: actual pay)
+  yearLabels: jsonb("year_labels").$type<Record<string, string>>(),
+  sellerLabel: text("seller_label").notNull(),
+  sellerHint: text("seller_hint"),
+  privateEvidence: boolean("private_evidence").notNull().default(false),
+  sentAt: timestamp("sent_at"),
+  sellerStatus: text("seller_status").notNull().default("not_started"),
+  reopenedNote: text("reopened_note"),
+  sellerNote: text("seller_note"),
+  sellerNoteShown: boolean("seller_note_shown").notNull().default(false),
+  notInLedger: jsonb("not_in_ledger").$type<{ reason: "personal" | "other_document" | "unsure"; at: string; years?: string[] } | null>(),
+  question: jsonb("question").$type<{ text: string; askedAt: string; answer?: string; answeredAt?: string } | null>(),
+  brokerVerdict: text("broker_verdict"),          // found | partly_found | not_found
+  reviewedAt: timestamp("reviewed_at"),
+  brokerNote: text("broker_note"),
+  brokerNoteShown: boolean("broker_note_shown").notNull().default(false),
+  buyerReason: text("buyer_reason"),
+  leftOut: jsonb("left_out").$type<{ years: string[]; reason: string } | null>(),
+  includeInCim: boolean("include_in_cim").notNull().default(true),
+  computed: jsonb("computed").$type<import("./gl-types").GlTraceComputed>(),
+  proposalFingerprint: text("proposal_fingerprint"),
+  removedAt: timestamp("removed_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [uniqueIndex("gl_addback_traces_deal_key_uq").on(t.dealId, t.addbackKey)]);
+export type GlAddbackTrace = typeof glAddbackTraces.$inferSelect;
+export type InsertGlAddbackTrace = typeof glAddbackTraces.$inferInsert;
+
+/** A ledger entry (pointer + snapshot) or a supporting document linked to a traced add-back for one fiscal year. */
+export const glTraceLinks = pgTable("gl_trace_links", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  traceId: varchar("trace_id").notNull(),
+  dealId: varchar("deal_id").notNull(),
+  fiscalYear: text("fiscal_year").notNull(),
+  ledgerId: varchar("ledger_id"),                 // ledger entry: pointer + snapshot (D12)
+  rowNo: integer("row_no"),
+  documentId: varchar("document_id"),             // document support (T4, payroll summary, invoice)
+  docAmountCheck: text("doc_amount_check"),       // found_in_document | not_found | unreadable
+  txnDate: text("txn_date"),
+  account: text("account"),
+  name: text("name"),
+  memo: text("memo"),
+  amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+  state: text("state").notNull(),                 // proposed | confirmed | rejected | orphaned
+  proposedBy: text("proposed_by"),                // rules | ai | seller_search | broker | seller_document
+  confidence: text("confidence"),
+  reason: text("reason"),
+  decidedBy: text("decided_by"),                  // seller | broker
+  decidedByMember: varchar("decided_by_member"),
+  decidedAt: timestamp("decided_at"),
+  showDetails: boolean("show_details"),           // null = default by serve-time masking; broker override
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  index("gl_trace_links_trace_idx").on(t.traceId, t.fiscalYear),
+  index("gl_trace_links_deal_idx").on(t.dealId),
+  uniqueIndex("gl_trace_links_entry_uq").on(t.traceId, t.ledgerId, t.rowNo).where(sql`${t.ledgerId} IS NOT NULL`),
+  uniqueIndex("gl_trace_links_doc_uq").on(t.traceId, t.documentId, t.fiscalYear).where(sql`${t.documentId} IS NOT NULL`),
+]);
+export type GlTraceLink = typeof glTraceLinks.$inferSelect;
+export type InsertGlTraceLink = typeof glTraceLinks.$inferInsert;
+
+// @anchor:schema-tail:oct-dd
+// ── Notes on the CIM's figures + the due-diligence figure checks ────────────
+// (stream "dd": server/cim/figures/*, shared/figure-*.ts). A note is keyed by
+// the figure (line + year), never by a section, so it survives regenerations
+// and attaches wherever any version of the CIM shows that figure. Questions
+// about the numbers live in their own table — never in `discrepancies`, whose
+// conflict engines and CIM lock must not see them.
+
+/** What a figure note rests on (broker-side; buyers get a basis label + citations only). */
+export interface FigureNoteSource {
+  kind: "document" | "transcript" | "interview" | "fact" | "discrepancy" | "computed" | "hint";
+  documentId?: string;
+  sessionId?: string;
+  messageIndex?: number;
+  factKey?: string;
+  discrepancyId?: string;
+  /** ≤ 240 characters. */
+  quote?: string;
+  page?: number | null;
+  /** A broker resolution note (internal wording). */
+  internal?: true;
+}
+/** The figures a note was written (and approved) for; served only while they still match. */
+export interface FigureValuesSnapshot {
+  year: string;
+  value: number;
+  fromYear?: string;
+  fromValue?: number;
+  other?: number;
+  components?: Record<string, number>;
+}
+/** A newer machine version of a note the refresh may not write over (approved, hidden, edited, broker-written). */
+export interface FigureNoteProposal {
+  text: string;
+  blindText: string | null;
+  sources: FigureNoteSource[];
+  valuesSnapshot: FigureValuesSnapshot;
+  inputFingerprint: string;
+  at: string;
+}
+export interface FigureNoteEvent {
+  at: string;
+  by: "cimple" | "broker" | "owner";
+  what: "written" | "edited" | "approved" | "hidden" | "restored" | "flagged" | "proposal_used";
+  comment?: string;
+}
+/** The last AI pass (or refresh) on a deal's figures. */
+export interface FigureBuildStatus {
+  status: "running" | "done" | "failed";
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
+  written?: number;
+  candidates?: number;
+  warnings?: string[];
+  skippedBecauseEdited?: number;
+  /** Why the build ran ("cim_generated", "dd_generated", "broker", "interview_answers"). */
+  reason?: string;
+  /** "<candidate key>@<fingerprint>" the AI found no reason for (not sent to the model again until something changes). */
+  noReason?: string[];
+  /** Candidates whose suggested note a guard dropped ("A suggested note was dropped: …"). */
+  dropped?: string[];
+}
+/** Where a figure was found in a document's text (D11), or that it wasn't. */
+export type FigureLocatedEntry = { index: number; page: number | null; sourceLabel: string | null } | { missing: true };
+
+export const cimFigureNotes = pgTable("cim_figure_notes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  /** "operatingExpenses|2023", "line:facility-rent-warehouse|2023". */
+  figureKey: text("figure_key").notNull(),
+  /** "movement" | "difference" | "context" */
+  kind: text("kind").notNull(),
+  /** movement: the earlier year; difference: "tax_return:<documentId>" | "cim_statements:<documentId>" | "restated:<documentId>"; context: "". */
+  compareKey: text("compare_key").notNull().default(""),
+  /** "computed" | "ai" | "broker" */
+  origin: text("origin").notNull(),
+  /** "suggested" | "approved" | "hidden" — buyers see approved notes only. */
+  status: text("status").notNull().default("suggested"),
+  /** Named wording (Full CIM + due diligence). */
+  text: text("text").notNull(),
+  /** Blind CIM wording; null = not shown in the Blind CIM. */
+  blindText: text("blind_text"),
+  sources: jsonb("sources").$type<FigureNoteSource[]>().notNull().default(sql`'[]'::jsonb`),
+  valuesSnapshot: jsonb("values_snapshot").$type<FigureValuesSnapshot>().notNull(),
+  inputFingerprint: text("input_fingerprint").notNull(),
+  /** "figures_changed" | "source_removed" | "seller_flagged" | null */
+  staleReason: text("stale_reason"),
+  proposal: jsonb("proposal").$type<FigureNoteProposal | null>(),
+  /** The owner's "Change this" comment — broker-only. */
+  sellerComment: text("seller_comment"),
+  history: jsonb("history").$type<FigureNoteEvent[]>().notNull().default(sql`'[]'::jsonb`),
+  approvedAt: timestamp("approved_at"),
+  approvedBy: varchar("approved_by"),
+  editedAt: timestamp("edited_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("cim_figure_notes_uniq").on(t.dealId, t.figureKey, t.kind, t.compareKey),
+  index("cim_figure_notes_deal").on(t.dealId, t.status),
+]);
+export type CimFigureNote = typeof cimFigureNotes.$inferSelect;
+export type InsertCimFigureNote = typeof cimFigureNotes.$inferInsert;
+
+/** The broker's decision on one due-diligence check (show / leave out / Cimple read it wrong). */
+export const ddCheckDecisions = pgTable("dd_check_decisions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  /** "<figureKey>~<compareKey>" */
+  checkKey: text("check_key").notNull(),
+  /** "shown" | "left_out" | "corrected" */
+  state: text("state").notNull(),
+  /** Broker-only. */
+  reason: text("reason"),
+  correctedValue: numeric("corrected_value", { precision: 18, scale: 2 }),
+  valuesSnapshot: jsonb("values_snapshot").$type<{ base: number; other: number }>().notNull(),
+  decidedBy: varchar("decided_by"),
+  decidedAt: timestamp("decided_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("dd_check_decisions_uniq").on(t.dealId, t.checkKey),
+]);
+export type DdCheckDecision = typeof ddCheckDecisions.$inferSelect;
+
+/** Questions about the numbers for the seller (never rows in `discrepancies`). */
+export const cimFigureQuestions = pgTable("cim_figure_questions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  figureKey: text("figure_key").notNull(),
+  /** "movement" | "difference" */
+  kind: text("kind").notNull(),
+  compareKey: text("compare_key").notNull().default(""),
+  /** The fact key the seller's answer is recorded under ("reasonFuelChange2023"). */
+  captureKey: text("capture_key").notNull(),
+  /** Seller wording. */
+  question: text("question").notNull(),
+  valuesShown: jsonb("values_shown").$type<Record<string, string | number>>().notNull(),
+  /** "suggested" | "ask_seller" | "answered" | "asked" | "closed" */
+  status: text("status").notNull().default("suggested"),
+  routedAt: timestamp("routed_at"),
+  /** "auto" | "broker" */
+  routedBy: text("routed_by"),
+  raisedAt: timestamp("raised_at"),
+  sessionId: varchar("session_id"),
+  /** "not_needed" | "written_by_broker" | "note_approved" | "figures_changed" */
+  closedReason: text("closed_reason"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("cim_figure_questions_uniq").on(t.dealId, t.figureKey, t.kind, t.compareKey),
+  index("cim_figure_questions_deal").on(t.dealId, t.status),
+]);
+export type CimFigureQuestion = typeof cimFigureQuestions.$inferSelect;
+
+/** One row per deal; every column has its own setter (server/cim/figures/store.ts) — never written as a whole. */
+export const cimFigureState = pgTable("cim_figure_state", {
+  dealId: varchar("deal_id").primaryKey(),
+  build: jsonb("build").$type<FigureBuildStatus | null>(),
+  /** "YYYY-MM-DD" (UTC) of the AI budget below. */
+  budgetDay: text("budget_day"),
+  budgetCalls: integer("budget_calls").notNull().default(0),
+  /** null = not chosen (new deals on, deals from before the release off). */
+  autoAsk: boolean("auto_ask"),
+  /** Due-diligence buyers see the checks since then (null = not shown). */
+  ddShownAt: timestamp("dd_shown_at"),
+  ddShownBy: varchar("dd_shown_by"),
+  /** The last build's keep-out holds (broker-side only). */
+  keepOut: jsonb("keep_out").$type<{ names: string[]; at: string; by: "ai" | "rules"; fp?: string } | null>(),
+  /** "<docId>@<docUpdatedAt>#<value>" → where it was found (D11). */
+  located: jsonb("located").$type<Record<string, FigureLocatedEntry>>().notNull().default(sql`'{}'::jsonb`),
+  refreshedFingerprint: text("refreshed_fingerprint"),
+  refreshedAt: timestamp("refreshed_at"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+export type CimFigureState = typeof cimFigureState.$inferSelect;

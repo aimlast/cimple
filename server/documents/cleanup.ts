@@ -83,8 +83,33 @@ export async function deleteDocumentAndProvenance(docId: string): Promise<string
   } catch (e) {
     console.warn("[documents] provenance cleanup failed:", e);
   }
+  // 1. together: an "Interview together" transcript stops its session filing (INTEGRATION §2.17).
+  try {
+    const { onTogetherSourceDeleted } = await import("../together/transcript");
+    await onTogetherSourceDeleted(doc);
+  } catch (e) {
+    console.warn("[documents] together clean-up failed:", e);
+  }
+
+  // A general ledger (INTEGRATION §2.17 step 2): its entries and ledger row
+  // go under the GL lock, links keep their snapshot as "orphaned", the
+  // checklist row follows. Never throws.
+  if (doc.subcategory === "general_ledger") {
+    const { onLedgerDocumentDeleted } = await import("../gl/ingest");
+    await onLedgerDocumentDeleted(doc);
+  } else if (doc.subcategory === "addback_support") {
+    const { onGlSupportDocumentDeleted } = await import("../gl/support-docs");
+    await onGlSupportDocumentDeleted(doc);
+  }
+
+  // The data room (INTEGRATION §2.17 step 3): its item becomes a tombstone;
+  // the cleaned copy, prepared pages and page text go. Never throws.
+  const { onSourceDeleted } = await import("../vdr/setup");
+  await onSourceDeleted(doc);
 
   await removeDocumentFile(doc);
+  // dd (INTEGRATION §2.17, last): its citations drop at once; the figure checks re-read the deal's documents.
+  void import("../cim/figures/refresh").then((m) => m.invalidateAndRefreshFigures(doc.dealId, "documents")).catch(() => {});
   return removed;
 }
 

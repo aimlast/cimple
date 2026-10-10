@@ -18,15 +18,24 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   blocksOf, blockFingerprint, expectedMsOf, partCount, topSegment,
 } from "../../shared/cim-blocks";
-import type {
-  BlockAttention, DocumentPage, EngagementRenditionResponse, RenditionPage,
+import {
+  DEFAULT_ENGAGEMENT_FILTERS, engagementViewScope, firstViewCounts,
+  type BlockAttention, type DocumentPage, type EngagementRenditionResponse, type RenditionPage,
 } from "../../shared/analytics-v2";
 import {
   effectiveScope, heatIntensity, heatMaxMs, interactionLines, legendTicks, msAtIntensity, orderPages, paperTint,
   parsePageParam, partVisibility, partVisibilityCss, pathWidths, reachFallback, readersText, selectPageIndex,
   steepestDrop, topBlocks, unreadBlocks, TINT_STRENGTH, defaultSectionView, inView, isUnread, pageInView, pageOfText,
+  drawMode, statusSentence, whyNotes, washFill, WASH_MAX_ALPHA, pageRank, railTint, pageLegendTicks, recordedReach, reachCountsLine, recordedDrop, pageRunsText,
+  pageHeatMaxMs, ordinal, shortDate, type StatusContext, FEW_PARTS_NOTE, scopedNobody,
+  parseCompareParam, compareParam, compareGroups, defaultCompareB, compareReducer, compareStart, compareSideB, validCompare,
+  perBuyerPage, sharedMaxMs, firstName, COMPARE_GROUP_MAX, type CompareBuyer, type CompareState,
 } from "../../client/src/components/engagement/document/viewer-model";
-import { PageCanvas } from "../../client/src/components/engagement/document/PageCanvas";
+import { compareFiltersText } from "../../client/src/components/engagement/document/CompareView";
+import { BlockDetails, PageCanvas } from "../../client/src/components/engagement/document/PageCanvas";
+import { PagePanel, updateNote } from "../../client/src/components/engagement/document/PagePanel";
+import { HeatLegend, PageLegend } from "../../client/src/components/engagement/document/Legends";
+import { axisLabelShown } from "../../client/src/components/engagement/document/ReachChart";
 
 (globalThis as any).window ??= { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) };
 
@@ -331,10 +340,362 @@ test("a page missing from this version says so instead of rendering something el
   assert.match(html, /isn(&#x27;|')t in this version of the CIM/);
 });
 
+console.log("whole-page heat, status line and Why? (heat-map spec §3)");
+
+type Heat = DocumentPage["heat"];
+const heat = (basis: Heat["basis"], over: Partial<Heat> = {}): Heat => ({ basis, partBuyers: basis === "parts" || basis === "mixed" ? 3 : 0, pageOnlyBuyers: basis === "page" ? 8 : basis === "mixed" ? 2 : 0, pageOnlyMs: basis === "page" ? 1_660_000 : basis === "mixed" ? 250_000 : 0, reason: basis === "page" || basis === "mixed" ? "before_part_tracking" : null, ...over });
+const hp = (attentionMs: number, h: Heat) => ({ attentionMs, heat: h });
+const ctx = (over: Partial<StatusContext> = {}): StatusContext => ({ blind: false, showNamed: false, sameLayout: true, ...over });
+const docOf = (over: Record<string, unknown> = {}) => ({ versionNote: null, sampleReading: false, reachBasis: "tracked", lastRecordedIndex: null, legacyUnmatched: null, pages: [], ...over }) as any;
+
+test("what is drawn: each part, the whole page, or nothing", () => {
+  assert.equal(drawMode(hp(60_000, heat("parts"))), "parts");
+  assert.equal(drawMode(hp(60_000, heat("mixed"))), "parts");
+  assert.equal(drawMode(hp(60_000, heat("page"))), "wash");
+  assert.equal(drawMode(hp(60_000, heat("parts")), false), "wash", "the named version with different parts: whole page");
+  assert.equal(drawMode(hp(500, heat("none"))), "none");
+  assert.equal(drawMode(null), "none");
+});
+test("the wash stays light enough to read through (alpha ≤ 0.37) and grows with time", () => {
+  const a = (c: string | null) => Number(/, ([\d.]+)\)$/.exec(c ?? "")?.[1]);
+  assert.equal(washFill(0), null);
+  assert.ok(a(washFill(1)) <= WASH_MAX_ALPHA + 1e-9 && a(washFill(1)) > 0.36);
+  assert.ok(a(washFill(0.2)) < a(washFill(0.8)));
+  assert.ok(a(washFill(0.01)) >= 0.1, "even a little reading shows");
+  assert.match(washFill(0.5)!, /^rgba\(\d+, \d+, \d+, /, "explicit rgba on the theme-locked paper");
+});
+test("rank on the page: '3rd most-read of 29', 'Most-read of 29', nothing for an unread page", () => {
+  const pages = [5, 30, 10, 20, 0].map((m, i) => ({ pageId: `p${i}`, part: 0, index: i, attentionMs: m * 1000 }));
+  assert.equal(pageRank(pages, pages[1])!.text, "Most-read of 5");
+  assert.equal(pageRank(pages, pages[2])!.text, "3rd most-read of 5");
+  assert.equal(pageRank(pages, pages[4]), null);
+  // A section printed as two parts ("2a", "2b") is one page, its parts' time together.
+  const split = [{ pageId: "a", part: 0, index: 0, attentionMs: 10_000 }, { pageId: "b", part: 0, index: 1, attentionMs: 6_000 }, { pageId: "b", part: 1, index: 2, attentionMs: 6_000 }];
+  assert.equal(pageRank(split, split[2])!.text, "Most-read of 2");
+  assert.equal(pageRank(split, split[0])!.text, "2nd most-read of 2");
+  assert.deepEqual([1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 101].map(ordinal), ["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd", "101st"]);
+  assert.equal(pageHeatMaxMs(pages), 30_000);
+});
+test("rail tiles are tinted by reading time in the brass token (both themes); unread tiles aren't", () => {
+  assert.equal(railTint(0), null);
+  assert.equal(railTint(1), "hsl(var(--teal) / 0.300)");
+  assert.equal(railTint(0.5), "hsl(var(--teal) / 0.175)");
+});
+test("the whole-page legend speaks in seconds of page reading time", () => {
+  const ticks = pageLegendTicks(36 * 60_000 + 46_000);
+  assert.equal(ticks.length, 4);
+  assert.equal(ticks[3].label, "36 min 46 s");
+  assert.ok(ticks.every((t) => !/%/.test(t.label)));
+});
+test("the status line: one sentence, first match wins (spec §3.4)", () => {
+  const d = docOf();
+  assert.equal(statusSentence(hp(0, heat("none")), d, ctx()), "Nobody has read this page yet.");
+  // Filtered views ("See where they read"): other buyers may have read it — unless nobody's reading was recorded on it.
+  assert.equal(statusSentence(hp(0, heat("none")), d, ctx({ filter: "one" })), "This buyer hasn't read this page.");
+  assert.equal(statusSentence(hp(0, heat("none")), d, ctx({ filter: "some" })), "No buyer in this view has read this page.");
+  assert.equal(statusSentence({ ...hp(0, heat("none")), reachRecorded: false }, d, ctx({ filter: "one" })), "Nobody has read this page yet.");
+  assert.equal(statusSentence(hp(60_000, heat("page")), docOf({ versionNote: { kind: "kept_copy", since: "2026-09-29T14:02:17Z" } }), ctx({ blind: true })),
+    "Shaded as a whole page: read before Cimple tracked each part of a page.");
+  assert.equal(statusSentence(hp(60_000, heat("page", { reason: "other_layout" })), d, ctx()), "Shaded as a whole page: buyers read a version of it with different parts.");
+  assert.equal(statusSentence(hp(60_000, heat("mixed", { partBuyers: 1, pageOnlyBuyers: 2, pageOnlyMs: 250_000 })), d, ctx()),
+    "Colours show where 1 buyer read; 2 more read it as a whole page (4 min 10 s).");
+  assert.equal(statusSentence(hp(60_000, heat("parts")), docOf({ versionNote: { kind: "held", sample: true } }), ctx({ blind: true })), "Buyers can't open this CIM until you publish your update.");
+  assert.equal(statusSentence(hp(60_000, heat("parts")), docOf({ versionNote: { kind: "kept_copy", since: "2026-09-29T14:02:17Z" } }), ctx()), "Buyers are still reading the version from before your 29 Sep update.");
+  assert.equal(statusSentence(hp(60_000, heat("parts")), docOf({ versionNote: { kind: "older_version", changedPages: 3 } }), ctx()), "This is the version these buyers read; your CIM has changed since.");
+  assert.equal(statusSentence(hp(60_000, heat("parts")), d, ctx({ blind: true })), "Blind version: exactly what blind buyers saw.");
+  assert.equal(statusSentence(hp(60_000, heat("parts")), d, ctx()), null);
+  assert.equal(shortDate("not a date"), null);
+});
+test("Why? lists every note that applies, in plain words", () => {
+  const pages = [0, 1, 2, 3].map((i) => ({ index: i, label: String(27 + i), title: ["Transaction", "Next Steps & Contact", "Disclaimer", "Contact"][i], reachRecorded: i === 0 }));
+  const notes = whyNotes(hp(60_000, heat("page")), docOf({
+    versionNote: { kind: "kept_copy", since: "2026-09-29T14:02:17Z" }, sampleReading: true, reachBasis: "old_tracking", lastRecordedIndex: 0, pages,
+    legacyUnmatched: { attentionMs: 660_000, pages: [{ label: "History milestones", attentionMs: 400_000 }, { label: "Where we operate", attentionMs: 260_000 }] },
+  }), ctx({ blind: true }));
+  assert.deepEqual(notes.map((n) => n.key), ["basis", "version", "blind", "not_recorded", "unmatched", "sample"]);
+  assert.match(notes[0].text, /^Cimple recorded these visits before it tracked each part of a page/);
+  assert.match(notes[1].text, /before your 29 Sep update, while the update waits for your review/);
+  assert.equal(notes[3].text, `Cimple's earlier tracking didn't record pages 28–30 (Next Steps & Contact, Disclaimer, Contact), so "how far buyers got" stops at page 27.`);
+  assert.match(notes[4].text, /^11 min of earlier reading was on pages this version of the CIM doesn't show \(History milestones, Where we operate\)/);
+  assert.match(notes[5].text, /^This is an example deal\./);
+  const held = whyNotes(hp(60_000, heat("parts")), docOf({ versionNote: { kind: "held", sample: true } }), ctx());
+  assert.equal(held[0].text, "Buyers haven't seen this version yet. This sample reading is drawn on the version they'll get when you publish.");
+  const heldBlind = whyNotes(hp(60_000, heat("parts")), docOf({ versionNote: { kind: "held", sample: false } }), ctx({ blind: true }));
+  assert.equal(heldBlind[1].text, "Blind version: what blind buyers will see when you publish. Page titles in the list are the real ones, for you.");
+  const heldReal = whyNotes(hp(60_000, heat("parts")), docOf({ versionNote: { kind: "held", sample: false } }), ctx());
+  assert.equal(heldReal[0].text, "Buyers haven't seen this version yet. Shading shows the time they spent on the matching page of the version they read.");
+  const named = whyNotes(hp(60_000, heat("parts")), docOf(), ctx({ blind: true, showNamed: true, sameLayout: false }));
+  assert.equal(named[0].text, "The named version's parts differ from what blind buyers saw, so the whole page is shaded by its reading time.");
+  // Never the internal words on screen.
+  for (const n of [...notes, ...held, ...named]) assert.doesNotMatch(`${n.title} ${n.text}`, /legacy|rendition|dwell/i);
+  assert.deepEqual(whyNotes(hp(60_000, heat("parts")), docOf(), ctx()), []);
+});
+test("Why? for pages with no reading recorded in between (a rebuild's new pages): listed as runs, honest about why", () => {
+  const labels = ["1", "2", "3", "4a", "4b", "5", "6", "7", "8", "9"];
+  const unrec = new Set(["4a", "4b", "8"]);
+  const pages = labels.map((label, i) => ({ index: i, label, title: label.startsWith("4") ? "Executive Summary" : label === "8" ? "Three-Year Revenue Growth" : `Page ${label}`, reachRecorded: !unrec.has(label) }));
+  const doc = { reachBasis: "old_tracking", lastRecordedIndex: 9, pages };
+  const kept = whyNotes(null, docOf({ ...doc }), ctx()).find((n) => n.key === "not_recorded")!;
+  assert.equal(kept.title, "Pages with no reading recorded");
+  assert.equal(kept.text, `Cimple's earlier tracking didn't record pages 4a–4b and 8 (Executive Summary, Three-Year Revenue Growth), so they're hatched and left out of "how far buyers got".`);
+  const held = whyNotes(null, docOf({ ...doc, versionNote: { kind: "held", sample: true } }), ctx()).find((n) => n.key === "not_recorded")!;
+  assert.equal(held.text, `No reading was recorded on pages 4a–4b and 8 (Executive Summary, Three-Year Revenue Growth): they were added after these buyers read, or Cimple's earlier tracking didn't record them. So they're hatched and left out of "how far buyers got".`);
+  // Trailing only, on a held version: "stops at page …".
+  const trail = labels.map((label, i) => ({ index: i, label, title: `Page ${label}`, reachRecorded: i < 8 }));
+  const heldTrail = whyNotes(null, docOf({ reachBasis: "old_tracking", lastRecordedIndex: 7, pages: trail, versionNote: { kind: "held", sample: false } }), ctx()).find((n) => n.key === "not_recorded")!;
+  assert.equal(heldTrail.text, `No reading was recorded on pages 8–9 (Page 8, Page 9): they were added after these buyers read, or Cimple's earlier tracking didn't record them. So "how far buyers got" stops at page 7.`);
+  // One page.
+  const one = labels.map((label, i) => ({ index: i, label, title: `Page ${label}`, reachRecorded: label !== "5" }));
+  assert.equal(whyNotes(null, docOf({ reachBasis: "old_tracking", lastRecordedIndex: 9, pages: one }), ctx()).find((n) => n.key === "not_recorded")!.text,
+    `Cimple's earlier tracking didn't record page 5 (Page 5), so it's hatched and left out of "how far buyers got".`);
+  assert.equal(pageRunsText([1, 3, 5, 7, 9, 11, 13].map((i) => ({ index: i, label: String(i) }))), "1, 3, 5, 7, 9 and 2 more");
+  // "more" counts pages, not runs (here 19, 21 and 25–28 → 6 more).
+  assert.equal(pageRunsText([1, 3, 4, 7, 8, 13, 14, 16, 18, 20, 24, 25, 26, 27].map((i) => ({ index: i, label: String(i + 1) }))), "2, 4–5, 8–9, 14–15, 17 and 6 more");
+  assert.equal(pageRunsText([{ index: 2, label: "3" }]), "3");
+  assert.equal(pageRunsText([{ index: 2, label: "3" }, { index: 3, label: "4" }]), "3–4");
+});
+test("the ▼ sits on the page itself when unrecorded pages are in between (recordedDrop)", () => {
+  // Pages 9–13; page 11 (index 2) was never recorded: the drop 10 → 7 is onto page 12 (index 3).
+  const reach = [10, 10, 7, 7, 7].map((b, i) => ({ buyers: b, label: String(9 + i) }));
+  const pages = reach.map((_, i) => ({ reachRecorded: i !== 2 }));
+  assert.equal(steepestDrop(recordedReach(reach, pages))!.index, 2, "a position in the filtered list");
+  assert.deepEqual(recordedDrop(reach, pages), { index: 3, from: 10, to: 7 });
+  assert.equal(recordedDrop(reach.map(() => ({ buyers: 4 })), pages), null);
+});
+test("how far buyers got: pages never recorded are left out of the drop; the counts match the Buyers view", () => {
+  // Pacific: 12 ×8, 11, 9, 9, 8 ×13, 7, 6, 6, then 0 0 on the two pages the old tracking never recorded.
+  const counts = [...Array(8).fill(12), 11, 9, 9, ...Array(13).fill(8), 7, 6, 6, 0, 0];
+  const reach = counts.map((b, i) => ({ buyers: b, label: String(i + 1) }));
+  const pagesRec = counts.map((_, i) => ({ reachRecorded: i < 27 }));
+  assert.equal(steepestDrop(reach)!.index, 27, "without the rule: the stray drop onto page 28");
+  assert.equal(steepestDrop(recordedReach(reach, pagesRec))!.index, 9, "with it: page 10 (11 → 9)");
+  assert.equal(reachCountsLine({ openedTotal: 13, openedBy: 12, reach, pages: pagesRec, oldTracking: true }),
+    "13 opened it · 12 with reading recorded · 6 got to page 27, the last page recorded");
+  // No marked drop: the sentence above already says how far they got.
+  const flat = [5, 5, 5].map((b, i) => ({ buyers: b, label: String(i + 1) }));
+  assert.equal(reachCountsLine({ openedTotal: 5, openedBy: 5, reach: flat, pages: flat.map(() => ({ reachRecorded: true })), oldTracking: false }), "5 opened it");
+});
+test("who a view shows (HM2-1): a device or date filter narrows it like a buyer filter", () => {
+  const f = DEFAULT_ENGAGEMENT_FILTERS;
+  assert.equal(engagementViewScope(f), null);
+  assert.equal(engagementViewScope({ ...f, buyers: ["a"] }), "one");
+  assert.equal(engagementViewScope({ ...f, buyers: ["a", "b"] }), "some");
+  assert.equal(engagementViewScope({ ...f, segment: "interested" }), "some");
+  assert.equal(engagementViewScope({ ...f, device: "phone" }), "some");
+  assert.equal(engagementViewScope({ ...f, device: "desktop" }), "some");
+  assert.equal(engagementViewScope({ ...f, range: "7d" }), "some");
+  // One buyer on a phone (or over 7 days) may have read the page elsewhere or earlier.
+  assert.equal(engagementViewScope({ ...f, buyers: ["a"], device: "phone" }), "some");
+  assert.equal(engagementViewScope({ ...f, buyers: ["a"], range: "30d" }), "some");
+  // A stamped first view counts as "opened" only all time on any device (it carries no device).
+  assert.equal(firstViewCounts(f), true);
+  assert.equal(firstViewCounts({ ...f, device: "phone" }), false);
+  assert.equal(firstViewCounts({ ...f, range: "7d" }), false);
+  assert.equal(scopedNobody("some", { all: "a", one: "o", some: "s" }), "s");
+  assert.equal(scopedNobody(undefined, { all: "a", one: "o", some: "s" }), "a");
+});
+test("a narrower view's counts line says 'in this view' (HM2-1)", () => {
+  const reach = [1, 1, 0].map((b, i) => ({ buyers: b, label: String(i + 1) }));
+  const pages = reach.map(() => ({ reachRecorded: true }));
+  assert.equal(reachCountsLine({ openedTotal: 1, openedBy: 1, reach, pages, oldTracking: false, inView: true }), "1 opened it in this view");
+  assert.equal(reachCountsLine({ openedTotal: 3, openedBy: 2, reach, pages, oldTracking: false, inView: true }), "3 opened it in this view · 2 with reading recorded");
+  assert.equal(reachCountsLine({ openedTotal: 13, openedBy: 12, reach, pages, oldTracking: false }), "13 opened it · 12 with reading recorded");
+});
+test("phones: 'only one or two parts' moves into Why?; wide screens keep it inline (HM2-3)", () => {
+  const two = whyNotes(hp(60_000, heat("parts")), docOf(), ctx({ fewPartsNote: true }));
+  assert.deepEqual(two.map((n) => n.key), ["scope"]);
+  assert.equal(two[0].text, FEW_PARTS_NOTE);
+  assert.deepEqual(whyNotes(hp(60_000, heat("parts")), docOf(), ctx()), [], "no note without the flag");
+  // Only when parts are painted (a washed or unread page has no part colours to explain).
+  assert.deepEqual(whyNotes(hp(0, heat("none")), docOf(), ctx({ fewPartsNote: true })), []);
+  const src = fs.readFileSync(path.join(ROOT, "client/src/components/engagement/document/DocumentView.tsx"), "utf8");
+  assert.match(src, /fewPartsNote: isMobile && fewParts/);
+  assert.match(src, /\{!isMobile && fewParts && <span[^>]*>\{FEW_PARTS_NOTE\}<\/span>\}/, "inline only on wide screens");
+  // The eye and compare icons stay on the switch row on phones: rendered before the scope switch.
+  const row = src.slice(src.indexOf('data-testid="heat-toggles"'));
+  assert.ok(row.indexOf("{isMobile && pageButtons}") > 0 && row.indexOf("{isMobile && pageButtons}") < row.indexOf('label="Compare parts with"'));
+  assert.ok(row.indexOf("{!isMobile && pageButtons}") > row.indexOf('label="Compare parts with"'));
+  // One rule for who the view shows, the same as the server's headlines.
+  assert.match(src, /const viewScope = engagementViewScope\(filters\)/);
+  assert.match(src, /filter: viewScope,/);
+  assert.match(src, /inView=\{viewScope === "some"\}/);
+  assert.doesNotMatch(src, /filters\.segment !== "all" \? "some"/, "never the old buyers/segment-only test");
+});
+test("parts and sections in a narrower view never say 'Nobody' (HM2-1)", () => {
+  const b = { key: "row:0", kind: "table", label: "Row: Revenue", attentionMs: 0, skimMs: 0, visibleMs: 0, pointerMs: 0, skimShare: 0, readers: 0, topBuyer: null, topPoint: null } as BlockAttention;
+  const pg = { readers: 1 } as DocumentPage;
+  assert.match(renderToStaticMarkup(React.createElement(BlockDetails, { block: b, page: pg, expectedMs: null })), /Nobody read this part/);
+  assert.match(renderToStaticMarkup(React.createElement(BlockDetails, { block: b, page: pg, expectedMs: null, viewScope: "some" })), /No buyer in this view read this part/);
+  assert.match(renderToStaticMarkup(React.createElement(BlockDetails, { block: b, page: pg, expectedMs: null, viewScope: "one" })), /This buyer didn(&#x27;|')t read this part/);
+});
+test("phones: the open page's number never crowds its neighbours on the axis", () => {
+  const shown = (sel: number, compact: boolean) => Array.from({ length: 29 }, (_, i) => i).filter((i) => axisLabelShown(i, sel, 29, 2, compact)).map((i) => i + 1);
+  assert.deepEqual(shown(15, true).filter((n) => n >= 13 && n <= 19), [13, 16, 19], "page 16 open: 15 and 17 give way");
+  assert.deepEqual(shown(15, false).filter((n) => n >= 13 && n <= 19), [13, 15, 16, 17, 19], "wide screens unchanged");
+  assert.ok(shown(-1, true).includes(29), "the last page is always labelled");
+});
+test("the update note on a kept copy: renamed in the update, or nothing carries it on", () => {
+  const kept = { versionNote: { kind: "kept_copy", since: "x" } } as any;
+  assert.equal(updateNote({ update: { status: "renamed", title: "Capital Investment & Fleet Renewal" } }, kept), "In your update this page is “Capital Investment & Fleet Renewal”.");
+  assert.equal(updateNote({ update: { status: "no_successor" } }, kept), "No page in your update carries on this page's reading history.");
+  assert.equal(updateNote({ update: { status: "renamed", title: "X" } }, { versionNote: null }), null);
+  assert.equal(updateNote({ update: null }, kept), null);
+});
+
+function renderPanel(pg: DocumentPage): string {
+  const doc = { openedBy: 11, versionNote: null, byKind: [], pages: [pg] } as any;
+  return renderToStaticMarkup(React.createElement(PagePanel, {
+    page: pg, doc, dealId: "d", renditionPage: undefined, selectedKey: null, onHoverKey() {}, onSelectKey() {}, onOnlyBuyer() {},
+    filteredToOne: false, paint: false,
+  }));
+}
+test("the panel on a page nobody read: no 'Only the page total is known' beside 'Nobody has read this page yet' (HM-C3)", () => {
+  const unread = { ...page(0, [block("para:0", 0), block("para:1", 0)]), readers: 0, reachedBy: 7, readLabel: null, heat: heat("none"), reachRecorded: false } as DocumentPage;
+  const html = renderPanel(unread);
+  assert.match(html, /Nobody has read this page yet\./);
+  assert.doesNotMatch(html, /Only the page total is known/);
+  assert.doesNotMatch(html, /Parts of this page/);
+  assert.match(html, /no reading recorded on this page/, "never '7 got this far' on a page nobody's reading was recorded on");
+  assert.doesNotMatch(html, /7 got this far|Skipped/);
+  // A page known only as a total still says so.
+  // Filtered to one buyer, a page other buyers read: "This buyer hasn't read this page."
+  const unreadByOne = renderToStaticMarkup(React.createElement(PagePanel, {
+    page: { ...unread, reachRecorded: true }, doc: { openedBy: 1, versionNote: null, byKind: [], pages: [] } as any, dealId: "d", renditionPage: undefined,
+    selectedKey: null, onHoverKey() {}, onSelectKey() {}, onOnlyBuyer() {}, filteredToOne: true, paint: false,
+  }));
+  assert.match(unreadByOne, /This buyer hasn(&#x27;|')t read this page\./);
+  // A device or date filter (HM2-1): "No buyer in this view has read this page.", never "Nobody…" or "This buyer…".
+  const byScope = (viewScope: "one" | "some" | null, filteredToOne = false, reachRecorded = true) => renderToStaticMarkup(React.createElement(PagePanel, {
+    page: { ...unread, reachRecorded }, doc: { openedBy: 1, versionNote: null, byKind: [], pages: [] } as any, dealId: "d", renditionPage: undefined,
+    selectedKey: null, onHoverKey() {}, onSelectKey() {}, onOnlyBuyer() {}, filteredToOne, viewScope, paint: false,
+  }));
+  const phone = byScope("some");
+  assert.match(phone, /No buyer in this view has read this page\./);
+  assert.doesNotMatch(phone, /Nobody has read this page yet/);
+  assert.match(byScope("some", true), /No buyer in this view has read this page\./, "one buyer on a phone: they may have read it on a computer");
+  assert.match(byScope(null), /Nobody has read this page yet\./);
+  assert.match(byScope("some", false, false), /Nobody has read this page yet\./, "a page nobody's reading was ever recorded on");
+  const total = { ...page(0, [block("para:0", 0), block("para:1", 0)]), attentionMs: 90_000, readers: 3, heat: heat("page"), reachRecorded: true } as DocumentPage;
+  assert.match(renderPanel(total), /Only the page total is known for this reading\./);
+});
+test("compare's legend says both sides share one scale (HM-C5)", () => {
+  const parts = renderToStaticMarkup(React.createElement(HeatLegend, { maxMs: 120_000, scope: "document", perBuyer: true, note: "Same scale on both sides" }));
+  assert.match(parts, /Reading time on each part per buyer/);
+  assert.match(parts, /data-testid="legend-note"[^>]*>· Same scale on both sides/);
+  const wash = renderToStaticMarkup(React.createElement(PageLegend, { maxPageMs: 1_660_000, note: "Same scale on both sides" }));
+  assert.match(wash, /Same scale on both sides/);
+  assert.doesNotMatch(renderToStaticMarkup(React.createElement(HeatLegend, { maxMs: 120_000, scope: "page" })), /legend-note/);
+  // CompareCanvases draws the legend for parts AND for whole-page shading, with the note.
+  const src = fs.readFileSync(path.join(ROOT, "client/src/components/engagement/document/CompareView.tsx"), "utf8");
+  assert.equal((src.match(/note="Same scale on both sides"/g) ?? []).length, 2);
+});
+
+function renderWash(showHeat: boolean, modeOver: "wash" | "parts" = "wash", h: Heat = heat("page")): string {
+  const pg = { ...page(0, [block("heading", 0, "heading"), block("row:0", 0)]), attentionMs: 1_660_000, heat: h };
+  return renderToStaticMarkup(React.createElement(PageCanvas, {
+    rendition: rendition([longTable], "normal", [tablePage]), pageId: longTable.id, part: 0, renditionPage: tablePage, page: pg as DocumentPage,
+    paint: modeOver === "parts", showHeat, showUnread: false, maxMs: 1, selectedKey: null, hoveredKey: null, onSelectKey() {}, onHoverKey() {}, touch: false,
+    mode: modeOver, washT: 0.8, washCard: { time: "27 min 40 s", buyers: 8, rankText: "3rd most-read of 29" },
+  }));
+}
+test("a page known only as a total is washed, with its edge bar and rank badge — no part buttons", () => {
+  const html = renderWash(true);
+  const overlay = html.slice(html.indexOf("data-heat-overlay"));
+  assert.ok(/data-heat-wash="true"/.test(overlay), "the wash is drawn");
+  assert.ok(/role="img" aria-label="Whole page: 27 min 40 s of reading time from 8 buyers, 3rd most-read of 29 pages"/.test(overlay), "described for screen readers");
+  assert.ok(/data-heat-wash-edge/.test(overlay), "edge bar");
+  assert.ok(/3rd most-read of 29 · 27 min 40 s/.test(overlay), "rank badge");
+  assert.ok(!/data-heat-block=/.test(html), "no part buttons");
+  assert.ok(/mix-blend-mode:multiply/.test(overlay), "multiplied onto the paper");
+});
+test("colours off: no wash and no badge", () => {
+  const html = renderWash(false);
+  assert.ok(!/data-heat-wash/.test(html), "no wash");
+  assert.ok(!/most-read/.test(html), "no badge");
+});
+test("mixed reading: the parts are painted and a badge says how much was read as a whole page", () => {
+  const html = renderWash(true, "parts", heat("mixed", { pageOnlyMs: 250_000 }));
+  assert.ok(!/data-heat-wash=/.test(html), "no wash");
+  assert.ok(/\+ 4 min 10 s read as a whole page/.test(html), "the mixed badge");
+});
+
 console.log("words and removals");
+
+// ── Compare buyers (§3.7) ──────────────────────────────────────────────
+console.log("compare buyers");
+const cb = (accessId: string, decision: string | null, rank: number, activeMs = 60_000, visits = 1): CompareBuyer => ({ accessId, name: `${accessId.toUpperCase()} Name`, decision, rank, activeMs, visits });
+const CB: CompareBuyer[] = [
+  cb("lillian", "lapsed", 3), cb("gurdeep", "interested", 0), cb("natalie", "interested", 1), cb("julien", "not_interested", 5),
+  cb("wei", "not_interested", 6, 0, 0), // opened, no reading
+  cb("marcus", null, 4, 2_000, 1),       // under 3 s: not a reader
+];
+test("the ?compare= value round-trips; anything else is ignored", () => {
+  const s: CompareState = { a: "lillian", b: "interested" };
+  assert.deepEqual(parseCompareParam(compareParam(s)), s);
+  assert.deepEqual(parseCompareParam("lillian~gurdeep"), { a: "lillian", b: "gurdeep" });
+  for (const bad of ["", "lillian", "lillian~", "~x", "a b~c", "x~x", "a~b~c", null, undefined]) assert.equal(parseCompareParam(bad as string), null, String(bad));
+  assert.equal(validCompare(CB, { a: "wei", b: "interested" }), null, "A must have reading");
+  assert.deepEqual(validCompare(CB, { a: "lillian", b: "nobody-here" }), { a: "lillian", b: "interested" }, "an unknown B falls back to the default group");
+});
+test("groups never contain A, ignore the outer segment, and disable empty groups", () => {
+  const g = compareGroups(CB, "gurdeep");
+  const by = Object.fromEntries(g.map((x) => [x.key, x]));
+  assert.deepEqual(by.interested.ids, ["natalie"]);
+  assert.deepEqual(by["all-others"].ids, ["natalie", "lillian", "julien"], "call order; no Wei (no reading), no Marcus (under 3 s)");
+  assert.deepEqual(by.passed.ids, ["julien"]);
+  assert.deepEqual(by.undecided.ids, ["lillian"]);
+  const lonely = compareGroups([cb("a", "interested", 0), cb("b", "interested", 1)], "a");
+  assert.equal(lonely.find((x) => x.key === "passed")!.disabled, "nobody yet");
+});
+test("a group over 200 buyers is disabled (the filter's cap)", () => {
+  const many = Array.from({ length: COMPARE_GROUP_MAX + 2 }, (_, i) => cb(`b${i}`, "interested", i));
+  const g = compareGroups(many, "b0").find((x) => x.key === "interested")!;
+  assert.equal(g.ids.length, COMPARE_GROUP_MAX + 1);
+  assert.equal(g.disabled, "over 200 buyers, pick a smaller group");
+  assert.deepEqual(compareSideB(many, { a: "b0", b: "interested" }).ids, [], "a disabled group loads nothing");
+});
+test("default B: interested buyers for an undecided A when one read it, else everyone else", () => {
+  assert.equal(defaultCompareB(CB, "lillian"), "interested");
+  assert.equal(defaultCompareB(CB, "gurdeep"), "all-others");
+  assert.equal(defaultCompareB([cb("x", null, 0), cb("y", "not_interested", 1)], "x"), "all-others");
+  assert.deepEqual(compareStart(CB, "lillian"), { a: "lillian", b: "interested" }, "starts from the one filtered buyer");
+  assert.deepEqual(compareStart(CB, null), { a: "gurdeep", b: "all-others" }, "else the first to call");
+  assert.equal(compareStart([cb("x", null, 0)], null), null, "needs two readers");
+  assert.equal(firstName("Lillian Cho"), "Lillian");
+});
+test("compareReducer keeps compare open across page turns and filter changes; A can't also be B", () => {
+  let s = compareReducer(null, { type: "start", state: { a: "lillian", b: "interested" } });
+  s = compareReducer(s, { type: "page" });
+  s = compareReducer(s, { type: "filters" });
+  assert.deepEqual(s, { a: "lillian", b: "interested" });
+  s = compareReducer(s, { type: "setB", b: "gurdeep" });
+  assert.deepEqual(s, { a: "lillian", b: "gurdeep" });
+  s = compareReducer(s, { type: "setA", a: "gurdeep", buyers: CB });
+  assert.deepEqual(s, { a: "gurdeep", b: "all-others" }, "B was the new A: back to the default group");
+  assert.deepEqual(compareReducer(s, { type: "setB", b: "gurdeep" }), s, "B can't be A");
+  assert.equal(compareReducer(s, { type: "done" }), null);
+});
+test("side B is drawn per buyer: the page and its parts divided by its readers; one shared scale", () => {
+  const page = { attentionMs: 90_000, skimMs: 9_000, readers: 3, blocks: [
+    { key: "row:0", kind: "table", label: "Row: Revenue", attentionMs: 60_000, skimMs: 3_000, visibleMs: 70_000, pointerMs: 0 },
+    { key: "row:1", kind: "table", label: "Row: COGS", attentionMs: 30_000, skimMs: 6_000, visibleMs: 40_000, pointerMs: 300 },
+    { key: "text:0", kind: "text", label: "Text", attentionMs: 1_000, skimMs: 0, visibleMs: 2_000, pointerMs: 0 },
+  ] } as unknown as DocumentPage;
+  const per = perBuyerPage(page, 3);
+  assert.equal(per.attentionMs, 30_000);
+  assert.deepEqual(per.blocks.map((b) => b.attentionMs), [20_000, 10_000, 333]);
+  assert.equal(perBuyerPage(page, 1), page);
+  const a = { ...page, blocks: [{ ...page.blocks[0], attentionMs: 45_000 }, page.blocks[1], page.blocks[2]] } as DocumentPage;
+  assert.equal(sharedMaxMs({ pages: [a], current: a }, { pages: [per], current: per }, "page"), 45_000, "the larger side's busiest part");
+  assert.equal(compareFiltersText({ range: "7d", device: "desktop" }), "Last 7 days · Computer");
+  assert.equal(compareFiltersText({ range: "all", device: "all" }), "");
+});
 
 const VIEWER_FILES = [
   "client/src/components/engagement/document/DocumentView.tsx",
+  "client/src/components/engagement/document/CompareView.tsx",
+  "client/src/components/engagement/document/Legends.tsx",
+  "client/src/components/engagement/document/StatusLine.tsx",
   "client/src/components/engagement/document/PageCanvas.tsx",
   "client/src/components/engagement/document/PagePanel.tsx",
   "client/src/components/engagement/document/PageRail.tsx",
@@ -366,9 +727,11 @@ test("the global Analytics page no longer has the cursor heat map, Drop-off or p
   assert.doesNotMatch(code, /HeatMapViz|heatGrid|scrollDistribution/);
   assert.doesNotMatch(code, /value="heatmap"|value="dropoff"|Drop-off/);
   assert.doesNotMatch(code, /Per section read|Avg\. Time/);
-  assert.match(code, /<CallListPanel \/>/);
-  assert.match(code, /<ComparePanel \/>/);
-  assert.match(code, /engagement\?view=document/);
+  // The page is a tabbed dashboard now (analytics stream): Who to call and Deals are tabs; the
+  // Deals tab carries the Heat map link to each deal's "Where they read".
+  assert.match(code, /<CallListTab\b/);
+  assert.match(code, /<DealsTab\b/);
+  assert.match(fs.readFileSync(path.join(ROOT, "client/src/components/analytics/DealsTab.tsx"), "utf8"), /engagement\?view=document/);
 });
 
 console.log(`\n${passed} passed`);

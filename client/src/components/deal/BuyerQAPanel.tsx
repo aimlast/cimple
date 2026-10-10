@@ -6,7 +6,7 @@
  * Shows analytics on what buyers are asking about.
  */
 import { useState } from "react";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { PanelError } from "@/components/deal/PanelError";
 import { Button } from "@/components/ui/button";
@@ -31,8 +31,11 @@ import { approvedForSharing } from "@shared/buyer-qa-scope";
 import {
   MessageCircle, Clock, CheckCircle2, AlertCircle,
   Send, ChevronDown, ChevronRight, Bot, User,
-  XCircle, Loader2, Copy, Link2, Undo2, Users, Lock, Share2,
+  XCircle, Loader2, Copy, Link2, Undo2, Users, Lock, Share2, FileText,
 } from "lucide-react";
+
+/** A data-room question's document, page and asker (GET …/data-room/questions; vdr spec §5.12). */
+type DocQuestion = { id: string; itemId: string | null; number: string | null; title: string; page: number | null; buyer: string; askedBy: string; scope: "room" | "private" };
 
 interface BuyerQAPanelProps {
   dealId: string;
@@ -47,6 +50,8 @@ const STATUS_CONFIG = {
 };
 /** Answered by the AI for the buyer who asked; not shown to other buyers. */
 const PRIVATE_ANSWER = { label: "Answered · asker only", color: "bg-muted text-muted-foreground border-0", icon: Lock };
+/** A data-room answer the broker showed to everyone who can open that document. */
+const DOC_READERS_ANSWER = { label: "Answered · its readers", color: "bg-emerald-500/10 text-emerald-400 border-0", icon: FileText };
 
 /** Read the server's JSON error body, falling back to a readable default. */
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -110,8 +115,26 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
     },
   });
 
-  const invalidate = () =>
+  // Questions asked about a data-room document: which document, which page, who asked.
+  const hasDocQuestions = questions.some((q) => !!q.vdrItemId);
+  const { data: docQuestions = [] } = useQuery<DocQuestion[]>({
+    queryKey: ["/api/deals", dealId, "data-room", "questions"],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/data-room/questions`, { credentials: "include" });
+      if (!r.ok) throw new Error(await readError(r, "Failed to load the document questions"));
+      return r.json();
+    },
+    enabled: hasDocQuestions,
+  });
+  const docOf = (q: BuyerQuestion) => (q.vdrItemId ? docQuestions.find((d) => d.id === q.id) ?? null : null);
+  // The broker's answer audience for document questions: false = only the buyer who asked (default).
+  const [audience, setAudience] = useState<Record<string, boolean>>({});
+  const sharesWithReaders = (q: BuyerQuestion) => audience[q.id] ?? q.answerScope === "room";
+
+  const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "questions"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "data-room"] });
+  };
 
   const updateQuestion = useMutation({
     mutationFn: async ({ id, updates }: { id: string; updates: Record<string, any> }) => {
@@ -177,7 +200,7 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
     try {
       result = await updateQuestion.mutateAsync({
         id: q.id,
-        updates: { brokerDraft: draft.trim(), status: "pending_seller" },
+        updates: { brokerDraft: draft.trim(), status: "pending_seller", ...(q.vdrItemId ? { shareWithDocumentReaders: sharesWithReaders(q) } : {}) },
       });
     } catch {
       return; // onError already surfaced the toast
@@ -232,8 +255,9 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
   const declined = questions.filter(q => q.status === "declined");
   // Shared with every buyer only once a person approved it (the same rule
   // the server applies — an AI answer is the asker's alone until then).
-  const isShared = (q: BuyerQuestion) => q.status === "published" && !!q.isPublished && approvedForSharing(q);
+  const isShared = (q: BuyerQuestion) => !q.vdrItemId && q.status === "published" && !!q.isPublished && approvedForSharing(q);
   const sharedCount = published.filter(isShared).length;
+  const generalCount = questions.filter((q) => !q.vdrItemId).length;
 
   if (isLoading) {
     return (
@@ -254,7 +278,7 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
           <MessageCircle className="h-8 w-8 text-muted-foreground/30 mx-auto" />
           <p className="text-sm font-medium">No buyer questions yet</p>
           <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-            When buyers ask questions about the CIM, they'll appear here for your review.
+            When buyers ask about the CIM or a document in the data room, their questions appear here for your review.
           </p>
         </CardContent>
       </Card>
@@ -263,8 +287,11 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
 
   const renderQuestion = (q: BuyerQuestion) => {
     const isExpanded = expandedId === q.id;
-    const answeredPrivately = q.status === "published" && !isShared(q);
-    const config = answeredPrivately
+    const doc = docOf(q);
+    const answeredPrivately = q.status === "published" && !isShared(q) && !(q.vdrItemId && q.answerScope === "room");
+    const config = q.vdrItemId && q.status === "published" && q.answerScope === "room"
+      ? DOC_READERS_ANSWER
+      : answeredPrivately
       ? PRIVATE_ANSWER
       : STATUS_CONFIG[q.status as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.pending_ai;
     const Icon = config.icon;
@@ -288,7 +315,17 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
                 <p className="text-sm font-medium truncate">{q.question}</p>
                 <p className="text-[10px] text-muted-foreground mt-0.5">
                   {new Date(q.createdAt).toLocaleDateString()}
+                  {doc && <> · Asked by {doc.askedBy}</>}
                 </p>
+                {q.vdrItemId && (
+                  <span className="mt-1 inline-flex max-w-full items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground" data-testid={`doc-chip-${q.id}`}>
+                    <FileText className="h-3 w-3 shrink-0" />
+                    <span className="truncate">About {doc ? `${doc.number ? `${doc.number} ` : ""}${doc.title}` : "a data-room document"}{doc?.page ? ` · page ${doc.page}` : ""}</span>
+                    {doc?.itemId && (
+                      <Link href={`/deal/${dealId}/data-room?item=${encodeURIComponent(doc.itemId)}`} className="ml-0.5 shrink-0 text-teal hover:underline" onClick={(e) => e.stopPropagation()}>Open</Link>
+                    )}
+                  </span>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
@@ -337,9 +374,34 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
                 </div>
               )}
 
+              {/* A question about a data-room document: who reads the answer (vdr §9.9). */}
+              {q.vdrItemId && q.status !== "declined" && (
+                <div className="space-y-1.5 rounded bg-muted/30 px-2.5 py-2" data-testid={`doc-audience-${q.id}`}>
+                  <p className="text-[10px] font-medium text-muted-foreground">Who reads the answer</p>
+                  {[false, true].map((share) => (
+                    <label key={String(share)} className="flex cursor-pointer items-start gap-2 text-[11px]">
+                      <input
+                        type="radio"
+                        name={`aud-${q.id}`}
+                        className="mt-0.5 accent-[hsl(var(--teal))]"
+                        checked={sharesWithReaders(q) === share}
+                        disabled={busy}
+                        onChange={() => {
+                          setAudience((a) => ({ ...a, [q.id]: share }));
+                          // Already with the seller or answered: the choice is saved now; before that it goes with the answer.
+                          if (q.status === "pending_seller" || q.status === "published") updateQuestion.mutate({ id: q.id, updates: { shareWithDocumentReaders: share } });
+                        }}
+                      />
+                      <span>{share ? "Also show it to other buyers who can open this document" : `Only ${doc?.buyer ?? "the buyer who asked"} sees this answer`}</span>
+                    </label>
+                  ))}
+                  <p className="text-[10px] text-muted-foreground">Buyers who can't open the document never see it, and it never reaches teaser or Blind CIM buyers.</p>
+                </div>
+              )}
+
               {/* Answered by the AI for the asker only — other buyers never see a
                   buyer's own words until the broker chooses to share them. */}
-              {answeredPrivately && (
+              {answeredPrivately && !q.vdrItemId && (
                 <div className="flex flex-wrap items-center gap-2 rounded bg-muted/30 px-2.5 py-2">
                   <Lock className="h-3 w-3 text-muted-foreground shrink-0" />
                   <span className="text-[11px] text-muted-foreground flex-1 min-w-[12rem]">
@@ -464,9 +526,11 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
               {pendingBroker.length} need response
             </Badge>
           )}
-          <span className="text-xs text-muted-foreground">
-            {sharedCount}/{questions.length} shared with all buyers
-          </span>
+          {generalCount > 0 && (
+            <span className="text-xs text-muted-foreground">
+              {sharedCount}/{generalCount} shared with all buyers
+            </span>
+          )}
         </div>
       </div>
 

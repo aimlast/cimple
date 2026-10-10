@@ -8,6 +8,7 @@ import { useCimTheme } from "../CimDesignContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
 import { useBlockAttrs } from "../blocks";
+import { FigureValue } from "../figures/FigureValue";
 
 interface SecondaryStat {
   label: string;
@@ -60,7 +61,7 @@ export function StatCalloutRenderer({ layoutData, content, branding, section }: 
           className="text-6xl font-semibold tracking-tight leading-none mb-2"
           style={{ color: accentHex }}
         >
-          {data.primaryValue}
+          <FigureValue block="primary">{data.primaryValue}</FigureValue>
         </div>
 
         {/* Primary label */}
@@ -76,7 +77,7 @@ export function StatCalloutRenderer({ layoutData, content, branding, section }: 
           <div className="flex items-center justify-center gap-8 mt-6 pt-5 border-t border-border flex-wrap">
             {data.secondaryStats.map((stat, i) => (
               <div key={i} {...ba(`stat:${i}`)} className="flex flex-col items-center gap-0.5">
-                <span className="text-xl font-semibold tabular-nums text-foreground">{stat.value}</span>
+                <span className="text-xl font-semibold tabular-nums text-foreground"><FigureValue block={`stat:${i}`}>{stat.value}</FigureValue></span>
                 <span className="text-2xs text-muted-foreground uppercase tracking-wide">{stat.label}</span>
               </div>
             ))}

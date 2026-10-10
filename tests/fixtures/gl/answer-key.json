@@ -1,0 +1,1672 @@
+{
+  "qbo-classic": {
+    "software": "quickbooks_online",
+    "basis": "accrual",
+    "accountMode": "heading_rows",
+    "amountMode": "single",
+    "dateOrder": "mdy",
+    "entries": 2117,
+    "byYear": {
+      "2022": 705,
+      "2023": 703,
+      "2024": 709
+    },
+    "accounts": {
+      "Chequing": {
+        "2022": 62596620,
+        "2023": 73819644,
+        "2024": 57087060
+      },
+      "Accumulated Amortization": {
+        "2022": -2800000,
+        "2024": -3100000
+      },
+      "HST Payable": {
+        "2022": 4112870,
+        "2023": 4123110,
+        "2024": 4094174
+      },
+      "Shareholder Loan": {
+        "2022": -1000000,
+        "2023": -1000000,
+        "2024": -1000000
+      },
+      "Sales - Service": {
+        "2022": -48546100,
+        "2023": -48314700,
+        "2024": -50353500
+      },
+      "Sales - Installations": {
+        "2022": -66629800,
+        "2023": -77709400,
+        "2024": -58243200
+      },
+      "Materials & Supplies": {
+        "2022": 17243800,
+        "2023": 18735200,
+        "2024": 17688000
+      },
+      "Subcontractors": {
+        "2022": 14626000,
+        "2023": 12864500,
+        "2024": 13048400
+      },
+      "Wages & Salaries": {
+        "2022": 27300002,
+        "2023": 27300002,
+        "2024": 27300002
+      },
+      "Wages - Officers": {
+        "2022": 24000000,
+        "2023": 24000000,
+        "2024": 24000000
+      },
+      "Payroll Taxes - CPP/EI": {
+        "2022": 3905876,
+        "2023": 3875361,
+        "2024": 3899399
+      },
+      "WSIB": {
+        "2022": 840000,
+        "2023": 840000,
+        "2024": 840000
+      },
+      "Employee Benefits": {
+        "2022": 1344000,
+        "2023": 1344000,
+        "2024": 1344000
+      },
+      "Automobile Expense:Vehicle - Owner": {
+        "2022": 2400000,
+        "2023": 2600000,
+        "2024": 2784000
+      },
+      "Automobile Expense:Fuel - Service Vans": {
+        "2022": 986674,
+        "2023": 920667,
+        "2024": 947722
+      },
+      "Automobile Expense:Van Repairs & Maintenance": {
+        "2022": 231880,
+        "2023": 202137,
+        "2024": 192571
+      },
+      "Meals and Entertainment": {
+        "2022": 1800000,
+        "2023": 2000000,
+        "2024": 2200000
+      },
+      "Insurance": {
+        "2022": 2100000,
+        "2023": 2100000,
+        "2024": 2100000
+      },
+      "Legal & Professional Fees": {
+        "2022": 1190000,
+        "2023": 1190000,
+        "2024": 3340000
+      },
+      "Rent": {
+        "2022": 5400000,
+        "2023": 5400000,
+        "2024": 5400000
+      },
+      "Utilities": {
+        "2022": 668289,
+        "2023": 702982,
+        "2024": 757527
+      },
+      "Telephone & Internet": {
+        "2022": 548172,
+        "2023": 555229,
+        "2024": 551402
+      },
+      "Advertising & Promotion": {
+        "2022": 1557645,
+        "2023": 1512205,
+        "2024": 1581220
+      },
+      "Office Supplies": {
+        "2022": 206490,
+        "2023": 201968,
+        "2024": 199626
+      },
+      "Software & Subscriptions": {
+        "2022": 406800,
+        "2023": 406800,
+        "2024": 406800
+      },
+      "Bank Charges": {
+        "2022": 35940,
+        "2023": 35940,
+        "2024": 35940
+      },
+      "Interest Expense": {
+        "2022": 669600,
+        "2023": 669600,
+        "2024": 669600
+      },
+      "Dues & Memberships": {
+        "2022": 1565000,
+        "2023": 1565000,
+        "2024": 1565000
+      },
+      "Shareholder Expenses": {
+        "2023": 3815,
+        "2024": 956420
+      },
+      "Donations": {
+        "2022": 100000,
+        "2023": 100000,
+        "2024": 100000
+      },
+      "Repairs & Maintenance": {
+        "2022": 215494,
+        "2023": 211279,
+        "2024": 209010
+      },
+      "Amortization Expense": {
+        "2022": 2800000,
+        "2024": 3100000
+      },
+      "Income Tax Expense": {
+        "2022": 980000,
+        "2024": 1420000
+      }
+    }
+  },
+  "qbo-classic-xlsx": {
+    "software": "quickbooks_online",
+    "basis": "accrual",
+    "accountMode": "heading_rows",
+    "amountMode": "single",
+    "dateOrder": "mdy",
+    "entries": 2117,
+    "byYear": {
+      "2022": 705,
+      "2023": 703,
+      "2024": 709
+    },
+    "accounts": {
+      "Chequing": {
+        "2022": 62596620,
+        "2023": 73819644,
+        "2024": 57087060
+      },
+      "Accumulated Amortization": {
+        "2022": -2800000,
+        "2024": -3100000
+      },
+      "HST Payable": {
+        "2022": 4112870,
+        "2023": 4123110,
+        "2024": 4094174
+      },
+      "Shareholder Loan": {
+        "2022": -1000000,
+        "2023": -1000000,
+        "2024": -1000000
+      },
+      "Sales - Service": {
+        "2022": -48546100,
+        "2023": -48314700,
+        "2024": -50353500
+      },
+      "Sales - Installations": {
+        "2022": -66629800,
+        "2023": -77709400,
+        "2024": -58243200
+      },
+      "Materials & Supplies": {
+        "2022": 17243800,
+        "2023": 18735200,
+        "2024": 17688000
+      },
+      "Subcontractors": {
+        "2022": 14626000,
+        "2023": 12864500,
+        "2024": 13048400
+      },
+      "Wages & Salaries": {
+        "2022": 27300002,
+        "2023": 27300002,
+        "2024": 27300002
+      },
+      "Wages - Officers": {
+        "2022": 24000000,
+        "2023": 24000000,
+        "2024": 24000000
+      },
+      "Payroll Taxes - CPP/EI": {
+        "2022": 3905876,
+        "2023": 3875361,
+        "2024": 3899399
+      },
+      "WSIB": {
+        "2022": 840000,
+        "2023": 840000,
+        "2024": 840000
+      },
+      "Employee Benefits": {
+        "2022": 1344000,
+        "2023": 1344000,
+        "2024": 1344000
+      },
+      "Automobile Expense:Vehicle - Owner": {
+        "2022": 2400000,
+        "2023": 2600000,
+        "2024": 2784000
+      },
+      "Automobile Expense:Fuel - Service Vans": {
+        "2022": 986674,
+        "2023": 920667,
+        "2024": 947722
+      },
+      "Automobile Expense:Van Repairs & Maintenance": {
+        "2022": 231880,
+        "2023": 202137,
+        "2024": 192571
+      },
+      "Meals and Entertainment": {
+        "2022": 1800000,
+        "2023": 2000000,
+        "2024": 2200000
+      },
+      "Insurance": {
+        "2022": 2100000,
+        "2023": 2100000,
+        "2024": 2100000
+      },
+      "Legal & Professional Fees": {
+        "2022": 1190000,
+        "2023": 1190000,
+        "2024": 3340000
+      },
+      "Rent": {
+        "2022": 5400000,
+        "2023": 5400000,
+        "2024": 5400000
+      },
+      "Utilities": {
+        "2022": 668289,
+        "2023": 702982,
+        "2024": 757527
+      },
+      "Telephone & Internet": {
+        "2022": 548172,
+        "2023": 555229,
+        "2024": 551402
+      },
+      "Advertising & Promotion": {
+        "2022": 1557645,
+        "2023": 1512205,
+        "2024": 1581220
+      },
+      "Office Supplies": {
+        "2022": 206490,
+        "2023": 201968,
+        "2024": 199626
+      },
+      "Software & Subscriptions": {
+        "2022": 406800,
+        "2023": 406800,
+        "2024": 406800
+      },
+      "Bank Charges": {
+        "2022": 35940,
+        "2023": 35940,
+        "2024": 35940
+      },
+      "Interest Expense": {
+        "2022": 669600,
+        "2023": 669600,
+        "2024": 669600
+      },
+      "Dues & Memberships": {
+        "2022": 1565000,
+        "2023": 1565000,
+        "2024": 1565000
+      },
+      "Shareholder Expenses": {
+        "2023": 3815,
+        "2024": 956420
+      },
+      "Donations": {
+        "2022": 100000,
+        "2023": 100000,
+        "2024": 100000
+      },
+      "Repairs & Maintenance": {
+        "2022": 215494,
+        "2023": 211279,
+        "2024": 209010
+      },
+      "Amortization Expense": {
+        "2022": 2800000,
+        "2024": 3100000
+      },
+      "Income Tax Expense": {
+        "2022": 980000,
+        "2024": 1420000
+      }
+    }
+  },
+  "qbo-2024-only": {
+    "software": "quickbooks_online",
+    "basis": "accrual",
+    "accountMode": "heading_rows",
+    "entries": 709,
+    "byYear": {
+      "2024": 709
+    },
+    "accounts": {
+      "Chequing": {
+        "2024": 57087060
+      },
+      "Accumulated Amortization": {
+        "2024": -3100000
+      },
+      "HST Payable": {
+        "2024": 4094174
+      },
+      "Shareholder Loan": {
+        "2024": -1000000
+      },
+      "Sales - Service": {
+        "2024": -50353500
+      },
+      "Sales - Installations": {
+        "2024": -58243200
+      },
+      "Materials & Supplies": {
+        "2024": 17688000
+      },
+      "Subcontractors": {
+        "2024": 13048400
+      },
+      "Wages & Salaries": {
+        "2024": 27300002
+      },
+      "Wages - Officers": {
+        "2024": 24000000
+      },
+      "Payroll Taxes - CPP/EI": {
+        "2024": 3899399
+      },
+      "WSIB": {
+        "2024": 840000
+      },
+      "Employee Benefits": {
+        "2024": 1344000
+      },
+      "Automobile Expense:Vehicle - Owner": {
+        "2024": 2784000
+      },
+      "Automobile Expense:Fuel - Service Vans": {
+        "2024": 947722
+      },
+      "Automobile Expense:Van Repairs & Maintenance": {
+        "2024": 192571
+      },
+      "Meals and Entertainment": {
+        "2024": 2200000
+      },
+      "Insurance": {
+        "2024": 2100000
+      },
+      "Legal & Professional Fees": {
+        "2024": 3340000
+      },
+      "Rent": {
+        "2024": 5400000
+      },
+      "Utilities": {
+        "2024": 757527
+      },
+      "Telephone & Internet": {
+        "2024": 551402
+      },
+      "Advertising & Promotion": {
+        "2024": 1581220
+      },
+      "Office Supplies": {
+        "2024": 199626
+      },
+      "Software & Subscriptions": {
+        "2024": 406800
+      },
+      "Bank Charges": {
+        "2024": 35940
+      },
+      "Interest Expense": {
+        "2024": 669600
+      },
+      "Dues & Memberships": {
+        "2024": 1565000
+      },
+      "Shareholder Expenses": {
+        "2024": 956420
+      },
+      "Donations": {
+        "2024": 100000
+      },
+      "Repairs & Maintenance": {
+        "2024": 209010
+      },
+      "Amortization Expense": {
+        "2024": 3100000
+      },
+      "Income Tax Expense": {
+        "2024": 1420000
+      }
+    }
+  },
+  "qbo-cash-basis": {
+    "software": "quickbooks_online",
+    "basis": "cash",
+    "accountMode": "heading_rows",
+    "entries": 709,
+    "byYear": {
+      "2024": 709
+    },
+    "accounts": {
+      "Chequing": {
+        "2024": 57087060
+      },
+      "Accumulated Amortization": {
+        "2024": -3100000
+      },
+      "HST Payable": {
+        "2024": 4094174
+      },
+      "Shareholder Loan": {
+        "2024": -1000000
+      },
+      "Sales - Service": {
+        "2024": -50353500
+      },
+      "Sales - Installations": {
+        "2024": -58243200
+      },
+      "Materials & Supplies": {
+        "2024": 17688000
+      },
+      "Subcontractors": {
+        "2024": 13048400
+      },
+      "Wages & Salaries": {
+        "2024": 27300002
+      },
+      "Wages - Officers": {
+        "2024": 24000000
+      },
+      "Payroll Taxes - CPP/EI": {
+        "2024": 3899399
+      },
+      "WSIB": {
+        "2024": 840000
+      },
+      "Employee Benefits": {
+        "2024": 1344000
+      },
+      "Automobile Expense:Vehicle - Owner": {
+        "2024": 2784000
+      },
+      "Automobile Expense:Fuel - Service Vans": {
+        "2024": 947722
+      },
+      "Automobile Expense:Van Repairs & Maintenance": {
+        "2024": 192571
+      },
+      "Meals and Entertainment": {
+        "2024": 2200000
+      },
+      "Insurance": {
+        "2024": 2100000
+      },
+      "Legal & Professional Fees": {
+        "2024": 3340000
+      },
+      "Rent": {
+        "2024": 5400000
+      },
+      "Utilities": {
+        "2024": 757527
+      },
+      "Telephone & Internet": {
+        "2024": 551402
+      },
+      "Advertising & Promotion": {
+        "2024": 1581220
+      },
+      "Office Supplies": {
+        "2024": 199626
+      },
+      "Software & Subscriptions": {
+        "2024": 406800
+      },
+      "Bank Charges": {
+        "2024": 35940
+      },
+      "Interest Expense": {
+        "2024": 669600
+      },
+      "Dues & Memberships": {
+        "2024": 1565000
+      },
+      "Shareholder Expenses": {
+        "2024": 956420
+      },
+      "Donations": {
+        "2024": 100000
+      },
+      "Repairs & Maintenance": {
+        "2024": 209010
+      },
+      "Amortization Expense": {
+        "2024": 3100000
+      },
+      "Income Tax Expense": {
+        "2024": 1420000
+      }
+    }
+  },
+  "qbo-modern": {
+    "software": "quickbooks_online",
+    "basis": "accrual",
+    "accountMode": "column_fill_down",
+    "amountMode": "single",
+    "entries": 709,
+    "byYear": {
+      "2024": 709
+    },
+    "accounts": {
+      "Chequing": {
+        "2024": 57087060
+      },
+      "Accumulated Amortization": {
+        "2024": -3100000
+      },
+      "HST Payable": {
+        "2024": 4094174
+      },
+      "Shareholder Loan": {
+        "2024": -1000000
+      },
+      "Sales - Service": {
+        "2024": -50353500
+      },
+      "Sales - Installations": {
+        "2024": -58243200
+      },
+      "Materials & Supplies": {
+        "2024": 17688000
+      },
+      "Subcontractors": {
+        "2024": 13048400
+      },
+      "Wages & Salaries": {
+        "2024": 27300002
+      },
+      "Wages - Officers": {
+        "2024": 24000000
+      },
+      "Payroll Taxes - CPP/EI": {
+        "2024": 3899399
+      },
+      "WSIB": {
+        "2024": 840000
+      },
+      "Employee Benefits": {
+        "2024": 1344000
+      },
+      "Automobile Expense:Vehicle - Owner": {
+        "2024": 2784000
+      },
+      "Automobile Expense:Fuel - Service Vans": {
+        "2024": 947722
+      },
+      "Automobile Expense:Van Repairs & Maintenance": {
+        "2024": 192571
+      },
+      "Meals and Entertainment": {
+        "2024": 2200000
+      },
+      "Insurance": {
+        "2024": 2100000
+      },
+      "Legal & Professional Fees": {
+        "2024": 3340000
+      },
+      "Rent": {
+        "2024": 5400000
+      },
+      "Utilities": {
+        "2024": 757527
+      },
+      "Telephone & Internet": {
+        "2024": 551402
+      },
+      "Advertising & Promotion": {
+        "2024": 1581220
+      },
+      "Office Supplies": {
+        "2024": 199626
+      },
+      "Software & Subscriptions": {
+        "2024": 406800
+      },
+      "Bank Charges": {
+        "2024": 35940
+      },
+      "Interest Expense": {
+        "2024": 669600
+      },
+      "Dues & Memberships": {
+        "2024": 1565000
+      },
+      "Shareholder Expenses": {
+        "2024": 956420
+      },
+      "Donations": {
+        "2024": 100000
+      },
+      "Repairs & Maintenance": {
+        "2024": 209010
+      },
+      "Amortization Expense": {
+        "2024": 3100000
+      },
+      "Income Tax Expense": {
+        "2024": 1420000
+      }
+    }
+  },
+  "qbd": {
+    "software": "quickbooks_desktop",
+    "basis": "accrual",
+    "accountMode": "heading_rows",
+    "amountMode": "debit_credit",
+    "dateOrder": "mdy",
+    "entries": 709,
+    "byYear": {
+      "2024": 709
+    },
+    "accounts": {
+      "Chequing": {
+        "2024": 57087060
+      },
+      "Accumulated Amortization": {
+        "2024": -3100000
+      },
+      "HST Payable": {
+        "2024": 4094174
+      },
+      "Shareholder Loan": {
+        "2024": -1000000
+      },
+      "Sales - Service": {
+        "2024": -50353500
+      },
+      "Sales - Installations": {
+        "2024": -58243200
+      },
+      "Materials & Supplies": {
+        "2024": 17688000
+      },
+      "Subcontractors": {
+        "2024": 13048400
+      },
+      "Wages & Salaries": {
+        "2024": 27300002
+      },
+      "Wages - Officers": {
+        "2024": 24000000
+      },
+      "Payroll Taxes - CPP/EI": {
+        "2024": 3899399
+      },
+      "WSIB": {
+        "2024": 840000
+      },
+      "Employee Benefits": {
+        "2024": 1344000
+      },
+      "Automobile Expense:Vehicle - Owner": {
+        "2024": 2784000
+      },
+      "Automobile Expense:Fuel - Service Vans": {
+        "2024": 947722
+      },
+      "Automobile Expense:Van Repairs & Maintenance": {
+        "2024": 192571
+      },
+      "Meals and Entertainment": {
+        "2024": 2200000
+      },
+      "Insurance": {
+        "2024": 2100000
+      },
+      "Legal & Professional Fees": {
+        "2024": 3340000
+      },
+      "Rent": {
+        "2024": 5400000
+      },
+      "Utilities": {
+        "2024": 757527
+      },
+      "Telephone & Internet": {
+        "2024": 551402
+      },
+      "Advertising & Promotion": {
+        "2024": 1581220
+      },
+      "Office Supplies": {
+        "2024": 199626
+      },
+      "Software & Subscriptions": {
+        "2024": 406800
+      },
+      "Bank Charges": {
+        "2024": 35940
+      },
+      "Interest Expense": {
+        "2024": 669600
+      },
+      "Dues & Memberships": {
+        "2024": 1565000
+      },
+      "Shareholder Expenses": {
+        "2024": 956420
+      },
+      "Donations": {
+        "2024": 100000
+      },
+      "Repairs & Maintenance": {
+        "2024": 209010
+      },
+      "Amortization Expense": {
+        "2024": 3100000
+      },
+      "Income Tax Expense": {
+        "2024": 1420000
+      }
+    }
+  },
+  "xero-account-transactions": {
+    "software": "xero",
+    "accountMode": "heading_rows",
+    "amountMode": "debit_credit",
+    "dateOrder": "dmy",
+    "entries": 709,
+    "byYear": {
+      "2024": 709
+    },
+    "accounts": {
+      "Chequing": {
+        "2024": 57087060
+      },
+      "Accumulated Amortization": {
+        "2024": -3100000
+      },
+      "HST Payable": {
+        "2024": 4094174
+      },
+      "Shareholder Loan": {
+        "2024": -1000000
+      },
+      "Sales - Service": {
+        "2024": -50353500
+      },
+      "Sales - Installations": {
+        "2024": -58243200
+      },
+      "Materials & Supplies": {
+        "2024": 17688000
+      },
+      "Subcontractors": {
+        "2024": 13048400
+      },
+      "Wages & Salaries": {
+        "2024": 27300002
+      },
+      "Wages - Officers": {
+        "2024": 24000000
+      },
+      "Payroll Taxes - CPP/EI": {
+        "2024": 3899399
+      },
+      "WSIB": {
+        "2024": 840000
+      },
+      "Employee Benefits": {
+        "2024": 1344000
+      },
+      "Automobile Expense:Vehicle - Owner": {
+        "2024": 2784000
+      },
+      "Automobile Expense:Fuel - Service Vans": {
+        "2024": 947722
+      },
+      "Automobile Expense:Van Repairs & Maintenance": {
+        "2024": 192571
+      },
+      "Meals and Entertainment": {
+        "2024": 2200000
+      },
+      "Insurance": {
+        "2024": 2100000
+      },
+      "Legal & Professional Fees": {
+        "2024": 3340000
+      },
+      "Rent": {
+        "2024": 5400000
+      },
+      "Utilities": {
+        "2024": 757527
+      },
+      "Telephone & Internet": {
+        "2024": 551402
+      },
+      "Advertising & Promotion": {
+        "2024": 1581220
+      },
+      "Office Supplies": {
+        "2024": 199626
+      },
+      "Software & Subscriptions": {
+        "2024": 406800
+      },
+      "Bank Charges": {
+        "2024": 35940
+      },
+      "Interest Expense": {
+        "2024": 669600
+      },
+      "Dues & Memberships": {
+        "2024": 1565000
+      },
+      "Shareholder Expenses": {
+        "2024": 956420
+      },
+      "Donations": {
+        "2024": 100000
+      },
+      "Repairs & Maintenance": {
+        "2024": 209010
+      },
+      "Amortization Expense": {
+        "2024": 3100000
+      },
+      "Income Tax Expense": {
+        "2024": 1420000
+      }
+    }
+  },
+  "xero-gl-detail": {
+    "software": "xero",
+    "accountMode": "column",
+    "amountMode": "debit_credit",
+    "entries": 709,
+    "byYear": {
+      "2024": 709
+    },
+    "accounts": {
+      "Chequing": {
+        "2024": 57087060
+      },
+      "Accumulated Amortization": {
+        "2024": -3100000
+      },
+      "HST Payable": {
+        "2024": 4094174
+      },
+      "Shareholder Loan": {
+        "2024": -1000000
+      },
+      "Sales - Service": {
+        "2024": -50353500
+      },
+      "Sales - Installations": {
+        "2024": -58243200
+      },
+      "Materials & Supplies": {
+        "2024": 17688000
+      },
+      "Subcontractors": {
+        "2024": 13048400
+      },
+      "Wages & Salaries": {
+        "2024": 27300002
+      },
+      "Wages - Officers": {
+        "2024": 24000000
+      },
+      "Payroll Taxes - CPP/EI": {
+        "2024": 3899399
+      },
+      "WSIB": {
+        "2024": 840000
+      },
+      "Employee Benefits": {
+        "2024": 1344000
+      },
+      "Automobile Expense:Vehicle - Owner": {
+        "2024": 2784000
+      },
+      "Automobile Expense:Fuel - Service Vans": {
+        "2024": 947722
+      },
+      "Automobile Expense:Van Repairs & Maintenance": {
+        "2024": 192571
+      },
+      "Meals and Entertainment": {
+        "2024": 2200000
+      },
+      "Insurance": {
+        "2024": 2100000
+      },
+      "Legal & Professional Fees": {
+        "2024": 3340000
+      },
+      "Rent": {
+        "2024": 5400000
+      },
+      "Utilities": {
+        "2024": 757527
+      },
+      "Telephone & Internet": {
+        "2024": 551402
+      },
+      "Advertising & Promotion": {
+        "2024": 1581220
+      },
+      "Office Supplies": {
+        "2024": 199626
+      },
+      "Software & Subscriptions": {
+        "2024": 406800
+      },
+      "Bank Charges": {
+        "2024": 35940
+      },
+      "Interest Expense": {
+        "2024": 669600
+      },
+      "Dues & Memberships": {
+        "2024": 1565000
+      },
+      "Shareholder Expenses": {
+        "2024": 956420
+      },
+      "Donations": {
+        "2024": 100000
+      },
+      "Repairs & Maintenance": {
+        "2024": 209010
+      },
+      "Amortization Expense": {
+        "2024": 3100000
+      },
+      "Income Tax Expense": {
+        "2024": 1420000
+      }
+    }
+  },
+  "sage50": {
+    "software": "sage50",
+    "accountMode": "heading_rows",
+    "amountMode": "debit_credit",
+    "dateOrder": "mdy",
+    "encoding": "windows-1252",
+    "entries": 709,
+    "byYear": {
+      "2024": 709
+    },
+    "accounts": {
+      "Chequing": {
+        "2024": 57087060
+      },
+      "Accumulated Amortization": {
+        "2024": -3100000
+      },
+      "HST Payable": {
+        "2024": 4094174
+      },
+      "Shareholder Loan": {
+        "2024": -1000000
+      },
+      "Sales - Service": {
+        "2024": -50353500
+      },
+      "Sales - Installations": {
+        "2024": -58243200
+      },
+      "Materials & Supplies": {
+        "2024": 17688000
+      },
+      "Subcontractors": {
+        "2024": 13048400
+      },
+      "Wages & Salaries": {
+        "2024": 27300002
+      },
+      "Wages - Officers": {
+        "2024": 24000000
+      },
+      "Payroll Taxes - CPP/EI": {
+        "2024": 3899399
+      },
+      "WSIB": {
+        "2024": 840000
+      },
+      "Employee Benefits": {
+        "2024": 1344000
+      },
+      "Vehicle - Owner": {
+        "2024": 2784000
+      },
+      "Fuel - Service Vans": {
+        "2024": 947722
+      },
+      "Van Repairs & Maintenance": {
+        "2024": 192571
+      },
+      "Meals and Entertainment": {
+        "2024": 2200000
+      },
+      "Insurance": {
+        "2024": 2100000
+      },
+      "Legal & Professional Fees": {
+        "2024": 3340000
+      },
+      "Rent": {
+        "2024": 5400000
+      },
+      "Utilities": {
+        "2024": 757527
+      },
+      "Telephone & Internet": {
+        "2024": 551402
+      },
+      "Advertising & Promotion": {
+        "2024": 1581220
+      },
+      "Office Supplies": {
+        "2024": 199626
+      },
+      "Software & Subscriptions": {
+        "2024": 406800
+      },
+      "Bank Charges": {
+        "2024": 35940
+      },
+      "Interest Expense": {
+        "2024": 669600
+      },
+      "Dues & Memberships": {
+        "2024": 1565000
+      },
+      "Shareholder Expenses": {
+        "2024": 956420
+      },
+      "Donations": {
+        "2024": 100000
+      },
+      "Repairs & Maintenance": {
+        "2024": 209010
+      },
+      "Amortization Expense": {
+        "2024": 3100000
+      },
+      "Income Tax Expense": {
+        "2024": 1420000
+      }
+    }
+  },
+  "wave": {
+    "software": "wave",
+    "accountMode": "column",
+    "amountMode": "debit_credit",
+    "dateOrder": "ymd",
+    "entries": 709,
+    "byYear": {
+      "2024": 709
+    },
+    "accounts": {
+      "Chequing": {
+        "2024": 57087060
+      },
+      "Accumulated Amortization": {
+        "2024": -3100000
+      },
+      "HST Payable": {
+        "2024": 4094174
+      },
+      "Shareholder Loan": {
+        "2024": -1000000
+      },
+      "Sales - Service": {
+        "2024": -50353500
+      },
+      "Sales - Installations": {
+        "2024": -58243200
+      },
+      "Materials & Supplies": {
+        "2024": 17688000
+      },
+      "Subcontractors": {
+        "2024": 13048400
+      },
+      "Wages & Salaries": {
+        "2024": 27300002
+      },
+      "Wages - Officers": {
+        "2024": 24000000
+      },
+      "Payroll Taxes - CPP/EI": {
+        "2024": 3899399
+      },
+      "WSIB": {
+        "2024": 840000
+      },
+      "Employee Benefits": {
+        "2024": 1344000
+      },
+      "Automobile Expense:Vehicle - Owner": {
+        "2024": 2784000
+      },
+      "Automobile Expense:Fuel - Service Vans": {
+        "2024": 947722
+      },
+      "Automobile Expense:Van Repairs & Maintenance": {
+        "2024": 192571
+      },
+      "Meals and Entertainment": {
+        "2024": 2200000
+      },
+      "Insurance": {
+        "2024": 2100000
+      },
+      "Legal & Professional Fees": {
+        "2024": 3340000
+      },
+      "Rent": {
+        "2024": 5400000
+      },
+      "Utilities": {
+        "2024": 757527
+      },
+      "Telephone & Internet": {
+        "2024": 551402
+      },
+      "Advertising & Promotion": {
+        "2024": 1581220
+      },
+      "Office Supplies": {
+        "2024": 199626
+      },
+      "Software & Subscriptions": {
+        "2024": 406800
+      },
+      "Bank Charges": {
+        "2024": 35940
+      },
+      "Interest Expense": {
+        "2024": 669600
+      },
+      "Dues & Memberships": {
+        "2024": 1565000
+      },
+      "Shareholder Expenses": {
+        "2024": 956420
+      },
+      "Donations": {
+        "2024": 100000
+      },
+      "Repairs & Maintenance": {
+        "2024": 209010
+      },
+      "Amortization Expense": {
+        "2024": 3100000
+      },
+      "Income Tax Expense": {
+        "2024": 1420000
+      }
+    }
+  },
+  "freshbooks": {
+    "software": "freshbooks",
+    "accountMode": "column",
+    "amountMode": "debit_credit",
+    "entries": 709,
+    "byYear": {
+      "2024": 709
+    },
+    "accounts": {
+      "Chequing": {
+        "2024": 57087060
+      },
+      "Accumulated Amortization": {
+        "2024": -3100000
+      },
+      "HST Payable": {
+        "2024": 4094174
+      },
+      "Shareholder Loan": {
+        "2024": -1000000
+      },
+      "Sales - Service": {
+        "2024": -50353500
+      },
+      "Sales - Installations": {
+        "2024": -58243200
+      },
+      "Materials & Supplies": {
+        "2024": 17688000
+      },
+      "Subcontractors": {
+        "2024": 13048400
+      },
+      "Wages & Salaries": {
+        "2024": 27300002
+      },
+      "Wages - Officers": {
+        "2024": 24000000
+      },
+      "Payroll Taxes - CPP/EI": {
+        "2024": 3899399
+      },
+      "WSIB": {
+        "2024": 840000
+      },
+      "Employee Benefits": {
+        "2024": 1344000
+      },
+      "Vehicle - Owner": {
+        "2024": 2784000
+      },
+      "Fuel - Service Vans": {
+        "2024": 947722
+      },
+      "Van Repairs & Maintenance": {
+        "2024": 192571
+      },
+      "Meals and Entertainment": {
+        "2024": 2200000
+      },
+      "Insurance": {
+        "2024": 2100000
+      },
+      "Legal & Professional Fees": {
+        "2024": 3340000
+      },
+      "Rent": {
+        "2024": 5400000
+      },
+      "Utilities": {
+        "2024": 757527
+      },
+      "Telephone & Internet": {
+        "2024": 551402
+      },
+      "Advertising & Promotion": {
+        "2024": 1581220
+      },
+      "Office Supplies": {
+        "2024": 199626
+      },
+      "Software & Subscriptions": {
+        "2024": 406800
+      },
+      "Bank Charges": {
+        "2024": 35940
+      },
+      "Interest Expense": {
+        "2024": 669600
+      },
+      "Dues & Memberships": {
+        "2024": 1565000
+      },
+      "Shareholder Expenses": {
+        "2024": 956420
+      },
+      "Donations": {
+        "2024": 100000
+      },
+      "Repairs & Maintenance": {
+        "2024": 209010
+      },
+      "Amortization Expense": {
+        "2024": 3100000
+      },
+      "Income Tax Expense": {
+        "2024": 1420000
+      }
+    }
+  },
+  "account-type": {
+    "accountMode": "column",
+    "amountMode": "debit_credit",
+    "dateOrder": "ymd",
+    "entries": 709,
+    "byYear": {
+      "2024": 709
+    },
+    "accounts": {
+      "Chequing": {
+        "2024": 57087060
+      },
+      "Accumulated Amortization": {
+        "2024": -3100000
+      },
+      "HST Payable": {
+        "2024": 4094174
+      },
+      "Shareholder Loan": {
+        "2024": -1000000
+      },
+      "Sales - Service": {
+        "2024": -50353500
+      },
+      "Sales - Installations": {
+        "2024": -58243200
+      },
+      "Materials & Supplies": {
+        "2024": 17688000
+      },
+      "Subcontractors": {
+        "2024": 13048400
+      },
+      "Wages & Salaries": {
+        "2024": 27300002
+      },
+      "Wages - Officers": {
+        "2024": 24000000
+      },
+      "Payroll Taxes - CPP/EI": {
+        "2024": 3899399
+      },
+      "WSIB": {
+        "2024": 840000
+      },
+      "Employee Benefits": {
+        "2024": 1344000
+      },
+      "Automobile Expense:Vehicle - Owner": {
+        "2024": 2784000
+      },
+      "Automobile Expense:Fuel - Service Vans": {
+        "2024": 947722
+      },
+      "Automobile Expense:Van Repairs & Maintenance": {
+        "2024": 192571
+      },
+      "Meals and Entertainment": {
+        "2024": 2200000
+      },
+      "Insurance": {
+        "2024": 2100000
+      },
+      "Legal & Professional Fees": {
+        "2024": 3340000
+      },
+      "Rent": {
+        "2024": 5400000
+      },
+      "Utilities": {
+        "2024": 757527
+      },
+      "Telephone & Internet": {
+        "2024": 551402
+      },
+      "Advertising & Promotion": {
+        "2024": 1581220
+      },
+      "Office Supplies": {
+        "2024": 199626
+      },
+      "Software & Subscriptions": {
+        "2024": 406800
+      },
+      "Bank Charges": {
+        "2024": 35940
+      },
+      "Interest Expense": {
+        "2024": 669600
+      },
+      "Dues & Memberships": {
+        "2024": 1565000
+      },
+      "Shareholder Expenses": {
+        "2024": 956420
+      },
+      "Donations": {
+        "2024": 100000
+      },
+      "Repairs & Maintenance": {
+        "2024": 209010
+      },
+      "Amortization Expense": {
+        "2024": 3100000
+      },
+      "Income Tax Expense": {
+        "2024": 1420000
+      }
+    }
+  },
+  "payroll-provider": {
+    "software": "quickbooks_online",
+    "accountMode": "heading_rows",
+    "entries": 607,
+    "byYear": {
+      "2024": 607
+    },
+    "accounts": {
+      "Chequing": {
+        "2024": 62596620
+      },
+      "Accumulated Amortization": {
+        "2024": -3100000
+      },
+      "HST Payable": {
+        "2024": 4112870
+      },
+      "Shareholder Loan": {
+        "2024": -1000000
+      },
+      "Sales - Service": {
+        "2024": -48546100
+      },
+      "Sales - Installations": {
+        "2024": -66629800
+      },
+      "Materials & Supplies": {
+        "2024": 17243800
+      },
+      "Subcontractors": {
+        "2024": 14626000
+      },
+      "Wages & Salaries": {
+        "2024": 51300004
+      },
+      "Payroll Taxes - CPP/EI": {
+        "2024": 3905876
+      },
+      "WSIB": {
+        "2024": 840000
+      },
+      "Employee Benefits": {
+        "2024": 1344000
+      },
+      "Automobile Expense:Vehicle - Owner": {
+        "2024": 2784000
+      },
+      "Automobile Expense:Fuel - Service Vans": {
+        "2024": 986674
+      },
+      "Automobile Expense:Van Repairs & Maintenance": {
+        "2024": 231880
+      },
+      "Meals and Entertainment": {
+        "2024": 2200000
+      },
+      "Insurance": {
+        "2024": 2100000
+      },
+      "Legal & Professional Fees": {
+        "2024": 3340000
+      },
+      "Rent": {
+        "2024": 5400000
+      },
+      "Utilities": {
+        "2024": 668289
+      },
+      "Telephone & Internet": {
+        "2024": 548172
+      },
+      "Advertising & Promotion": {
+        "2024": 1557645
+      },
+      "Office Supplies": {
+        "2024": 206490
+      },
+      "Software & Subscriptions": {
+        "2024": 406800
+      },
+      "Bank Charges": {
+        "2024": 35940
+      },
+      "Interest Expense": {
+        "2024": 669600
+      },
+      "Dues & Memberships": {
+        "2024": 1565000
+      },
+      "Shareholder Expenses": {
+        "2024": 956420
+      },
+      "Donations": {
+        "2024": 100000
+      },
+      "Repairs & Maintenance": {
+        "2024": 215494
+      },
+      "Amortization Expense": {
+        "2024": 3100000
+      },
+      "Income Tax Expense": {
+        "2024": 1420000
+      }
+    }
+  },
+  "adjustments": {
+    "accountMode": "column",
+    "amountMode": "debit_credit",
+    "entries": 4,
+    "byYear": {
+      "2023": 4
+    },
+    "accounts": {
+      "Amortization Expense": {
+        "2023": 2970000
+      },
+      "Accumulated Amortization": {
+        "2023": -2970000
+      },
+      "Income Tax Expense": {
+        "2023": 1150000
+      },
+      "HST Payable": {
+        "2023": -1150000
+      }
+    }
+  },
+  "odd": {
+    "detectable": false
+  },
+  "bank-statement": {
+    "detectable": false,
+    "ledger": false
+  },
+  "bank-statement-amount": {
+    "ledger": false
+  },
+  "pnl": {
+    "detectable": false,
+    "ledger": false
+  },
+  "statements": {
+    "2022": {
+      "revenue": 115175900,
+      "netIncome": 2054238,
+      "amortization": 2800000,
+      "incomeTax": 980000
+    },
+    "2023": {
+      "revenue": 126024100,
+      "netIncome": 12567415,
+      "amortization": 2970000,
+      "incomeTax": 1150000
+    },
+    "2024": {
+      "revenue": 108596700,
+      "netIncome": -8039939,
+      "amortization": 3100000,
+      "incomeTax": 1420000
+    }
+  },
+  "planted": {
+    "vehicleOwner": {
+      "account": "Automobile Expense:Vehicle - Owner",
+      "byYear": {
+        "2022": 2400000,
+        "2023": 2600000,
+        "2024": 2784000
+      }
+    },
+    "meals": {
+      "account": "Meals and Entertainment",
+      "byYear": {
+        "2022": 1800000,
+        "2023": 2000000,
+        "2024": 2200000
+      }
+    },
+    "settlement": {
+      "account": "Legal & Professional Fees",
+      "date": "2024-07-15",
+      "amountCents": 2200000,
+      "name": "Holloway LLP"
+    },
+    "ownerPay": {
+      "account": "Wages - Officers",
+      "perYear": 24000000,
+      "name": "Payroll — D. Brightwater"
+    },
+    "spousePay": {
+      "account": "Wages & Salaries",
+      "perYear": 8500000,
+      "name": "Payroll — E. Brightwater"
+    },
+    "lifeInsurance": {
+      "account": "Insurance",
+      "perYear": 900000,
+      "name": "Sun Life"
+    },
+    "golf": {
+      "account": "Dues & Memberships",
+      "perYear": 1500000,
+      "name": "Glen Abbey Golf Club"
+    },
+    "yearEnd2023": {
+      "amortization": 2970000,
+      "incomeTax": 1150000,
+      "total": 4120000
+    }
+  }
+}

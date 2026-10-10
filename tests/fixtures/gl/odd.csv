@@ -1,0 +1,401 @@
+When,Ledger,Who,What,In,Out
+01/28/2024,Chequing,,Deposits - month,,90497.25
+01/28/2024,Chequing,,Payments - month,42924.70,
+02/28/2024,Chequing,,Deposits - month,,90497.25
+02/28/2024,Chequing,,Payments - month,42924.70,
+03/28/2024,Chequing,,Deposits - month,,90497.25
+03/28/2024,Chequing,,Payments - month,42924.70,
+04/28/2024,Chequing,,Deposits - month,,90497.25
+04/28/2024,Chequing,,Payments - month,42924.70,
+05/28/2024,Chequing,,Deposits - month,,90497.25
+05/28/2024,Chequing,,Payments - month,42924.70,
+06/28/2024,Chequing,,Deposits - month,,90497.25
+06/28/2024,Chequing,,Payments - month,42924.70,
+07/28/2024,Chequing,,Deposits - month,,90497.25
+07/28/2024,Chequing,,Payments - month,42924.70,
+08/28/2024,Chequing,,Deposits - month,,90497.25
+08/28/2024,Chequing,,Payments - month,42924.70,
+09/28/2024,Chequing,,Deposits - month,,90497.25
+09/28/2024,Chequing,,Payments - month,42924.70,
+10/28/2024,Chequing,,Deposits - month,,90497.25
+10/28/2024,Chequing,,Payments - month,42924.70,
+11/28/2024,Chequing,,Deposits - month,,90497.25
+11/28/2024,Chequing,,Payments - month,42924.70,
+12/28/2024,Chequing,,Deposits - month,,90497.25
+12/28/2024,Chequing,,Payments - month,42924.70,
+12/31/2024,Accumulated Amortization,,Year-end amortization,31000.00,
+03/30/2024,HST Payable,Receiver General,HST remittance,,10280.64
+06/30/2024,HST Payable,Receiver General,HST remittance,,10279.20
+09/30/2024,HST Payable,Receiver General,HST remittance,,10040.00
+12/30/2024,HST Payable,Receiver General,HST remittance,,10341.90
+06/01/2024,Shareholder Loan,Dan Brightwater,Shareholder advance,10000.00,
+01/02/2024,Sales - Service,Maple Ridge Condos,Service call 2024-01-1,4434.00,
+01/05/2024,Sales - Service,J. Alvarez,Service call 2024-01-2,3430.00,
+01/08/2024,Sales - Service,Lakeview Dental Centre,Service call 2024-01-3,6332.00,
+01/11/2024,Sales - Service,Northgate Schools,Service call 2024-01-4,8583.00,
+01/14/2024,Sales - Service,P. Nguyen,Service call 2024-01-5,7515.00,
+01/17/2024,Sales - Service,Oakville Medical Arts,Service call 2024-01-6,5992.00,
+01/20/2024,Sales - Service,Riverstone Homes,Service call 2024-01-7,6802.00,
+01/23/2024,Sales - Service,S. Kowalski,Service call 2024-01-8,7823.00,
+02/02/2024,Sales - Service,J. Alvarez,Service call 2024-02-1,6575.00,
+02/05/2024,Sales - Service,Lakeview Dental Centre,Service call 2024-02-2,2909.00,
+02/08/2024,Sales - Service,Northgate Schools,Service call 2024-02-3,1568.00,
+02/11/2024,Sales - Service,P. Nguyen,Service call 2024-02-4,6668.00,
+02/14/2024,Sales - Service,Oakville Medical Arts,Service call 2024-02-5,3283.00,
+02/17/2024,Sales - Service,Riverstone Homes,Service call 2024-02-6,5927.00,
+02/20/2024,Sales - Service,S. Kowalski,Service call 2024-02-7,3945.00,
+02/23/2024,Sales - Service,Bayfront Hotel,Service call 2024-02-8,5434.00,
+03/02/2024,Sales - Service,Lakeview Dental Centre,Service call 2024-03-1,8967.00,
+03/05/2024,Sales - Service,Northgate Schools,Service call 2024-03-2,8582.00,
+03/08/2024,Sales - Service,P. Nguyen,Service call 2024-03-3,2299.00,
+03/11/2024,Sales - Service,Oakville Medical Arts,Service call 2024-03-4,2815.00,
+03/14/2024,Sales - Service,Riverstone Homes,Service call 2024-03-5,3334.00,
+03/17/2024,Sales - Service,S. Kowalski,Service call 2024-03-6,5225.00,
+03/20/2024,Sales - Service,Bayfront Hotel,Service call 2024-03-7,6029.00,
+03/23/2024,Sales - Service,Halton Property Group,Service call 2024-03-8,4446.00,
+04/02/2024,Sales - Service,Northgate Schools,Service call 2024-04-1,1844.00,
+04/05/2024,Sales - Service,P. Nguyen,Service call 2024-04-2,2197.00,
+04/08/2024,Sales - Service,Oakville Medical Arts,Service call 2024-04-3,5204.00,
+04/11/2024,Sales - Service,Riverstone Homes,Service call 2024-04-4,2575.00,
+04/14/2024,Sales - Service,S. Kowalski,Service call 2024-04-5,4012.00,
+04/17/2024,Sales - Service,Bayfront Hotel,Service call 2024-04-6,4586.00,
+04/20/2024,Sales - Service,Halton Property Group,Service call 2024-04-7,8967.00,
+04/23/2024,Sales - Service,Maple Ridge Condos,Service call 2024-04-8,1384.00,
+05/02/2024,Sales - Service,P. Nguyen,Service call 2024-05-1,3527.00,
+05/05/2024,Sales - Service,Oakville Medical Arts,Service call 2024-05-2,8181.00,
+05/08/2024,Sales - Service,Riverstone Homes,Service call 2024-05-3,4280.00,
+05/11/2024,Sales - Service,S. Kowalski,Service call 2024-05-4,5699.00,
+05/14/2024,Sales - Service,Bayfront Hotel,Service call 2024-05-5,4063.00,
+05/17/2024,Sales - Service,Halton Property Group,Service call 2024-05-6,4229.00,
+05/20/2024,Sales - Service,Maple Ridge Condos,Service call 2024-05-7,5526.00,
+05/23/2024,Sales - Service,J. Alvarez,Service call 2024-05-8,4943.00,
+06/02/2024,Sales - Service,Oakville Medical Arts,Service call 2024-06-1,8495.00,
+06/05/2024,Sales - Service,Riverstone Homes,Service call 2024-06-2,7660.00,
+06/08/2024,Sales - Service,S. Kowalski,Service call 2024-06-3,5761.00,
+06/11/2024,Sales - Service,Bayfront Hotel,Service call 2024-06-4,4095.00,
+06/14/2024,Sales - Service,Halton Property Group,Service call 2024-06-5,7425.00,
+06/17/2024,Sales - Service,Maple Ridge Condos,Service call 2024-06-6,4205.00,
+06/20/2024,Sales - Service,J. Alvarez,Service call 2024-06-7,7878.00,
+06/23/2024,Sales - Service,Lakeview Dental Centre,Service call 2024-06-8,4981.00,
+07/02/2024,Sales - Service,Riverstone Homes,Service call 2024-07-1,4301.00,
+07/05/2024,Sales - Service,S. Kowalski,Service call 2024-07-2,4423.00,
+07/08/2024,Sales - Service,Bayfront Hotel,Service call 2024-07-3,4586.00,
+07/11/2024,Sales - Service,Halton Property Group,Service call 2024-07-4,1276.00,
+07/14/2024,Sales - Service,Maple Ridge Condos,Service call 2024-07-5,8257.00,
+07/17/2024,Sales - Service,J. Alvarez,Service call 2024-07-6,8716.00,
+07/20/2024,Sales - Service,Lakeview Dental Centre,Service call 2024-07-7,8275.00,
+07/23/2024,Sales - Service,Northgate Schools,Service call 2024-07-8,2721.00,
+08/02/2024,Sales - Service,S. Kowalski,Service call 2024-08-1,4414.00,
+08/05/2024,Sales - Service,Bayfront Hotel,Service call 2024-08-2,7877.00,
+08/08/2024,Sales - Service,Halton Property Group,Service call 2024-08-3,5809.00,
+08/11/2024,Sales - Service,Maple Ridge Condos,Service call 2024-08-4,7473.00,
+08/14/2024,Sales - Service,J. Alvarez,Service call 2024-08-5,8838.00,
+08/17/2024,Sales - Service,Lakeview Dental Centre,Service call 2024-08-6,8804.00,
+08/20/2024,Sales - Service,Northgate Schools,Service call 2024-08-7,5599.00,
+08/23/2024,Sales - Service,P. Nguyen,Service call 2024-08-8,3859.00,
+09/02/2024,Sales - Service,Bayfront Hotel,Service call 2024-09-1,7617.00,
+09/05/2024,Sales - Service,Halton Property Group,Service call 2024-09-2,5387.00,
+09/08/2024,Sales - Service,Maple Ridge Condos,Service call 2024-09-3,3796.00,
+09/11/2024,Sales - Service,J. Alvarez,Service call 2024-09-4,7612.00,
+09/14/2024,Sales - Service,Lakeview Dental Centre,Service call 2024-09-5,3063.00,
+09/17/2024,Sales - Service,Northgate Schools,Service call 2024-09-6,8428.00,
+09/20/2024,Sales - Service,P. Nguyen,Service call 2024-09-7,4314.00,
+09/23/2024,Sales - Service,Oakville Medical Arts,Service call 2024-09-8,1591.00,
+10/02/2024,Sales - Service,Halton Property Group,Service call 2024-10-1,2690.00,
+10/05/2024,Sales - Service,Maple Ridge Condos,Service call 2024-10-2,4854.00,
+10/08/2024,Sales - Service,J. Alvarez,Service call 2024-10-3,6823.00,
+10/11/2024,Sales - Service,Lakeview Dental Centre,Service call 2024-10-4,3600.00,
+10/14/2024,Sales - Service,Northgate Schools,Service call 2024-10-5,2140.00,
+10/17/2024,Sales - Service,P. Nguyen,Service call 2024-10-6,5623.00,
+10/20/2024,Sales - Service,Oakville Medical Arts,Service call 2024-10-7,8977.00,
+10/23/2024,Sales - Service,Riverstone Homes,Service call 2024-10-8,7618.00,
+11/02/2024,Sales - Service,Maple Ridge Condos,Service call 2024-11-1,6364.00,
+11/05/2024,Sales - Service,J. Alvarez,Service call 2024-11-2,8050.00,
+11/08/2024,Sales - Service,Lakeview Dental Centre,Service call 2024-11-3,1921.00,
+11/11/2024,Sales - Service,Northgate Schools,Service call 2024-11-4,3575.00,
+11/14/2024,Sales - Service,P. Nguyen,Service call 2024-11-5,1349.00,
+11/17/2024,Sales - Service,Oakville Medical Arts,Service call 2024-11-6,7415.00,
+11/20/2024,Sales - Service,Riverstone Homes,Service call 2024-11-7,4331.00,
+11/23/2024,Sales - Service,S. Kowalski,Service call 2024-11-8,6854.00,
+12/02/2024,Sales - Service,J. Alvarez,Service call 2024-12-1,2679.00,
+12/05/2024,Sales - Service,Lakeview Dental Centre,Service call 2024-12-2,4822.00,
+12/08/2024,Sales - Service,Northgate Schools,Service call 2024-12-3,7230.00,
+12/11/2024,Sales - Service,P. Nguyen,Service call 2024-12-4,1949.00,
+12/14/2024,Sales - Service,Oakville Medical Arts,Service call 2024-12-5,1466.00,
+12/17/2024,Sales - Service,Riverstone Homes,Service call 2024-12-6,5262.00,
+12/20/2024,Sales - Service,S. Kowalski,Service call 2024-12-7,5647.00,
+12/23/2024,Sales - Service,Bayfront Hotel,Service call 2024-12-8,4626.00,
+01/05/2024,Sales - Installations,Lakeview Dental Centre,Furnace / boiler installation,10135.00,
+01/13/2024,Sales - Installations,Northgate Schools,Furnace / boiler installation,16644.00,
+01/21/2024,Sales - Installations,P. Nguyen,Furnace / boiler installation,8116.00,
+02/05/2024,Sales - Installations,Oakville Medical Arts,Furnace / boiler installation,13317.00,
+02/13/2024,Sales - Installations,Riverstone Homes,Furnace / boiler installation,11394.00,
+02/21/2024,Sales - Installations,S. Kowalski,Furnace / boiler installation,14211.00,
+03/05/2024,Sales - Installations,Bayfront Hotel,Furnace / boiler installation,11580.00,
+03/13/2024,Sales - Installations,Halton Property Group,Furnace / boiler installation,14806.00,
+03/21/2024,Sales - Installations,Maple Ridge Condos,Furnace / boiler installation,28765.00,
+04/05/2024,Sales - Installations,J. Alvarez,Furnace / boiler installation,12850.00,
+04/13/2024,Sales - Installations,Lakeview Dental Centre,Furnace / boiler installation,9823.00,
+04/21/2024,Sales - Installations,Northgate Schools,Furnace / boiler installation,8736.00,
+05/05/2024,Sales - Installations,P. Nguyen,Furnace / boiler installation,11222.00,
+05/13/2024,Sales - Installations,Oakville Medical Arts,Furnace / boiler installation,18249.00,
+05/21/2024,Sales - Installations,Riverstone Homes,Furnace / boiler installation,22354.00,
+06/05/2024,Sales - Installations,S. Kowalski,Furnace / boiler installation,19840.00,
+06/13/2024,Sales - Installations,Bayfront Hotel,Furnace / boiler installation,18276.00,
+06/21/2024,Sales - Installations,Halton Property Group,Furnace / boiler installation,27254.00,
+07/05/2024,Sales - Installations,Maple Ridge Condos,Furnace / boiler installation,26743.00,
+07/13/2024,Sales - Installations,J. Alvarez,Furnace / boiler installation,24938.00,
+07/21/2024,Sales - Installations,Lakeview Dental Centre,Furnace / boiler installation,16763.00,
+08/05/2024,Sales - Installations,Northgate Schools,Furnace / boiler installation,10399.00,
+08/13/2024,Sales - Installations,P. Nguyen,Furnace / boiler installation,8340.00,
+08/21/2024,Sales - Installations,Oakville Medical Arts,Furnace / boiler installation,27274.00,
+09/05/2024,Sales - Installations,Riverstone Homes,Furnace / boiler installation,11433.00,
+09/13/2024,Sales - Installations,S. Kowalski,Furnace / boiler installation,20610.00,
+09/21/2024,Sales - Installations,Bayfront Hotel,Furnace / boiler installation,18354.00,
+10/05/2024,Sales - Installations,Halton Property Group,Furnace / boiler installation,11683.00,
+10/13/2024,Sales - Installations,Maple Ridge Condos,Furnace / boiler installation,16995.00,
+10/21/2024,Sales - Installations,J. Alvarez,Furnace / boiler installation,27991.00,
+11/05/2024,Sales - Installations,Lakeview Dental Centre,Furnace / boiler installation,8273.00,
+11/13/2024,Sales - Installations,Northgate Schools,Furnace / boiler installation,8898.00,
+11/21/2024,Sales - Installations,P. Nguyen,Furnace / boiler installation,9173.00,
+12/05/2024,Sales - Installations,Oakville Medical Arts,Furnace / boiler installation,14748.00,
+12/13/2024,Sales - Installations,Riverstone Homes,Furnace / boiler installation,13579.00,
+12/21/2024,Sales - Installations,S. Kowalski,Furnace / boiler installation,28666.00,
+01/03/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,4089.00
+01/08/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,1412.00
+01/13/2024,Materials & Supplies,The Home Depot,"Pipe, fittings and parts",,1988.00
+01/18/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,1288.00
+01/23/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,994.00
+02/03/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,2236.00
+02/08/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,4713.00
+02/13/2024,Materials & Supplies,The Home Depot,"Pipe, fittings and parts",,3706.00
+02/18/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,3389.00
+02/23/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,4982.00
+03/03/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,630.00
+03/08/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,4544.00
+03/13/2024,Materials & Supplies,The Home Depot,"Pipe, fittings and parts",,2281.00
+03/18/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,4036.00
+03/23/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,2673.00
+04/03/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,3108.00
+04/08/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,4985.00
+04/13/2024,Materials & Supplies,The Home Depot,"Pipe, fittings and parts",,4057.00
+04/18/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,3997.00
+04/23/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,595.00
+05/03/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,848.00
+05/08/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,4391.00
+05/13/2024,Materials & Supplies,The Home Depot,"Pipe, fittings and parts",,1680.00
+05/18/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,4209.00
+05/23/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,1662.00
+06/03/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,4042.00
+06/08/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,5143.00
+06/13/2024,Materials & Supplies,The Home Depot,"Pipe, fittings and parts",,2768.00
+06/18/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,1058.00
+06/23/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,2154.00
+07/03/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,3312.00
+07/08/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,1013.00
+07/13/2024,Materials & Supplies,The Home Depot,"Pipe, fittings and parts",,2808.00
+07/18/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,3876.00
+07/23/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,4630.00
+08/03/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,3761.00
+08/08/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,2689.00
+08/13/2024,Materials & Supplies,The Home Depot,"Pipe, fittings and parts",,3169.00
+08/18/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,935.00
+08/23/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,5157.00
+09/03/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,2666.00
+09/08/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,2686.00
+09/13/2024,Materials & Supplies,The Home Depot,"Pipe, fittings and parts",,3650.00
+09/18/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,4640.00
+09/23/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,1736.00
+10/03/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,650.00
+10/08/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,2060.00
+10/13/2024,Materials & Supplies,The Home Depot,"Pipe, fittings and parts",,4336.00
+10/18/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,3164.00
+10/23/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,2921.00
+11/03/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,4154.00
+11/08/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,1684.00
+11/13/2024,Materials & Supplies,The Home Depot,"Pipe, fittings and parts",,2710.00
+11/18/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,5363.00
+11/23/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,3227.00
+12/03/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,1120.00
+12/08/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,3206.00
+12/13/2024,Materials & Supplies,The Home Depot,"Pipe, fittings and parts",,1166.00
+12/18/2024,Materials & Supplies,Wolseley Canada,"Pipe, fittings and parts",,5543.00
+12/23/2024,Materials & Supplies,Emco Supply,"Pipe, fittings and parts",,1190.00
+01/10/2024,Subcontractors,Delta Electrical,Subcontract work,,3384.00
+01/19/2024,Subcontractors,Precision Ductwork,Subcontract work,,6714.00
+02/10/2024,Subcontractors,Delta Electrical,Subcontract work,,6511.00
+02/19/2024,Subcontractors,Precision Ductwork,Subcontract work,,3504.00
+03/10/2024,Subcontractors,Delta Electrical,Subcontract work,,3604.00
+03/19/2024,Subcontractors,Precision Ductwork,Subcontract work,,6640.00
+04/10/2024,Subcontractors,Delta Electrical,Subcontract work,,2946.00
+04/19/2024,Subcontractors,Precision Ductwork,Subcontract work,,8630.00
+05/10/2024,Subcontractors,Delta Electrical,Subcontract work,,7471.00
+05/19/2024,Subcontractors,Precision Ductwork,Subcontract work,,6604.00
+06/10/2024,Subcontractors,Delta Electrical,Subcontract work,,4932.00
+06/19/2024,Subcontractors,Precision Ductwork,Subcontract work,,5112.00
+07/10/2024,Subcontractors,Delta Electrical,Subcontract work,,5099.00
+07/19/2024,Subcontractors,Precision Ductwork,Subcontract work,,4324.00
+08/10/2024,Subcontractors,Delta Electrical,Subcontract work,,4382.00
+08/19/2024,Subcontractors,Precision Ductwork,Subcontract work,,8443.00
+09/10/2024,Subcontractors,Delta Electrical,Subcontract work,,5719.00
+09/19/2024,Subcontractors,Precision Ductwork,Subcontract work,,5443.00
+10/10/2024,Subcontractors,Delta Electrical,Subcontract work,,3095.00
+10/19/2024,Subcontractors,Precision Ductwork,Subcontract work,,6934.00
+11/10/2024,Subcontractors,Delta Electrical,Subcontract work,,2957.00
+11/19/2024,Subcontractors,Precision Ductwork,Subcontract work,,3637.00
+12/10/2024,Subcontractors,Delta Electrical,Subcontract work,,7077.00
+12/19/2024,Subcontractors,Precision Ductwork,Subcontract work,,7322.00
+01/12/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+01/12/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+01/12/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+01/12/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+01/26/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+01/26/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+01/26/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+01/26/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+02/09/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+02/09/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+02/09/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+02/09/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+02/23/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+02/23/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+02/23/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+02/23/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+03/08/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+03/08/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+03/08/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+03/08/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+03/22/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+03/22/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+03/22/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+03/22/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+04/05/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+04/05/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+04/05/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+04/05/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+04/19/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+04/19/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+04/19/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+04/19/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+05/03/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+05/03/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+05/03/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+05/03/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+05/17/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+05/17/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+05/17/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+05/17/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+05/31/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+05/31/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+05/31/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+05/31/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+06/14/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+06/14/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+06/14/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+06/14/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+06/28/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+06/28/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+06/28/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+06/28/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+07/12/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+07/12/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+07/12/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+07/12/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+07/26/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+07/26/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+07/26/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+07/26/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+08/09/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+08/09/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+08/09/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+08/09/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+08/23/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+08/23/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+08/23/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+08/23/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+09/06/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+09/06/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+09/06/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+09/06/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+09/20/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+09/20/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+09/20/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+09/20/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+10/04/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+10/04/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+10/04/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+10/04/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+10/18/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+10/18/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+10/18/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+10/18/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+11/01/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+11/01/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+11/01/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+11/01/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+11/15/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+11/15/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+11/15/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+11/15/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+11/29/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+11/29/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+11/29/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+11/29/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+12/13/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+12/13/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+12/13/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+12/13/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.23
+12/27/2024,Wages & Salaries,Payroll — M. Chen,Biweekly pay,,2615.38
+12/27/2024,Wages & Salaries,Payroll — J. Okafor,Biweekly pay,,2423.08
+12/27/2024,Wages & Salaries,Payroll — R. Singh,Biweekly pay,,2192.31
+12/27/2024,Wages & Salaries,Payroll — E. Brightwater,Biweekly pay,,3269.25
+01/15/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+01/28/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+02/15/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+02/28/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+03/15/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+03/28/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+04/15/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+04/28/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+05/15/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+05/28/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+06/15/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+06/28/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+07/15/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+07/28/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+08/15/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+08/28/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+09/15/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+09/28/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+10/15/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+10/28/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+11/15/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+11/28/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+12/15/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+12/28/2024,Wages - Officers,Payroll — D. Brightwater,Semi-monthly salary,,10000.00
+01/11/2024,Payroll Taxes - CPP/EI,Receiver General,CPP/EI remittance,,3138.81
+02/11/2024,Payroll Taxes - CPP/EI,Receiver General,CPP/EI remittance,,3224.69
+03/11/2024,Payroll Taxes - CPP/EI,Receiver General,CPP/EI remittance,,3280.93
+04/11/2024,Payroll Taxes - CPP/EI,Receiver General,CPP/EI remittance,,3270.40
+05/11/2024,Payroll Taxes - CPP/EI,Receiver General,CPP/EI remittance,,3212.89
+06/11/2024,Payroll Taxes - CPP/EI,Receiver General,CPP/EI remittance,,3323.38
+07/11/2024,Payroll Taxes - CPP/EI,Receiver General,CPP/EI remittance,,3258.41
+08/11/2024,Payroll Taxes - CPP/EI,Receiver General,CPP/EI remittance,,3345.34
+09/11/2024,Payroll Taxes - CPP/EI,Receiver General,CPP/EI remittance,,3266.16
+10/11/2024,Payroll Taxes - CPP/EI,Receiver General,CPP/EI remittance,,3191.52
+11/11/2024,Payroll Taxes - CPP/EI,Receiver General,CPP/EI remittance,,3132.92
+12/11/2024,Payroll Taxes - CPP/EI,Receiver General,CPP/EI remittance,,3348.54
+03/15/2024,WSIB,WSIB,Quarterly premium,,2100.00
+06/15/2024,WSIB,WSIB,Quarterly premium,,2100.00
+09/15/2024,WSIB,WSIB,Quarterly premium,,2100.00
+12/15/2024,WSIB,WSIB,Quarterly premium,,2100.00
+01/13/2024,Employee Benefits,Manulife,Group benefits,,1120.00
+02/13/2024,Employee Benefits,Manulife,Group benefits,,1120.00
+03/13/2024,Employee Benefits,Manulife,Group benefits,,1120.00
+04/13/2024,Employee Benefits,Manulife,Group benefits,,1120.00
+05/13/2024,Employee Benefits,Manulife,Group benefits,,1120.00
+06/13/2024,Employee Benefits,Manulife,Group benefits,,1120.00
+07/13/2024,Employee Benefits,Manulife,Group benefits,,1120.00
+08/13/2024,Employee Benefits,Manulife,Group benefits,,1120.00
+09/13/2024,Employee Benefits,Manulife,Group benefits,,1120.00
+10/13/2024,Employee Benefits,Manulife,Group benefits,,1120.00

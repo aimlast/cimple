@@ -182,7 +182,7 @@ async function main() {
     [{ buyerUserId: null, buyerEmail: "a@x.invalid" }],
     [{ buyerEmail: "B@X.invalid", status: "pending_seller_review" }, { buyerEmail: "d@x.invalid", status: "rejected" }],
   );
-  assert.deepEqual(reached({ id: "U1", email: "a@x.invalid" }), { alreadyHasAccess: true, alreadyContacted: false, inApproval: false });
+  assert.deepEqual(reached({ id: "U1", email: "a@x.invalid" }), { alreadyHasAccess: true, alreadyContacted: false, inApproval: false, teaserOnly: false });
   assert.equal(reached({ id: "U2", email: "b@x.invalid" }).inApproval, true);
   assert.equal(reached({ id: "U4", email: "d@x.invalid" }).inApproval, true, "a buyer the seller turned down isn't suggested again");
   assert.equal(reached({ id: "U3", email: "c@x.invalid" }).alreadyContacted, true);
@@ -194,7 +194,8 @@ async function main() {
   assert.equal(reachedBuyers([], [])({ id: "U1", email: "a@x.invalid" }).inApproval, false);
 
   // ── 8. Stages ────────────────────────────────────────────────────────────
-  assert.deepEqual(BUYER_STAGES.map((s) => s.label), ["Find new buyers", "Send it to next", "Waiting for approval", "Have the CIM"]);
+  // October 2026: a fifth stage, "Have the teaser" (tests/unit/buyer-pipeline-stages.test.ts covers it).
+  assert.deepEqual(BUYER_STAGES.map((s) => s.label), ["Find new buyers", "Send it to next", "Have the teaser", "Waiting for approval", "Have the CIM"]);
   assert.equal(defaultBuyerStage(true, 3), "have");
   assert.equal(defaultBuyerStage(true, 0), "send");
   assert.equal(defaultBuyerStage(false, 3), "send");

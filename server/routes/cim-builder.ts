@@ -1,5 +1,7 @@
 /**
- * CIM builder: add/delete/duplicate/rewrite sections, access tiers (workstream: cim-builder).
+ * CIM builder: add/delete/duplicate/rewrite sections (workstream: cim-builder).
+ * Per-section access tiers are retired (Oct 2026): every CIM buyer gets the
+ * whole CIM of their version; the teaser is its own document.
  * Registered from server/routes.ts (merge anchor) — keep this workstream's
  * new endpoints in this file.
  *
@@ -11,12 +13,11 @@
  */
 import type { Express, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
-import { and, eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { cimSections, type CimGenerationStatus, type CimSection, type CimSectionAiTask, type Deal } from "@shared/schema";
 import {
-  BUYER_ACCESS_LEVELS,
   canAiRewriteLayout,
   canAiWriteLayout,
   defaultLayoutData,
@@ -24,8 +25,8 @@ import {
   isCimFallbackSection,
   isCimLayoutKey,
   sameLayoutFamily,
-  sectionTier,
 } from "@shared/cim-layouts";
+import { ACCESS_LEVELS, BLIND_ACCESS_LEVEL, normalizeAccessLevel, type AccessLevel } from "@shared/access-levels";
 import { requireBroker, requireOwnedDeal, getOwnedDeal } from "../broker-auth/routes";
 import {
   summarizeBlindRows,
@@ -42,6 +43,7 @@ import { discrepancyBlocksCim } from "@shared/discrepancy-gate";
 import { factAmounts, withStatedChartTotal } from "@shared/cim-chart-values";
 import { codenameProblem, renameDealCodename } from "../cim/codenames";
 import {
+  SECTION_TIERS_RETIRED,
   deleteSection,
   duplicateSection,
   historyWith,
@@ -152,14 +154,14 @@ function ddStatusOf(s: CimSection, ddGenerated: boolean, hasDd: boolean): DdStat
 
 /** Section row for the builder: task normalised, undo stack summarised. */
 function toBuilderSection(s: CimSection, blindGenerated: boolean, hasOverride: boolean, dd: { generated: boolean; has: boolean } = { generated: false, has: false }) {
-  const { contentHistory, ...rest } = s;
+  // access_tier is history only (per-section locks are retired) — not sent.
+  const { contentHistory, accessTier: _retiredTier, ...rest } = s;
   // Marker entries (the approval rule's mark) are not versions to undo to.
   const history = historySnapshots<{ reason: string; at: string }>(contentHistory);
   const last = history[history.length - 1];
   const excluded = getCimLayout(s.layoutType)?.blind === "exclude";
   return {
     ...rest,
-    accessTier: sectionTier(s),
     aiTask: normalizeTask(s.id, s.aiTask),
     historyCount: history.length,
     lastChange: last ? { reason: last.reason, at: last.at } : null,
@@ -222,7 +224,7 @@ export function registerCimBuilderRoutes(app: Express): void {
         // The same final check the view room runs: a blind version that still
         // names something, or kept a "[Province/State]" placeholder, is redone
         // now rather than waiting for the first buyer to open the CIM.
-        const check = buildBuyerCim({ deal, accessLevel: "full", sections, overrides: blindOverrides, media: null });
+        const check = buildBuyerCim({ deal, accessLevel: BLIND_ACCESS_LEVEL, sections, overrides: blindOverrides, media: null });
         if (check.leaked.length > 0) {
           redoLeakedBlind(deal.id, check.leaked, check.leakReasons).catch((err) => console.error("[cim-builder] blind redo failed:", err));
           for (const id of check.leaked) withOverride.delete(id);
@@ -263,16 +265,30 @@ export function registerCimBuilderRoutes(app: Express): void {
       }));
       const generation = deal.cimGeneration as CimGenerationStatus | null | undefined;
       const active = buyers.filter((b) => !b.revokedAt);
-      const byLevel = Object.fromEntries(BUYER_ACCESS_LEVELS.map((l) => [l.key, 0])) as Record<string, number>;
-      for (const b of active) byLevel[b.accessLevel || "teaser"] = (byLevel[b.accessLevel || "teaser"] ?? 0) + 1;
+      // Counted by level (legacy values under the level they mean: "loi" → named).
+      const byLevel = Object.fromEntries(ACCESS_LEVELS.map((l) => [l.key, 0])) as Record<AccessLevel, number>;
+      for (const b of active) byLevel[normalizeAccessLevel(b.accessLevel)] += 1;
       const blind = summarizeBlindRows(deal.id, rows);
+      // The codename blind buyers read now: the kept copy's while a CIM update is under review, else null (= codename).
+      const servedCodename = await (async () => {
+        try {
+          const { servedBlindCodename } = await import("../cim/published-snapshot");
+          return await servedBlindCodename(deal);
+        } catch {
+          return null;
+        }
+      })();
       res.json({
         sections: rows,
         blind: {
           generated: blindGenerated,
           codename: deal.blindCodename ?? null,
+          /** The codename blind buyers read now: the kept copy's while a CIM update is under review, else null (= codename). */
+          servedCodename,
           /** Why the codename (chosen before a stricter check, or before a fact changed) would point at the business; null when it is neutral. */
           codenameProblem: deal.blindCodename ? codenameProblem(deal, deal.blindCodename) : null,
+          /** The same for the codename blind buyers still read in the kept copy, when it differs (release review security-integration F6). */
+          servedCodenameProblem: servedCodename && servedCodename !== deal.blindCodename ? codenameProblem(deal, servedCodename) : null,
           running: blind.running,
           error: blind.error,
           /** Sections waiting for their redaction (not held back). */
@@ -291,6 +307,17 @@ export function registerCimBuilderRoutes(app: Express): void {
         // `total` = links that can open the CIM now (not revoked, not expired):
         // the count the regenerate dialogs quote and the hold is decided on.
         buyers: { total: openBuyerLinks(buyers), byLevel },
+        // The teaser tile on the CIM tab (server/teaser/summary.ts; reading counts are its own).
+        teaser: await (async () => {
+          try {
+            const { getDealTeaser } = await import("../teaser/store");
+            const { teaserSummary } = await import("../teaser/summary");
+            return await teaserSummary(deal, await getDealTeaser(deal.id));
+          } catch (err) {
+            console.warn(`[cim-builder] teaser summary skipped for deal ${deal.id}:`, (err as Error)?.message);
+            return null;
+          }
+        })(),
         deal: {
           isLive: !!deal.isLive,
           cimLayoutGeneratedAt: deal.cimLayoutGeneratedAt ?? null,
@@ -364,7 +391,6 @@ export function registerCimBuilderRoutes(app: Express): void {
             // hidden and the broker shows it when it's ready. (While buyers
             // read the kept copy of an update under review, it's draft.)
             isVisible: !buyersReadWorkingCopy(deal),
-            accessTier: body.accessTier === "full" ? "full" : "teaser",
             blindStaleAt: new Date(),
           },
           position,
@@ -668,31 +694,10 @@ export function registerCimBuilderRoutes(app: Express): void {
     }
   });
 
-  // ── Set several sections' access tier at once ──
-  app.post("/api/deals/:dealId/cim-sections/tiers", requireBroker, requireOwnedDeal, async (req, res) => {
-    try {
-      const deal = res.locals.deal as Deal;
-      const tier = req.body?.accessTier;
-      const ids: unknown = req.body?.sectionIds;
-      if (tier !== "teaser" && tier !== "full") return res.status(400).json({ error: "Access must be teaser or full" });
-      if (!Array.isArray(ids) || ids.some((i) => typeof i !== "string")) return res.status(400).json({ error: "sectionIds must be a list" });
-      let changed = 0;
-      for (const id of ids as string[]) {
-        // A tier change is a change to what buyers read (a teaser stops
-        // seeing the section): updatedAt moves, as it does through PATCH, so
-        // an unreviewed AI answer drawn from it is withdrawn (qa/cim-context
-        // answerStillHolds). A section already at that tier is left alone.
-        const r = await db
-          .update(cimSections)
-          .set({ accessTier: tier, updatedAt: new Date() })
-          .where(and(eq(cimSections.id, id), eq(cimSections.dealId, deal.id), sql`${cimSections.accessTier} is distinct from ${tier}`))
-          .returning({ id: cimSections.id });
-        changed += r.length;
-      }
-      res.json({ success: true, changed });
-    } catch (err) {
-      console.error("[cim-builder] set tiers failed:", err);
-      res.status(500).json({ error: "Couldn't change access" });
-    }
+  // ── Retired: per-section access tiers ──
+  // Sections aren't locked by access level any more (the teaser is its own
+  // document). A stale builder tab that still sends this gets a plain answer.
+  app.post("/api/deals/:dealId/cim-sections/tiers", requireBroker, requireOwnedDeal, (_req, res) => {
+    res.status(400).json({ error: SECTION_TIERS_RETIRED, code: "tiers_retired" });
   });
 }

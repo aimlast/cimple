@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { CimpleWordmark } from "@/components/brand/CimpleLogo";
 
 /**
  * Parse an error body defensively. Railway returns HTML during deploys
@@ -24,20 +25,7 @@ export function BuyerAuthCard({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-background flex items-center justify-center p-6">
       <div className="w-full max-w-md space-y-6">
         <div className="text-center">
-          <div
-            className="h-6 w-24 mx-auto"
-            style={{
-              backgroundColor: "hsl(42, 26%, 92%)",
-              WebkitMaskImage: "url('/cimple-text.png')",
-              WebkitMaskSize: "contain",
-              WebkitMaskRepeat: "no-repeat",
-              WebkitMaskPosition: "center",
-              maskImage: "url('/cimple-text.png')",
-              maskSize: "contain",
-              maskRepeat: "no-repeat",
-              maskPosition: "center",
-            }}
-          />
+          <CimpleWordmark className="mx-auto h-6" />
           <div className="text-xs text-muted-foreground mt-1">
             Matched CIMs for private business acquirers
           </div>
@@ -214,18 +202,7 @@ export function BuyerNav() {
       <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
         <div className="flex items-center gap-6">
           <Link href="/buyer/dashboard">
-            <div
-              className="h-4 w-16"
-              style={{
-                backgroundColor: "hsl(42, 26%, 92%)",
-                WebkitMaskImage: "url('/cimple-text.png')",
-                WebkitMaskSize: "contain",
-                WebkitMaskRepeat: "no-repeat",
-                maskImage: "url('/cimple-text.png')",
-                maskSize: "contain",
-                maskRepeat: "no-repeat",
-              }}
-            />
+            <CimpleWordmark className="h-4" />
           </Link>
           <div className="flex items-center gap-1">
             <NavLink href="/buyer/dashboard" icon={LayoutDashboard} label="Dashboard" />

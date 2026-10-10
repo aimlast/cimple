@@ -9,8 +9,8 @@
  * and the PageRole set (shared/analytics-v2.ts) are the contract.
  *
  * Order matters: the first rule that matches the title wins, so the narrow
- * roles (add-backs before financials, suppliers before customers, reason
- * for sale before employees) come first. Words are matched on word starts,
+ * roles (add-backs before financials, suppliers before customers, staff
+ * retention before customers, reason for sale before employees) come first. Words are matched on word starts,
  * so "contract" never matches "contractors" and "account" never matches
  * "accounting".
  */
@@ -34,6 +34,8 @@ const RULES: Array<[PageRole, RegExp]> = [
   ["financials", /\b(financial|income statement|p&l|profit|revenue (?:and|&) (?:ebitda|earnings|profit)|balance sheet|cash ?flow|working capital|margins?\b|ebitda|earnings|historical performance|revenue (?:trend|growth|history)|operating results|receivables?|payables?|expenses?\b|cost structure|capex|capital expenditure)/i],
   ["operations", /\b(suppliers?|vendors?|supply chain|procurement|inventory)\b/i],
   ["revenue_mix", /\b(revenue (?:by|mix|breakdown|streams?|sources?|split|composition)|revenue composition|sources of revenue|service lines?|product (?:mix|lines?)|products (?:and|&) services|services (?:and|&) products|offerings?|segments?\b|payer mix|insurance mix|recurring revenue|pricing)/i],
+  // Keeping staff is about the team, not customers ("Driver Workforce & Retention").
+  ["employees", /\b(drivers?|staff|employees?|workforce|technicians?|nurses?)\b[^.]*\bretention\b|\bretention of (drivers|staff|employees|technicians|nurses)\b/i],
   ["customers", /\b(customers?\b|clients?\b|client base|patients?\b|patient base|concentration|contracts?\b|retention|churn|accounts?\b|key accounts|payers?\b|referral sources?)/i],
   ["employees", /\b(employees?|(?:sub)?contractors?|staff(?:ing)?|team\b|people\b|workforce|management|leadership|personnel|org(?:ani[sz]ation(?:al)?)? chart|key (?:person|people|staff)|labou?r|human resources|hr\b|compensation)/i],
   ["location", /\b(locations?|facilit|real estate|lease|premises|property|site\b|sites\b|warehouse|plant\b|offices?\b|service area|territor|geograph|footprint|square f(?:ee|oo)t)/i],

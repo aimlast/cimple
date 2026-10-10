@@ -14,6 +14,7 @@ import { ProseFallback, renderInline } from "../richText";
 import { compactFigure } from "./chartFormat";
 import { BlockTitle } from "./BlockTitle";
 import { useBlockAttrs } from "../blocks";
+import { FigureValue } from "../figures/FigureValue";
 
 interface Metric {
   label: string;
@@ -136,7 +137,7 @@ export function MetricGridRenderer({ layoutData, content, branding, section }: R
                     )}
                     title={text !== exact ? exact : undefined}
                   >
-                    {text}
+                    <FigureValue block={`metric:${i}`}>{text}</FigureValue>
                   </span>
                 );
               })()}

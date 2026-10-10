@@ -7,7 +7,7 @@ import { getInterviewOutline, renderOutlineForPrompt } from "./outline";
 import { coverageAdjustmentsForDeal, fieldLabel } from "./interview-plan";
 import type { InterviewOutline } from "@shared/schema";
 import { profileSafeForInterview, profileValueForPrompt, type SellerCommunicationProfile, type InterviewSellerProfile } from "./eq-profiler";
-import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, isBrokerSessionSource, type FieldSource } from "./info-merger";
+import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, isBrokerSessionSource, isRowBackedSource, type FieldSource } from "./info-merger";
 import { sellerInterviewView, privateSourceMatcher, heldByBroker, withHeldFacts } from "./seller-view";
 import { resolvedNotes, settleResolvedFacts, currentResolvedNotes, resolvedNoteLabel, type ResolvedDiscrepancyNote as ResolvedNote } from "../cim/resolved-block";
 import {
@@ -34,6 +34,8 @@ import { sessionModeOf, type ConductedBy } from "./session-mode";
 // =====================
 // Types
 // =====================
+
+import type { ExplainRequest } from "../cim/figures/requests";
 
 export interface KnowledgeBase {
   // Business identity
@@ -90,6 +92,12 @@ export interface KnowledgeBase {
   // back through normal extraction. Optional because KBs persisted before
   // this field existed (and test fixtures) lack it.
   askSellerDiscrepancies?: AskSellerDiscrepancy[];
+
+  // Questions about the numbers the broker (or auto-ask) put to this
+  // interview (stream dd: cim_figure_questions, status ask_seller). An
+  // OPTIONAL block — never MANDATORY, never a completion blocker; the answer
+  // is recorded under each capture key. Set per turn by session-manager.
+  explainRequests?: ExplainRequest[];
 
   // Open entries from the durable deferral ledger (session-manager sets this
   // per turn). Rendered into the dynamic prompt so the agent always sees its
@@ -150,6 +158,9 @@ export interface KnowledgeBase {
   // score see. Screens show this one (so every screen agrees); the agent is
   // steered by sectionCoverage, which also counts what the sources answer.
   recordedCoverage?: SectionCoverage[];
+  // Facts the seller confirmed to the broker on the coverage board (their
+  // verify / reconcile ledger entries read as resolved — see extras).
+  confirmedByBroker?: string[];
 }
 
 /** A settled discrepancy as the interview sees it (resolvedPrivately: the final value is withheld — it came from the broker's own material). */
@@ -163,6 +174,14 @@ export interface KnowledgeBaseExtras {
   currentSessionId?: string | null;
   /** Open discrepancy rows (conflicts the fact merge raised). */
   openDiscrepancies?: Discrepancy[];
+  /**
+   * Fact keys the broker confirmed on the coverage board ("✓ Confirmed" while
+   * the seller was there) whose value hasn't changed since
+   * (coverage-board.ts confirmedKeys). Read-side only: their open "verify" /
+   * "reconcile" ledger entries read as resolved, their confidence as
+   * confirmed. Nothing is written to the sessions.
+   */
+  confirmedByBroker?: string[];
 }
 
 export interface AskSellerDiscrepancy {
@@ -368,7 +387,7 @@ export const KNOWN_EXTRACTED_FIELDS: ReadonlySet<string> = new Set(
  * Sections not listed treat every field as its own group; industry
  * checklist items are always their own group.
  */
-const SECTION_FIELD_GROUPS: Record<string, { keys: string[]; aliases?: string[] }[]> = {
+export const SECTION_FIELD_GROUPS: Record<string, { keys: string[]; aliases?: string[] }[]> = {
   overview: [
     { keys: ["businessName"] },
     { keys: ["industry"] },
@@ -425,14 +444,31 @@ const SELLER_SOURCE_KINDS: ReadonlySet<string> = new Set(["interview", "call", "
 // Knowledge base assembly
 // =====================
 
-export function assembleKnowledgeBase(
-  deal: Deal,
-  documents: Document[],
-  tasks: Task[],
-  latestSession: InterviewSession | null,
+/** The deal's facts exactly as the seller interview reads them (see assembleKnowledgeBase). */
+export interface SellerInterviewFacts {
+  /** The seller-safe view (seller-view.ts) before the broker's settled values. */
+  base: Partial<ExtractedInfo>;
+  privacy: ReturnType<typeof discrepancyPrivacy>;
+  /** The broker's settled values, as the interview may know them. */
+  resolvedValues: ResolvedDiscrepancyNote[];
+  /** The view with the settled values applied — the interview's facts. */
+  facts: Partial<ExtractedInfo>;
+  /** The facts with every fully held fact present (what "is it on file?" reads — recorded coverage). */
+  coverageView: Partial<ExtractedInfo>;
+}
+
+/**
+ * The seller-safe facts of a deal: what the interview reads, with the
+ * broker's settled discrepancies applied (never a private figure), plus the
+ * coverage view. One function, so the seller's interview, the seller's
+ * progress page and the coverage board's seller audience can't disagree.
+ * Pure.
+ */
+export function sellerInterviewFacts(
+  deal: Pick<Deal, "extractedInfo"> & Partial<Deal>,
+  documents: Array<Pick<Document, "id" | "visibility"> & { name?: string | null }>,
   resolvedDiscrepancies: Discrepancy[] = [],
-  extras: KnowledgeBaseExtras = {},
-): KnowledgeBase {
+): SellerInterviewFacts {
   // The facts exactly as the interview may read them (see seller-view.ts):
   // nothing a broker-only source asserted (the broker's CRM notes, private
   // emails and files — facts, other values, private notes), and not the
@@ -443,7 +479,6 @@ export function assembleKnowledgeBase(
     ((deal.extractedInfo as Partial<ExtractedInfo>) || {}) as Record<string, unknown>,
     documents,
   ) as Partial<ExtractedInfo>;
-  const questionnaireData = deal.questionnaireData as Record<string, unknown> | null;
 
   // Which side of a discrepancy (and which text written from it) came from
   // the broker's own material. Fail closed: a side is private when the row's
@@ -508,6 +543,41 @@ export function assembleKnowledgeBase(
   });
   const resolvedValues = currentResolvedNotes(settledFacts.notes) as ResolvedDiscrepancyNote[];
   const extractedInfo = settledFacts.facts as Partial<ExtractedInfo>;
+  return {
+    base: baseExtractedInfo,
+    privacy,
+    resolvedValues,
+    facts: extractedInfo,
+    coverageView: withHeldFacts(extractedInfo as Record<string, unknown>) as Partial<ExtractedInfo>,
+  };
+}
+
+/** The seller-safe coverage view (sellerInterviewFacts().coverageView). Pure. */
+export function sellerCoverageFacts(
+  deal: Pick<Deal, "extractedInfo"> & Partial<Deal>,
+  documents: Array<Pick<Document, "id" | "visibility"> & { name?: string | null }>,
+  resolvedDiscrepancies: Discrepancy[] = [],
+): Record<string, unknown> {
+  return sellerInterviewFacts(deal, documents, resolvedDiscrepancies).coverageView as Record<string, unknown>;
+}
+
+export function assembleKnowledgeBase(
+  deal: Deal,
+  documents: Document[],
+  tasks: Task[],
+  latestSession: InterviewSession | null,
+  resolvedDiscrepancies: Discrepancy[] = [],
+  extras: KnowledgeBaseExtras = {},
+): KnowledgeBase {
+  // The facts exactly as the interview may read them, with the broker's
+  // settled values applied (sellerInterviewFacts above — one function for
+  // the interview, the seller's progress and the coverage board).
+  const sellerFacts = sellerInterviewFacts(deal, documents, resolvedDiscrepancies);
+  const baseExtractedInfo = sellerFacts.base;
+  const questionnaireData = deal.questionnaireData as Record<string, unknown> | null;
+  const privacy = sellerFacts.privacy;
+  const resolvedValues = sellerFacts.resolvedValues;
+  const extractedInfo = sellerFacts.facts;
 
   // Discrepancies the broker explicitly routed to the interview. One side
   // from a broker-only source (a CRM note, a private email): the agent never
@@ -604,7 +674,7 @@ export function assembleKnowledgeBase(
   const baseAdjustments = coverageAdjustmentsForDeal(deal);
   // (A fact the broker settled but the interview can't see is on file, not
   // a gap to ask about — and not an item for the evidence build either.)
-  const coverageView = withHeldFacts(extractedInfo as Record<string, unknown>) as Partial<ExtractedInfo>;
+  const coverageView = sellerFacts.coverageView;
   const rawCoverage = buildSectionCoverage(coverageView, confidenceLevels, sectionImportance, outline.excludedSections, baseAdjustments);
   const evidenceTargets = buildEvidenceTargets(
     rawCoverage,
@@ -627,6 +697,16 @@ export function assembleKnowledgeBase(
     ? buildSectionCoverage(coverageView, confidenceLevels, sectionImportance, outline.excludedSections, { ...baseAdjustments, onFile: fieldsOnFile })
     : rawCoverage;
   const answeredIds = new Set(onFile.filter((i) => !i.partial).map((i) => i.id));
+
+  // Facts the seller confirmed to the broker on the coverage board (read-side
+  // only; coverage above is untouched so every screen keeps its numbers).
+  const confirmedByBroker = (extras.confirmedByBroker ?? []).filter((k) => isSubstantiveValue((extractedInfo as Record<string, unknown>)[k]));
+  const fieldConfidence = confirmedByBroker.length > 0
+    ? { ...(confidenceLevels ?? {}), ...Object.fromEntries(confirmedByBroker.map((k) => [k, "confirmed"])) }
+    : confidenceLevels;
+  for (const k of confirmedByBroker) {
+    if (factSourceLabels[k] && !factSourceLabels[k].includes("confirmed it to the broker")) factSourceLabels[k] += " — the seller confirmed it to the broker";
+  }
 
   return {
     business: {
@@ -662,7 +742,7 @@ export function assembleKnowledgeBase(
     scrapedData: (deal.scrapedData as Record<string, string> | null) || null,
     scrapeSource: (deal.scrapeSource as "website" | "internet_search" | "website_and_internet" | null) || null,
     askSellerDiscrepancies,
-    fieldConfidence: confidenceLevels,
+    fieldConfidence,
     factSourceLabels,
     // The sources as the seller interview may read them: no item framed as
     // the broker's normalisation work (add-backs, SDE, a recast, valuation
@@ -685,6 +765,7 @@ export function assembleKnowledgeBase(
     evidenceTargets,
     onFileTopics: onFile.filter((i) => i.kind === "topic" && !i.partial).map((i) => i.key),
     recordedCoverage: rawCoverage,
+    ...(confirmedByBroker.length > 0 ? { confirmedByBroker } : {}),
   };
 }
 
@@ -996,6 +1077,36 @@ export function sellerSafeGuidance(text: string | null | undefined): string | nu
 // Rendering for system prompt injection
 // =====================
 
+/**
+ * The questions about the numbers routed to this interview (stream dd).
+ * Optional: never MANDATORY, never a completion blocker, never framed as a
+ * problem; no add-back / SDE / EBITDA wording. Values are the statements as
+ * issued (shared documents only). Pure.
+ */
+export function renderExplainRequests(requests: ReadonlyArray<ExplainRequest>): string {
+  if (requests.length === 0) return "";
+  const money = (n: number) => `$${Math.round(Math.abs(n)).toLocaleString("en-US")}`;
+  const lines = [
+    `## THE BROKER WOULD LIKE THE STORY BEHIND THESE NUMBERS (optional — never hold the interview open for these)`,
+    `Buyers will ask what drove these. At natural moments, one at a time and never back-to-back, ask the seller what happened.`,
+    `Never suggest a reason, never call it a problem or a discrepancy, and never mention add-backs, SDE, EBITDA or what it does to value.`,
+    `Record the seller's explanation in their own words under the key shown. If they don't know, offer that their accountant can explain, defer it, and move on.`,
+  ];
+  for (const r of requests) {
+    const line = r.line || "this line";
+    if (r.kind === "movement" && typeof r.from === "number" && typeof r.value === "number" && r.fromYear) {
+      lines.push(`- ${r.captureKey}: ${line} ${money(r.from)} (${r.fromYear}) → ${money(r.value)} (${r.year}), from the financial statements`);
+    } else if (r.kind === "difference" && typeof r.statements === "number" && typeof r.other === "number") {
+      lines.push(`- ${r.captureKey}: ${line} for ${r.year} — the financial statements show ${money(r.statements)} and the ${r.otherKind ?? "tax return"} shows ${money(r.other)}`);
+    } else if (r.kind === "difference") {
+      lines.push(`- ${r.captureKey}: why ${line} for ${r.year} differs between the financial statements and the ${r.otherKind ?? "tax return"}`);
+    } else {
+      lines.push(`- ${r.captureKey}: what drove the change in ${line} in ${r.year}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   const parts: string[] = [];
 
@@ -1033,6 +1144,10 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     }
     parts.push(``);
   }
+
+  // The story behind the numbers (dd) — optional, never holds the interview open.
+  const explainBlock = renderExplainRequests(kb.explainRequests ?? []);
+  if (explainBlock) parts.push(explainBlock, ``);
 
   // Risks the sources flag — what a buyer's diligence asks about first.
   const risks = kb.flaggedRisks ?? [];
@@ -1180,6 +1295,8 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     // Agenda items the seller already explained (listed as on file above).
     ...(kb.onFile ?? []).filter((i) => !i.partial && (i.kind === "risk" || i.kind === "conflict"))
       .map((i) => (i.kind === "risk" ? `risk: ${i.key}` : `reconcile ${i.key}`).toLowerCase()),
+    // Checks the seller settled with the broker on the coverage board.
+    ...(kb.confirmedByBroker ?? []).flatMap((k) => [`verify ${k}`, `verify ${k} date`, `reconcile ${k}`].map((t) => t.toLowerCase())),
   ];
   const ledgerItems = (kb.openDeferrals ?? []).filter((d) => !shownAbove.includes(d.topic.toLowerCase()));
   if (ledgerItems.length > 0) {
@@ -1322,7 +1439,12 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   // Section priorities + coverage
   parts.push("");
   parts.push(renderSectionImportanceForPrompt(kb.sectionImportance));
-  const outlineBlock = renderOutlineForPrompt(kb.outline);
+  // (A follow-up the seller has answered since drops out — it's on file.)
+  const factsNow = (kb.extractedInfo ?? {}) as Record<string, unknown>;
+  const outlineBlock = renderOutlineForPrompt(kb.outline, (key) => {
+    const v = factsNow[key];
+    return v !== null && v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0);
+  });
   if (outlineBlock) {
     parts.push("");
     parts.push(outlineBlock);
@@ -1506,7 +1628,11 @@ export function buildSectionCoverage(
       const value = recorded ?? (evidence && !evidence.partial ? evidence.answer : null);
       const valueKey = usesAlias ? alias! : fieldName;
       const unverified = recorded !== null && isLead(valueKey);
-      const sessionConf = confidenceLevels?.[fieldName];
+      // A live capture records the confidence of the value it wrote on the
+      // value's own source (FieldSource.confidence — Interview together); it
+      // wins over the session's label for that value. No other writer sets it.
+      const valueSrc = sources[valueKey];
+      const sessionConf = (valueSrc && isRowBackedSource(valueSrc) && valueSrc.confidence) ? valueSrc.confidence : confidenceLevels?.[fieldName];
       const confidence: "confirmed" | "inferred" | "approximate" | "unknown" =
         !value ? "unknown"
         : unverified ? "inferred"

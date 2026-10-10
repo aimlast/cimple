@@ -16,6 +16,7 @@
  * to compile until CimSectionRenderer has one). Pure — used by server and client.
  */
 import { comparisonAsFinancialTable, comparisonPacksSeries } from "./cim-chart-values";
+import { accessGrantPhrase } from "./access-levels";
 
 export const CIM_LAYOUT_CATEGORIES = [
   { key: "text", label: "Text" },
@@ -78,6 +79,12 @@ export interface CimLayoutDef {
   defaultData: (ctx: CimLayoutDefaultContext) => Record<string, unknown>;
   /** Presentation-only keys (URLs, colours…) the Q&A flattener skips. */
   presentationKeys?: string[];
+  /**
+   * A page the system adds for buyers at serve time (never stored as a
+   * section): not in the builder's gallery, never a layout a broker or the
+   * AI can choose (isCimLayoutKey is false for it), always read-only.
+   */
+  synthetic?: boolean;
 }
 
 const LAYOUTS = [
@@ -519,6 +526,52 @@ const LAYOUTS = [
     }),
     presentationKeys: ["zoom", "blindMap", "regionOnly"],
   },
+
+  // ── General ledger (stream "gl") ───────────────────────────────────────
+  {
+    // "Where each add-back is in the books": the entries behind each add-back,
+    // inserted for due-diligence buyers by buildBuyerCim right after the
+    // earnings bridge (shared/gl-evidence.ts). Its layoutData is the payload
+    // server/gl/evidence.ts built from the broker's published snapshot.
+    key: "gl_evidence",
+    label: "Where each add-back is in the books",
+    description: "Due diligence only: the ledger entries behind each add-back.",
+    category: "tables",
+    content: "structured",
+    editor: "data",
+    blind: "exclude",
+    family: "gl_evidence",
+    planner: false,
+    aiWrite: false,
+    aiRewrite: false,
+    synthetic: true,
+    aiSpec: "gl_evidence: { mode, pageId, summary, lines: [...] }",
+    aiUse: "— Never chosen: the system adds it for due-diligence buyers.",
+    defaultData: () => ({ mode: "dd", pageId: "", summary: { total: 0, found: 0, partly: 0, notFound: 0, document: 0, statement: 0 }, note: null, lines: [] }),
+  },
+
+  // ── Due diligence (stream "dd") ────────────────────────────────────────
+  {
+    // "How the figures check out": the CIM's figures beside the tax returns
+    // and other records, inserted for due-diligence buyers by buildBuyerCim
+    // (shared/figure-layer.ts withDdSourceCheck). Its layoutData is structure
+    // only ({ v, lines, years }); the values come from the figure layer.
+    key: "dd_source_check",
+    label: "How the figures check out",
+    description: "Due diligence only: each figure compared with the tax returns and other records.",
+    category: "tables",
+    content: "structured",
+    editor: "data",
+    blind: "exclude",
+    family: "dd_source_check",
+    planner: false,
+    aiWrite: false,
+    aiRewrite: false,
+    synthetic: true,
+    aiSpec: "dd_source_check: { v: 1, lines: string[], years: string[] }",
+    aiUse: "— Never chosen: the system adds it for due-diligence buyers.",
+    defaultData: () => ({ v: 1, lines: [], years: [] }),
+  },
 ] as const satisfies readonly CimLayoutDef[];
 
 export type CimLayoutKey = (typeof LAYOUTS)[number]["key"];
@@ -526,7 +579,8 @@ export type CimLayoutKey = (typeof LAYOUTS)[number]["key"];
 /** Every registered layout, in gallery order. */
 export const CIM_LAYOUTS: readonly CimLayoutDef[] = LAYOUTS;
 
-export const CIM_LAYOUT_KEYS: readonly CimLayoutKey[] = LAYOUTS.map((l) => l.key);
+/** Layouts a section can have (system-added pages excluded). */
+export const CIM_LAYOUT_KEYS: readonly CimLayoutKey[] = LAYOUTS.filter((l) => !("synthetic" in l && l.synthetic)).map((l) => l.key);
 
 const BY_KEY = new Map<string, CimLayoutDef>(LAYOUTS.map((l) => [l.key, l]));
 
@@ -535,8 +589,9 @@ export function getCimLayout(key: string | null | undefined): CimLayoutDef | und
   return key ? BY_KEY.get(key) : undefined;
 }
 
+/** A layout a section can be given (a system-added page such as dd_source_check is not one). */
 export function isCimLayoutKey(key: unknown): key is CimLayoutKey {
-  return typeof key === "string" && BY_KEY.has(key);
+  return typeof key === "string" && BY_KEY.has(key) && !BY_KEY.get(key)!.synthetic;
 }
 
 /** Map an arbitrary (AI- or client-supplied) layout type onto a registered one. */
@@ -558,7 +613,7 @@ export function layoutsByCategory(): Array<{ key: CimLayoutCategory; label: stri
   return CIM_LAYOUT_CATEGORIES.map((c) => ({
     key: c.key,
     label: c.label,
-    layouts: CIM_LAYOUTS.filter((l) => l.category === c.key),
+    layouts: CIM_LAYOUTS.filter((l) => l.category === c.key && !l.synthetic),
   })).filter((g) => g.layouts.length > 0);
 }
 
@@ -601,54 +656,46 @@ export function layoutSpecsForPrompt(layouts: readonly CimLayoutDef[] = plannerL
   return layouts.map((l) => `${l.aiSpec}\n${l.aiUse}`).join("\n\n");
 }
 
-// ── Section access tiers & buyer access levels ─────────────────────────────
+// ── Section access tiers (retired) & buyer access levels ────────────────────
 
 /**
- * Per-section access tier. "teaser" sections are shown to every buyer; "full"
- * sections are shown as locked stubs to buyers whose access level is teaser.
- * A missing value (older rows) means teaser — every existing CIM is unchanged.
+ * @deprecated Per-section "Full access only" locks are retired (Oct 2026): the
+ * teaser is its own document now, and every CIM buyer gets the whole CIM of
+ * their version. `cim_sections.access_tier` is kept as history only — nothing
+ * writes it and buildBuyerCim never reads it. Kept exported for old imports.
  */
-export const CIM_ACCESS_TIERS = ["teaser", "full"] as const;
+export const CIM_ACCESS_TIERS = ["teaser", "full"] as const; // access-level-literal-ok: retired section tiers (history), not buyer access levels
+/** @deprecated See CIM_ACCESS_TIERS. */
 export type CimAccessTier = (typeof CIM_ACCESS_TIERS)[number];
 
+/** @deprecated See CIM_ACCESS_TIERS (history only). */
 export function sectionTier(section: { accessTier?: string | null }): CimAccessTier {
   return section.accessTier === "full" ? "full" : "teaser";
 }
 
-/** Buyer access levels (buyer_access.access_level) with plain-English meaning. */
-export const BUYER_ACCESS_LEVELS = [
-  { key: "teaser", label: "Teaser", version: "blind", description: "Blind CIM; sections you mark “Full access” show as locked." },
-  { key: "full", label: "Full", version: "blind", description: "Blind CIM with every section unlocked." },
-  { key: "loi", label: "LOI", version: "normal", description: "The named CIM — business name, people and places shown." },
-  { key: "due_diligence", label: "Due diligence", version: "dd", description: "Named CIM plus due-diligence detail (customer names, verification notes)." },
-] as const;
-export type BuyerAccessLevel = (typeof BUYER_ACCESS_LEVELS)[number]["key"];
+/**
+ * Buyer access levels live in shared/access-levels.ts (the registry): Teaser ·
+ * Blind CIM · Full CIM · Due diligence. These re-exports keep older imports
+ * compiling with the new meaning.
+ */
+export {
+  ACCESS_LEVELS as BUYER_ACCESS_LEVELS,
+  type AccessLevel as BuyerAccessLevel,
+  isAccessLevel as isBuyerAccessLevel,
+  accessLevelLabel as buyerAccessLabel,
+  cimModeForAccessLevel,
+  TEASER_ACCESS_LEVEL,
+  BLIND_ACCESS_LEVEL,
+  NAMED_ACCESS_LEVEL,
+  DD_ACCESS_LEVEL,
+} from "./access-levels";
 
-export function isBuyerAccessLevel(v: unknown): v is BuyerAccessLevel {
-  return typeof v === "string" && BUYER_ACCESS_LEVELS.some((l) => l.key === v);
-}
-
-/** Buyer-facing name of an access level ("Full CIM", "LOI", "Due diligence") — never the raw key. */
-export function buyerAccessLabel(level: string | null | undefined): string {
-  if (level === "full") return "Full CIM";
-  const known = BUYER_ACCESS_LEVELS.find((l) => l.key === level);
-  if (known) return known.label;
-  const s = String(level ?? "").replace(/_/g, " ").trim();
-  return s ? s.charAt(0).toUpperCase() + s.slice(1) : "—";
-}
-
-/** The same name inside a sentence: "Given LOI access", "Given due diligence access", "Given full CIM access". */
+/**
+ * @deprecated Use accessGrantPhrase / accessChangePhrase from shared/access-levels.
+ * The level inside a sentence: "the Blind CIM", "the Full CIM", "due-diligence access".
+ */
 export function buyerAccessPhrase(level: string | null | undefined): string {
-  const label = buyerAccessLabel(level);
-  // Keep acronyms ("LOI"); lower-case the first letter of words.
-  return /^[A-Z]{2,}\b/.test(label) ? label : label.charAt(0).toLowerCase() + label.slice(1);
-}
-
-/** Which CIM version a buyer access level sees. */
-export function cimModeForAccessLevel(level: string | null | undefined): "blind" | "normal" | "dd" {
-  if (level === "due_diligence") return "dd";
-  if (level === "loi") return "normal";
-  return "blind"; // teaser, full (and anything unknown) → blind
+  return accessGrantPhrase(level).replace(/^(Given|Sent) /, "");
 }
 
 /**

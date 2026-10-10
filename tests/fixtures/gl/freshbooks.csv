@@ -1,0 +1,715 @@
+FreshBooks
+General Ledger
+Brightwater Plumbing & Heating Ltd.
+"Jan 1, 2024 - Dec 31, 2024"
+
+Account,Date,Description,Debit,Credit,Balance
+Chequing (1000),"Jan 28, 2024",Deposits - month,90497.25,,90497.25
+Chequing (1000),"Jan 28, 2024",Payments - month,,42924.70,47572.55
+Chequing (1000),"Feb 28, 2024",Deposits - month,90497.25,,138069.80
+Chequing (1000),"Feb 28, 2024",Payments - month,,42924.70,95145.10
+Chequing (1000),"Mar 28, 2024",Deposits - month,90497.25,,185642.35
+Chequing (1000),"Mar 28, 2024",Payments - month,,42924.70,142717.65
+Chequing (1000),"Apr 28, 2024",Deposits - month,90497.25,,233214.90
+Chequing (1000),"Apr 28, 2024",Payments - month,,42924.70,190290.20
+Chequing (1000),"May 28, 2024",Deposits - month,90497.25,,280787.45
+Chequing (1000),"May 28, 2024",Payments - month,,42924.70,237862.75
+Chequing (1000),"Jun 28, 2024",Deposits - month,90497.25,,328360.00
+Chequing (1000),"Jun 28, 2024",Payments - month,,42924.70,285435.30
+Chequing (1000),"Jul 28, 2024",Deposits - month,90497.25,,375932.55
+Chequing (1000),"Jul 28, 2024",Payments - month,,42924.70,333007.85
+Chequing (1000),"Aug 28, 2024",Deposits - month,90497.25,,423505.10
+Chequing (1000),"Aug 28, 2024",Payments - month,,42924.70,380580.40
+Chequing (1000),"Sep 28, 2024",Deposits - month,90497.25,,471077.65
+Chequing (1000),"Sep 28, 2024",Payments - month,,42924.70,428152.95
+Chequing (1000),"Oct 28, 2024",Deposits - month,90497.25,,518650.20
+Chequing (1000),"Oct 28, 2024",Payments - month,,42924.70,475725.50
+Chequing (1000),"Nov 28, 2024",Deposits - month,90497.25,,566222.75
+Chequing (1000),"Nov 28, 2024",Payments - month,,42924.70,523298.05
+Chequing (1000),"Dec 28, 2024",Deposits - month,90497.25,,613795.30
+Chequing (1000),"Dec 28, 2024",Payments - month,,42924.70,570870.60
+Accumulated Amortization (1510),"Dec 31, 2024",Year-end amortization,,31000.00,-31000.00
+HST Payable (2100),"Mar 30, 2024",Receiver General — HST remittance,10280.64,,10280.64
+HST Payable (2100),"Jun 30, 2024",Receiver General — HST remittance,10279.20,,20559.84
+HST Payable (2100),"Sep 30, 2024",Receiver General — HST remittance,10040.00,,30599.84
+HST Payable (2100),"Dec 30, 2024",Receiver General — HST remittance,10341.90,,40941.74
+Shareholder Loan (2500),"Jun 1, 2024",Dan Brightwater — Shareholder advance,,10000.00,-10000.00
+Sales - Service (4000),"Jan 2, 2024",Maple Ridge Condos — Service call 2024-01-1,,4434.00,-4434.00
+Sales - Service (4000),"Jan 5, 2024",J. Alvarez — Service call 2024-01-2,,3430.00,-7864.00
+Sales - Service (4000),"Jan 8, 2024",Lakeview Dental Centre — Service call 2024-01-3,,6332.00,-14196.00
+Sales - Service (4000),"Jan 11, 2024",Northgate Schools — Service call 2024-01-4,,8583.00,-22779.00
+Sales - Service (4000),"Jan 14, 2024",P. Nguyen — Service call 2024-01-5,,7515.00,-30294.00
+Sales - Service (4000),"Jan 17, 2024",Oakville Medical Arts — Service call 2024-01-6,,5992.00,-36286.00
+Sales - Service (4000),"Jan 20, 2024",Riverstone Homes — Service call 2024-01-7,,6802.00,-43088.00
+Sales - Service (4000),"Jan 23, 2024",S. Kowalski — Service call 2024-01-8,,7823.00,-50911.00
+Sales - Service (4000),"Feb 2, 2024",J. Alvarez — Service call 2024-02-1,,6575.00,-57486.00
+Sales - Service (4000),"Feb 5, 2024",Lakeview Dental Centre — Service call 2024-02-2,,2909.00,-60395.00
+Sales - Service (4000),"Feb 8, 2024",Northgate Schools — Service call 2024-02-3,,1568.00,-61963.00
+Sales - Service (4000),"Feb 11, 2024",P. Nguyen — Service call 2024-02-4,,6668.00,-68631.00
+Sales - Service (4000),"Feb 14, 2024",Oakville Medical Arts — Service call 2024-02-5,,3283.00,-71914.00
+Sales - Service (4000),"Feb 17, 2024",Riverstone Homes — Service call 2024-02-6,,5927.00,-77841.00
+Sales - Service (4000),"Feb 20, 2024",S. Kowalski — Service call 2024-02-7,,3945.00,-81786.00
+Sales - Service (4000),"Feb 23, 2024",Bayfront Hotel — Service call 2024-02-8,,5434.00,-87220.00
+Sales - Service (4000),"Mar 2, 2024",Lakeview Dental Centre — Service call 2024-03-1,,8967.00,-96187.00
+Sales - Service (4000),"Mar 5, 2024",Northgate Schools — Service call 2024-03-2,,8582.00,-104769.00
+Sales - Service (4000),"Mar 8, 2024",P. Nguyen — Service call 2024-03-3,,2299.00,-107068.00
+Sales - Service (4000),"Mar 11, 2024",Oakville Medical Arts — Service call 2024-03-4,,2815.00,-109883.00
+Sales - Service (4000),"Mar 14, 2024",Riverstone Homes — Service call 2024-03-5,,3334.00,-113217.00
+Sales - Service (4000),"Mar 17, 2024",S. Kowalski — Service call 2024-03-6,,5225.00,-118442.00
+Sales - Service (4000),"Mar 20, 2024",Bayfront Hotel — Service call 2024-03-7,,6029.00,-124471.00
+Sales - Service (4000),"Mar 23, 2024",Halton Property Group — Service call 2024-03-8,,4446.00,-128917.00
+Sales - Service (4000),"Apr 2, 2024",Northgate Schools — Service call 2024-04-1,,1844.00,-130761.00
+Sales - Service (4000),"Apr 5, 2024",P. Nguyen — Service call 2024-04-2,,2197.00,-132958.00
+Sales - Service (4000),"Apr 8, 2024",Oakville Medical Arts — Service call 2024-04-3,,5204.00,-138162.00
+Sales - Service (4000),"Apr 11, 2024",Riverstone Homes — Service call 2024-04-4,,2575.00,-140737.00
+Sales - Service (4000),"Apr 14, 2024",S. Kowalski — Service call 2024-04-5,,4012.00,-144749.00
+Sales - Service (4000),"Apr 17, 2024",Bayfront Hotel — Service call 2024-04-6,,4586.00,-149335.00
+Sales - Service (4000),"Apr 20, 2024",Halton Property Group — Service call 2024-04-7,,8967.00,-158302.00
+Sales - Service (4000),"Apr 23, 2024",Maple Ridge Condos — Service call 2024-04-8,,1384.00,-159686.00
+Sales - Service (4000),"May 2, 2024",P. Nguyen — Service call 2024-05-1,,3527.00,-163213.00
+Sales - Service (4000),"May 5, 2024",Oakville Medical Arts — Service call 2024-05-2,,8181.00,-171394.00
+Sales - Service (4000),"May 8, 2024",Riverstone Homes — Service call 2024-05-3,,4280.00,-175674.00
+Sales - Service (4000),"May 11, 2024",S. Kowalski — Service call 2024-05-4,,5699.00,-181373.00
+Sales - Service (4000),"May 14, 2024",Bayfront Hotel — Service call 2024-05-5,,4063.00,-185436.00
+Sales - Service (4000),"May 17, 2024",Halton Property Group — Service call 2024-05-6,,4229.00,-189665.00
+Sales - Service (4000),"May 20, 2024",Maple Ridge Condos — Service call 2024-05-7,,5526.00,-195191.00
+Sales - Service (4000),"May 23, 2024",J. Alvarez — Service call 2024-05-8,,4943.00,-200134.00
+Sales - Service (4000),"Jun 2, 2024",Oakville Medical Arts — Service call 2024-06-1,,8495.00,-208629.00
+Sales - Service (4000),"Jun 5, 2024",Riverstone Homes — Service call 2024-06-2,,7660.00,-216289.00
+Sales - Service (4000),"Jun 8, 2024",S. Kowalski — Service call 2024-06-3,,5761.00,-222050.00
+Sales - Service (4000),"Jun 11, 2024",Bayfront Hotel — Service call 2024-06-4,,4095.00,-226145.00
+Sales - Service (4000),"Jun 14, 2024",Halton Property Group — Service call 2024-06-5,,7425.00,-233570.00
+Sales - Service (4000),"Jun 17, 2024",Maple Ridge Condos — Service call 2024-06-6,,4205.00,-237775.00
+Sales - Service (4000),"Jun 20, 2024",J. Alvarez — Service call 2024-06-7,,7878.00,-245653.00
+Sales - Service (4000),"Jun 23, 2024",Lakeview Dental Centre — Service call 2024-06-8,,4981.00,-250634.00
+Sales - Service (4000),"Jul 2, 2024",Riverstone Homes — Service call 2024-07-1,,4301.00,-254935.00
+Sales - Service (4000),"Jul 5, 2024",S. Kowalski — Service call 2024-07-2,,4423.00,-259358.00
+Sales - Service (4000),"Jul 8, 2024",Bayfront Hotel — Service call 2024-07-3,,4586.00,-263944.00
+Sales - Service (4000),"Jul 11, 2024",Halton Property Group — Service call 2024-07-4,,1276.00,-265220.00
+Sales - Service (4000),"Jul 14, 2024",Maple Ridge Condos — Service call 2024-07-5,,8257.00,-273477.00
+Sales - Service (4000),"Jul 17, 2024",J. Alvarez — Service call 2024-07-6,,8716.00,-282193.00
+Sales - Service (4000),"Jul 20, 2024",Lakeview Dental Centre — Service call 2024-07-7,,8275.00,-290468.00
+Sales - Service (4000),"Jul 23, 2024",Northgate Schools — Service call 2024-07-8,,2721.00,-293189.00
+Sales - Service (4000),"Aug 2, 2024",S. Kowalski — Service call 2024-08-1,,4414.00,-297603.00
+Sales - Service (4000),"Aug 5, 2024",Bayfront Hotel — Service call 2024-08-2,,7877.00,-305480.00
+Sales - Service (4000),"Aug 8, 2024",Halton Property Group — Service call 2024-08-3,,5809.00,-311289.00
+Sales - Service (4000),"Aug 11, 2024",Maple Ridge Condos — Service call 2024-08-4,,7473.00,-318762.00
+Sales - Service (4000),"Aug 14, 2024",J. Alvarez — Service call 2024-08-5,,8838.00,-327600.00
+Sales - Service (4000),"Aug 17, 2024",Lakeview Dental Centre — Service call 2024-08-6,,8804.00,-336404.00
+Sales - Service (4000),"Aug 20, 2024",Northgate Schools — Service call 2024-08-7,,5599.00,-342003.00
+Sales - Service (4000),"Aug 23, 2024",P. Nguyen — Service call 2024-08-8,,3859.00,-345862.00
+Sales - Service (4000),"Sep 2, 2024",Bayfront Hotel — Service call 2024-09-1,,7617.00,-353479.00
+Sales - Service (4000),"Sep 5, 2024",Halton Property Group — Service call 2024-09-2,,5387.00,-358866.00
+Sales - Service (4000),"Sep 8, 2024",Maple Ridge Condos — Service call 2024-09-3,,3796.00,-362662.00
+Sales - Service (4000),"Sep 11, 2024",J. Alvarez — Service call 2024-09-4,,7612.00,-370274.00
+Sales - Service (4000),"Sep 14, 2024",Lakeview Dental Centre — Service call 2024-09-5,,3063.00,-373337.00
+Sales - Service (4000),"Sep 17, 2024",Northgate Schools — Service call 2024-09-6,,8428.00,-381765.00
+Sales - Service (4000),"Sep 20, 2024",P. Nguyen — Service call 2024-09-7,,4314.00,-386079.00
+Sales - Service (4000),"Sep 23, 2024",Oakville Medical Arts — Service call 2024-09-8,,1591.00,-387670.00
+Sales - Service (4000),"Oct 2, 2024",Halton Property Group — Service call 2024-10-1,,2690.00,-390360.00
+Sales - Service (4000),"Oct 5, 2024",Maple Ridge Condos — Service call 2024-10-2,,4854.00,-395214.00
+Sales - Service (4000),"Oct 8, 2024",J. Alvarez — Service call 2024-10-3,,6823.00,-402037.00
+Sales - Service (4000),"Oct 11, 2024",Lakeview Dental Centre — Service call 2024-10-4,,3600.00,-405637.00
+Sales - Service (4000),"Oct 14, 2024",Northgate Schools — Service call 2024-10-5,,2140.00,-407777.00
+Sales - Service (4000),"Oct 17, 2024",P. Nguyen — Service call 2024-10-6,,5623.00,-413400.00
+Sales - Service (4000),"Oct 20, 2024",Oakville Medical Arts — Service call 2024-10-7,,8977.00,-422377.00
+Sales - Service (4000),"Oct 23, 2024",Riverstone Homes — Service call 2024-10-8,,7618.00,-429995.00
+Sales - Service (4000),"Nov 2, 2024",Maple Ridge Condos — Service call 2024-11-1,,6364.00,-436359.00
+Sales - Service (4000),"Nov 5, 2024",J. Alvarez — Service call 2024-11-2,,8050.00,-444409.00
+Sales - Service (4000),"Nov 8, 2024",Lakeview Dental Centre — Service call 2024-11-3,,1921.00,-446330.00
+Sales - Service (4000),"Nov 11, 2024",Northgate Schools — Service call 2024-11-4,,3575.00,-449905.00
+Sales - Service (4000),"Nov 14, 2024",P. Nguyen — Service call 2024-11-5,,1349.00,-451254.00
+Sales - Service (4000),"Nov 17, 2024",Oakville Medical Arts — Service call 2024-11-6,,7415.00,-458669.00
+Sales - Service (4000),"Nov 20, 2024",Riverstone Homes — Service call 2024-11-7,,4331.00,-463000.00
+Sales - Service (4000),"Nov 23, 2024",S. Kowalski — Service call 2024-11-8,,6854.00,-469854.00
+Sales - Service (4000),"Dec 2, 2024",J. Alvarez — Service call 2024-12-1,,2679.00,-472533.00
+Sales - Service (4000),"Dec 5, 2024",Lakeview Dental Centre — Service call 2024-12-2,,4822.00,-477355.00
+Sales - Service (4000),"Dec 8, 2024",Northgate Schools — Service call 2024-12-3,,7230.00,-484585.00
+Sales - Service (4000),"Dec 11, 2024",P. Nguyen — Service call 2024-12-4,,1949.00,-486534.00
+Sales - Service (4000),"Dec 14, 2024",Oakville Medical Arts — Service call 2024-12-5,,1466.00,-488000.00
+Sales - Service (4000),"Dec 17, 2024",Riverstone Homes — Service call 2024-12-6,,5262.00,-493262.00
+Sales - Service (4000),"Dec 20, 2024",S. Kowalski — Service call 2024-12-7,,5647.00,-498909.00
+Sales - Service (4000),"Dec 23, 2024",Bayfront Hotel — Service call 2024-12-8,,4626.00,-503535.00
+Sales - Installations (4010),"Jan 5, 2024",Lakeview Dental Centre — Furnace / boiler installation,,10135.00,-10135.00
+Sales - Installations (4010),"Jan 13, 2024",Northgate Schools — Furnace / boiler installation,,16644.00,-26779.00
+Sales - Installations (4010),"Jan 21, 2024",P. Nguyen — Furnace / boiler installation,,8116.00,-34895.00
+Sales - Installations (4010),"Feb 5, 2024",Oakville Medical Arts — Furnace / boiler installation,,13317.00,-48212.00
+Sales - Installations (4010),"Feb 13, 2024",Riverstone Homes — Furnace / boiler installation,,11394.00,-59606.00
+Sales - Installations (4010),"Feb 21, 2024",S. Kowalski — Furnace / boiler installation,,14211.00,-73817.00
+Sales - Installations (4010),"Mar 5, 2024",Bayfront Hotel — Furnace / boiler installation,,11580.00,-85397.00
+Sales - Installations (4010),"Mar 13, 2024",Halton Property Group — Furnace / boiler installation,,14806.00,-100203.00
+Sales - Installations (4010),"Mar 21, 2024",Maple Ridge Condos — Furnace / boiler installation,,28765.00,-128968.00
+Sales - Installations (4010),"Apr 5, 2024",J. Alvarez — Furnace / boiler installation,,12850.00,-141818.00
+Sales - Installations (4010),"Apr 13, 2024",Lakeview Dental Centre — Furnace / boiler installation,,9823.00,-151641.00
+Sales - Installations (4010),"Apr 21, 2024",Northgate Schools — Furnace / boiler installation,,8736.00,-160377.00
+Sales - Installations (4010),"May 5, 2024",P. Nguyen — Furnace / boiler installation,,11222.00,-171599.00
+Sales - Installations (4010),"May 13, 2024",Oakville Medical Arts — Furnace / boiler installation,,18249.00,-189848.00
+Sales - Installations (4010),"May 21, 2024",Riverstone Homes — Furnace / boiler installation,,22354.00,-212202.00
+Sales - Installations (4010),"Jun 5, 2024",S. Kowalski — Furnace / boiler installation,,19840.00,-232042.00
+Sales - Installations (4010),"Jun 13, 2024",Bayfront Hotel — Furnace / boiler installation,,18276.00,-250318.00
+Sales - Installations (4010),"Jun 21, 2024",Halton Property Group — Furnace / boiler installation,,27254.00,-277572.00
+Sales - Installations (4010),"Jul 5, 2024",Maple Ridge Condos — Furnace / boiler installation,,26743.00,-304315.00
+Sales - Installations (4010),"Jul 13, 2024",J. Alvarez — Furnace / boiler installation,,24938.00,-329253.00
+Sales - Installations (4010),"Jul 21, 2024",Lakeview Dental Centre — Furnace / boiler installation,,16763.00,-346016.00
+Sales - Installations (4010),"Aug 5, 2024",Northgate Schools — Furnace / boiler installation,,10399.00,-356415.00
+Sales - Installations (4010),"Aug 13, 2024",P. Nguyen — Furnace / boiler installation,,8340.00,-364755.00
+Sales - Installations (4010),"Aug 21, 2024",Oakville Medical Arts — Furnace / boiler installation,,27274.00,-392029.00
+Sales - Installations (4010),"Sep 5, 2024",Riverstone Homes — Furnace / boiler installation,,11433.00,-403462.00
+Sales - Installations (4010),"Sep 13, 2024",S. Kowalski — Furnace / boiler installation,,20610.00,-424072.00
+Sales - Installations (4010),"Sep 21, 2024",Bayfront Hotel — Furnace / boiler installation,,18354.00,-442426.00
+Sales - Installations (4010),"Oct 5, 2024",Halton Property Group — Furnace / boiler installation,,11683.00,-454109.00
+Sales - Installations (4010),"Oct 13, 2024",Maple Ridge Condos — Furnace / boiler installation,,16995.00,-471104.00
+Sales - Installations (4010),"Oct 21, 2024",J. Alvarez — Furnace / boiler installation,,27991.00,-499095.00
+Sales - Installations (4010),"Nov 5, 2024",Lakeview Dental Centre — Furnace / boiler installation,,8273.00,-507368.00
+Sales - Installations (4010),"Nov 13, 2024",Northgate Schools — Furnace / boiler installation,,8898.00,-516266.00
+Sales - Installations (4010),"Nov 21, 2024",P. Nguyen — Furnace / boiler installation,,9173.00,-525439.00
+Sales - Installations (4010),"Dec 5, 2024",Oakville Medical Arts — Furnace / boiler installation,,14748.00,-540187.00
+Sales - Installations (4010),"Dec 13, 2024",Riverstone Homes — Furnace / boiler installation,,13579.00,-553766.00
+Sales - Installations (4010),"Dec 21, 2024",S. Kowalski — Furnace / boiler installation,,28666.00,-582432.00
+Materials & Supplies (5000),"Jan 3, 2024","Wolseley Canada — Pipe, fittings and parts",4089.00,,4089.00
+Materials & Supplies (5000),"Jan 8, 2024","Emco Supply — Pipe, fittings and parts",1412.00,,5501.00
+Materials & Supplies (5000),"Jan 13, 2024","The Home Depot — Pipe, fittings and parts",1988.00,,7489.00
+Materials & Supplies (5000),"Jan 18, 2024","Wolseley Canada — Pipe, fittings and parts",1288.00,,8777.00
+Materials & Supplies (5000),"Jan 23, 2024","Emco Supply — Pipe, fittings and parts",994.00,,9771.00
+Materials & Supplies (5000),"Feb 3, 2024","Wolseley Canada — Pipe, fittings and parts",2236.00,,12007.00
+Materials & Supplies (5000),"Feb 8, 2024","Emco Supply — Pipe, fittings and parts",4713.00,,16720.00
+Materials & Supplies (5000),"Feb 13, 2024","The Home Depot — Pipe, fittings and parts",3706.00,,20426.00
+Materials & Supplies (5000),"Feb 18, 2024","Wolseley Canada — Pipe, fittings and parts",3389.00,,23815.00
+Materials & Supplies (5000),"Feb 23, 2024","Emco Supply — Pipe, fittings and parts",4982.00,,28797.00
+Materials & Supplies (5000),"Mar 3, 2024","Wolseley Canada — Pipe, fittings and parts",630.00,,29427.00
+Materials & Supplies (5000),"Mar 8, 2024","Emco Supply — Pipe, fittings and parts",4544.00,,33971.00
+Materials & Supplies (5000),"Mar 13, 2024","The Home Depot — Pipe, fittings and parts",2281.00,,36252.00
+Materials & Supplies (5000),"Mar 18, 2024","Wolseley Canada — Pipe, fittings and parts",4036.00,,40288.00
+Materials & Supplies (5000),"Mar 23, 2024","Emco Supply — Pipe, fittings and parts",2673.00,,42961.00
+Materials & Supplies (5000),"Apr 3, 2024","Wolseley Canada — Pipe, fittings and parts",3108.00,,46069.00
+Materials & Supplies (5000),"Apr 8, 2024","Emco Supply — Pipe, fittings and parts",4985.00,,51054.00
+Materials & Supplies (5000),"Apr 13, 2024","The Home Depot — Pipe, fittings and parts",4057.00,,55111.00
+Materials & Supplies (5000),"Apr 18, 2024","Wolseley Canada — Pipe, fittings and parts",3997.00,,59108.00
+Materials & Supplies (5000),"Apr 23, 2024","Emco Supply — Pipe, fittings and parts",595.00,,59703.00
+Materials & Supplies (5000),"May 3, 2024","Wolseley Canada — Pipe, fittings and parts",848.00,,60551.00
+Materials & Supplies (5000),"May 8, 2024","Emco Supply — Pipe, fittings and parts",4391.00,,64942.00
+Materials & Supplies (5000),"May 13, 2024","The Home Depot — Pipe, fittings and parts",1680.00,,66622.00
+Materials & Supplies (5000),"May 18, 2024","Wolseley Canada — Pipe, fittings and parts",4209.00,,70831.00
+Materials & Supplies (5000),"May 23, 2024","Emco Supply — Pipe, fittings and parts",1662.00,,72493.00
+Materials & Supplies (5000),"Jun 3, 2024","Wolseley Canada — Pipe, fittings and parts",4042.00,,76535.00
+Materials & Supplies (5000),"Jun 8, 2024","Emco Supply — Pipe, fittings and parts",5143.00,,81678.00
+Materials & Supplies (5000),"Jun 13, 2024","The Home Depot — Pipe, fittings and parts",2768.00,,84446.00
+Materials & Supplies (5000),"Jun 18, 2024","Wolseley Canada — Pipe, fittings and parts",1058.00,,85504.00
+Materials & Supplies (5000),"Jun 23, 2024","Emco Supply — Pipe, fittings and parts",2154.00,,87658.00
+Materials & Supplies (5000),"Jul 3, 2024","Wolseley Canada — Pipe, fittings and parts",3312.00,,90970.00
+Materials & Supplies (5000),"Jul 8, 2024","Emco Supply — Pipe, fittings and parts",1013.00,,91983.00
+Materials & Supplies (5000),"Jul 13, 2024","The Home Depot — Pipe, fittings and parts",2808.00,,94791.00
+Materials & Supplies (5000),"Jul 18, 2024","Wolseley Canada — Pipe, fittings and parts",3876.00,,98667.00
+Materials & Supplies (5000),"Jul 23, 2024","Emco Supply — Pipe, fittings and parts",4630.00,,103297.00
+Materials & Supplies (5000),"Aug 3, 2024","Wolseley Canada — Pipe, fittings and parts",3761.00,,107058.00
+Materials & Supplies (5000),"Aug 8, 2024","Emco Supply — Pipe, fittings and parts",2689.00,,109747.00
+Materials & Supplies (5000),"Aug 13, 2024","The Home Depot — Pipe, fittings and parts",3169.00,,112916.00
+Materials & Supplies (5000),"Aug 18, 2024","Wolseley Canada — Pipe, fittings and parts",935.00,,113851.00
+Materials & Supplies (5000),"Aug 23, 2024","Emco Supply — Pipe, fittings and parts",5157.00,,119008.00
+Materials & Supplies (5000),"Sep 3, 2024","Wolseley Canada — Pipe, fittings and parts",2666.00,,121674.00
+Materials & Supplies (5000),"Sep 8, 2024","Emco Supply — Pipe, fittings and parts",2686.00,,124360.00
+Materials & Supplies (5000),"Sep 13, 2024","The Home Depot — Pipe, fittings and parts",3650.00,,128010.00
+Materials & Supplies (5000),"Sep 18, 2024","Wolseley Canada — Pipe, fittings and parts",4640.00,,132650.00
+Materials & Supplies (5000),"Sep 23, 2024","Emco Supply — Pipe, fittings and parts",1736.00,,134386.00
+Materials & Supplies (5000),"Oct 3, 2024","Wolseley Canada — Pipe, fittings and parts",650.00,,135036.00
+Materials & Supplies (5000),"Oct 8, 2024","Emco Supply — Pipe, fittings and parts",2060.00,,137096.00
+Materials & Supplies (5000),"Oct 13, 2024","The Home Depot — Pipe, fittings and parts",4336.00,,141432.00
+Materials & Supplies (5000),"Oct 18, 2024","Wolseley Canada — Pipe, fittings and parts",3164.00,,144596.00
+Materials & Supplies (5000),"Oct 23, 2024","Emco Supply — Pipe, fittings and parts",2921.00,,147517.00
+Materials & Supplies (5000),"Nov 3, 2024","Wolseley Canada — Pipe, fittings and parts",4154.00,,151671.00
+Materials & Supplies (5000),"Nov 8, 2024","Emco Supply — Pipe, fittings and parts",1684.00,,153355.00
+Materials & Supplies (5000),"Nov 13, 2024","The Home Depot — Pipe, fittings and parts",2710.00,,156065.00
+Materials & Supplies (5000),"Nov 18, 2024","Wolseley Canada — Pipe, fittings and parts",5363.00,,161428.00
+Materials & Supplies (5000),"Nov 23, 2024","Emco Supply — Pipe, fittings and parts",3227.00,,164655.00
+Materials & Supplies (5000),"Dec 3, 2024","Wolseley Canada — Pipe, fittings and parts",1120.00,,165775.00
+Materials & Supplies (5000),"Dec 8, 2024","Emco Supply — Pipe, fittings and parts",3206.00,,168981.00
+Materials & Supplies (5000),"Dec 13, 2024","The Home Depot — Pipe, fittings and parts",1166.00,,170147.00
+Materials & Supplies (5000),"Dec 18, 2024","Wolseley Canada — Pipe, fittings and parts",5543.00,,175690.00
+Materials & Supplies (5000),"Dec 23, 2024","Emco Supply — Pipe, fittings and parts",1190.00,,176880.00
+Subcontractors (5100),"Jan 10, 2024",Delta Electrical — Subcontract work,3384.00,,3384.00
+Subcontractors (5100),"Jan 19, 2024",Precision Ductwork — Subcontract work,6714.00,,10098.00
+Subcontractors (5100),"Feb 10, 2024",Delta Electrical — Subcontract work,6511.00,,16609.00
+Subcontractors (5100),"Feb 19, 2024",Precision Ductwork — Subcontract work,3504.00,,20113.00
+Subcontractors (5100),"Mar 10, 2024",Delta Electrical — Subcontract work,3604.00,,23717.00
+Subcontractors (5100),"Mar 19, 2024",Precision Ductwork — Subcontract work,6640.00,,30357.00
+Subcontractors (5100),"Apr 10, 2024",Delta Electrical — Subcontract work,2946.00,,33303.00
+Subcontractors (5100),"Apr 19, 2024",Precision Ductwork — Subcontract work,8630.00,,41933.00
+Subcontractors (5100),"May 10, 2024",Delta Electrical — Subcontract work,7471.00,,49404.00
+Subcontractors (5100),"May 19, 2024",Precision Ductwork — Subcontract work,6604.00,,56008.00
+Subcontractors (5100),"Jun 10, 2024",Delta Electrical — Subcontract work,4932.00,,60940.00
+Subcontractors (5100),"Jun 19, 2024",Precision Ductwork — Subcontract work,5112.00,,66052.00
+Subcontractors (5100),"Jul 10, 2024",Delta Electrical — Subcontract work,5099.00,,71151.00
+Subcontractors (5100),"Jul 19, 2024",Precision Ductwork — Subcontract work,4324.00,,75475.00
+Subcontractors (5100),"Aug 10, 2024",Delta Electrical — Subcontract work,4382.00,,79857.00
+Subcontractors (5100),"Aug 19, 2024",Precision Ductwork — Subcontract work,8443.00,,88300.00
+Subcontractors (5100),"Sep 10, 2024",Delta Electrical — Subcontract work,5719.00,,94019.00
+Subcontractors (5100),"Sep 19, 2024",Precision Ductwork — Subcontract work,5443.00,,99462.00
+Subcontractors (5100),"Oct 10, 2024",Delta Electrical — Subcontract work,3095.00,,102557.00
+Subcontractors (5100),"Oct 19, 2024",Precision Ductwork — Subcontract work,6934.00,,109491.00
+Subcontractors (5100),"Nov 10, 2024",Delta Electrical — Subcontract work,2957.00,,112448.00
+Subcontractors (5100),"Nov 19, 2024",Precision Ductwork — Subcontract work,3637.00,,116085.00
+Subcontractors (5100),"Dec 10, 2024",Delta Electrical — Subcontract work,7077.00,,123162.00
+Subcontractors (5100),"Dec 19, 2024",Precision Ductwork — Subcontract work,7322.00,,130484.00
+Wages & Salaries (6000),"Jan 12, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,2615.38
+Wages & Salaries (6000),"Jan 12, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,5038.46
+Wages & Salaries (6000),"Jan 12, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,7230.77
+Wages & Salaries (6000),"Jan 12, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,10500.00
+Wages & Salaries (6000),"Jan 26, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,13115.38
+Wages & Salaries (6000),"Jan 26, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,15538.46
+Wages & Salaries (6000),"Jan 26, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,17730.77
+Wages & Salaries (6000),"Jan 26, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,21000.00
+Wages & Salaries (6000),"Feb 9, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,23615.38
+Wages & Salaries (6000),"Feb 9, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,26038.46
+Wages & Salaries (6000),"Feb 9, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,28230.77
+Wages & Salaries (6000),"Feb 9, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,31500.00
+Wages & Salaries (6000),"Feb 23, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,34115.38
+Wages & Salaries (6000),"Feb 23, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,36538.46
+Wages & Salaries (6000),"Feb 23, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,38730.77
+Wages & Salaries (6000),"Feb 23, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,42000.00
+Wages & Salaries (6000),"Mar 8, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,44615.38
+Wages & Salaries (6000),"Mar 8, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,47038.46
+Wages & Salaries (6000),"Mar 8, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,49230.77
+Wages & Salaries (6000),"Mar 8, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,52500.00
+Wages & Salaries (6000),"Mar 22, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,55115.38
+Wages & Salaries (6000),"Mar 22, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,57538.46
+Wages & Salaries (6000),"Mar 22, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,59730.77
+Wages & Salaries (6000),"Mar 22, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,63000.00
+Wages & Salaries (6000),"Apr 5, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,65615.38
+Wages & Salaries (6000),"Apr 5, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,68038.46
+Wages & Salaries (6000),"Apr 5, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,70230.77
+Wages & Salaries (6000),"Apr 5, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,73500.00
+Wages & Salaries (6000),"Apr 19, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,76115.38
+Wages & Salaries (6000),"Apr 19, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,78538.46
+Wages & Salaries (6000),"Apr 19, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,80730.77
+Wages & Salaries (6000),"Apr 19, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,84000.00
+Wages & Salaries (6000),"May 3, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,86615.38
+Wages & Salaries (6000),"May 3, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,89038.46
+Wages & Salaries (6000),"May 3, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,91230.77
+Wages & Salaries (6000),"May 3, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,94500.00
+Wages & Salaries (6000),"May 17, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,97115.38
+Wages & Salaries (6000),"May 17, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,99538.46
+Wages & Salaries (6000),"May 17, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,101730.77
+Wages & Salaries (6000),"May 17, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,105000.00
+Wages & Salaries (6000),"May 31, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,107615.38
+Wages & Salaries (6000),"May 31, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,110038.46
+Wages & Salaries (6000),"May 31, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,112230.77
+Wages & Salaries (6000),"May 31, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,115500.00
+Wages & Salaries (6000),"Jun 14, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,118115.38
+Wages & Salaries (6000),"Jun 14, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,120538.46
+Wages & Salaries (6000),"Jun 14, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,122730.77
+Wages & Salaries (6000),"Jun 14, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,126000.00
+Wages & Salaries (6000),"Jun 28, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,128615.38
+Wages & Salaries (6000),"Jun 28, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,131038.46
+Wages & Salaries (6000),"Jun 28, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,133230.77
+Wages & Salaries (6000),"Jun 28, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,136500.00
+Wages & Salaries (6000),"Jul 12, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,139115.38
+Wages & Salaries (6000),"Jul 12, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,141538.46
+Wages & Salaries (6000),"Jul 12, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,143730.77
+Wages & Salaries (6000),"Jul 12, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,147000.00
+Wages & Salaries (6000),"Jul 26, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,149615.38
+Wages & Salaries (6000),"Jul 26, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,152038.46
+Wages & Salaries (6000),"Jul 26, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,154230.77
+Wages & Salaries (6000),"Jul 26, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,157500.00
+Wages & Salaries (6000),"Aug 9, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,160115.38
+Wages & Salaries (6000),"Aug 9, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,162538.46
+Wages & Salaries (6000),"Aug 9, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,164730.77
+Wages & Salaries (6000),"Aug 9, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,168000.00
+Wages & Salaries (6000),"Aug 23, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,170615.38
+Wages & Salaries (6000),"Aug 23, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,173038.46
+Wages & Salaries (6000),"Aug 23, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,175230.77
+Wages & Salaries (6000),"Aug 23, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,178500.00
+Wages & Salaries (6000),"Sep 6, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,181115.38
+Wages & Salaries (6000),"Sep 6, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,183538.46
+Wages & Salaries (6000),"Sep 6, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,185730.77
+Wages & Salaries (6000),"Sep 6, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,189000.00
+Wages & Salaries (6000),"Sep 20, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,191615.38
+Wages & Salaries (6000),"Sep 20, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,194038.46
+Wages & Salaries (6000),"Sep 20, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,196230.77
+Wages & Salaries (6000),"Sep 20, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,199500.00
+Wages & Salaries (6000),"Oct 4, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,202115.38
+Wages & Salaries (6000),"Oct 4, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,204538.46
+Wages & Salaries (6000),"Oct 4, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,206730.77
+Wages & Salaries (6000),"Oct 4, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,210000.00
+Wages & Salaries (6000),"Oct 18, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,212615.38
+Wages & Salaries (6000),"Oct 18, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,215038.46
+Wages & Salaries (6000),"Oct 18, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,217230.77
+Wages & Salaries (6000),"Oct 18, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,220500.00
+Wages & Salaries (6000),"Nov 1, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,223115.38
+Wages & Salaries (6000),"Nov 1, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,225538.46
+Wages & Salaries (6000),"Nov 1, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,227730.77
+Wages & Salaries (6000),"Nov 1, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,231000.00
+Wages & Salaries (6000),"Nov 15, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,233615.38
+Wages & Salaries (6000),"Nov 15, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,236038.46
+Wages & Salaries (6000),"Nov 15, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,238230.77
+Wages & Salaries (6000),"Nov 15, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,241500.00
+Wages & Salaries (6000),"Nov 29, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,244115.38
+Wages & Salaries (6000),"Nov 29, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,246538.46
+Wages & Salaries (6000),"Nov 29, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,248730.77
+Wages & Salaries (6000),"Nov 29, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,252000.00
+Wages & Salaries (6000),"Dec 13, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,254615.38
+Wages & Salaries (6000),"Dec 13, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,257038.46
+Wages & Salaries (6000),"Dec 13, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,259230.77
+Wages & Salaries (6000),"Dec 13, 2024",Payroll — E. Brightwater — Biweekly pay,3269.23,,262500.00
+Wages & Salaries (6000),"Dec 27, 2024",Payroll — M. Chen — Biweekly pay,2615.38,,265115.38
+Wages & Salaries (6000),"Dec 27, 2024",Payroll — J. Okafor — Biweekly pay,2423.08,,267538.46
+Wages & Salaries (6000),"Dec 27, 2024",Payroll — R. Singh — Biweekly pay,2192.31,,269730.77
+Wages & Salaries (6000),"Dec 27, 2024",Payroll — E. Brightwater — Biweekly pay,3269.25,,273000.02
+Wages - Officers (6010),"Jan 15, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,10000.00
+Wages - Officers (6010),"Jan 28, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,20000.00
+Wages - Officers (6010),"Feb 15, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,30000.00
+Wages - Officers (6010),"Feb 28, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,40000.00
+Wages - Officers (6010),"Mar 15, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,50000.00
+Wages - Officers (6010),"Mar 28, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,60000.00
+Wages - Officers (6010),"Apr 15, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,70000.00
+Wages - Officers (6010),"Apr 28, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,80000.00
+Wages - Officers (6010),"May 15, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,90000.00
+Wages - Officers (6010),"May 28, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,100000.00
+Wages - Officers (6010),"Jun 15, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,110000.00
+Wages - Officers (6010),"Jun 28, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,120000.00
+Wages - Officers (6010),"Jul 15, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,130000.00
+Wages - Officers (6010),"Jul 28, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,140000.00
+Wages - Officers (6010),"Aug 15, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,150000.00
+Wages - Officers (6010),"Aug 28, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,160000.00
+Wages - Officers (6010),"Sep 15, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,170000.00
+Wages - Officers (6010),"Sep 28, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,180000.00
+Wages - Officers (6010),"Oct 15, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,190000.00
+Wages - Officers (6010),"Oct 28, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,200000.00
+Wages - Officers (6010),"Nov 15, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,210000.00
+Wages - Officers (6010),"Nov 28, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,220000.00
+Wages - Officers (6010),"Dec 15, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,230000.00
+Wages - Officers (6010),"Dec 28, 2024",Payroll — D. Brightwater — Semi-monthly salary,10000.00,,240000.00
+Payroll Taxes - CPP/EI (6020),"Jan 11, 2024",Receiver General — CPP/EI remittance,3138.81,,3138.81
+Payroll Taxes - CPP/EI (6020),"Feb 11, 2024",Receiver General — CPP/EI remittance,3224.69,,6363.50
+Payroll Taxes - CPP/EI (6020),"Mar 11, 2024",Receiver General — CPP/EI remittance,3280.93,,9644.43
+Payroll Taxes - CPP/EI (6020),"Apr 11, 2024",Receiver General — CPP/EI remittance,3270.40,,12914.83
+Payroll Taxes - CPP/EI (6020),"May 11, 2024",Receiver General — CPP/EI remittance,3212.89,,16127.72
+Payroll Taxes - CPP/EI (6020),"Jun 11, 2024",Receiver General — CPP/EI remittance,3323.38,,19451.10
+Payroll Taxes - CPP/EI (6020),"Jul 11, 2024",Receiver General — CPP/EI remittance,3258.41,,22709.51
+Payroll Taxes - CPP/EI (6020),"Aug 11, 2024",Receiver General — CPP/EI remittance,3345.34,,26054.85
+Payroll Taxes - CPP/EI (6020),"Sep 11, 2024",Receiver General — CPP/EI remittance,3266.16,,29321.01
+Payroll Taxes - CPP/EI (6020),"Oct 11, 2024",Receiver General — CPP/EI remittance,3191.52,,32512.53
+Payroll Taxes - CPP/EI (6020),"Nov 11, 2024",Receiver General — CPP/EI remittance,3132.92,,35645.45
+Payroll Taxes - CPP/EI (6020),"Dec 11, 2024",Receiver General — CPP/EI remittance,3348.54,,38993.99
+WSIB (6030),"Mar 15, 2024",WSIB — Quarterly premium,2100.00,,2100.00
+WSIB (6030),"Jun 15, 2024",WSIB — Quarterly premium,2100.00,,4200.00
+WSIB (6030),"Sep 15, 2024",WSIB — Quarterly premium,2100.00,,6300.00
+WSIB (6030),"Dec 15, 2024",WSIB — Quarterly premium,2100.00,,8400.00
+Employee Benefits (6040),"Jan 13, 2024",Manulife — Group benefits,1120.00,,1120.00
+Employee Benefits (6040),"Feb 13, 2024",Manulife — Group benefits,1120.00,,2240.00
+Employee Benefits (6040),"Mar 13, 2024",Manulife — Group benefits,1120.00,,3360.00
+Employee Benefits (6040),"Apr 13, 2024",Manulife — Group benefits,1120.00,,4480.00
+Employee Benefits (6040),"May 13, 2024",Manulife — Group benefits,1120.00,,5600.00
+Employee Benefits (6040),"Jun 13, 2024",Manulife — Group benefits,1120.00,,6720.00
+Employee Benefits (6040),"Jul 13, 2024",Manulife — Group benefits,1120.00,,7840.00
+Employee Benefits (6040),"Aug 13, 2024",Manulife — Group benefits,1120.00,,8960.00
+Employee Benefits (6040),"Sep 13, 2024",Manulife — Group benefits,1120.00,,10080.00
+Employee Benefits (6040),"Oct 13, 2024",Manulife — Group benefits,1120.00,,11200.00
+Employee Benefits (6040),"Nov 13, 2024",Manulife — Group benefits,1120.00,,12320.00
+Employee Benefits (6040),"Dec 13, 2024",Manulife — Group benefits,1120.00,,13440.00
+Vehicle - Owner (6110),"Jan 3, 2024",Lexus Financial — Lease Jan - Lexus RX,1150.00,,1150.00
+Vehicle - Owner (6110),"Jan 11, 2024",Petro-Canada — Fuel - Lexus RX,438.69,,1588.69
+Vehicle - Owner (6110),"Jan 24, 2024",Petro-Canada — Fuel - Lexus RX,416.31,,2005.00
+Vehicle - Owner (6110),"Feb 3, 2024",Lexus Financial — Lease Feb - Lexus RX,1150.00,,3155.00
+Vehicle - Owner (6110),"Feb 11, 2024",Petro-Canada — Fuel - Lexus RX,387.97,,3542.97
+Vehicle - Owner (6110),"Feb 24, 2024",Petro-Canada — Fuel - Lexus RX,368.14,,3911.11
+Vehicle - Owner (6110),"Mar 3, 2024",Lexus Financial — Lease Mar - Lexus RX,1150.00,,5061.11
+Vehicle - Owner (6110),"Mar 11, 2024",Petro-Canada — Fuel - Lexus RX,409.69,,5470.80
+Vehicle - Owner (6110),"Mar 24, 2024",Petro-Canada — Fuel - Lexus RX,392.17,,5862.97
+Vehicle - Owner (6110),"Apr 2, 2024",Intact Insurance — Auto insurance - Lexus RX,1860.00,,7722.97
+Vehicle - Owner (6110),"Apr 3, 2024",Lexus Financial — Lease Apr - Lexus RX,1150.00,,8872.97
+Vehicle - Owner (6110),"Apr 11, 2024",Petro-Canada — Fuel - Lexus RX,513.28,,9386.25
+Vehicle - Owner (6110),"Apr 24, 2024",Petro-Canada — Fuel - Lexus RX,506.78,,9893.03
+Vehicle - Owner (6110),"May 3, 2024",Lexus Financial — Lease May - Lexus RX,1150.00,,11043.03
+Vehicle - Owner (6110),"May 11, 2024",Petro-Canada — Fuel - Lexus RX,512.91,,11555.94
+Vehicle - Owner (6110),"May 24, 2024",Petro-Canada — Fuel - Lexus RX,676.73,,12232.67
+Vehicle - Owner (6110),"Jun 3, 2024",Lexus Financial — Lease Jun - Lexus RX,1150.00,,13382.67
+Vehicle - Owner (6110),"Jun 11, 2024",Petro-Canada — Fuel - Lexus RX,457.40,,13840.07
+Vehicle - Owner (6110),"Jun 24, 2024",Petro-Canada — Fuel - Lexus RX,504.47,,14344.54
+Vehicle - Owner (6110),"Jul 3, 2024",Lexus Financial — Lease Jul - Lexus RX,1150.00,,15494.54
+Vehicle - Owner (6110),"Jul 11, 2024",Petro-Canada — Fuel - Lexus RX,622.31,,16116.85
+Vehicle - Owner (6110),"Jul 24, 2024",Petro-Canada — Fuel - Lexus RX,580.48,,16697.33
+Vehicle - Owner (6110),"Aug 3, 2024",Lexus Financial — Lease Aug - Lexus RX,1150.00,,17847.33
+Vehicle - Owner (6110),"Aug 11, 2024",Petro-Canada — Fuel - Lexus RX,393.91,,18241.24
+Vehicle - Owner (6110),"Aug 24, 2024",Petro-Canada — Fuel - Lexus RX,515.68,,18756.92
+Vehicle - Owner (6110),"Sep 3, 2024",Lexus Financial — Lease Sep - Lexus RX,1150.00,,19906.92
+Vehicle - Owner (6110),"Sep 11, 2024",Petro-Canada — Fuel - Lexus RX,500.96,,20407.88
+Vehicle - Owner (6110),"Sep 24, 2024",Petro-Canada — Fuel - Lexus RX,530.01,,20937.89
+Vehicle - Owner (6110),"Oct 3, 2024",Lexus Financial — Lease Oct - Lexus RX,1150.00,,22087.89
+Vehicle - Owner (6110),"Oct 11, 2024",Petro-Canada — Fuel - Lexus RX,528.56,,22616.45
+Vehicle - Owner (6110),"Oct 24, 2024",Petro-Canada — Fuel - Lexus RX,593.05,,23209.50
+Vehicle - Owner (6110),"Nov 3, 2024",Lexus Financial — Lease Nov - Lexus RX,1150.00,,24359.50
+Vehicle - Owner (6110),"Nov 11, 2024",Petro-Canada — Fuel - Lexus RX,608.01,,24967.51
+Vehicle - Owner (6110),"Nov 24, 2024",Petro-Canada — Fuel - Lexus RX,609.56,,25577.07
+Vehicle - Owner (6110),"Dec 3, 2024",Lexus Financial — Lease Dec - Lexus RX,1150.00,,26727.07
+Vehicle - Owner (6110),"Dec 11, 2024",Petro-Canada — Fuel - Lexus RX,526.54,,27253.61
+Vehicle - Owner (6110),"Dec 24, 2024",Petro-Canada — Fuel - Lexus RX,586.39,,27840.00
+Fuel - Service Vans (6120),"Jan 3, 2024",Petro-Canada — Fuel - service vans,236.07,,236.07
+Fuel - Service Vans (6120),"Jan 10, 2024",Esso — Fuel - service vans,244.97,,481.04
+Fuel - Service Vans (6120),"Jan 17, 2024",Petro-Canada — Fuel - service vans,187.61,,668.65
+Fuel - Service Vans (6120),"Jan 24, 2024",Esso — Fuel - service vans,196.82,,865.47
+Fuel - Service Vans (6120),"Feb 3, 2024",Petro-Canada — Fuel - service vans,155.43,,1020.90
+Fuel - Service Vans (6120),"Feb 10, 2024",Esso — Fuel - service vans,249.83,,1270.73
+Fuel - Service Vans (6120),"Feb 17, 2024",Petro-Canada — Fuel - service vans,196.44,,1467.17
+Fuel - Service Vans (6120),"Feb 24, 2024",Esso — Fuel - service vans,249.95,,1717.12
+Fuel - Service Vans (6120),"Mar 3, 2024",Petro-Canada — Fuel - service vans,173.21,,1890.33
+Fuel - Service Vans (6120),"Mar 10, 2024",Esso — Fuel - service vans,150.04,,2040.37
+Fuel - Service Vans (6120),"Mar 17, 2024",Petro-Canada — Fuel - service vans,159.07,,2199.44
+Fuel - Service Vans (6120),"Mar 24, 2024",Esso — Fuel - service vans,153.74,,2353.18
+Fuel - Service Vans (6120),"Apr 3, 2024",Petro-Canada — Fuel - service vans,184.93,,2538.11
+Fuel - Service Vans (6120),"Apr 10, 2024",Esso — Fuel - service vans,214.16,,2752.27
+Fuel - Service Vans (6120),"Apr 17, 2024",Petro-Canada — Fuel - service vans,238.88,,2991.15
+Fuel - Service Vans (6120),"Apr 24, 2024",Esso — Fuel - service vans,217.02,,3208.17
+Fuel - Service Vans (6120),"May 3, 2024",Petro-Canada — Fuel - service vans,222.89,,3431.06
+Fuel - Service Vans (6120),"May 10, 2024",Esso — Fuel - service vans,220.36,,3651.42
+Fuel - Service Vans (6120),"May 17, 2024",Petro-Canada — Fuel - service vans,141.87,,3793.29
+Fuel - Service Vans (6120),"May 24, 2024",Esso — Fuel - service vans,149.53,,3942.82
+Fuel - Service Vans (6120),"Jun 3, 2024",Petro-Canada — Fuel - service vans,221.66,,4164.48
+Fuel - Service Vans (6120),"Jun 10, 2024",Esso — Fuel - service vans,192.66,,4357.14
+Fuel - Service Vans (6120),"Jun 17, 2024",Petro-Canada — Fuel - service vans,253.11,,4610.25
+Fuel - Service Vans (6120),"Jun 24, 2024",Esso — Fuel - service vans,225.55,,4835.80
+Fuel - Service Vans (6120),"Jul 3, 2024",Petro-Canada — Fuel - service vans,222.79,,5058.59
+Fuel - Service Vans (6120),"Jul 10, 2024",Esso — Fuel - service vans,163.34,,5221.93
+Fuel - Service Vans (6120),"Jul 17, 2024",Petro-Canada — Fuel - service vans,240.16,,5462.09
+Fuel - Service Vans (6120),"Jul 24, 2024",Esso — Fuel - service vans,209.88,,5671.97
+Fuel - Service Vans (6120),"Aug 3, 2024",Petro-Canada — Fuel - service vans,183.72,,5855.69
+Fuel - Service Vans (6120),"Aug 10, 2024",Esso — Fuel - service vans,164.02,,6019.71
+Fuel - Service Vans (6120),"Aug 17, 2024",Petro-Canada — Fuel - service vans,217.39,,6237.10
+Fuel - Service Vans (6120),"Aug 24, 2024",Esso — Fuel - service vans,177.78,,6414.88
+Fuel - Service Vans (6120),"Sep 3, 2024",Petro-Canada — Fuel - service vans,228.46,,6643.34
+Fuel - Service Vans (6120),"Sep 10, 2024",Esso — Fuel - service vans,208.91,,6852.25
+Fuel - Service Vans (6120),"Sep 17, 2024",Petro-Canada — Fuel - service vans,199.24,,7051.49
+Fuel - Service Vans (6120),"Sep 24, 2024",Esso — Fuel - service vans,170.17,,7221.66
+Fuel - Service Vans (6120),"Oct 3, 2024",Petro-Canada — Fuel - service vans,181.75,,7403.41
+Fuel - Service Vans (6120),"Oct 10, 2024",Esso — Fuel - service vans,221.95,,7625.36
+Fuel - Service Vans (6120),"Oct 17, 2024",Petro-Canada — Fuel - service vans,168.09,,7793.45
+Fuel - Service Vans (6120),"Oct 24, 2024",Esso — Fuel - service vans,156.43,,7949.88
+Fuel - Service Vans (6120),"Nov 3, 2024",Petro-Canada — Fuel - service vans,256.43,,8206.31
+Fuel - Service Vans (6120),"Nov 10, 2024",Esso — Fuel - service vans,175.22,,8381.53
+Fuel - Service Vans (6120),"Nov 17, 2024",Petro-Canada — Fuel - service vans,198.92,,8580.45
+Fuel - Service Vans (6120),"Nov 24, 2024",Esso — Fuel - service vans,249.49,,8829.94
+Fuel - Service Vans (6120),"Dec 3, 2024",Petro-Canada — Fuel - service vans,141.44,,8971.38
+Fuel - Service Vans (6120),"Dec 10, 2024",Esso — Fuel - service vans,219.60,,9190.98
+Fuel - Service Vans (6120),"Dec 17, 2024",Petro-Canada — Fuel - service vans,140.82,,9331.80
+Fuel - Service Vans (6120),"Dec 24, 2024",Esso — Fuel - service vans,145.42,,9477.22
+Van Repairs & Maintenance (6130),"Mar 22, 2024",Midas — Van service,422.86,,422.86
+Van Repairs & Maintenance (6130),"Jun 22, 2024",Midas — Van service,502.53,,925.39
+Van Repairs & Maintenance (6130),"Sep 22, 2024",Midas — Van service,682.67,,1608.06
+Van Repairs & Maintenance (6130),"Dec 22, 2024",Midas — Van service,317.65,,1925.71
+Meals and Entertainment (6200),"Jan 6, 2024",The Keg — Client dinner,268.35,,268.35
+Meals and Entertainment (6200),"Jan 14, 2024",Tim Hortons — Team lunch,284.07,,552.42
+Meals and Entertainment (6200),"Jan 22, 2024",Earls Kitchen — Team lunch,621.13,,1173.55
+Meals and Entertainment (6200),"Feb 6, 2024",Café Novo — Team lunch,733.39,,1906.94
+Meals and Entertainment (6200),"Feb 14, 2024",Jack Astor's — Client dinner,641.30,,2548.24
+Meals and Entertainment (6200),"Feb 22, 2024",The Keg — Team lunch,543.63,,3091.87
+Meals and Entertainment (6200),"Mar 6, 2024",Tim Hortons — Team lunch,411.50,,3503.37
+Meals and Entertainment (6200),"Mar 14, 2024",Earls Kitchen — Team lunch,834.84,,4338.21
+Meals and Entertainment (6200),"Mar 22, 2024",Café Novo — Client dinner,894.01,,5232.22
+Meals and Entertainment (6200),"Apr 6, 2024",Jack Astor's — Team lunch,781.57,,6013.79
+Meals and Entertainment (6200),"Apr 14, 2024",The Keg — Team lunch,786.22,,6800.01
+Meals and Entertainment (6200),"Apr 22, 2024",Tim Hortons — Team lunch,267.90,,7067.91
+Meals and Entertainment (6200),"May 6, 2024",Earls Kitchen — Client dinner,391.45,,7459.36
+Meals and Entertainment (6200),"May 14, 2024",Café Novo — Team lunch,327.43,,7786.79
+Meals and Entertainment (6200),"May 22, 2024",Jack Astor's — Team lunch,885.01,,8671.80
+Meals and Entertainment (6200),"Jun 6, 2024",The Keg — Team lunch,382.47,,9054.27
+Meals and Entertainment (6200),"Jun 14, 2024",Tim Hortons — Client dinner,251.83,,9306.10
+Meals and Entertainment (6200),"Jun 22, 2024",Earls Kitchen — Team lunch,951.05,,10257.15
+Meals and Entertainment (6200),"Jul 6, 2024",Café Novo — Team lunch,807.76,,11064.91
+Meals and Entertainment (6200),"Jul 14, 2024",Jack Astor's — Team lunch,871.27,,11936.18
+Meals and Entertainment (6200),"Jul 22, 2024",The Keg — Client dinner,909.13,,12845.31
+Meals and Entertainment (6200),"Aug 6, 2024",Tim Hortons — Team lunch,345.41,,13190.72
+Meals and Entertainment (6200),"Aug 14, 2024",Earls Kitchen — Team lunch,284.24,,13474.96
+Meals and Entertainment (6200),"Aug 22, 2024",Café Novo — Team lunch,598.09,,14073.05
+Meals and Entertainment (6200),"Sep 6, 2024",Jack Astor's — Client dinner,657.39,,14730.44
+Meals and Entertainment (6200),"Sep 14, 2024",The Keg — Team lunch,531.56,,15262.00
+Meals and Entertainment (6200),"Sep 22, 2024",Tim Hortons — Team lunch,794.01,,16056.01
+Meals and Entertainment (6200),"Oct 6, 2024",Earls Kitchen — Team lunch,883.36,,16939.37
+Meals and Entertainment (6200),"Oct 14, 2024",Café Novo — Client dinner,594.55,,17533.92
+Meals and Entertainment (6200),"Oct 22, 2024",Jack Astor's — Team lunch,754.99,,18288.91
+Meals and Entertainment (6200),"Nov 6, 2024",The Keg — Team lunch,279.47,,18568.38
+Meals and Entertainment (6200),"Nov 14, 2024",Tim Hortons — Team lunch,523.89,,19092.27
+Meals and Entertainment (6200),"Nov 22, 2024",Earls Kitchen — Client dinner,836.63,,19928.90
+Meals and Entertainment (6200),"Dec 6, 2024",Café Novo — Team lunch,849.82,,20778.72
+Meals and Entertainment (6200),"Dec 14, 2024",Jack Astor's — Team lunch,936.85,,21715.57
+Meals and Entertainment (6200),"Dec 22, 2024",The Keg — Team lunch,284.43,,22000.00
+Insurance (6300),"Jan 9, 2024",Sun Life — Life insurance premium - D. Brightwater,750.00,,750.00
+Insurance (6300),"Feb 9, 2024",Sun Life — Life insurance premium - D. Brightwater,750.00,,1500.00
+Insurance (6300),"Mar 9, 2024",Sun Life — Life insurance premium - D. Brightwater,750.00,,2250.00
+Insurance (6300),"Mar 20, 2024",Intact Insurance — Business insurance - quarterly,3000.00,,5250.00
+Insurance (6300),"Apr 9, 2024",Sun Life — Life insurance premium - D. Brightwater,750.00,,6000.00
+Insurance (6300),"May 9, 2024",Sun Life — Life insurance premium - D. Brightwater,750.00,,6750.00
+Insurance (6300),"Jun 9, 2024",Sun Life — Life insurance premium - D. Brightwater,750.00,,7500.00
+Insurance (6300),"Jun 20, 2024",Intact Insurance — Business insurance - quarterly,3000.00,,10500.00
+Insurance (6300),"Jul 9, 2024",Sun Life — Life insurance premium - D. Brightwater,750.00,,11250.00
+Insurance (6300),"Aug 9, 2024",Sun Life — Life insurance premium - D. Brightwater,750.00,,12000.00
+Insurance (6300),"Sep 9, 2024",Sun Life — Life insurance premium - D. Brightwater,750.00,,12750.00
+Insurance (6300),"Sep 20, 2024",Intact Insurance — Business insurance - quarterly,3000.00,,15750.00
+Insurance (6300),"Oct 9, 2024",Sun Life — Life insurance premium - D. Brightwater,750.00,,16500.00
+Insurance (6300),"Nov 9, 2024",Sun Life — Life insurance premium - D. Brightwater,750.00,,17250.00
+Insurance (6300),"Dec 9, 2024",Sun Life — Life insurance premium - D. Brightwater,750.00,,18000.00
+Insurance (6300),"Dec 20, 2024",Intact Insurance — Business insurance - quarterly,3000.00,,21000.00
+Legal & Professional Fees (6400),"Jan 9, 2024",Ledgerline Bookkeeping — Monthly bookkeeping,450.00,,450.00
+Legal & Professional Fees (6400),"Feb 9, 2024",Ledgerline Bookkeeping — Monthly bookkeeping,450.00,,900.00
+Legal & Professional Fees (6400),"Mar 9, 2024",Ledgerline Bookkeeping — Monthly bookkeeping,450.00,,1350.00
+Legal & Professional Fees (6400),"Mar 30, 2024",Moore & Partners CPA — Year-end financial statements,6500.00,,7850.00
+Legal & Professional Fees (6400),"Apr 9, 2024",Ledgerline Bookkeeping — Monthly bookkeeping,450.00,,8300.00
+Legal & Professional Fees (6400),"May 9, 2024",Ledgerline Bookkeeping — Monthly bookkeeping,450.00,,8750.00
+Legal & Professional Fees (6400),"Jun 9, 2024",Ledgerline Bookkeeping — Monthly bookkeeping,450.00,,9200.00
+Legal & Professional Fees (6400),"Jul 9, 2024",Ledgerline Bookkeeping — Monthly bookkeeping,450.00,,9650.00
+Legal & Professional Fees (6400),"Jul 15, 2024",Holloway LLP — Settlement - wrongful dismissal,22000.00,,31650.00
+Legal & Professional Fees (6400),"Jul 31, 2024",Holloway LLP — Refund of retainer,,500.00,31150.00
+Legal & Professional Fees (6400),"Aug 9, 2024",Ledgerline Bookkeeping — Monthly bookkeeping,450.00,,31600.00
+Legal & Professional Fees (6400),"Sep 9, 2024",Ledgerline Bookkeeping — Monthly bookkeeping,450.00,,32050.00
+Legal & Professional Fees (6400),"Oct 9, 2024",Ledgerline Bookkeeping — Monthly bookkeeping,450.00,,32500.00
+Legal & Professional Fees (6400),"Nov 9, 2024",Ledgerline Bookkeeping — Monthly bookkeeping,450.00,,32950.00
+Legal & Professional Fees (6400),"Dec 9, 2024",Ledgerline Bookkeeping — Monthly bookkeeping,450.00,,33400.00
+Rent (6500),"Jan 9, 2024",Brightwater Holdings Inc. — Shop rent,4500.00,,4500.00
+Rent (6500),"Feb 9, 2024",Brightwater Holdings Inc. — Shop rent,4500.00,,9000.00
+Rent (6500),"Mar 9, 2024",Brightwater Holdings Inc. — Shop rent,4500.00,,13500.00
+Rent (6500),"Apr 9, 2024",Brightwater Holdings Inc. — Shop rent,4500.00,,18000.00
+Rent (6500),"May 9, 2024",Brightwater Holdings Inc. — Shop rent,4500.00,,22500.00
+Rent (6500),"Jun 9, 2024",Brightwater Holdings Inc. — Shop rent,4500.00,,27000.00
+Rent (6500),"Jul 9, 2024",Brightwater Holdings Inc. — Shop rent,4500.00,,31500.00
+Rent (6500),"Aug 9, 2024",Brightwater Holdings Inc. — Shop rent,4500.00,,36000.00
+Rent (6500),"Sep 9, 2024",Brightwater Holdings Inc. — Shop rent,4500.00,,40500.00
+Rent (6500),"Oct 9, 2024",Brightwater Holdings Inc. — Shop rent,4500.00,,45000.00
+Rent (6500),"Nov 9, 2024",Brightwater Holdings Inc. — Shop rent,4500.00,,49500.00
+Rent (6500),"Dec 9, 2024",Brightwater Holdings Inc. — Shop rent,4500.00,,54000.00
+Utilities (6510),"Jan 10, 2024",Enbridge Gas — Gas,364.16,,364.16
+Utilities (6510),"Jan 10, 2024",Toronto Hydro — Hydro,321.08,,685.24
+Utilities (6510),"Feb 10, 2024",Enbridge Gas — Gas,320.22,,1005.46
+Utilities (6510),"Feb 10, 2024",Toronto Hydro — Hydro,362.41,,1367.87
+Utilities (6510),"Mar 10, 2024",Enbridge Gas — Gas,211.23,,1579.10
+Utilities (6510),"Mar 10, 2024",Toronto Hydro — Hydro,329.93,,1909.03
+Utilities (6510),"Apr 10, 2024",Enbridge Gas — Gas,245.11,,2154.14
+Utilities (6510),"Apr 10, 2024",Toronto Hydro — Hydro,364.38,,2518.52
+Utilities (6510),"May 10, 2024",Enbridge Gas — Gas,249.14,,2767.66
+Utilities (6510),"May 10, 2024",Toronto Hydro — Hydro,353.23,,3120.89
+Utilities (6510),"Jun 10, 2024",Enbridge Gas — Gas,205.24,,3326.13
+Utilities (6510),"Jun 10, 2024",Toronto Hydro — Hydro,340.61,,3666.74
+Utilities (6510),"Jul 10, 2024",Enbridge Gas — Gas,379.25,,4045.99
+Utilities (6510),"Jul 10, 2024",Toronto Hydro — Hydro,326.97,,4372.96
+Utilities (6510),"Aug 10, 2024",Enbridge Gas — Gas,321.78,,4694.74
+Utilities (6510),"Aug 10, 2024",Toronto Hydro — Hydro,336.79,,5031.53
+Utilities (6510),"Sep 10, 2024",Enbridge Gas — Gas,386.22,,5417.75
+Utilities (6510),"Sep 10, 2024",Toronto Hydro — Hydro,349.95,,5767.70
+Utilities (6510),"Oct 10, 2024",Enbridge Gas — Gas,286.18,,6053.88
+Utilities (6510),"Oct 10, 2024",Toronto Hydro — Hydro,306.21,,6360.09
+Utilities (6510),"Nov 10, 2024",Enbridge Gas — Gas,382.16,,6742.25
+Utilities (6510),"Nov 10, 2024",Toronto Hydro — Hydro,242.00,,6984.25
+Utilities (6510),"Dec 10, 2024",Enbridge Gas — Gas,301.89,,7286.14
+Utilities (6510),"Dec 10, 2024",Toronto Hydro — Hydro,289.13,,7575.27
+Telephone & Internet (6520),"Jan 11, 2024",Bell Canada — Phones,342.18,,342.18
+Telephone & Internet (6520),"Jan 11, 2024",Rogers — Internet,129.95,,472.13
+Telephone & Internet (6520),"Feb 11, 2024",Bell Canada — Phones,323.22,,795.35
+Telephone & Internet (6520),"Feb 11, 2024",Rogers — Internet,129.95,,925.30
+Telephone & Internet (6520),"Mar 11, 2024",Bell Canada — Phones,346.69,,1271.99
+Telephone & Internet (6520),"Mar 11, 2024",Rogers — Internet,129.95,,1401.94
+Telephone & Internet (6520),"Apr 11, 2024",Bell Canada — Phones,312.50,,1714.44
+Telephone & Internet (6520),"Apr 11, 2024",Rogers — Internet,129.95,,1844.39
+Telephone & Internet (6520),"May 11, 2024",Bell Canada — Phones,327.11,,2171.50
+Telephone & Internet (6520),"May 11, 2024",Rogers — Internet,129.95,,2301.45
+Telephone & Internet (6520),"Jun 11, 2024",Bell Canada — Phones,316.68,,2618.13
+Telephone & Internet (6520),"Jun 11, 2024",Rogers — Internet,129.95,,2748.08
+Telephone & Internet (6520),"Jul 11, 2024",Bell Canada — Phones,335.79,,3083.87
+Telephone & Internet (6520),"Jul 11, 2024",Rogers — Internet,129.95,,3213.82
+Telephone & Internet (6520),"Aug 11, 2024",Bell Canada — Phones,332.72,,3546.54
+Telephone & Internet (6520),"Aug 11, 2024",Rogers — Internet,129.95,,3676.49
+Telephone & Internet (6520),"Sep 11, 2024",Bell Canada — Phones,349.20,,4025.69
+Telephone & Internet (6520),"Sep 11, 2024",Rogers — Internet,129.95,,4155.64
+Telephone & Internet (6520),"Oct 11, 2024",Bell Canada — Phones,322.64,,4478.28
+Telephone & Internet (6520),"Oct 11, 2024",Rogers — Internet,129.95,,4608.23
+Telephone & Internet (6520),"Nov 11, 2024",Bell Canada — Phones,318.92,,4927.15
+Telephone & Internet (6520),"Nov 11, 2024",Rogers — Internet,129.95,,5057.10
+Telephone & Internet (6520),"Dec 11, 2024",Bell Canada — Phones,326.97,,5384.07
+Telephone & Internet (6520),"Dec 11, 2024",Rogers — Internet,129.95,,5514.02
+Advertising & Promotion (6600),"Jan 9, 2024",Google Ads — Search ads,1162.15,,1162.15
+Advertising & Promotion (6600),"Feb 9, 2024",Google Ads — Search ads,1159.80,,2321.95
+Advertising & Promotion (6600),"Mar 9, 2024",Google Ads — Search ads,1430.39,,3752.34
+Advertising & Promotion (6600),"Apr 9, 2024",Google Ads — Search ads,1512.54,,5264.88
+Advertising & Promotion (6600),"May 9, 2024",Google Ads — Search ads,1348.24,,6613.12
+Advertising & Promotion (6600),"Jun 9, 2024",Google Ads — Search ads,904.32,,7517.44
+Advertising & Promotion (6600),"Jul 9, 2024",Google Ads — Search ads,1226.64,,8744.08
+Advertising & Promotion (6600),"Aug 9, 2024",Google Ads — Search ads,1506.37,,10250.45
+Advertising & Promotion (6600),"Sep 9, 2024",Google Ads — Search ads,1521.43,,11771.88
+Advertising & Promotion (6600),"Oct 9, 2024",Google Ads — Search ads,1549.00,,13320.88
+Advertising & Promotion (6600),"Nov 9, 2024",Google Ads — Search ads,1403.11,,14723.99
+Advertising & Promotion (6600),"Dec 9, 2024",Google Ads — Search ads,1088.21,,15812.20
+Office Supplies (6700),"Jan 9, 2024",Staples — Office supplies,251.44,,251.44
+Office Supplies (6700),"Feb 9, 2024",Staples — Office supplies,141.67,,393.11
+Office Supplies (6700),"Mar 9, 2024",Staples — Office supplies,91.35,,484.46
+Office Supplies (6700),"Apr 9, 2024",Staples — Office supplies,232.74,,717.20
+Office Supplies (6700),"May 9, 2024",Staples — Office supplies,236.37,,953.57
+Office Supplies (6700),"Jun 9, 2024",Staples — Office supplies,70.48,,1024.05
+Office Supplies (6700),"Jul 9, 2024",Staples — Office supplies,216.21,,1240.26
+Office Supplies (6700),"Aug 9, 2024",Staples — Office supplies,139.47,,1379.73
+Office Supplies (6700),"Sep 9, 2024",Staples — Office supplies,80.84,,1460.57
+Office Supplies (6700),"Oct 9, 2024",Staples — Office supplies,111.51,,1572.08
+Office Supplies (6700),"Nov 9, 2024",Staples — Office supplies,229.73,,1801.81
+Office Supplies (6700),"Dec 9, 2024",Staples — Office supplies,194.45,,1996.26
+Software & Subscriptions (6710),"Jan 10, 2024",Intuit QuickBooks — QuickBooks Online,90.00,,90.00
+Software & Subscriptions (6710),"Jan 10, 2024",Jobber — Field service software,249.00,,339.00
+Software & Subscriptions (6710),"Feb 10, 2024",Intuit QuickBooks — QuickBooks Online,90.00,,429.00
+Software & Subscriptions (6710),"Feb 10, 2024",Jobber — Field service software,249.00,,678.00
+Software & Subscriptions (6710),"Mar 10, 2024",Intuit QuickBooks — QuickBooks Online,90.00,,768.00
+Software & Subscriptions (6710),"Mar 10, 2024",Jobber — Field service software,249.00,,1017.00
+Software & Subscriptions (6710),"Apr 10, 2024",Intuit QuickBooks — QuickBooks Online,90.00,,1107.00
+Software & Subscriptions (6710),"Apr 10, 2024",Jobber — Field service software,249.00,,1356.00
+Software & Subscriptions (6710),"May 10, 2024",Intuit QuickBooks — QuickBooks Online,90.00,,1446.00
+Software & Subscriptions (6710),"May 10, 2024",Jobber — Field service software,249.00,,1695.00
+Software & Subscriptions (6710),"Jun 10, 2024",Intuit QuickBooks — QuickBooks Online,90.00,,1785.00
+Software & Subscriptions (6710),"Jun 10, 2024",Jobber — Field service software,249.00,,2034.00
+Software & Subscriptions (6710),"Jul 10, 2024",Intuit QuickBooks — QuickBooks Online,90.00,,2124.00
+Software & Subscriptions (6710),"Jul 10, 2024",Jobber — Field service software,249.00,,2373.00
+Software & Subscriptions (6710),"Aug 10, 2024",Intuit QuickBooks — QuickBooks Online,90.00,,2463.00
+Software & Subscriptions (6710),"Aug 10, 2024",Jobber — Field service software,249.00,,2712.00
+Software & Subscriptions (6710),"Sep 10, 2024",Intuit QuickBooks — QuickBooks Online,90.00,,2802.00
+Software & Subscriptions (6710),"Sep 10, 2024",Jobber — Field service software,249.00,,3051.00
+Software & Subscriptions (6710),"Oct 10, 2024",Intuit QuickBooks — QuickBooks Online,90.00,,3141.00
+Software & Subscriptions (6710),"Oct 10, 2024",Jobber — Field service software,249.00,,3390.00
+Software & Subscriptions (6710),"Nov 10, 2024",Intuit QuickBooks — QuickBooks Online,90.00,,3480.00
+Software & Subscriptions (6710),"Nov 10, 2024",Jobber — Field service software,249.00,,3729.00
+Software & Subscriptions (6710),"Dec 10, 2024",Intuit QuickBooks — QuickBooks Online,90.00,,3819.00
+Software & Subscriptions (6710),"Dec 10, 2024",Jobber — Field service software,249.00,,4068.00
+Bank Charges (6800),"Jan 9, 2024",RBC Royal Bank — Monthly fee,29.95,,29.95
+Bank Charges (6800),"Feb 9, 2024",RBC Royal Bank — Monthly fee,29.95,,59.90
+Bank Charges (6800),"Mar 9, 2024",RBC Royal Bank — Monthly fee,29.95,,89.85
+Bank Charges (6800),"Apr 9, 2024",RBC Royal Bank — Monthly fee,29.95,,119.80
+Bank Charges (6800),"May 9, 2024",RBC Royal Bank — Monthly fee,29.95,,149.75
+Bank Charges (6800),"Jun 9, 2024",RBC Royal Bank — Monthly fee,29.95,,179.70
+Bank Charges (6800),"Jul 9, 2024",RBC Royal Bank — Monthly fee,29.95,,209.65
+Bank Charges (6800),"Aug 9, 2024",RBC Royal Bank — Monthly fee,29.95,,239.60
+Bank Charges (6800),"Sep 9, 2024",RBC Royal Bank — Monthly fee,29.95,,269.55
+Bank Charges (6800),"Oct 9, 2024",RBC Royal Bank — Monthly fee,29.95,,299.50
+Bank Charges (6800),"Nov 9, 2024",RBC Royal Bank — Monthly fee,29.95,,329.45
+Bank Charges (6800),"Dec 9, 2024",RBC Royal Bank — Monthly fee,29.95,,359.40
+Interest Expense (6810),"Jan 10, 2024",RBC Royal Bank — Loan interest,602.00,,602.00
+Interest Expense (6810),"Feb 10, 2024",RBC Royal Bank — Loan interest,594.00,,1196.00
+Interest Expense (6810),"Mar 10, 2024",RBC Royal Bank — Loan interest,586.00,,1782.00
+Interest Expense (6810),"Apr 10, 2024",RBC Royal Bank — Loan interest,578.00,,2360.00
+Interest Expense (6810),"May 10, 2024",RBC Royal Bank — Loan interest,570.00,,2930.00
+Interest Expense (6810),"Jun 10, 2024",RBC Royal Bank — Loan interest,562.00,,3492.00
+Interest Expense (6810),"Jul 10, 2024",RBC Royal Bank — Loan interest,554.00,,4046.00
+Interest Expense (6810),"Aug 10, 2024",RBC Royal Bank — Loan interest,546.00,,4592.00
+Interest Expense (6810),"Sep 10, 2024",RBC Royal Bank — Loan interest,538.00,,5130.00
+Interest Expense (6810),"Oct 10, 2024",RBC Royal Bank — Loan interest,530.00,,5660.00
+Interest Expense (6810),"Nov 10, 2024",RBC Royal Bank — Loan interest,522.00,,6182.00
+Interest Expense (6810),"Dec 10, 2024",RBC Royal Bank — Loan interest,514.00,,6696.00
+Dues & Memberships (6900),"Jan 9, 2024",Glen Abbey Golf Club — Membership dues,1250.00,,1250.00
+Dues & Memberships (6900),"Feb 1, 2024",HRAI — Association membership,650.00,,1900.00
+Dues & Memberships (6900),"Feb 9, 2024",Glen Abbey Golf Club — Membership dues,1250.00,,3150.00
+Dues & Memberships (6900),"Mar 9, 2024",Glen Abbey Golf Club — Membership dues,1250.00,,4400.00
+Dues & Memberships (6900),"Apr 9, 2024",Glen Abbey Golf Club — Membership dues,1250.00,,5650.00
+Dues & Memberships (6900),"May 9, 2024",Glen Abbey Golf Club — Membership dues,1250.00,,6900.00
+Dues & Memberships (6900),"Jun 9, 2024",Glen Abbey Golf Club — Membership dues,1250.00,,8150.00
+Dues & Memberships (6900),"Jul 9, 2024",Glen Abbey Golf Club — Membership dues,1250.00,,9400.00
+Dues & Memberships (6900),"Aug 9, 2024",Glen Abbey Golf Club — Membership dues,1250.00,,10650.00
+Dues & Memberships (6900),"Sep 9, 2024",Glen Abbey Golf Club — Membership dues,1250.00,,11900.00
+Dues & Memberships (6900),"Oct 9, 2024",Glen Abbey Golf Club — Membership dues,1250.00,,13150.00
+Dues & Memberships (6900),"Nov 9, 2024",Glen Abbey Golf Club — Membership dues,1250.00,,14400.00
+Dues & Memberships (6900),"Dec 9, 2024",Glen Abbey Golf Club — Membership dues,1250.00,,15650.00
+Shareholder Expenses (6910),"May 2, 2024",Shoppers Drug Mart — Prescription,64.20,,64.20
+Shareholder Expenses (6910),"Sep 5, 2024",Upper Canada College — Tuition - fall term,9500.00,,9564.20
+Donations (6920),"Nov 20, 2024",SickKids Foundation — Donation,1000.00,,1000.00
+Repairs & Maintenance (6950),"Jun 18, 2024",Rapid Roofing — Shop roof repair,2090.10,,2090.10
+Amortization Expense (7000),"Dec 31, 2024",Year-end amortization,31000.00,,31000.00
+Income Tax Expense (7100),"Dec 31, 2024",Current income taxes,14200.00,,14200.00

@@ -5,7 +5,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { AlertTriangle, CheckCircle2, EyeOff, LayoutPanelLeft, Loader2, Lock, Wand2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, EyeOff, LayoutPanelLeft, Loader2, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { builderKey, builderRequest, type BuilderState } from "./api";
@@ -33,7 +33,6 @@ export function CimSummaryCard({ dealId }: { dealId: string }) {
   const s = data.sections;
   const approved = s.filter((x) => x.brokerApproved).length;
   const hidden = s.filter((x) => x.isVisible === false).length;
-  const full = s.filter((x) => x.accessTier === "full").length;
 
   return (
     <div className="rounded-lg border border-border bg-card p-4 space-y-3" data-testid="cim-summary-card">
@@ -41,7 +40,6 @@ export function CimSummaryCard({ dealId }: { dealId: string }) {
         <Stat value={s.length} label={s.length === 1 ? "section" : "sections"} />
         <Stat value={`${approved}/${s.length}`} label="approved" icon={<CheckCircle2 className="h-3.5 w-3.5 text-teal" />} />
         {hidden > 0 && <Stat value={hidden} label="hidden" icon={<EyeOff className="h-3.5 w-3.5 text-muted-foreground" />} />}
-        {full > 0 && <Stat value={full} label="full-access only" icon={<Lock className="h-3.5 w-3.5 text-teal" />} />}
         <span className="text-xs text-muted-foreground">
           Blind version:{" "}
           {data.blind.generated

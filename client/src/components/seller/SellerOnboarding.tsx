@@ -16,6 +16,7 @@ import { Screen3Comparison } from "./onboarding/Screen3Comparison";
 import { Screen4Tutorial } from "./onboarding/Screen4Tutorial";
 import { Screen5Ready } from "./onboarding/Screen5Ready";
 import { OnboardingProgress } from "./onboarding/OnboardingProgress";
+import { CimpleWordmark } from "@/components/brand/CimpleLogo";
 
 const TOTAL_SCREENS = 5;
 
@@ -86,20 +87,7 @@ export function SellerOnboarding({ token, onComplete, replay = false }: SellerOn
     >
       {/* Logo */}
       <div className="absolute top-4 left-5 z-10">
-        <div
-          role="img"
-          aria-label="Cimple"
-          className="h-4 w-16"
-          style={{
-            backgroundColor: "hsl(42, 26%, 92%)",
-            WebkitMaskImage: "url('/cimple-text.png')",
-            WebkitMaskSize: "contain",
-            WebkitMaskRepeat: "no-repeat",
-            maskImage: "url('/cimple-text.png')",
-            maskSize: "contain",
-            maskRepeat: "no-repeat",
-          }}
-        />
+        <CimpleWordmark className="h-4" />
       </div>
 
       {/* Skip / Close — available on every screen */}

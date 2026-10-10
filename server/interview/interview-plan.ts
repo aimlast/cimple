@@ -332,6 +332,8 @@ export async function computeInterviewPlan(
       const plan: InterviewPlan = { industry, subIndustry, ...(dealSubIndustry !== undefined ? { dealSubIndustry } : {}), rulesVersion: PLAN_RULES_VERSION, computedAt: new Date().toISOString(), status: "ready", items, ...(revision ? { revision } : {}) };
       await storage.updateDeal(deal.id, { interviewPlan: plan } as any);
       console.log(`[interview-plan] ${items.length} industry data points for deal ${deal.id} (${industry})`);
+      // Its suggested ways to ask, in the background (one small call per deal; a no-op with the key off).
+      void import("./plan-phrasing").then(({ phraseAfterPlanBuild }) => phraseAfterPlanBuild(deal.id)).catch(() => undefined);
       return plan;
     } catch (err: any) {
       console.warn(`[interview-plan] build failed for deal ${deal.id}:`, err?.message || err);

@@ -354,6 +354,8 @@ export async function loadDealSideFacts(
   ]);
 
   const byDeal = <T extends { dealId: string }>(rows: T[]) => new Map(rows.map((r) => [r.dealId, r]));
+  // "Add-backs in the books" (gl spec §6.11) — empty before the GL tables exist.
+  const glByDeal = await (await import("../gl/progress")).glProgressForDeals(ids);
   const sessions = byDeal(sessionRows);
   const docs = byDeal(docRows);
   const buyers = byDeal(buyerRows);
@@ -394,6 +396,7 @@ export async function loadDealSideFacts(
         sellerChangesRequested: review.changesRequested,
         buyersWithAccess: toNum(b?.active),
         buyersViewing: toNum(b?.viewing),
+        glTracing: glByDeal.get(d.id) ?? null,
       },
       lastActivityMs,
       documents: toNum(doc?.count),

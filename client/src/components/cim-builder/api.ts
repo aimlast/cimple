@@ -8,8 +8,8 @@ import type { CimGenerationStatus, CimSection, CimSectionAiTask } from "@shared/
 export type BlindStatus = "fresh" | "updating" | "held" | "none" | "excluded";
 
 /** A section row as the builder receives it. */
+/** (No access tier: per-section locks are retired — the server doesn't send it.) */
 export interface BuilderSection extends Omit<CimSection, "aiTask" | "contentHistory" | "accessTier" | "figureWarnings"> {
-  accessTier: "teaser" | "full";
   aiTask: CimSectionAiTask | null;
   historyCount: number;
   lastChange: { reason: string; at: string } | null;
@@ -69,7 +69,13 @@ export interface BuilderState {
    * redaction failed — blind buyers don't get them until one succeeds (their
    * reason is in `error`, and on the row's `blindError`).
    */
-  blind: { generated: boolean; codename: string | null; codenameProblem?: string | null; running: boolean; error: string | null; updating: number; held: number };
+  blind: {
+    generated: boolean; codename: string | null; codenameProblem?: string | null; running: boolean; error: string | null; updating: number; held: number;
+    /** The codename blind buyers read now while a CIM update is under review (the kept copy's), else null. */
+    servedCodename?: string | null;
+    /** Why the codename blind buyers still read (the kept copy's) could point at the business; null when neutral or the same as `codename`. */
+    servedCodenameProblem?: string | null;
+  };
   /** outOfDate: sections whose DD version is stale or missing; running: a refresh is under way. */
   dd: {
     generated: boolean;

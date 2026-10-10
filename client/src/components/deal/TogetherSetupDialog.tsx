@@ -1,12 +1,12 @@
 /**
  * TogetherSetupDialog — how will the broker run the interview with the seller?
  *
- * In Cimple's own video call (suggested — arrives with the video setup), on
- * the broker's Zoom / Google Meet / Teams call with a floating question
- * window, or in person on one laptop. Navigates to the together-interview
- * page with the choice in the URL.
+ * In Cimple's own video call (suggested), on the broker's Zoom / Google Meet
+ * / Teams call with Cimple's notetaker (the checklist can float over the
+ * call), or in person on one laptop. Navigates to the coverage board with
+ * the choice in the URL.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -16,17 +16,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Users, Video, MonitorSmartphone } from "lucide-react";
 
-type Via = "cimple" | "zoom" | "meet" | "teams" | "person";
+export type Via = "cimple" | "zoom" | "meet" | "teams" | "person";
 
 const OPTIONS: { via: Via; label: string; hint: string; soon?: boolean }[] = [
-  { via: "cimple", label: "Video call in Cimple", hint: "One link for the seller; questions and progress beside the video. Who said what is exact." },
-  { via: "zoom", label: "Zoom", hint: "Use your own call. Questions float in a small window over Zoom." },
-  { via: "meet", label: "Google Meet", hint: "Use your own call. Questions float in a small window over Meet." },
-  { via: "teams", label: "Microsoft Teams", hint: "Use your own call. Questions float in a small window over Teams." },
-  { via: "person", label: "In person / phone", hint: "Same room or on speaker — one laptop, the mic captures the answers." },
+  { via: "cimple", label: "Video call in Cimple", hint: "One link for the seller; the checklist beside the video. Who said what is exact." },
+  { via: "zoom", label: "Zoom", hint: "Use your own call. Cimple's notetaker joins; the checklist can float over the call." },
+  { via: "meet", label: "Google Meet", hint: "Use your own call. Cimple's notetaker joins; the checklist can float over the call." },
+  { via: "teams", label: "Microsoft Teams", hint: "Use your own call. Cimple's notetaker joins; the checklist can float over the call." },
+  { via: "person", label: "In person / phone", hint: "Same room or on speaker — one laptop listens; the checklist hides anything private to you." },
 ];
 
-export function TogetherSetupDialog({ dealId, open, onOpenChange }: { dealId: string; open: boolean; onOpenChange: (o: boolean) => void }) {
+export function TogetherSetupDialog({ dealId, open, onOpenChange, initialVia }: { dealId: string; open: boolean; onOpenChange: (o: boolean) => void; initialVia?: Via }) {
   const [, setLocation] = useLocation();
   const { data: services } = useQuery<{ deepgram: boolean; daily: boolean; recall: boolean }>({
     queryKey: ["/api/calls/status"],
@@ -34,7 +34,11 @@ export function TogetherSetupDialog({ dealId, open, onOpenChange }: { dealId: st
     staleTime: 60_000,
   });
   const dailyReady = !!services?.daily;
-  const [via, setVia] = useState<Via>("zoom");
+  const [via, setVia] = useState<Via>(initialVia ?? "zoom");
+  // (Opened from a mode button: that mode is picked.)
+  useEffect(() => {
+    if (open && initialVia) setVia(initialVia);
+  }, [open, initialVia]);
   const effectiveVia: Via = via === "cimple" && !dailyReady ? "zoom" : via;
   const [link, setLink] = useState("");
   const needsLink = effectiveVia === "zoom" || effectiveVia === "meet" || effectiveVia === "teams";
@@ -52,7 +56,7 @@ export function TogetherSetupDialog({ dealId, open, onOpenChange }: { dealId: st
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2"><Users className="h-4 w-4 text-teal" /> Interview together</DialogTitle>
           <DialogDescription>
-            You ask, the seller answers out loud, Cimple fills in the profile. Choose where the conversation happens.
+            You lead the conversation. Cimple listens, files the seller's answers into the CIM checklist, and shows you what's still missing.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-1.5" role="radiogroup">
@@ -93,7 +97,7 @@ export function TogetherSetupDialog({ dealId, open, onOpenChange }: { dealId: st
               data-testid="input-meeting-link"
             />
             <p className="text-[11px] text-muted-foreground">
-              The notetaker appears in the call as "Cimple Notetaker". Leave the link blank to add it later from the interview screen.
+              The notetaker appears in the call as "Cimple Notetaker". Leave the link blank to add it later from the checklist.
             </p>
           </div>
         )}

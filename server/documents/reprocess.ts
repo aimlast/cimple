@@ -23,6 +23,8 @@
  *
  * The broker's endpoint runs it as a background job (reprocess-jobs.ts).
  */
+import { isTogetherSitting } from "../together/transcript";
+import { isImageMime } from "@shared/vdr";
 import fs from "fs";
 import { storage } from "../storage";
 import { extractTextWithPages, isPdfSource } from "./parser";
@@ -144,6 +146,18 @@ export function _setReprocessRetryDelaysForTests(delays: number[] | null): void 
   _setExtractionRetryDelaysForTests(delays);
 }
 
+/** A data-room file the broker chose to store without reading (`sourceMeta.readSkipped`, server/documents/upload.ts). */
+export function storedOnlySource(doc: { sourceMeta?: unknown }): boolean {
+  return !!(doc.sourceMeta as DocumentSourceMeta | null)?.readSkipped;
+}
+
+/** "Read again" on one stored-only source: the broker now wants it read, so the choice is cleared (null = nothing to clear). */
+export function clearStoredOnly(meta: DocumentSourceMeta | null | undefined): DocumentSourceMeta | null {
+  if (!meta?.readSkipped) return null;
+  const { readSkipped: _skipped, ...rest } = meta;
+  return rest as DocumentSourceMeta;
+}
+
 export async function reprocessDealDocuments(
   dealId: string,
   onProgress?: (p: ReprocessProgress) => void,
@@ -177,8 +191,24 @@ export async function reprocessDealDocuments(
       doc.extractedData && typeof doc.extractedData === "object"
         ? normaliseExtraction(doc.extractedData as Record<string, unknown>, doc.extractedText ?? null, documentKind(doc))
         : null;
+    // A general ledger is never re-read by the extractor and carries no facts:
+    // "reprocess all" skips it; "Read it again" on it re-runs the ledger reader.
+    if (doc.subcategory === "general_ledger") {
+      if (onlyIds?.has(doc.id)) {
+        void import("../gl/ingest").then((m) => m.rereadLedgerDocument(doc.id)).catch((err) => console.error(`[reprocess] ledger re-read of ${doc.id} failed:`, err));
+      }
+      return { data: null, freshText: null, skipped: true };
+    }
     // A run for chosen sources: every other one keeps what it had.
     if (onlyIds && !onlyIds.has(doc.id)) return { data: stored, freshText: null, skipped: true };
+    // An "Interview together" transcript is replay-only: what the session filed
+    // (guarded, minus what was undone) is replayed, never read again from its text.
+    if (isTogetherSitting(doc)) return { data: stored, freshText: null };
+    // The data room (INTEGRATION §2.17): a picture is never read (no text, and
+    // Cimple never sends pictures to the AI); a file the broker chose to "Just
+    // store in the data room" keeps what it had until they ask for that one
+    // source ("Read again" clears the choice before this job starts).
+    if (isImageMime(doc.mimeType) || storedOnlySource(doc)) return { data: stored, freshText: null };
 
     let text: string | null = null;
     // How the text was laid out (a PDF's pages) — tells a scan from a readable file.
@@ -456,6 +486,8 @@ export async function reprocessDealDocuments(
       documentsSkipped: results.filter((r) => r.skipped).length,
     };
   });
+  // dd: the figure checks re-read the deal's documents after a re-read.
+  void import("../cim/figures/refresh").then((m) => m.invalidateAndRefreshFigures(dealId, "documents")).catch(() => {});
   // Each source says on its row whether its last re-read failed (the
   // Information tab shows it, with "Read again"); a fresh read clears it.
   for (const r of results) {

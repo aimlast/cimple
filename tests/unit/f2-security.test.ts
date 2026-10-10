@@ -122,6 +122,14 @@ await test("S4: deleting a deal deletes every child row, detaches the rest, then
   }
   assert.ok(ops.includes("detach buyer_emails dealId= D9"));
   assert.ok(ops.includes("detach buyer_users invitedByDeal= D9"));
+  // The data room (vdr spec §8): all ten tables go with the deal, by name.
+  for (const t of ["vdr_rooms", "vdr_folders", "vdr_items", "vdr_shares", "vdr_buyer_settings", "vdr_requests", "vdr_views", "vdr_activity", "vdr_page_text", "vdr_team_members"]) {
+    assert.ok(ops.includes(`delete ${t} D9`), `${t} not deleted with the deal`);
+  }
+  // Add-backs in the books (gl spec §5): all five tables go with the deal, by name.
+  for (const t of ["gl_ledgers", "gl_transactions", "gl_tracing", "gl_addback_traces", "gl_trace_links"]) {
+    assert.ok(ops.includes(`delete ${t} D9`), `${t} not deleted with the deal`);
+  }
 });
 await test("S4: a deal's files are removed except those another deal's row shares", async () => {
   const rows = [

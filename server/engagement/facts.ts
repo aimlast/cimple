@@ -42,13 +42,16 @@ import {
   type ReadingInteractionType,
   type RenditionPage,
   type RenditionSummary,
+  type VersionNote,
   type VisitFacts,
 } from "@shared/analytics-v2";
-import { cimModeForAccessLevel } from "@shared/cim-layouts";
-import { chartOfPoint, headingKey } from "@shared/cim-blocks";
+import { ACCESS_LEVELS, NAMED_ACCESS_LEVEL, cimModeForAccessLevel, normalizeAccessLevel, seesCim } from "@shared/access-levels";
+import { CONTACT_PAGE_ID, DISCLAIMER_PAGE_ID, chartOfPoint, headingKey } from "@shared/cim-blocks";
 import { pageRole } from "@shared/cim-page-role";
-import { blindSectionKey } from "@shared/cim-buyer-view";
+import { blindSectionKey, cimHeldFromBuyers, servesPublishedSnapshot } from "@shared/cim-buyer-view";
+import { servedVersions } from "@shared/cim-published";
 import { legacyPageRemap, legacyRows, legacySessions, liveRendition, mainAccessLevel, remapLegacyReading, type LegacyExit, type LegacyUnmatched } from "./legacy";
+import { liveTitleSources, needsNamedNow, pageTitle, titleIndex, type TitleSources } from "./titles";
 import { storage } from "../storage";
 import {
   dbReadingSource,
@@ -59,6 +62,7 @@ import {
   type RawRendition,
   type RawVisit,
   type RawVisitPage,
+  type ReadingQuery,
   type ReadingSource,
 } from "./queries";
 
@@ -86,6 +90,29 @@ export interface CaptureFacts extends DealReadingFacts {
   blockLevelPages: string[];
   /** Old-tracker reading on pages the current CIM no longer has (after a regeneration). */
   legacyUnmatched?: LegacyUnmatched;
+  /**
+   * viewerPageKey → how its reading is known: buyers with part-by-part rows
+   * on the page, and per buyer the time known only as a page total (spread
+   * over a split section's parts like the rest of the page-level time) —
+   * read before part tracking, or on a version with different parts.
+   */
+  pageHeat?: Record<string, PageHeatFacts>;
+  /** What the drawn version is, against what buyers are served now (kept copy, held update, an older version). */
+  versionNote?: VersionNote | null;
+  /**
+   * The drawn pages (pageIds) with ANY reading on file for this deal — any
+   * buyer, any date range or device, whatever the view is filtered to. With
+   * old tracking (responses.ts reach basis) a page outside this set was never
+   * recorded (added after these buyers read, or the old tracker didn't see
+   * it): hatched, never a drop, never "skipped" (heat-map spec §5.4). A buyer
+   * filter never makes another buyer's recorded pages "not recorded".
+   */
+  recordedPages?: string[];
+}
+
+export interface PageHeatFacts {
+  partBuyers: string[];
+  pageOnly: Record<string, { beforeMs: number; otherMs: number }>;
 }
 
 export async function loadDealReadingFacts(
@@ -93,10 +120,13 @@ export async function loadDealReadingFacts(
   filters: EngagementFilters,
   now: Date = new Date(),
 ): Promise<CaptureFacts> {
-  const [accesses, live] = await Promise.all([
+  const [allAccesses, live] = await Promise.all([
     storage.getBuyerAccessByDeal(deal.id),
     storage.getCimSectionsByDeal(deal.id).catch((): CimSection[] => []),
   ]);
+  // CIM reading only: a Teaser link can't open the CIM (its reading is the
+  // teaser's, reported on its own — shared/access-levels.ts seesCim).
+  const accesses = allAccesses.filter((a) => seesCim(a.accessLevel));
   const listed = accesses.filter((a) => segmentMatches(a, filters) && (filters.buyers.length === 0 || filters.buyers.includes(a.id)));
   const q = {
     dealId: deal.id,
@@ -104,7 +134,12 @@ export async function loadDealReadingFacts(
     device: filters.device,
     accessIds: filters.buyers.length > 0 || filters.segment !== "all" ? listed.map((a) => a.id) : null,
   };
-  const [renditionsStored, visitsStored, sumsStored, visitPagesStored, events, questions, decisions, exits] = await Promise.all([
+  // Which pages have any reading is a fact about the deal, not about the
+  // buyers in view: with a narrowed view, read every buyer's page rows too
+  // (one grouped read; on failure the view's own rows stand in).
+  const allQ: ReadingQuery = { dealId: deal.id, since: null, device: "all", accessIds: null };
+  const narrowed = q.accessIds !== null || q.since !== null || q.device !== "all";
+  const [renditionsStored, visitsStored, sumsStored, visitPagesStored, events, questions, decisions, exits, dealWideStored] = await Promise.all([
     source.renditions(deal.id),
     source.visits(q),
     source.blockSums(q),
@@ -113,6 +148,7 @@ export async function loadDealReadingFacts(
     source.questions(deal.id),
     source.decisions(deal.id),
     source.legacyExits(deal.id).catch((): LegacyExit[] => []),
+    narrowed ? source.visitPages(allQ).catch((): RawVisitPage[] | null => null) : Promise.resolve(null),
   ]);
   // Reading from the old tracker (before part-by-part tracking), read on the
   // fly (or stored by the legacy backfill): page totals, marked legacy. Every
@@ -128,7 +164,13 @@ export async function loadDealReadingFacts(
     visitPages: [...visitPagesStored, ...legacy.visitPages],
   };
   let renditions = renditionsStored;
-  let chosen = chooseRendition(renditions, unplaced.visits, filters.rendition);
+  // Drawn on the version most buyers in view were given (release fix F8): a
+  // due-diligence buyer's visit must not put every Blind buyer on the DD
+  // pages ("skipped" on a page they never had).
+  const readingIds = new Set(unplaced.visits.map((v) => v.accessId));
+  const withReading = listed.filter((a) => readingIds.has(a.id));
+  const preferMode = cimModeForAccessLevel(mainAccessLevel((withReading.length ? withReading : listed).map((a) => a.accessLevel)));
+  let chosen = chooseRendition(renditions, unplaced.visits, filters.rendition, preferMode);
   const liveIndexes = new Map<string, RenditionPage[]>();
   const legacyVisits = unplaced.visits.filter((v) => v.legacy);
   if (!chosen && legacyVisits.length > 0) {
@@ -138,7 +180,11 @@ export async function loadDealReadingFacts(
     // Document view had no version to draw on and showed no pages at all.
     const levels = accesses.filter((a) => legacyVisits.some((v) => v.accessId === a.id)).map((a) => a.accessLevel);
     const since = new Date(Math.min(...legacyVisits.map((v) => v.startedAt.getTime())));
-    const lr = (await liveRenditionOf(deal, mainAccessLevel(levels), since)) ?? (await liveRenditionOf(deal, "loi", since));
+    // Broker side: a CIM held from buyers (an update waiting for review with
+    // nobody served meanwhile) is still drawn — on the version buyers will
+    // get — and the Document view says so (versionNote "held").
+    const lr = (await liveRenditionOf(deal, mainAccessLevel(levels), since, { ignoreHold: true }))
+      ?? (await liveRenditionOf(deal, NAMED_ACCESS_LEVEL, since, { ignoreHold: true }));
     if (lr) {
       renditions = [...renditions, lr.raw];
       chosen = lr.raw;
@@ -152,13 +198,61 @@ export async function loadDealReadingFacts(
   liveIndexes.forEach((v, k) => indexes.set(k, v));
   // Old-tracker pages placed on the version drawn (by page, lineage, or what
   // the old key resolves to among the current sections).
-  const placed = remapLegacyReading(unplaced, legacyPageRemap(live, blindSectionKey, chosen ? indexes.get(chosen.id) ?? [] : null));
+  const remap = legacyPageRemap(live, blindSectionKey, chosen ? indexes.get(chosen.id) ?? [] : null);
+  const placed = remapLegacyReading(unplaced, remap);
   const { visits, sums, visitPages } = placed;
+  let dealWideVisitPages: RawVisitPage[] | undefined;
+  if (dealWideStored) {
+    // Old-tracker rows (no version) are placed the same way as the view's.
+    dealWideVisitPages = [...dealWideStored, ...legacyRows(sessions, allQ, () => null).visitPages].map((r) => {
+      if (r.renditionId !== null) return r;
+      const to = remap(r.pageId, r.lineageId);
+      return to ? { ...r, pageId: to.pageId, lineageId: to.lineageId } : r;
+    });
+  }
+  const titles = await loadTitleSources(deal, live, renditionsStored, chosen, indexes);
   const facts = assembleFacts({
-    deal, filters, now, accesses: listed, live, renditions, chosen, indexes, visits, sums, visitPages, events, questions, decisions,
+    deal, filters, now, accesses: listed, live, renditions, chosen, indexes, visits, sums, visitPages, events, questions, decisions, titles, dealWideVisitPages,
   });
   if (placed.unmatched && chosen) facts.legacyUnmatched = placed.unmatched;
   return facts;
+}
+
+/**
+ * Where page titles come from (server/engagement/titles.ts): the kept copy
+ * (SQL projection), the newest stored named version's page index, and — only
+ * when a blind version has pages neither of those name — the titles named
+ * buyers are served now. Never throws: a failed read leaves that source out.
+ */
+export async function loadTitleSources(
+  deal: Deal,
+  live: ReadonlyArray<Pick<CimSection, "id" | "sectionKey" | "sectionTitle"> & { analyticsLineage?: string | null }>,
+  stored: RawRendition[],
+  chosen: RawRendition | null,
+  indexes: Map<string, RenditionPage[]>,
+): Promise<TitleSources> {
+  const kept = await (source.keptCopyTitles?.(deal.id) ?? Promise.resolve(null)).catch(() => null);
+  const named = [...stored].filter((r) => r.mode === "normal" || r.mode === "dd").sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0] ?? null;
+  const namedServed = new Map<string, string>();
+  if (named) {
+    const index = indexes.get(named.id) ?? (await source.pageIndexes([named.id]).catch(() => new Map<string, RenditionPage[]>())).get(named.id) ?? [];
+    for (const p of index) namedServed.set(p.pageId, p.servedTitle);
+  }
+  const src: TitleSources = { live, kept: kept?.sections ?? null, namedServed, namedNow: null };
+  const chosenPages = chosen ? indexes.get(chosen.id) ?? [] : [];
+  if (chosen && needsNamedNow(chosenPages, chosen.mode as CimMode, src)) {
+    try {
+      const [rows, published] = await Promise.all([
+        storage.getCimSectionsByDeal(deal.id),
+        storage.getCimSectionOverrides(deal.id, "published"),
+      ]);
+      const served = servedVersions({ deal, mode: "normal", sections: rows, overrides: [], published });
+      src.namedNow = new Map(served.sections.map((s) => [s.id, s.sectionTitle]));
+    } catch {
+      // The live rows stand in (titles.ts falls back to them).
+    }
+  }
+  return src;
 }
 
 function segmentMatches(a: BuyerAccess, f: EngagementFilters): boolean {
@@ -173,8 +267,12 @@ function segmentMatches(a: BuyerAccess, f: EngagementFilters): boolean {
  * with reading in this filter, else the latest. One publish produces a
  * version per access level at about the same time (blind, named, teaser),
  * so among those the full (not teaser) one most buyers read wins.
+ * `preferMode` (the version most buyers in view were given — release fix
+ * F8): versions of that kind come first; failing that, anything but the
+ * due-diligence version (its extra pages would read as "skipped" for
+ * everyone else).
  */
-export function chooseRendition(renditions: RawRendition[], visits: RawVisit[], asked: string | null): RawRendition | null {
+export function chooseRendition(renditions: RawRendition[], visits: RawVisit[], asked: string | null, preferMode?: string | null): RawRendition | null {
   if (asked) {
     const r = renditions.find((x) => x.id === asked);
     if (r) return r;
@@ -182,7 +280,13 @@ export function chooseRendition(renditions: RawRendition[], visits: RawVisit[], 
   const readBy = new Map<string, number>();
   for (const v of visits) if (v.renditionId) readBy.set(v.renditionId, (readBy.get(v.renditionId) ?? 0) + 1);
   const withReading = renditions.filter((r) => readBy.has(r.id));
-  const pool = withReading.length ? withReading : renditions;
+  let pool = withReading.length ? withReading : renditions;
+  if (preferMode) {
+    const preferred = pool.filter((r) => r.mode === preferMode);
+    const notDd = pool.filter((r) => r.mode !== "dd");
+    if (preferred.length) pool = preferred;
+    else if (preferMode !== "dd" && notDd.length) pool = notDd;
+  }
   if (pool.length === 0) return null;
   const latest = Math.max(...pool.map((r) => r.createdAt.getTime()));
   const sameGeneration = pool.filter((r) => latest - r.createdAt.getTime() <= 86_400_000);
@@ -192,13 +296,20 @@ export function chooseRendition(renditions: RawRendition[], visits: RawVisit[], 
     || b.createdAt.getTime() - a.createdAt.getTime())[0];
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const MODE_LABEL: Record<string, string> = { blind: "Blind", normal: "Named", dd: "Due diligence" };
+/** Pages only the due-diligence version has (shared/cim-layouts: planner:false, never outside DD). */
+const DD_ONLY_LAYOUTS = new Set(["dd_source_check", "gl_evidence"]);
 
-/** "Blind · published 12 Sep", "Blind teaser · published 12 Sep". */
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** The registry's words per version: blind → "Blind CIM", normal → "Full CIM", dd → "Due diligence", teaser → "Teaser". */
+const MODE_LABEL: Record<string, string> = Object.fromEntries(ACCESS_LEVELS.map((l) => [l.cimMode ?? "teaser", l.label]));
+
+/**
+ * "Blind CIM · published 12 Sep". A rendition recorded as {blind, teaser}
+ * before Oct 2026 was the Blind CIM too — same words, no suffix.
+ */
 export function renditionLabel(r: { mode: string; variant: string; createdAt: Date }): string {
   const date = `${r.createdAt.getUTCDate()} ${MONTHS[r.createdAt.getUTCMonth()]}`;
-  return `${MODE_LABEL[r.mode] ?? r.mode}${r.variant === "teaser" ? " teaser" : ""} · published ${date}`;
+  return `${MODE_LABEL[r.mode] ?? r.mode} · published ${date}`;
 }
 
 function summary(r: RawRendition): RenditionSummary {
@@ -206,7 +317,7 @@ function summary(r: RawRendition): RenditionSummary {
 }
 
 export interface AssembleInput {
-  deal: Pick<Deal, "id" | "businessName"> & { buyerDeepCheck?: unknown };
+  deal: Pick<Deal, "id" | "businessName"> & { buyerDeepCheck?: unknown; isLive?: boolean | null; cimGeneration?: unknown };
   filters: EngagementFilters;
   now: Date;
   accesses: BuyerAccess[];
@@ -220,6 +331,13 @@ export interface AssembleInput {
   events: RawEvent[];
   questions: RawQuestion[];
   decisions: RawDecision[];
+  /** Where page titles come from (default: the live sections only). */
+  titles?: TitleSources;
+  /**
+   * Every buyer's page rows, whatever the filters (CaptureFacts.recordedPages);
+   * only needed when the view is narrowed (else this view's rows are all of them).
+   */
+  dealWideVisitPages?: RawVisitPage[];
 }
 
 /** Pure: raw grouped rows → DealReadingFacts. */
@@ -227,10 +345,9 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
   const { deal, filters, now, accesses, live, chosen, indexes } = input;
   const chosenPages = chosen ? indexes.get(chosen.id) ?? [] : [];
 
-  // ── Pages (real titles, broker side) ──
-  const liveById = new Map(live.map((s) => [s.id, s]));
-  const liveByLineage = new Map(live.map((s) => [s.analyticsLineage || s.id, s]));
-  const realOf = (p: RenditionPage) => liveById.get(p.pageId) ?? liveByLineage.get(p.lineageId);
+  // ── Pages (real titles, broker side: the served page's own, titles.ts) ──
+  const titles = titleIndex(input.titles ?? liveTitleSources(live));
+  const drawnMode = (chosen?.mode ?? "normal") as CimMode;
   const pageById = new Map(chosenPages.map((p) => [p.pageId, p]));
   const pageByLineage = new Map(chosenPages.map((p) => [p.lineageId, p]));
   const viewer = viewerPagesOf(chosenPages);
@@ -250,8 +367,8 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
   }
   const pages: FactPage[] = viewer.map((v) => {
     const p = pageById.get(v.pageId)!;
-    const real = realOf(p);
-    const title = real?.sectionTitle || p.servedTitle;
+    const named = pageTitle(p, drawnMode, titles);
+    const title = named.title || p.servedTitle;
     const blocks = p.blocks.filter((b) => b.part === v.part);
     return {
       ...v,
@@ -260,10 +377,11 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
       servedTitle: headingKey(p.servedTitle) !== headingKey(title) ? p.servedTitle : null,
       blindTitle: blindTitleOf.get(p.pageId) ?? blindTitleOf.get(`lin:${p.lineageId}`) ?? null,
       layoutType: p.layoutType,
-      role: pageRole({ layoutType: p.layoutType, title, sectionKey: real?.sectionKey ?? null, pageId: p.pageId }),
+      role: pageRole({ layoutType: p.layoutType, title, sectionKey: named.sectionKey, pageId: p.pageId }),
       locked: p.locked,
       expectedMs: blocks.filter((b) => !b.virtual && !b.when).reduce((s, b) => s + b.expectedMs, 0),
       blocks,
+      update: named.update,
     };
   });
   const orderOf = new Map(chosenPages.map((p) => [p.pageId, p.order]));
@@ -285,12 +403,48 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
     b.visits.push(visitFacts(v, indexes, mapPage, orderOf));
   }
 
+  // The drawn pages each buyer's own version has (release fix F8): a Blind
+  // buyer never had the due-diligence pages, so they are never "skipped" or
+  // counted for them. Only known when every visit names its version;
+  // otherwise (old tracking) every drawn page counts.
+  {
+    const drawnIds = Array.from(new Set(pages.map((p) => p.pageId)));
+    const visitsOf = new Map<string, RawVisit[]>();
+    for (const v of input.visits) if (buyers.has(v.accessId)) visitsOf.set(v.accessId, [...(visitsOf.get(v.accessId) ?? []), v]);
+    visitsOf.forEach((vs, accessId) => {
+      if (vs.some((v) => !v.renditionId || (indexes.get(v.renditionId)?.length ?? 0) === 0)) return;
+      const served = new Set<string>();
+      for (const v of vs) for (const rp of indexes.get(v.renditionId!)!) {
+        const t = mapPage(rp.pageId, rp.lineageId);
+        if (t) served.add(t.pageId);
+      }
+      const ids = drawnIds.filter((id) => served.has(id));
+      if (ids.length > 0 && ids.length < drawnIds.length) buyers.get(accessId)!.servedPageIds = ids;
+    });
+    // Old tracking names no version, but the link's level does: a buyer who
+    // isn't a due-diligence buyer never had a due-diligence-only page (the
+    // figure check page, the add-backs-in-the-books page).
+    const ddOnly = new Set(pages.filter((p) => DD_ONLY_LAYOUTS.has(p.layoutType)).map((p) => p.pageId));
+    if (ddOnly.size > 0) {
+      buyers.forEach((b) => {
+        if (b.servedPageIds || b.mode === "dd") return;
+        b.servedPageIds = drawnIds.filter((id) => !ddOnly.has(id));
+      });
+    }
+  }
+
   // Reading per block → per viewer page part.
   type PartAcc = { att: number; skim: number; vis: number; first: Date | null; last: Date | null };
   const parts = new Map<string, Map<string, PartAcc>>();   // accessId → viewerKey → acc
   const pageLevel = new Map<string, Map<string, { att: number; skim: number; vis: number; first: Date | null; last: Date | null }>>(); // accessId → pageId
   const changed = new Map<string, Set<string>>();          // pageId → buyers who read it in another structure
   const blockLevel = new Set<string>();                    // pageIds with part-level reading
+  // How each page's reading is known (DocumentPage.heat): buyers with part
+  // rows, and time known only as a page total (old tracking / other parts).
+  const partBuyersOf = new Map<string, Set<string>>();     // pageId → buyers with ≥ 1 part row
+  const pageOnlyRaw = new Map<string, Map<string, { before: number; other: number }>>(); // accessId → pageId
+  const pageHeat: Record<string, PageHeatFacts> = {};      // viewerKey → heat facts
+  const heatOf = (key: string) => (pageHeat[key] ??= { partBuyers: [], pageOnly: {} });
   const accOf = (accessId: string, key: string) => {
     let m = parts.get(accessId);
     if (!m) { m = new Map(); parts.set(accessId, m); }
@@ -312,6 +466,9 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
     const block = same && s.blockKey ? target.blocks.find((x) => x.key === s.blockKey) ?? (chartOfPoint(s.blockKey) ? target.blocks.find((x) => x.key === chartOfPoint(s.blockKey)) : undefined) : undefined;
     if (same && s.blockKey) {
       blockLevel.add(target.pageId);
+      const set = partBuyersOf.get(target.pageId) ?? new Set<string>();
+      set.add(s.accessId);
+      partBuyersOf.set(target.pageId, set);
       const id = blockId(target.pageId, s.blockKey);
       const c = b.blocks[id] ?? [0, 0, 0, 0];
       b.blocks[id] = [c[0] + s.attentionMs, c[1] + s.skimMs, c[2] + s.visibleMs, c[3] + s.pointerMs] as BlockCounters;
@@ -326,6 +483,13 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
         const set = changed.get(target.pageId) ?? new Set<string>();
         set.add(s.accessId);
         changed.set(target.pageId, set);
+      }
+      if (!same && s.attentionMs > 0) {
+        let m = pageOnlyRaw.get(s.accessId);
+        if (!m) { m = new Map(); pageOnlyRaw.set(s.accessId, m); }
+        const o = m.get(target.pageId) ?? { before: 0, other: 0 };
+        if (s.renditionId === null) o.before += s.attentionMs; else o.other += s.attentionMs;
+        m.set(target.pageId, o);
       }
       let m = pageLevel.get(s.accessId);
       if (!m) { m = new Map(); pageLevel.set(s.accessId, m); }
@@ -345,8 +509,14 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
       const ownTotal = own.reduce((s, x) => s + x, 0);
       const weights = ownTotal > 0 ? own : pageParts.map((p) => Math.max(1, p.expectedMs));
       const wTotal = weights.reduce((s, x) => s + x, 0);
+      const only = pageOnlyRaw.get(accessId)?.get(pageId);
       pageParts.forEach((p, i) => {
         const f = weights[i] / wTotal;
+        if (only && f > 0) {
+          const h = heatOf(viewerPageKey(pageId, p.part));
+          const prev = h.pageOnly[accessId] ?? { beforeMs: 0, otherMs: 0 };
+          h.pageOnly[accessId] = { beforeMs: prev.beforeMs + only.before * f, otherMs: prev.otherMs + only.other * f };
+        }
         const acc = accOf(accessId, viewerPageKey(pageId, p.part));
         acc.att += a.att * f; acc.skim += a.skim * f;
         if (i === 0 || f > 0) acc.vis = Math.max(acc.vis, a.vis);
@@ -409,10 +579,25 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
     });
   }
 
+  for (const p of pages) {
+    const set = partBuyersOf.get(p.pageId);
+    if (set) heatOf(viewerPageKey(p.pageId, p.part)).partBuyers = Array.from(set);
+  }
+
+  // Drawn pages with any reading on file, deal-wide (CaptureFacts.recordedPages):
+  // this view's reading, plus every other buyer's when the view is narrowed.
+  const recorded = new Set<string>();
+  for (const r of [...input.sums, ...(input.dealWideVisitPages ?? [])]) {
+    if (!(r.attentionMs > 0)) continue;
+    const target = mapPage(r.pageId, r.lineageId);
+    if (target) recorded.add(target.pageId);
+  }
+
   const renditions = input.renditions.map(summary);
   const lastSeen = input.visits.reduce<number>((m, v) => Math.max(m, v.lastSeenAt.getTime()), 0);
   const changedReaders: Record<string, string[]> = {};
   changed.forEach((set, pageId) => { changedReaders[pageId] = Array.from(set); });
+  const sampleReading = input.visits.some((v) => !!v.demoSeed);
   return {
     dealId: deal.id,
     dealName: deal.businessName,
@@ -423,10 +608,48 @@ export function assembleFacts(input: AssembleInput): CaptureFacts {
     pages,
     buyers: Array.from(buyers.values()),
     legacyOnly: input.visits.length > 0 && input.visits.every((v) => v.legacy),
+    sampleReading,
     lastWriteAt: lastSeen ? new Date(lastSeen).toISOString() : null,
     changedReaders,
     blockLevelPages: Array.from(blockLevel),
+    pageHeat,
+    versionNote: versionNoteOf(deal, chosenPages, input.titles?.kept ?? null, live, sampleReading),
+    recordedPages: Array.from(recorded),
   };
+}
+
+const isBrokeragePage = (pageId: string) => pageId === DISCLAIMER_PAGE_ID || pageId === CONTACT_PAGE_ID;
+
+/**
+ * What the drawn version is, for the Document view's status line:
+ *   kept_copy      buyers read the copy kept while the broker reviews an
+ *                  update, and this IS that copy;
+ *   held           the CIM is held from buyers (an update waiting for
+ *                  review with nothing served meanwhile): drawn on the
+ *                  version they'll get (ignoreHold);
+ *   older_version  some drawn pages are no longer current sections.
+ * Pure.
+ */
+export function versionNoteOf(
+  deal: { isLive?: boolean | null; cimGeneration?: unknown },
+  drawn: ReadonlyArray<Pick<RenditionPage, "pageId">>,
+  kept: ReadonlyArray<{ id: string }> | null,
+  live: ReadonlyArray<{ id: string }>,
+  sample: boolean,
+): VersionNote | null {
+  const sectionPages = drawn.filter((p) => !isBrokeragePage(p.pageId));
+  if (sectionPages.length === 0) return null;
+  if (servesPublishedSnapshot(deal) && kept && kept.length > 0) {
+    const keptIds = new Set(kept.map((s) => s.id));
+    if (sectionPages.every((p) => keptIds.has(p.pageId))) {
+      const since = (deal.cimGeneration as { buyerHold?: { since?: string } | null } | null | undefined)?.buyerHold?.since ?? "";
+      return { kind: "kept_copy", since };
+    }
+  }
+  if (cimHeldFromBuyers(deal)) return { kind: "held", sample };
+  const liveIds = new Set(live.map((s) => s.id));
+  const changed = sectionPages.filter((p) => !liveIds.has(p.pageId)).length;
+  return changed > 0 ? { kind: "older_version", changedPages: changed } : null;
 }
 
 /** "toc:<pageId>" → the same with the target mapped onto the chosen rendition. */
@@ -463,6 +686,7 @@ function visitFacts(
     maxPageIndex,
     path: v.path.map(([t, pageId]) => [t, mapPage(pageId, lineageOf(pageId))?.pageId ?? pageId] as [number, string]),
     legacy: v.legacy,
+    sample: !!v.demoSeed,
     networkKey: v.ipHash,
   };
 }
@@ -494,7 +718,7 @@ export function buyerShell(a: BuyerAccess, fit: BuyerFit | null = null): BuyerRe
     company: a.buyerCompany ?? null,
     email: a.buyerEmail,
     buyerType: a.buyerType ?? null,
-    accessLevel: a.accessLevel,
+    accessLevel: normalizeAccessLevel(a.accessLevel),
     mode: cimModeForAccessLevel(a.accessLevel) as CimMode,
     grantedAt: iso(a.createdAt)!,
     firstViewedAt: iso(a.firstViewedAt),

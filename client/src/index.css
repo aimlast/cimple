@@ -382,6 +382,54 @@
 /* ─────────────────────────────────────────────
    CIM PRINT STYLES
 ───────────────────────────────────────────── */
+/* ── Teaser pages (client/src/components/teaser/TeaserPages.tsx) ────────────
+   A teaser is a one- or two-page printed summary: the CIM's own renderers,
+   a little denser than the CIM's reading layout. The hidden measuring copy
+   wears the same class, so the page count matches what's drawn. */
+.teaser-sheet .cim-heading { font-size: 1rem !important; line-height: 1.3rem !important; }
+.teaser-sheet .cim-section > .mb-4,
+.teaser-sheet .cim-section > .mb-5 { margin-bottom: 0.375rem !important; }
+.teaser-sheet .space-y-4 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.2rem !important; }
+.teaser-sheet .space-y-3 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.375rem !important; }
+.teaser-sheet .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.25rem !important; }
+.teaser-sheet .py-4 { padding-top: 0.625rem !important; padding-bottom: 0.625rem !important; }
+.teaser-sheet .leading-relaxed, .teaser-sheet .leading-\[1\.7\] { line-height: 1.45 !important; }
+.teaser-sheet .text-sm { font-size: 0.8125rem !important; line-height: 1.125rem !important; }
+.teaser-sheet .text-xs { font-size: 0.71875rem !important; line-height: 1rem !important; }
+.teaser-sheet .py-1 { padding-top: 0.0625rem !important; padding-bottom: 0.0625rem !important; }
+.teaser-sheet .pb-1\.5 { padding-bottom: 0.25rem !important; }
+.teaser-sheet .mb-2 { margin-bottom: 0.3rem !important; }
+.teaser-sheet .mt-1 { margin-top: 0.125rem !important; }
+/* Key numbers at one size (the CIM sizes each by its length); a phrase ("Vendor financing available") smaller. */
+.teaser-sheet .tabular-nums.font-semibold.tracking-tight { font-size: 1.125rem !important; line-height: 1.5rem !important; }
+.teaser-sheet .tabular-nums.font-semibold.tracking-tight.text-base.break-words { font-size: 0.9375rem !important; line-height: 1.25rem !important; }
+/* Phones (the one continuous sheet): the key numbers two across (the CIM stacks them one per row). */
+@media (max-width: 419px) {
+  .teaser-flow .grid.grid-cols-1.min-\[420px\]\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+/* Pages (and their hidden measuring copy) always lay out as printed, whatever
+   the screen: the renderers' wide-screen columns apply on a phone too, so the
+   page count is the same everywhere. */
+.teaser-paper .min-\[420px\]\:grid-cols-2, .teaser-paper .sm\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.teaser-paper .sm\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.teaser-paper .sm\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.teaser-paper .sm\:px-5 { padding-left: 1.25rem; padding-right: 1.25rem; }
+.teaser-paper .md\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.teaser-paper .md\:gap-8 { gap: 2rem; }
+.teaser-paper .md\:border-l { border-left-width: 1px; }
+.teaser-paper .md\:border-t-0 { border-top-width: 0; }
+.teaser-paper .md\:pl-8 { padding-left: 2rem; }
+.teaser-paper .md\:pt-0 { padding-top: 0; }
+.teaser-paper .md\:flex-row { flex-direction: row; }
+.teaser-paper .md\:items-start { align-items: flex-start; }
+.teaser-paper .md\:flex-shrink-0 { flex-shrink: 0; }
+.teaser-paper .md\:max-w-\[60\%\] { max-width: 60%; }
+.teaser-paper .md\:w-\[36\%\] { width: 36%; }
+/* Rule-style headings (some looks): a tighter rule. */
+.teaser-sheet .cim-section .pb-2\.5 { padding-bottom: 0.375rem !important; }
+/* Numbered steps: small numbers. */
+.teaser-sheet .text-xl.tabular-nums.text-teal { font-size: 0.9375rem !important; line-height: 1.25rem !important; }
+
 @media print {
   /* Hide interactive chrome */
   .sticky, [class*="sticky"] { position: static !important; }
@@ -463,3 +511,80 @@
 /* ─────────────────────────────────────────────
    SIDEBAR — hover-to-expand, content pushes over
 ───────────────────────────────────────────── */
+
+/* ─────────────────────────────────────────────
+   COVERAGE BOARD (Interview together, the AI interview's panel, the
+   Overview outline card, the seller's "What we've covered").
+   Four statuses: on file · partial · to verify · missing. Partial and To
+   verify are ~37° apart in hue and To verify is also hatched, so they stay
+   distinct on a projector; status is never colour alone (icon + label).
+───────────────────────────────────────────── */
+:root, .dark {
+  --coverage-on: var(--success);
+  --coverage-partial: 45 75% 55%;
+  --coverage-verify: 8 70% 60%;
+  --coverage-missing: 240 4% 30%;
+}
+.light {
+  --coverage-on: var(--success);
+  --coverage-partial: 40 80% 36%;
+  --coverage-verify: 6 65% 42%;
+  --coverage-missing: 40 8% 72%;
+}
+.cov-bg-on_file { background-color: hsl(var(--coverage-on)); }
+.cov-bg-partial { background-color: hsl(var(--coverage-partial)); }
+.cov-bg-missing { background-color: hsl(var(--coverage-missing)); }
+.cov-bg-verify,
+.cov-hatch {
+  background-color: hsl(var(--coverage-verify) / 0.45);
+  background-image: repeating-linear-gradient(135deg, hsl(var(--coverage-verify)) 0 3px, transparent 3px 6px);
+}
+.cov-text-on_file { color: hsl(var(--coverage-on)); }
+.cov-text-partial { color: hsl(var(--coverage-partial)); }
+.cov-text-verify { color: hsl(var(--coverage-verify)); }
+.cov-text-missing { color: hsl(var(--coverage-missing)); }
+.light .cov-text-missing { color: hsl(40 8% 52%); }
+.cov-row-flash { box-shadow: inset 2px 0 0 hsl(var(--teal)); }
+.cov-just-filed {
+  box-shadow: inset 3px 0 0 hsl(var(--teal));
+  background-image: linear-gradient(90deg, hsl(var(--teal) / 0.10), transparent 60%);
+}
+/* Listening (Interview together): amber for every listening problem, a calm
+   brass pulse while Cimple listens. */
+:root, .dark { --listen-warn: 38 92% 56%; }
+.light { --listen-warn: 30 90% 36%; }
+.tg-warn-text { color: hsl(var(--listen-warn)); }
+.tg-warn-bg { background-color: hsl(var(--listen-warn) / 0.10); }
+.tg-warn-border { border-color: hsl(var(--listen-warn) / 0.55); }
+.tg-warn-dot { background-color: hsl(var(--listen-warn)); }
+@keyframes tg-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.8); } }
+.tg-pulse { animation: tg-pulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .cov-animate { transition: none !important; animation: none !important; }
+  .tg-pulse { animation: none !important; }
+}
+@media print {
+  .cov-no-print { display: none !important; }
+  .cov-print-sheet { display: block !important; color: #000 !important; background: #fff !important; font-size: 11pt; }
+}
+
+/* ── vdr: the data room's viewer never prints (vdr spec §6.3) ── */
+.vdr-printonly { display: none; }
+@media print {
+  .vdr-noprint img,
+  .vdr-noprint iframe,
+  .vdr-noprint table,
+  .vdr-noprint pre,
+  [data-vdr-overlay] { display: none !important; }
+  .vdr-printonly { display: block !important; padding: 2rem; font-size: 14px; }
+}
+
+/* ── dd: notes on the CIM's figures + due-diligence checks ──────────────────
+   (client/src/components/cim/figures/*). Colours are literal hexes in the
+   components (shared/figure-states.ts) — the paper is theme-locked. */
+.cim-doc .fig-trigger { cursor: help; }
+.cim-doc .fig-trigger:hover > span > span:first-child { text-decoration-color: #46423B; }
+@media print {
+  .cim-doc .fig-trigger { pointer-events: none; }
+  .fig-popover, .fig-sheet { display: none !important; }
+}

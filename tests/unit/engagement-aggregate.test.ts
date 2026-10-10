@@ -201,10 +201,13 @@ try {
     assert.equal(jordan.pageStrip.length, 6);
     assert.equal(jordan.pageStrip.find((c: any) => c.pageId === ids.fin).attentionMs, 116_000);
     assert.equal(jordan.pageStrip[4].reached, false, "never got to the team page");
-    assert.equal(jordan.pagesReached, 4);
+    // Out of the content pages (front matter aside) — the denominator Analytics uses (release fix F8):
+    // cover and disclaimer were scrolled past, the financials and the chart reached; not the team or the contact page.
+    assert.equal(jordan.pagesReached, 2);
+    assert.equal(jordan.totalPages, 3, "content pages only: the financials, the chart, the team");
     assert.deepEqual(jordan.fit, { criteriaMatched: 4, criteriaTotal: 6, deepCheckVerdict: "strong", deepCheckFit: 88 });
     const ari = buyers.buyers.find((b: any) => b.accessId === "accPhone");
-    assert.equal(ari.pagesReached, 1);
+    assert.equal(ari.pagesReached, 0, "only the cover (front matter) — no content page reached");
   });
   await test("filters: device, buyers, segment, range", async () => {
     const phone = await get("/api/deals/deal1/engagement/document?device=phone");

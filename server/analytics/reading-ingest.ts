@@ -46,8 +46,7 @@ import {
   type ReadingPayload,
   type RenditionPage,
 } from "@shared/analytics-v2";
-import { cimModeForAccessLevel } from "@shared/cim-layouts";
-import { variantForAccessLevel } from "./renditions";
+import { normalizeAccessLevel, renditionKindFor } from "@shared/access-levels";
 import { viewStampFor } from "../buyers/view-access";
 import type { BuyerAccess } from "@shared/schema";
 
@@ -149,6 +148,19 @@ const EVENT_DETAIL_RE = /^(?:[a-z_]{1,20}(?::[A-Za-z0-9_-]{1,64})?|\d{1,7})$/;
 
 // ── The plan (pure) ─────────────────────────────────────────────────────
 
+/**
+ * Is this rendition what a NEW visit at `level` reads? Its kind must match
+ * renditionKindFor(level) — or, for a Blind CIM level, a {blind, teaser}
+ * rendition recorded before Oct 2026 (a legacy "teaser" link was served the
+ * Blind CIM under that variant: the same document, so a tab opened before the
+ * deploy keeps recording).
+ */
+export function renditionServesLevel(rendition: Pick<RenditionRef, "mode" | "variant">, level: string | null | undefined): boolean {
+  const kind = renditionKindFor(level);
+  if (rendition.mode === kind.mode && rendition.variant === kind.variant) return true;
+  return kind.mode === "blind" && kind.variant === "full" && rendition.mode === "blind" && rendition.variant === "teaser";
+}
+
 export function planIngest(
   input: IngestInput,
   rendition: RenditionRef | null,
@@ -159,8 +171,13 @@ export function planIngest(
   const fail = (status: 400 | 409, reason: string): IngestPlan => ({ ok: false, status, reason });
 
   if (!rendition || rendition.dealId !== deal.id) return fail(400, "unknown rendition");
-  const mode = cimModeForAccessLevel(access.accessLevel) as CimMode;
-  if (rendition.mode !== mode || rendition.variant !== variantForAccessLevel(access.accessLevel)) return fail(400, "rendition does not match this buyer's version");
+  // A visit continuing on its own rendition is accepted whatever the link's
+  // level is now: it was valid when it started (a teaser tab still open when
+  // the broker gives the CIM). A new visit must be on what this level reads.
+  const continuing = !!existing && existing.buyerAccessId === access.id && !!existing.renditionId && existing.renditionId === rendition.id;
+  if (!continuing && !renditionServesLevel(rendition, access.accessLevel)) return fail(400, "rendition does not match this buyer's version");
+  // What was read: the rendition's own version.
+  const mode = rendition.mode as CimMode;
   if (existing && existing.buyerAccessId !== access.id) return fail(409, "visit belongs to another link");
   if (existing && existing.renditionId && existing.renditionId !== rendition.id) return fail(400, "visit is on another rendition");
 
@@ -274,7 +291,7 @@ export function planIngest(
     selfView: !!existing?.selfView || input.selfView,
     clamped: !!existing?.clamped || clamped,
     mode,
-    accessLevel: access.accessLevel,
+    accessLevel: normalizeAccessLevel(access.accessLevel),
     deviceClass: deviceClassOf(p.device),
     viewportW: p.device.w,
     viewportH: p.device.h,
@@ -364,7 +381,8 @@ export async function ingestReading(store: ReadingStore, input: IngestInput): Pr
       if (!w) throw new VisitConflict();
       if (plan.rollups.length) await tx.writeRollups(plan.rollups, plan.exactRollups);
       if (plan.events.length) await tx.writeEvents(plan.events);
-      const viewCounted = w.inserted && !plan.visit.selfView ? await tx.countView(input.access.id, plan.visit.id, input.now) : false;
+      // A teaser visit is never a CIM view (and never suppresses one: countView ignores teaser visits).
+      const viewCounted = w.inserted && !plan.visit.selfView && (plan.visit.mode as string) !== "teaser" ? await tx.countView(input.access.id, plan.visit.id, input.now) : false;
       return { status: 204, newVisit: w.inserted, clamped: plan.clamped, viewCounted } as IngestResult;
     });
   } catch (err) {
@@ -550,6 +568,7 @@ export const dbReadingStore: ReadingStore = {
               AND NOT EXISTS (
                 SELECT 1 FROM buyer_visits
                 WHERE buyer_access_id = ${accessId} AND id <> ${visitId} AND NOT self_view
+                  AND mode IS DISTINCT FROM 'teaser'
                   AND last_seen_at > ${new Date(now.getTime() - READING_RULES.visitGapMs).toISOString()}::timestamp
                   AND last_seen_at <= ${now.toISOString()}::timestamp)
             RETURNING id`);
@@ -629,6 +648,7 @@ export function memoryReadingStore(): MemoryReadingStore {
         },
         async countView(accessId, visitId, now) {
           const recent = Array.from(s.visits.values()).some((v) => v.buyerAccessId === accessId && v.id !== visitId && !v.selfView
+            && (v.mode as string | null) !== "teaser"
             && v.lastSeenAt.getTime() > now.getTime() - READING_RULES.visitGapMs && v.lastSeenAt.getTime() <= now.getTime());
           if (recent) return false;
           s.viewCounts.set(accessId, (s.viewCounts.get(accessId) ?? 0) + 1);

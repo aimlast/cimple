@@ -346,6 +346,7 @@ check("J6 published FAQs become 'all'-scope rows; a Blind buyer never gets one t
   assert.deepEqual(visible("teaser"), ["faq:f1"], "Blind teaser: the lease answer only");
   assert.deepEqual(visible("full"), ["faq:f1"], "Blind full: still not the one naming the business");
   assert.deepEqual(visible("loi"), ["faq:f2", "faq:f1"], "named-CIM buyer: both");
+  assert.deepEqual(visible("teaser_only"), [], "a Teaser link reads no Q&A");
 });
 
 // ── J11: the website is read without the broker finding the button ──────

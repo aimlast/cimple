@@ -552,7 +552,7 @@ const WITHDRAWAL_VOCAB = new Set(
 
 /** Who the seller says holds the real answer: "Rob keeps the tooling list" → "Rob". */
 export function whoHoldsTheAnswer(sellerMessage: string): string {
-  const m = sellerMessage.match(/\b([A-Z][a-z]+(?: [A-Z][a-z]+)?)\s+(?:keeps|has|holds|tracks|knows|maintains|can send|will send|could send|can pull|would know|manages|owns)\b/);
+  const m = sellerMessage.match(/\b([A-Z][a-z]+(?: [A-Z][a-z]+)?)\s+(?:keeps|has|holds|tracks|knows|maintains|can send|will send|could send|can pull|would know|would have|manages|owns)\b/);
   if (m && !/^(?:I|We|It|That|This|He|She|They|Let|The)$/.test(m[1])) return m[1];
   const role = sellerMessage.match(/\bmy (accountant|bookkeeper|controller|office manager|lawyer|ops manager|operations manager|plant manager|tool ?room (?:lead|manager))\b/i);
   return role ? `the seller's ${role[1]}` : "";
@@ -1183,6 +1183,53 @@ export function recordFactSpeakers(info: Info, speakers: unknown, documentId: st
     const src = sources[key];
     if (!src || src.documentId !== documentId || (src.source !== "call" && src.source !== "video_call")) continue;
     sources[key] = { ...src, speaker: who.trim().slice(0, 120) };
+    n++;
+  }
+  if (n > 0) info["_fieldSources"] = sources;
+  return n;
+}
+
+/**
+ * Live capture ("Interview together", specs/together.md §5.7): how sure the
+ * seller was of each value a session's transcript filed, and a guard's
+ * verify flag ("number" / "date" / "legal"). Stamped only where the current
+ * source is this document. Mutates `info`.
+ */
+export function recordFactConfidence(info: Info, confidence: unknown, documentId: string, verify?: unknown): number {
+  const conf = confidence && typeof confidence === "object" && !Array.isArray(confidence) ? (confidence as Record<string, unknown>) : {};
+  const ver = verify && typeof verify === "object" && !Array.isArray(verify) ? (verify as Record<string, unknown>) : {};
+  const keys = new Set([...Object.keys(conf), ...Object.keys(ver)]);
+  if (keys.size === 0) return 0;
+  const sources = { ...getFieldSources(info) };
+  let n = 0;
+  for (const rawKey of Array.from(keys)) {
+    const key = canonicalFieldName(rawKey, Object.keys(info));
+    const src = sources[key];
+    if (!src || src.documentId !== documentId) continue;
+    const c = conf[rawKey];
+    const v = ver[rawKey];
+    sources[key] = {
+      ...src,
+      ...(c === "confirmed" || c === "approximate" || c === "inferred" ? { confidence: c } : {}),
+      ...(v === "number" || v === "date" || v === "legal" ? { verify: v } : {}),
+    };
+    n++;
+  }
+  if (n > 0) info["_fieldSources"] = sources;
+  return n;
+}
+
+/** The seller's words each live-filed value came from (≤ 200 chars), where the current source is this document. Mutates `info`. */
+export function recordFactExcerpts(info: Info, excerpts: unknown, documentId: string): number {
+  if (!excerpts || typeof excerpts !== "object" || Array.isArray(excerpts)) return 0;
+  const sources = { ...getFieldSources(info) };
+  let n = 0;
+  for (const [rawKey, text] of Object.entries(excerpts as Record<string, unknown>)) {
+    if (typeof text !== "string" || !text.trim()) continue;
+    const key = canonicalFieldName(rawKey, Object.keys(info));
+    const src = sources[key];
+    if (!src || src.documentId !== documentId) continue;
+    sources[key] = { ...src, excerpt: text.trim().slice(0, 200) };
     n++;
   }
   if (n > 0) info["_fieldSources"] = sources;

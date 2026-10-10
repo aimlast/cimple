@@ -19,12 +19,15 @@ import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadin
 import { InterviewOutlineCard } from "@/components/deal/InterviewOutlineCard";
 import { ReopenInterviewButton } from "@/components/deal/ReopenInterviewButton";
 import { OpenInterviewItemsCard } from "@/components/deal/OpenInterviewItemsCard";
-import { SellerChecklistCard } from "@/components/deal/SellerChecklistCard";
+import { DocumentsSummaryCard } from "@/components/deal/DocumentsSummaryCard";
 import { SellerReviewControls } from "@/components/deal/SellerReviewControls";
 import { sellerIntakeState } from "@shared/seller-portal";
 import { discrepancyBlocksCim, routedButNeverAsked } from "@shared/discrepancy-gate";
 import { discrepancyFieldLabel } from "@shared/discrepancy-sides";
 import { NeverAskedFollowUpsNotice } from "@/components/deal/NeverAskedFollowUps";
+import { GlTraceCard } from "@/components/gl/GlTraceCard";
+import { GlGenerationNotice, useGlGenerationConfirm } from "@/components/gl/GlGenerationNotice";
+import { useGlProgress } from "@/hooks/useGlStatus";
 import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
 import { ChecklistStepTitle } from "@/components/deal/ChecklistStepTitle";
 import { AddSourceDialog, type AddSourcePreset } from "@/components/information/AddSourceDialog";
@@ -93,6 +96,7 @@ import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysi
 import { CimStaleNotice, CimSummaryCard, useBuilderState } from "@/components/cim-builder/CimSummaryCard";
 import { regenerateBuyerImpact, reviewingUpdate } from "@shared/cim-generation-warnings";
 import { PublishedVersionBanner } from "@/components/deal/PublishedVersionBanner";
+import { TeaserAttentionNote } from "@/components/teaser/TeaserAttentionNote";
 import { publishReadiness, sectionsAwaitingApproval } from "@shared/cim-approvals";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { ReadyToBuildCta } from "@/components/deal/ReadyToBuildCta";
@@ -1655,6 +1659,10 @@ function Phase3Center() {
     },
   });
 
+  // "Add-backs in the books" (gl spec §3.5): writing the CIM while the step is
+  // unfinished asks first; the hold switch (server-enforced) shows its notice.
+  const glConfirm = useGlGenerationConfirm(dealId);
+
   const approve = useMutation({
     mutationFn: (role: "broker" | "seller") =>
       apiJson(
@@ -1748,6 +1756,8 @@ function Phase3Center() {
           </div>
         )}
 
+        <GlTraceCard dealId={dealId} />
+        <GlGenerationNotice dealId={dealId} kind="cim" />
         <NeverAskedFollowUpsNotice dealId={dealId} rows={neverAsked} onResolve={setFocusDiscrepancy} />
 
         {discrepanciesError ? (
@@ -1788,8 +1798,8 @@ function Phase3Center() {
               )}
               <Button
                 className="bg-teal text-teal-foreground hover:bg-teal/90"
-                onClick={() => generate.mutate()}
-                disabled={generate.isPending || generationBlocked || !infoGate.allowed}
+                onClick={() => glConfirm.run(() => generate.mutate())}
+                disabled={generate.isPending || generationBlocked || !infoGate.allowed || glConfirm.blocked}
                 title={blockReason ?? infoBlockReason ?? undefined}
                 data-testid="button-generate-content"
               >
@@ -1808,6 +1818,7 @@ function Phase3Center() {
             </>
           )}
         </div>
+        {glConfirm.dialog}
       </div>
     );
   }
@@ -1933,7 +1944,7 @@ function Phase3Center() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => {
                 setRegenConfirmOpen(false);
-                generate.mutate();
+                glConfirm.run(() => generate.mutate());
               }}
               data-testid="button-regenerate-confirm"
             >
@@ -1947,6 +1958,10 @@ function Phase3Center() {
           broker the panel to resolve them (or take one back from the seller)
           right here instead of sending them hunting for it. */}
       {/* Also after a run stopped to show new conflicts — the broker reviews them right here. */}
+      {/* "Add-backs in the books" (gl): where it stands, the hold notice, and the write-now confirmation. */}
+      <GlTraceCard dealId={dealId} />
+      <GlGenerationNotice dealId={dealId} kind="cim" />
+      {glConfirm.dialog}
       {/* Questions routed before follow-up emails existed: the broker emails the seller or resolves them. */}
       <NeverAskedFollowUpsNotice dealId={dealId} rows={neverAsked} onResolve={setFocusDiscrepancy} />
       {(generationBlocked || focusDiscrepancy || (!generation.isRunning && generation.job?.stoppedBy === "discrepancies")) && (
@@ -2089,6 +2104,8 @@ function Phase4Center() {
           Open CIM builder
         </Button>
       </div>
+      {/* "Add-backs in the books" stays visible in Design too (the DD CIM waits for it). */}
+      <GlTraceCard dealId={dealId} />
       <NeverAskedFollowUpsNotice dealId={dealId} rows={neverAsked} onResolve={setFocusDiscrepancy} />
       {(publishBlocked || focusDiscrepancy) && (
         <div className="space-y-3">
@@ -2275,158 +2292,6 @@ function SectionsAwaitingApproval({
 }
 
 /* ═══════════════════════════════════════════
-   DOCUMENT TABLE (full list below phases)
-═══════════════════════════════════════════ */
-function DocumentTable() {
-  const { dealId } = useDeal();
-  const { toast } = useToast();
-  // Deletion is permanent and the trash icon only appears on hover — always
-  // confirm before removing an uploaded financial document.
-  const [pendingDelete, setPendingDelete] = useState<DocType | null>(null);
-
-  const { data: documents = [], error: docsError, refetch: refetchDocs } = useQuery<DocType[]>({
-    queryKey: ["/api/deals", dealId, "documents"],
-    queryFn: async () => {
-      const r = await fetch(`/api/deals/${dealId}/documents`);
-      if (!r.ok) throw new Error("Failed to load documents");
-      return r.json();
-    },
-    refetchInterval: (query) =>
-      query.state.data?.some(isDocProcessing) ? DOC_POLL_MS : false,
-  });
-
-  const deleteDoc = useMutation({
-    mutationFn: (doc: DocType) =>
-      apiJson("DELETE", `/api/documents/${doc.id}`, undefined, "Couldn't delete the document"),
-    onSuccess: (_, doc) => {
-      queryClient.invalidateQueries({
-        queryKey: ["/api/deals", dealId, "documents"],
-      });
-      setPendingDelete(null);
-      toast({ title: "Document deleted", description: doc.name });
-    },
-    onError: (e: Error) =>
-      toast({
-        title: "Delete failed",
-        description: e.message,
-        variant: "destructive",
-      }),
-  });
-
-  if (docsError) {
-    return <PanelError what="documents" onRetry={() => refetchDocs()} />;
-  }
-  if (documents.length === 0) return null;
-
-  return (
-    <div className="mt-6 pt-6 border-t border-border">
-      <h3 className="text-sm font-semibold mb-3">
-        All Documents ({documents.length})
-      </h3>
-      <div className="rounded-lg border border-border overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border bg-muted/30">
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
-                Name
-              </th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
-                Category
-              </th>
-              <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
-                Status
-              </th>
-              <th className="w-10" />
-            </tr>
-          </thead>
-          <tbody>
-            {documents.map((doc) => (
-              <tr
-                key={doc.id}
-                className="border-b border-border last:border-0 group hover:bg-muted/20"
-              >
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                    <span className="truncate">{doc.name}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-2.5 text-muted-foreground capitalize">
-                  {doc.category}
-                </td>
-                <td className="px-4 py-2.5">
-                  <span
-                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-2xs font-medium ${
-                      (doc.status as string) === "extracted"
-                        ? "bg-success-muted text-success-muted-foreground"
-                        : (doc.status as string) === "parsing"
-                          ? "bg-amber-500/10 text-amber-600"
-                          : "bg-muted text-muted-foreground"
-                    }`}
-                  >
-                    {doc.status}
-                  </span>
-                </td>
-                <td className="px-4 py-2.5">
-                  <button
-                    onClick={() => setPendingDelete(doc)}
-                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive transition-all"
-                    aria-label={`Delete ${doc.name}`}
-                    data-testid={`button-delete-document-${doc.id}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <AlertDialog
-        open={!!pendingDelete}
-        onOpenChange={(open) => {
-          if (!open && !deleteDoc.isPending) setPendingDelete(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete this document?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingDelete?.name
-                ? `"${pendingDelete.name}" and any data extracted from it will be permanently removed from this deal. This cannot be undone.`
-                : "This document will be permanently removed from this deal. This cannot be undone."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteDoc.isPending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleteDoc.isPending}
-              onClick={(e) => {
-                // Keep the dialog open while the request runs so a failure
-                // can be shown in place.
-                e.preventDefault();
-                if (pendingDelete) deleteDoc.mutate(pendingDelete);
-              }}
-              data-testid="button-confirm-delete-document"
-            >
-              {deleteDoc.isPending ? (
-                <>
-                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Deleting...
-                </>
-              ) : (
-                "Delete"
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════
    OVERVIEW TAB — Phase accordion + documents
 ═══════════════════════════════════════════ */
 /** A request (from the DealShell header stepper) to open and scroll to a phase. */
@@ -2487,6 +2352,8 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
     },
   });
   const checklistGeneration = useCimGeneration(dealId);
+  // "Add-backs in the books" rows on the Phase 3 checklist (shared/deal-progress glChecklistItems).
+  const checklistGl = useGlProgress(dealId, { enabled: deal.phase === "phase3_content_creation" || deal.phase === "phase4_design_finalization" });
 
   const phaseComponents: Record<string, React.ReactNode> = {
     phase1_info_collection: <Phase1Center />,
@@ -2502,6 +2369,8 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
   return (
     <div className="max-w-4xl mx-auto px-6 py-6 space-y-3">
       <PublishedVersionBanner deal={deal} />
+      <TeaserAttentionNote dealId={dealId} />
+      <BuyerPulseCard dealId={dealId} placement="top" />
       {PHASES.map((phase, idx) => {
         const isCurrentPhase = deal.phase === phase.key;
         const isComplete = currentPhaseIdx > idx;
@@ -2513,6 +2382,7 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
           hasCimSections: checklistSections ? checklistSections.length > 0 : undefined,
           sectionsAwaitingApproval: checklistSections ? sectionsAwaitingApproval(checklistSections, deal).length : undefined,
           cimGenerating: checklistGeneration.isRunning,
+          glTracing: checklistGl.data?.glTracing ?? null,
         });
         const required = items.filter((i) => !i.optional);
         const doneCount = required.filter((i) => i.done).length;
@@ -2623,27 +2493,28 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
             </p>
           </div>
           <CrmLinkCard dealId={dealId} variant="compact" />
-          {/* What the seller is asked to upload — verify, waive, ask again */}
-          <SellerChecklistCard dealId={dealId} />
+          {/* The Data room is the home for files (vdr): one line here; the
+              seller's checklist moved to Data room › To do › Seller checklist. */}
+          <DocumentsSummaryCard dealId={dealId} />
           <DocumentUploadCard openSignal={uploadSignal} />
-          <IntegrationPromptCard
-            onOpenTranscripts={() =>
-              setUploadSignal({
-                kind: "call",
-                tab: "paste",
-                nonce: Date.now(),
-              })
-            }
-          />
+          {/* "Before the interview" — only while information is being collected (release review UX-F13). */}
+          {currentPhaseIdx <= getPhaseIndex("phase2_platform_intake") && (
+            <IntegrationPromptCard
+              onOpenTranscripts={() =>
+                setUploadSignal({
+                  kind: "call",
+                  tab: "paste",
+                  nonce: Date.now(),
+                })
+              }
+            />
+          )}
         </div>
       )}
 
-      {/* Document table below phases */}
-      <DocumentTable />
-
       {/* Buyer pulse: who is reading, who to call first (replaces the old analytics widget) */}
-      <div className="mt-6 pt-6 border-t border-border">
-        <BuyerPulseCard dealId={dealId} />
+      <div className="mt-6 pt-6 border-t border-border empty:hidden">
+        <BuyerPulseCard dealId={dealId} placement="bottom" />
       </div>
     </div>
   );

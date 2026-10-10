@@ -25,6 +25,9 @@ import {
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { sellerUnavailableReason, withoutSellerUnavailableNote } from "@shared/seller-portal";
+import { SellerRoomChips } from "@/components/vdr/SellerChips";
+import { GL_REQUIREMENT_NAME } from "@shared/gl-copy";
+import { SellerGlRow } from "@/components/gl/SellerGlRow";
 
 interface DocRequirement {
   id: string;
@@ -38,6 +41,9 @@ interface DocRequirement {
   uploadedFileName?: string | null;
   uploadedBy?: "broker" | "seller" | null;
   uploadedAt?: string | null;
+  /** vdr §7: shared with buyers who signed an NDA; the broker's "needed by" date. */
+  inDataRoom?: boolean;
+  neededBy?: string | null;
 }
 
 interface UploadedDoc {
@@ -535,6 +541,10 @@ export default function SellerDocuments() {
               {expandedCategories.has(group.category) && (
                 <div className="border-t border-border divide-y divide-border">
                   {group.items.map((req) => {
+                    // The general ledger: uploaded through the ledger reader, its status set by it (gl spec §3.1).
+                    if (req.name === GL_REQUIREMENT_NAME && token) {
+                      return <SellerGlRow key={req.id} token={token} name={req.name} isRequired={req.isRequired} chips={<SellerRoomChips inDataRoom={req.inDataRoom} neededBy={req.neededBy} missing={req.status === "missing"} />} />;
+                    }
                     const reason = req.status === "unavailable" ? sellerUnavailableReason(req.notes) : null;
                     const brokerNote = withoutSellerUnavailableNote(req.notes);
                     const openUpload = () => {
@@ -586,6 +596,7 @@ export default function SellerDocuments() {
                               {brokerNote && (
                                 <p className="text-xs text-muted-foreground mt-0.5 break-words">{brokerNote}</p>
                               )}
+                              <SellerRoomChips inDataRoom={req.inDataRoom} neededBy={req.neededBy} missing={req.status === "missing"} />
                             </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-8 sm:pl-0 sm:shrink-0">

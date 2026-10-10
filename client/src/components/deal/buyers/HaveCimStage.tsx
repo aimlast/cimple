@@ -16,6 +16,7 @@ import { formatReadingTime } from "@shared/analytics-v2";
 import { useEngagementBuyers } from "@/hooks/useEngagement";
 import { PageStrip, StatusChip, stripScale } from "@/components/engagement/buyers/parts";
 import { AccessLevelSelect } from "@/components/cim-builder/AccessLevelSelect";
+import { useDdRoomNudge } from "@/components/vdr/cim-slots";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -28,10 +29,22 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Clock, ThumbsUp, ThumbsDown, Timer, MoreHorizontal, Link2, CalendarPlus, Ban, UserPlus, Send, Lock, Target,
   ChevronDown, ChevronRight,
+  FolderLock,
 } from "lucide-react";
 import type { AccessFit } from "@shared/buyer-fit";
 import { invalidateBuyerPipeline } from "@/lib/buyer-pipeline";
+import { seesCim } from "@shared/access-levels";
+import { nextStepWords as sharedNextStepWords } from "@shared/buyer-next-steps";
 import { BuyerFitDialog, FitChip } from "./BuyerFit";
+
+/**
+ * The buyer's own next step after "Interested", in words ("Next: wants to make
+ * an offer (LOI)") — never the raw value. LOI here is the buyer's step, not an
+ * access level. One map for every screen: shared/buyer-next-steps.ts.
+ */
+export function nextStepWords(step: string): string {
+  return sharedNextStepWords(step) ?? "";
+}
 
 /** Read the server's JSON error body, falling back to a readable default. */
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -134,11 +147,17 @@ function RevokedList({ buyers, published, onGrant }: { buyers: any[]; published:
   );
 }
 
-export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], onGrant, onGoToSend }: Props) {
+export function HaveCimStage({ dealId, published, buyers: allBuyers, revokedBuyers: allRevoked = [], onGrant, onGoToSend }: Props) {
+  // Only links that open a CIM (Blind CIM, Full CIM, due diligence) — Teaser
+  // links have their own stage (shared/access-levels.ts seesCim).
+  const buyers = useMemo(() => allBuyers.filter((b: any) => seesCim(b.accessLevel)), [allBuyers]);
+  const revokedBuyers = useMemo(() => allRevoked.filter((b: any) => seesCim(b.accessLevel)), [allRevoked]);
   const { toast } = useToast();
   const qc = useQueryClient();
   const [revokeTarget, setRevokeTarget] = useState<any | null>(null);
   const [fitFor, setFitFor] = useState<any | null>(null);
+  // vdr §5.12: a buyer moved to due diligence → "N documents the DD CIM points to aren't shared yet · Share them".
+  useDdRoomNudge(dealId, buyers);
 
   // How each buyer read the CIM (the reading tracker — the same judgement
   // as the Engagement tab). Enriches the table but isn't essential: degrades quietly.
@@ -243,7 +262,7 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
       buyer,
       name: buyer.buyerName || buyer.buyerEmail,
       decision,
-      nextStep: buyer.decision === "interested" && buyer.decisionNextStep ? String(buyer.decisionNextStep).replace(/_/g, " ") : null,
+      nextStep: buyer.decision === "interested" && buyer.decisionNextStep ? nextStepWords(String(buyer.decisionNextStep)) : null,
       card,
       readMs: card?.activeMs ?? 0,
       activity: views === 0 && !card
@@ -286,6 +305,10 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => setFitFor(r.buyer)}>
           <Target className="h-3.5 w-3.5 mr-2" /> Why this fit?
+        </DropdownMenuItem>
+        {/* Data room (vdr §5.12): this buyer's room access, downloads and what they can see. */}
+        <DropdownMenuItem onClick={() => setLocation(`/deal/${dealId}/data-room?view=buyers&buyer=${encodeURIComponent(r.buyer.id)}`)} data-testid={`menu-data-room-${r.buyer.id}${testIdSuffix}`}>
+          <FolderLock className="h-3.5 w-3.5 mr-2" /> Data room access…
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem className="text-red-500 focus:text-red-500" onClick={() => setRevokeTarget(r.buyer)}>
@@ -331,15 +354,15 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
 
   const linkCell = (r: (typeof rows)[number]) => (
     <div className="text-xs">
-      <p className={r.buyer.ndaSigned ? "text-success-muted-foreground" : "text-muted-foreground"}>
+      <p className={`whitespace-nowrap ${r.buyer.ndaSigned ? "text-success-muted-foreground" : "text-muted-foreground"}`}>
         {r.buyer.ndaSigned ? "NDA signed" : "NDA not signed"}
       </p>
       {r.expiresAt ? (
-        <p className={r.expired ? "text-red-500" : "text-muted-foreground/80"}>
+        <p className={`whitespace-nowrap ${r.expired ? "text-red-500" : "text-muted-foreground/80"}`}>
           {r.expired ? "Link expired" : "Link expires"} {shortDate(r.expiresAt)}
         </p>
       ) : (
-        <p className="text-muted-foreground/60">Link never expires</p>
+        <p className="whitespace-nowrap text-muted-foreground/60">Link never expires</p>
       )}
     </div>
   );
@@ -373,8 +396,7 @@ export function HaveCimStage({ dealId, published, buyers, revokedBuyers = [], on
                   <p className="font-medium text-foreground">{r.name}</p>
                   {r.buyer.buyerCompany && <p className="text-xs text-muted-foreground mt-0.5">{r.buyer.buyerCompany}</p>}
                   {r.buyer.buyerName && <p className="text-xs text-muted-foreground/60">{r.buyer.buyerEmail}</p>}
-                  {/* Which CIM version this buyer sees (teaser → blind with locked
-                      sections, full → blind, LOI → named, DD → named + DD detail). */}
+                  {/* Which CIM version this buyer sees (Blind CIM, Full CIM or due diligence). */}
                   <div className="mt-1.5 flex items-center gap-1.5">
                     <span className="text-[11px] text-muted-foreground whitespace-nowrap">Sees</span>
                     <AccessLevelSelect dealId={dealId} buyer={r.buyer} />

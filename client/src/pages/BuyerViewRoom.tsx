@@ -8,8 +8,8 @@
  *
  * Falls back to legacy cimContent text if no AI sections exist yet.
  */
-import { useState, useEffect, useRef } from "react";
-import { useParams } from "wouter";
+import { Fragment, useState, useEffect, useMemo, useRef } from "react";
+import { Link, useLocation, useParams } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -20,7 +20,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Deal, CimSection } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
-import { buyerAccessLabel } from "@shared/cim-layouts";
+import { buyerFacingLevelLabel } from "@shared/access-levels";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { CimDesignProvider, buildCimDesign, type CimDesignPayload } from "@/components/cim/CimDesignContext";
 import { CimSheet } from "@/components/cim/CimSheet";
@@ -35,8 +35,18 @@ import { BuyerChatbot, type BuyerQuestionFeedItem } from "@/components/buyer/Buy
 import { BuyerDecisionPanel } from "@/components/buyer/BuyerDecisionPanel";
 import { NdaBuyerProfileGate } from "@/components/buyer/NdaBuyerProfileGate";
 import { CimBlockScope, CimBlocksProvider } from "@/components/cim/blocks";
+import { ExpiredTeaserCard, TeaserNotAvailable, TeaserView, type TeaserViewData } from "@/components/buyer/TeaserView";
 import { READING_SHEET_ATTR, useCimReading } from "@/lib/cim-reading";
+import { FigureLayerProvider, type FigureBuyerHooks } from "@/components/cim/figures/FigureLayerContext";
+import { DdBanner } from "@/components/cim/figures/DdBanner";
+import { DD_BADGE } from "@shared/figure-copy";
+import type { FigureLayer } from "@shared/figure-layer";
 import type { ViewRoomReading } from "@shared/analytics-v2";
+import type { ViewRoomDataRoom } from "@shared/vdr-api";
+import { RoomSwitch } from "@/components/vdr/RoomSwitch";
+import { VdrLinkProvider } from "@/components/vdr/VdrLinkContext";
+import { GlRoomLinkProvider } from "@/components/vdr/GlRoomLinks";
+import { GlMarksProvider, glMarkedLineIds } from "@/components/cim/gl/GlLinks";
 
 type BuyerDecision = "under_review" | "interested" | "not_interested" | "lapsed";
 
@@ -83,19 +93,29 @@ interface ViewData {
   pendingSections?: number;
   /** Reading analytics: the served version's opaque id + page order (content branch only). */
   reading?: ViewRoomReading;
+  /** The data room (vdr): the header switch and the downloads line. */
+  dataRoom?: ViewRoomDataRoom;
+  /** Notes on the figures and (due diligence) the figure checks for this version (content branch only). */
+  figureLayer?: FigureLayer | null;
 }
 
 /** A section the buyer's access level doesn't open yet (server sends title only). */
 const isLocked = (s: CimSection) => (s as CimSection & { locked?: boolean }).locked === true;
 
 /** Parse an error body defensively — proxies return HTML during deploys. */
-async function readErrorBody(res: Response): Promise<{ error?: string; code?: string }> {
+async function readErrorBody(res: Response): Promise<{ error?: string; code?: string; teaser?: boolean; firm?: string | null; [k: string]: any }> {
   return res.json().catch(() => ({}));
 }
 
-/** A load failure that carries the server's reason code (e.g. not_published). */
+/** A load failure that carries the server's reason code (e.g. not_published) — and whether it's a teaser link. */
 class ViewRoomError extends Error {
-  constructor(message: string, readonly code?: string) {
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly teaser = false,
+    readonly firm: string | null = null,
+    readonly body: Record<string, any> = {},
+  ) {
     super(message);
   }
 }
@@ -125,19 +145,24 @@ function Watermark({ email }: { email: string }) {
 // ── Main component ─────────────────────────────────────────────────────────
 export default function BuyerViewRoom() {
   const { token } = useParams<{ token: string }>();
+  const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const [timeOnPage, setTimeOnPage] = useState(0);
   const [localDecision, setLocalDecision] = useState<BuyerDecision | null>(null);
+  // A data-room document open beside the CIM (VdrViewerDrawer). While it is
+  // open the CIM reading tracker is paused (those seconds count as away, never
+  // reading) and each document opened records "vdr_open" (INTEGRATION §2.4).
+  const [roomDrawerOpen, setRoomDrawerOpen] = useState(false);
   const startTimeRef = useRef(Date.now());
 
-  const { data, isLoading, error } = useQuery<ViewData>({
+  const { data, isLoading, error } = useQuery<ViewData & Partial<Pick<TeaserViewData, "document">>>({
     queryKey: ["/api/view", token],
     enabled: !!token,
     queryFn: async () => {
       const res = await fetch(`/api/view/${token}`);
       if (!res.ok) {
         const body = await readErrorBody(res);
-        throw new ViewRoomError(body.error || "Access denied", body.code);
+        throw new ViewRoomError(body.error || "Access denied", body.code, body.teaser === true, body.firm ?? null, body);
       }
       return res.json();
     },
@@ -160,7 +185,23 @@ export default function BuyerViewRoom() {
     accessId: data?.access?.id,
     reading: data?.reading ?? null,
     enabled: hasContent && !data?.ndaGate && !data?.preparing && !data?.updating,
+    paused: roomDrawerOpen,
   });
+
+  // A question about one figure goes straight to the broker (no AI), from its note.
+  const dealIdForAsk = data?.deal?.id;
+  const figureBuyer = useMemo<FigureBuyerHooks>(() => ({
+    onAsk: async (figureId: string, text: string) => {
+      if (!dealIdForAsk || !token) throw new Error("not ready");
+      const res = await fetch(`/api/deals/${dealIdForAsk}/questions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: text, accessToken: token, figureId, sectionId: tracker.currentPageId() ?? undefined, renditionId: tracker.renditionId() ?? undefined }),
+      });
+      if (!res.ok) throw new Error("not sent");
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealIdForAsk, "questions", "published", token] });
+    },
+  }), [dealIdForAsk, token, tracker, queryClient]);
 
   // Timer
   useEffect(() => {
@@ -183,6 +224,30 @@ export default function BuyerViewRoom() {
     );
   }
 
+  // A buyer's team member's link: their data room (never the memorandum).
+  if (error instanceof ViewRoomError && error.code === "team_link" && typeof error.body.redirect === "string" && error.body.redirect.startsWith("/view/")) {
+    setTimeout(() => setLocation(error.body.redirect, { replace: true }), 0);
+    return null;
+  }
+
+  // A teaser link (INTEGRATION §2.4, before every CIM branch): an expired
+  // link asks the broker for a fresh one; a teaser that's offline says so.
+  if (error instanceof ViewRoomError && error.teaser && error.code === "expired") {
+    return <ExpiredTeaserCard token={token!} firm={error.firm} />;
+  }
+  if (error instanceof ViewRoomError && error.teaser && error.code === "not_published") {
+    return <TeaserNotAvailable />;
+  }
+  if (data?.document === "teaser") {
+    return (
+      <TeaserView
+        token={token!}
+        data={data as unknown as TeaserViewData}
+        onChanged={() => queryClient.invalidateQueries({ queryKey: ["/api/view", token], exact: true })}
+      />
+    );
+  }
+
   // Not published yet (or taken offline): a calm holding card, not an error.
   if (error instanceof ViewRoomError && error.code === "not_published") {
     return (
@@ -191,6 +256,13 @@ export default function BuyerViewRoom() {
           <Clock className="h-8 w-8 mx-auto text-muted-foreground/60" />
           <h2 className="text-lg font-semibold">Not available yet</h2>
           <p className="text-sm text-muted-foreground">Your broker will let you know as soon as this CIM is ready to view.</p>
+          {error.body?.dataRoom?.available && (
+            <div className="pt-2">
+              <Button asChild size="sm" data-testid="view-room-open-data-room">
+                <Link href={`/view/${token}/data-room`}>Open the data room</Link>
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -301,9 +373,17 @@ export default function BuyerViewRoom() {
               <h1 className="font-semibold text-sm leading-tight">{deal.businessName}</h1>
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
                 Confidential Information Memorandum
+                {cimMode === "dd" && (
+                  <span className="ml-2 inline-flex items-center rounded-full border border-teal/40 px-1.5 py-px text-[9px] font-semibold normal-case tracking-normal text-teal" data-testid="dd-badge">
+                    {DD_BADGE}
+                  </span>
+                )}
               </p>
             </div>
           </div>
+          {data.dataRoom?.available && (
+            <RoomSwitch token={token!} active="memo" newCount={data.dataRoom.newCount} className="hidden md:inline-flex" />
+          )}
           <div className="flex items-center gap-3">
             <p className="text-xs text-muted-foreground hidden sm:block">{access.buyerEmail}</p>
             <span className="flex items-center gap-1.5 text-xs text-muted-foreground border border-border rounded-full px-2.5 py-1">
@@ -312,6 +392,11 @@ export default function BuyerViewRoom() {
             </span>
           </div>
         </div>
+        {data.dataRoom?.available && (
+          <div className="border-t border-border px-4 py-2 md:hidden">
+            <RoomSwitch token={token!} active="memo" newCount={data.dataRoom.newCount} full />
+          </div>
+        )}
       </header>
 
       {/* ── Sticky section nav (appears after scrolling past cover) ────── */}
@@ -362,9 +447,9 @@ export default function BuyerViewRoom() {
               <div className="px-1 space-y-1.5 text-xs">
                 <div className="flex justify-between text-muted-foreground">
                   <span>Access</span>
-                  <Badge variant="outline" className="text-[9px] h-4">{buyerAccessLabel(access.accessLevel)}</Badge>
+                  <Badge variant="outline" className="text-[9px] h-4">{buyerFacingLevelLabel(access.accessLevel)}</Badge>
                 </div>
-                {access.canDownload === false && (
+                {(data.dataRoom?.available ? !data.dataRoom.allowDownloads : access.canDownload === false) && (
                   <div className="flex items-center gap-1 text-muted-foreground/60">
                     <Lock className="h-3 w-3" /> No downloads
                   </div>
@@ -374,6 +459,14 @@ export default function BuyerViewRoom() {
           </aside>
 
           {/* ── Main CIM content ─────────────────────────────────────────────── */}
+          {/* Data-room citations (VdrCitationChip) and links inside the CIM open beside it (vdr §6.6). */}
+          <VdrLinkProvider source={{ kind: "buyer", token: token! }} onDrawerChange={(open, itemId) => {
+              // Recorded on the page being read, before the pause starts.
+              if (open && itemId) tracker.record("vdr_open", null, undefined, `doc:${itemId}`);
+              setRoomDrawerOpen(open);
+            }}>
+          {/* gl's add-back page/note link to the ledger and its documents through the room (INTEGRATION §2.6). */}
+          <GlRoomLinkProvider>
           <main className="flex-1 min-w-0">
             {hasAiSections && !!data.pendingSections && (
               <p className="mb-3 text-xs text-muted-foreground flex items-center gap-2" data-testid="view-pending-sections">
@@ -391,7 +484,12 @@ export default function BuyerViewRoom() {
               <CimDesignProvider design={design} sections={visibleSections}>
               {/* Reading analytics: every page and part carries its id inside this provider. */}
               <CimBlocksProvider host={tracker}>
+              {/* Notes on the figures (and, due diligence, the checks) — whitelisted by the server. */}
+              <FigureLayerProvider layer={data.figureLayer ?? null} buyer={figureBuyer}>
+              {/* gl's "Found in the books" row marks: only lines whose mark is on in what this buyer is served. */}
+              <GlMarksProvider marks={glMarkedLineIds(visibleSections)}>
               <CimSheet className="px-5 py-6 sm:px-10 sm:py-12" {...{ [READING_SHEET_ATTR]: "" }}>
+                {!visibleSections.some((s) => s.layoutType === "cover_page") && <DdBanner />}
                 {withBrokeragePages(visibleSections, {
                   disclaimer: design.brokerage.showDisclaimerPage !== false,
                   contact: design.brokerage.showContactPage !== false,
@@ -403,7 +501,8 @@ export default function BuyerViewRoom() {
                   /* scroll-mt clears the sticky header + section strip so
                      nav clicks, "See …" links and TOC anchors land the
                      heading below the chrome instead of under it. */
-                  <div key={section.id} id={`section-${section.id}`} data-cim-page={section.id} className="scroll-mt-24">
+                  <Fragment key={section.id}>
+                  <div id={`section-${section.id}`} data-cim-page={section.id} className="scroll-mt-24">
                     {/* The page scope: interactions reported at the section's top level (expand/collapse) know their page. */}
                     <CimBlockScope pageId={section.id}>
                     <SectionBoundary sectionTitle={section.sectionTitle}>
@@ -423,8 +522,13 @@ export default function BuyerViewRoom() {
                     </SectionBoundary>
                     </CimBlockScope>
                   </div>
+                  {/* The due-diligence key sits under the cover page: inside the paper, outside any page (the reading tracker is unaffected). */}
+                  {section.layoutType === "cover_page" && <DdBanner />}
+                  </Fragment>
                 ); })())}
               </CimSheet>
+              </GlMarksProvider>
+              </FigureLayerProvider>
               </CimBlocksProvider>
               </CimDesignProvider>
               </CimMediaProvider>
@@ -466,6 +570,8 @@ export default function BuyerViewRoom() {
             )}
 
           </main>
+          </GlRoomLinkProvider>
+          </VdrLinkProvider>
         </div>
       </div>
 

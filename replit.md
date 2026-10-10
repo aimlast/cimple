@@ -1,7 +1,7 @@
 # Cimple — AI-Powered CBO Platform
 
 ## Overview
-Cimple is an AI-powered platform for generating Confidential Business Overviews (CBOs) and Confidential Information Memorandums (CIMs) for business brokers and sellers. The platform is branded as **Cimple** with a near-black background + cream text design language. The logo is served from `/cimple-logo.png` and also importable as `@assets/CIMPLE_Logo_full_stacked_1773847868992.png` via Vite.
+Cimple is an AI-powered platform for generating Confidential Business Overviews (CBOs) and Confidential Information Memorandums (CIMs) for business brokers and sellers. The platform is branded as **Cimple** with a near-black background + cream text design language. The brand is two separate pieces, never shown side by side: the icon (`/cimple-icon.png`, `CimpleMark`, collapsed sidebar only) and the wordmark (`/cimple-text.png`, `CimpleWordmark`), both in `client/src/components/brand/CimpleLogo.tsx`.
 
 The platform streamlines the traditional CIM creation process through AI-guided seller interviews, dynamic questionnaires, and document analysis — guiding sellers to capture industry-specific information and generating professional, buyer-ready CBOs with custom brokerage branding.
 

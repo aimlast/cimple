@@ -1,0 +1,838 @@
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+1000 Chequing
+01/28/2024,Deposits - month,3089,J3089,90497.25,,90497.25
+01/28/2024,Payments - month,3090,J3090,,42924.70,47572.55
+02/28/2024,Deposits - month,3091,J3091,90497.25,,138069.80
+02/28/2024,Payments - month,3092,J3092,,42924.70,95145.10
+03/28/2024,Deposits - month,3093,J3093,90497.25,,185642.35
+03/28/2024,Payments - month,3094,J3094,,42924.70,142717.65
+04/28/2024,Deposits - month,3096,J3096,90497.25,,233214.90
+04/28/2024,Payments - month,3097,J3097,,42924.70,190290.20
+05/28/2024,Deposits - month,3098,J3098,90497.25,,280787.45
+05/28/2024,Payments - month,3099,J3099,,42924.70,237862.75
+06/28/2024,Deposits - month,3100,J3100,90497.25,,328360.00
+06/28/2024,Payments - month,3101,J3101,,42924.70,285435.30
+07/28/2024,Deposits - month,3103,J3103,90497.25,,375932.55
+07/28/2024,Payments - month,3104,J3104,,42924.70,333007.85
+08/28/2024,Deposits - month,3105,J3105,90497.25,,423505.10
+08/28/2024,Payments - month,3106,J3106,,42924.70,380580.40
+09/28/2024,Deposits - month,3107,J3107,90497.25,,471077.65
+09/28/2024,Payments - month,3108,J3108,,42924.70,428152.95
+10/28/2024,Deposits - month,3110,J3110,90497.25,,518650.20
+10/28/2024,Payments - month,3111,J3111,,42924.70,475725.50
+11/28/2024,Deposits - month,3112,J3112,90497.25,,566222.75
+11/28/2024,Payments - month,3113,J3113,,42924.70,523298.05
+12/28/2024,Deposits - month,3114,J3114,90497.25,,613795.30
+12/28/2024,Payments - month,3115,J3115,,42924.70,570870.60
+1510 Accumulated Amortization
+12/31/2024,Year-end amortization,3087,J3087,,31000.00,-31000.00
+2100 HST Payable
+03/30/2024,"Receiver General, HST remittance",3095,J3095,10280.64,,10280.64
+06/30/2024,"Receiver General, HST remittance",3102,J3102,10279.20,,20559.84
+09/30/2024,"Receiver General, HST remittance",3109,J3109,10040.00,,30599.84
+12/30/2024,"Receiver General, HST remittance",3116,J3116,10341.90,,40941.74
+2500 Shareholder Loan
+06/01/2024,"Dan Brightwater, Shareholder advance",3117,J3117,,10000.00,-10000.00
+4000 Sales - Service
+01/02/2024,"Maple Ridge Condos, Service call 2024-01-1",2409,J2409,,4434.00,-4434.00
+01/05/2024,"J. Alvarez, Service call 2024-01-2",2410,J2410,,3430.00,-7864.00
+01/08/2024,"Lakeview Dental Centre, Service call 2024-01-3",2411,J2411,,6332.00,-14196.00
+01/11/2024,"Northgate Schools, Service call 2024-01-4",2412,J2412,,8583.00,-22779.00
+01/14/2024,"P. Nguyen, Service call 2024-01-5",2413,J2413,,7515.00,-30294.00
+01/17/2024,"Oakville Medical Arts, Service call 2024-01-6",2414,J2414,,5992.00,-36286.00
+01/20/2024,"Riverstone Homes, Service call 2024-01-7",2415,J2415,,6802.00,-43088.00
+01/23/2024,"S. Kowalski, Service call 2024-01-8",2416,J2416,,7823.00,-50911.00
+02/02/2024,"J. Alvarez, Service call 2024-02-1",2447,J2447,,6575.00,-57486.00
+02/05/2024,"Lakeview Dental Centre, Service call 2024-02-2",2448,J2448,,2909.00,-60395.00
+02/08/2024,"Northgate Schools, Service call 2024-02-3",2449,J2449,,1568.00,-61963.00
+02/11/2024,"P. Nguyen, Service call 2024-02-4",2450,J2450,,6668.00,-68631.00
+02/14/2024,"Oakville Medical Arts, Service call 2024-02-5",2451,J2451,,3283.00,-71914.00
+02/17/2024,"Riverstone Homes, Service call 2024-02-6",2452,J2452,,5927.00,-77841.00
+02/20/2024,"S. Kowalski, Service call 2024-02-7",2453,J2453,,3945.00,-81786.00
+
+Page 2
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+02/23/2024,"Bayfront Hotel, Service call 2024-02-8",2454,J2454,,5434.00,-87220.00
+03/02/2024,"Lakeview Dental Centre, Service call 2024-03-1",2485,J2485,,8967.00,-96187.00
+03/05/2024,"Northgate Schools, Service call 2024-03-2",2486,J2486,,8582.00,-104769.00
+03/08/2024,"P. Nguyen, Service call 2024-03-3",2487,J2487,,2299.00,-107068.00
+03/11/2024,"Oakville Medical Arts, Service call 2024-03-4",2488,J2488,,2815.00,-109883.00
+03/14/2024,"Riverstone Homes, Service call 2024-03-5",2489,J2489,,3334.00,-113217.00
+03/17/2024,"S. Kowalski, Service call 2024-03-6",2490,J2490,,5225.00,-118442.00
+03/20/2024,"Bayfront Hotel, Service call 2024-03-7",2491,J2491,,6029.00,-124471.00
+03/23/2024,"Halton Property Group, Service call 2024-03-8",2492,J2492,,4446.00,-128917.00
+04/02/2024,"Northgate Schools, Service call 2024-04-1",2526,J2526,,1844.00,-130761.00
+04/05/2024,"P. Nguyen, Service call 2024-04-2",2527,J2527,,2197.00,-132958.00
+04/08/2024,"Oakville Medical Arts, Service call 2024-04-3",2528,J2528,,5204.00,-138162.00
+04/11/2024,"Riverstone Homes, Service call 2024-04-4",2529,J2529,,2575.00,-140737.00
+04/14/2024,"S. Kowalski, Service call 2024-04-5",2530,J2530,,4012.00,-144749.00
+04/17/2024,"Bayfront Hotel, Service call 2024-04-6",2531,J2531,,4586.00,-149335.00
+04/20/2024,"Halton Property Group, Service call 2024-04-7",2532,J2532,,8967.00,-158302.00
+04/23/2024,"Maple Ridge Condos, Service call 2024-04-8",2533,J2533,,1384.00,-159686.00
+05/02/2024,"P. Nguyen, Service call 2024-05-1",2564,J2564,,3527.00,-163213.00
+05/05/2024,"Oakville Medical Arts, Service call 2024-05-2",2565,J2565,,8181.00,-171394.00
+05/08/2024,"Riverstone Homes, Service call 2024-05-3",2566,J2566,,4280.00,-175674.00
+05/11/2024,"S. Kowalski, Service call 2024-05-4",2567,J2567,,5699.00,-181373.00
+05/14/2024,"Bayfront Hotel, Service call 2024-05-5",2568,J2568,,4063.00,-185436.00
+05/17/2024,"Halton Property Group, Service call 2024-05-6",2569,J2569,,4229.00,-189665.00
+05/20/2024,"Maple Ridge Condos, Service call 2024-05-7",2570,J2570,,5526.00,-195191.00
+05/23/2024,"J. Alvarez, Service call 2024-05-8",2571,J2571,,4943.00,-200134.00
+06/02/2024,"Oakville Medical Arts, Service call 2024-06-1",2602,J2602,,8495.00,-208629.00
+06/05/2024,"Riverstone Homes, Service call 2024-06-2",2603,J2603,,7660.00,-216289.00
+06/08/2024,"S. Kowalski, Service call 2024-06-3",2604,J2604,,5761.00,-222050.00
+06/11/2024,"Bayfront Hotel, Service call 2024-06-4",2605,J2605,,4095.00,-226145.00
+06/14/2024,"Halton Property Group, Service call 2024-06-5",2606,J2606,,7425.00,-233570.00
+06/17/2024,"Maple Ridge Condos, Service call 2024-06-6",2607,J2607,,4205.00,-237775.00
+06/20/2024,"J. Alvarez, Service call 2024-06-7",2608,J2608,,7878.00,-245653.00
+06/23/2024,"Lakeview Dental Centre, Service call 2024-06-8",2609,J2609,,4981.00,-250634.00
+07/02/2024,"Riverstone Homes, Service call 2024-07-1",2644,J2644,,4301.00,-254935.00
+07/05/2024,"S. Kowalski, Service call 2024-07-2",2645,J2645,,4423.00,-259358.00
+07/08/2024,"Bayfront Hotel, Service call 2024-07-3",2646,J2646,,4586.00,-263944.00
+07/11/2024,"Halton Property Group, Service call 2024-07-4",2647,J2647,,1276.00,-265220.00
+07/14/2024,"Maple Ridge Condos, Service call 2024-07-5",2648,J2648,,8257.00,-273477.00
+07/17/2024,"J. Alvarez, Service call 2024-07-6",2649,J2649,,8716.00,-282193.00
+07/20/2024,"Lakeview Dental Centre, Service call 2024-07-7",2650,J2650,,8275.00,-290468.00
+07/23/2024,"Northgate Schools, Service call 2024-07-8",2651,J2651,,2721.00,-293189.00
+08/02/2024,"S. Kowalski, Service call 2024-08-1",2682,J2682,,4414.00,-297603.00
+08/05/2024,"Bayfront Hotel, Service call 2024-08-2",2683,J2683,,7877.00,-305480.00
+08/08/2024,"Halton Property Group, Service call 2024-08-3",2684,J2684,,5809.00,-311289.00
+08/11/2024,"Maple Ridge Condos, Service call 2024-08-4",2685,J2685,,7473.00,-318762.00
+08/14/2024,"J. Alvarez, Service call 2024-08-5",2686,J2686,,8838.00,-327600.00
+
+Page 3
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+08/17/2024,"Lakeview Dental Centre, Service call 2024-08-6",2687,J2687,,8804.00,-336404.00
+08/20/2024,"Northgate Schools, Service call 2024-08-7",2688,J2688,,5599.00,-342003.00
+08/23/2024,"P. Nguyen, Service call 2024-08-8",2689,J2689,,3859.00,-345862.00
+09/02/2024,"Bayfront Hotel, Service call 2024-09-1",2720,J2720,,7617.00,-353479.00
+09/05/2024,"Halton Property Group, Service call 2024-09-2",2721,J2721,,5387.00,-358866.00
+09/08/2024,"Maple Ridge Condos, Service call 2024-09-3",2722,J2722,,3796.00,-362662.00
+09/11/2024,"J. Alvarez, Service call 2024-09-4",2723,J2723,,7612.00,-370274.00
+09/14/2024,"Lakeview Dental Centre, Service call 2024-09-5",2724,J2724,,3063.00,-373337.00
+09/17/2024,"Northgate Schools, Service call 2024-09-6",2725,J2725,,8428.00,-381765.00
+09/20/2024,"P. Nguyen, Service call 2024-09-7",2726,J2726,,4314.00,-386079.00
+09/23/2024,"Oakville Medical Arts, Service call 2024-09-8",2727,J2727,,1591.00,-387670.00
+10/02/2024,"Halton Property Group, Service call 2024-10-1",2761,J2761,,2690.00,-390360.00
+10/05/2024,"Maple Ridge Condos, Service call 2024-10-2",2762,J2762,,4854.00,-395214.00
+10/08/2024,"J. Alvarez, Service call 2024-10-3",2763,J2763,,6823.00,-402037.00
+10/11/2024,"Lakeview Dental Centre, Service call 2024-10-4",2764,J2764,,3600.00,-405637.00
+10/14/2024,"Northgate Schools, Service call 2024-10-5",2765,J2765,,2140.00,-407777.00
+10/17/2024,"P. Nguyen, Service call 2024-10-6",2766,J2766,,5623.00,-413400.00
+10/20/2024,"Oakville Medical Arts, Service call 2024-10-7",2767,J2767,,8977.00,-422377.00
+10/23/2024,"Riverstone Homes, Service call 2024-10-8",2768,J2768,,7618.00,-429995.00
+11/02/2024,"Maple Ridge Condos, Service call 2024-11-1",2799,J2799,,6364.00,-436359.00
+11/05/2024,"J. Alvarez, Service call 2024-11-2",2800,J2800,,8050.00,-444409.00
+11/08/2024,"Lakeview Dental Centre, Service call 2024-11-3",2801,J2801,,1921.00,-446330.00
+11/11/2024,"Northgate Schools, Service call 2024-11-4",2802,J2802,,3575.00,-449905.00
+11/14/2024,"P. Nguyen, Service call 2024-11-5",2803,J2803,,1349.00,-451254.00
+11/17/2024,"Oakville Medical Arts, Service call 2024-11-6",2804,J2804,,7415.00,-458669.00
+11/20/2024,"Riverstone Homes, Service call 2024-11-7",2805,J2805,,4331.00,-463000.00
+11/23/2024,"S. Kowalski, Service call 2024-11-8",2806,J2806,,6854.00,-469854.00
+12/02/2024,"J. Alvarez, Service call 2024-12-1",2837,J2837,,2679.00,-472533.00
+12/05/2024,"Lakeview Dental Centre, Service call 2024-12-2",2838,J2838,,4822.00,-477355.00
+12/08/2024,"Northgate Schools, Service call 2024-12-3",2839,J2839,,7230.00,-484585.00
+12/11/2024,"P. Nguyen, Service call 2024-12-4",2840,J2840,,1949.00,-486534.00
+12/14/2024,"Oakville Medical Arts, Service call 2024-12-5",2841,J2841,,1466.00,-488000.00
+12/17/2024,"Riverstone Homes, Service call 2024-12-6",2842,J2842,,5262.00,-493262.00
+12/20/2024,"S. Kowalski, Service call 2024-12-7",2843,J2843,,5647.00,-498909.00
+12/23/2024,"Bayfront Hotel, Service call 2024-12-8",2844,J2844,,4626.00,-503535.00
+4010 Sales - Installations
+01/05/2024,"Lakeview Dental Centre, Furnace / boiler installation",2417,J2417,,10135.00,-10135.00
+01/13/2024,"Northgate Schools, Furnace / boiler installation",2418,J2418,,16644.00,-26779.00
+01/21/2024,"P. Nguyen, Furnace / boiler installation",2419,J2419,,8116.00,-34895.00
+02/05/2024,"Oakville Medical Arts, Furnace / boiler installation",2455,J2455,,13317.00,-48212.00
+02/13/2024,"Riverstone Homes, Furnace / boiler installation",2456,J2456,,11394.00,-59606.00
+02/21/2024,"S. Kowalski, Furnace / boiler installation",2457,J2457,,14211.00,-73817.00
+03/05/2024,"Bayfront Hotel, Furnace / boiler installation",2493,J2493,,11580.00,-85397.00
+03/13/2024,"Halton Property Group, Furnace / boiler installation",2494,J2494,,14806.00,-100203.00
+03/21/2024,"Maple Ridge Condos, Furnace / boiler installation",2495,J2495,,28765.00,-128968.00
+04/05/2024,"J. Alvarez, Furnace / boiler installation",2534,J2534,,12850.00,-141818.00
+04/13/2024,"Lakeview Dental Centre, Furnace / boiler installation",2535,J2535,,9823.00,-151641.00
+
+Page 4
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+04/21/2024,"Northgate Schools, Furnace / boiler installation",2536,J2536,,8736.00,-160377.00
+05/05/2024,"P. Nguyen, Furnace / boiler installation",2572,J2572,,11222.00,-171599.00
+05/13/2024,"Oakville Medical Arts, Furnace / boiler installation",2573,J2573,,18249.00,-189848.00
+05/21/2024,"Riverstone Homes, Furnace / boiler installation",2574,J2574,,22354.00,-212202.00
+06/05/2024,"S. Kowalski, Furnace / boiler installation",2610,J2610,,19840.00,-232042.00
+06/13/2024,"Bayfront Hotel, Furnace / boiler installation",2611,J2611,,18276.00,-250318.00
+06/21/2024,"Halton Property Group, Furnace / boiler installation",2612,J2612,,27254.00,-277572.00
+07/05/2024,"Maple Ridge Condos, Furnace / boiler installation",2652,J2652,,26743.00,-304315.00
+07/13/2024,"J. Alvarez, Furnace / boiler installation",2653,J2653,,24938.00,-329253.00
+07/21/2024,"Lakeview Dental Centre, Furnace / boiler installation",2654,J2654,,16763.00,-346016.00
+08/05/2024,"Northgate Schools, Furnace / boiler installation",2690,J2690,,10399.00,-356415.00
+08/13/2024,"P. Nguyen, Furnace / boiler installation",2691,J2691,,8340.00,-364755.00
+08/21/2024,"Oakville Medical Arts, Furnace / boiler installation",2692,J2692,,27274.00,-392029.00
+09/05/2024,"Riverstone Homes, Furnace / boiler installation",2728,J2728,,11433.00,-403462.00
+09/13/2024,"S. Kowalski, Furnace / boiler installation",2729,J2729,,20610.00,-424072.00
+09/21/2024,"Bayfront Hotel, Furnace / boiler installation",2730,J2730,,18354.00,-442426.00
+10/05/2024,"Halton Property Group, Furnace / boiler installation",2769,J2769,,11683.00,-454109.00
+10/13/2024,"Maple Ridge Condos, Furnace / boiler installation",2770,J2770,,16995.00,-471104.00
+10/21/2024,"J. Alvarez, Furnace / boiler installation",2771,J2771,,27991.00,-499095.00
+11/05/2024,"Lakeview Dental Centre, Furnace / boiler installation",2807,J2807,,8273.00,-507368.00
+11/13/2024,"Northgate Schools, Furnace / boiler installation",2808,J2808,,8898.00,-516266.00
+11/21/2024,"P. Nguyen, Furnace / boiler installation",2809,J2809,,9173.00,-525439.00
+12/05/2024,"Oakville Medical Arts, Furnace / boiler installation",2845,J2845,,14748.00,-540187.00
+12/13/2024,"Riverstone Homes, Furnace / boiler installation",2846,J2846,,13579.00,-553766.00
+12/21/2024,"S. Kowalski, Furnace / boiler installation",2847,J2847,,28666.00,-582432.00
+5000 Materials & Supplies
+01/03/2024,"Wolseley Canada, Pipe, fittings and parts",2420,J2420,4089.00,,4089.00
+01/08/2024,"Emco Supply, Pipe, fittings and parts",2421,J2421,1412.00,,5501.00
+01/13/2024,"The Home Depot, Pipe, fittings and parts",2422,J2422,1988.00,,7489.00
+01/18/2024,"Wolseley Canada, Pipe, fittings and parts",2423,J2423,1288.00,,8777.00
+01/23/2024,"Emco Supply, Pipe, fittings and parts",2424,J2424,994.00,,9771.00
+02/03/2024,"Wolseley Canada, Pipe, fittings and parts",2458,J2458,2236.00,,12007.00
+02/08/2024,"Emco Supply, Pipe, fittings and parts",2459,J2459,4713.00,,16720.00
+02/13/2024,"The Home Depot, Pipe, fittings and parts",2460,J2460,3706.00,,20426.00
+02/18/2024,"Wolseley Canada, Pipe, fittings and parts",2461,J2461,3389.00,,23815.00
+02/23/2024,"Emco Supply, Pipe, fittings and parts",2462,J2462,4982.00,,28797.00
+03/03/2024,"Wolseley Canada, Pipe, fittings and parts",2496,J2496,630.00,,29427.00
+03/08/2024,"Emco Supply, Pipe, fittings and parts",2497,J2497,4544.00,,33971.00
+03/13/2024,"The Home Depot, Pipe, fittings and parts",2498,J2498,2281.00,,36252.00
+03/18/2024,"Wolseley Canada, Pipe, fittings and parts",2499,J2499,4036.00,,40288.00
+03/23/2024,"Emco Supply, Pipe, fittings and parts",2500,J2500,2673.00,,42961.00
+04/03/2024,"Wolseley Canada, Pipe, fittings and parts",2537,J2537,3108.00,,46069.00
+04/08/2024,"Emco Supply, Pipe, fittings and parts",2538,J2538,4985.00,,51054.00
+04/13/2024,"The Home Depot, Pipe, fittings and parts",2539,J2539,4057.00,,55111.00
+04/18/2024,"Wolseley Canada, Pipe, fittings and parts",2540,J2540,3997.00,,59108.00
+04/23/2024,"Emco Supply, Pipe, fittings and parts",2541,J2541,595.00,,59703.00
+05/03/2024,"Wolseley Canada, Pipe, fittings and parts",2575,J2575,848.00,,60551.00
+
+Page 5
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+05/08/2024,"Emco Supply, Pipe, fittings and parts",2576,J2576,4391.00,,64942.00
+05/13/2024,"The Home Depot, Pipe, fittings and parts",2577,J2577,1680.00,,66622.00
+05/18/2024,"Wolseley Canada, Pipe, fittings and parts",2578,J2578,4209.00,,70831.00
+05/23/2024,"Emco Supply, Pipe, fittings and parts",2579,J2579,1662.00,,72493.00
+06/03/2024,"Wolseley Canada, Pipe, fittings and parts",2613,J2613,4042.00,,76535.00
+06/08/2024,"Emco Supply, Pipe, fittings and parts",2614,J2614,5143.00,,81678.00
+06/13/2024,"The Home Depot, Pipe, fittings and parts",2615,J2615,2768.00,,84446.00
+06/18/2024,"Wolseley Canada, Pipe, fittings and parts",2616,J2616,1058.00,,85504.00
+06/23/2024,"Emco Supply, Pipe, fittings and parts",2617,J2617,2154.00,,87658.00
+07/03/2024,"Wolseley Canada, Pipe, fittings and parts",2655,J2655,3312.00,,90970.00
+07/08/2024,"Emco Supply, Pipe, fittings and parts",2656,J2656,1013.00,,91983.00
+07/13/2024,"The Home Depot, Pipe, fittings and parts",2657,J2657,2808.00,,94791.00
+07/18/2024,"Wolseley Canada, Pipe, fittings and parts",2658,J2658,3876.00,,98667.00
+07/23/2024,"Emco Supply, Pipe, fittings and parts",2659,J2659,4630.00,,103297.00
+08/03/2024,"Wolseley Canada, Pipe, fittings and parts",2693,J2693,3761.00,,107058.00
+08/08/2024,"Emco Supply, Pipe, fittings and parts",2694,J2694,2689.00,,109747.00
+08/13/2024,"The Home Depot, Pipe, fittings and parts",2695,J2695,3169.00,,112916.00
+08/18/2024,"Wolseley Canada, Pipe, fittings and parts",2696,J2696,935.00,,113851.00
+08/23/2024,"Emco Supply, Pipe, fittings and parts",2697,J2697,5157.00,,119008.00
+09/03/2024,"Wolseley Canada, Pipe, fittings and parts",2731,J2731,2666.00,,121674.00
+09/08/2024,"Emco Supply, Pipe, fittings and parts",2732,J2732,2686.00,,124360.00
+09/13/2024,"The Home Depot, Pipe, fittings and parts",2733,J2733,3650.00,,128010.00
+09/18/2024,"Wolseley Canada, Pipe, fittings and parts",2734,J2734,4640.00,,132650.00
+09/23/2024,"Emco Supply, Pipe, fittings and parts",2735,J2735,1736.00,,134386.00
+10/03/2024,"Wolseley Canada, Pipe, fittings and parts",2772,J2772,650.00,,135036.00
+10/08/2024,"Emco Supply, Pipe, fittings and parts",2773,J2773,2060.00,,137096.00
+10/13/2024,"The Home Depot, Pipe, fittings and parts",2774,J2774,4336.00,,141432.00
+10/18/2024,"Wolseley Canada, Pipe, fittings and parts",2775,J2775,3164.00,,144596.00
+10/23/2024,"Emco Supply, Pipe, fittings and parts",2776,J2776,2921.00,,147517.00
+11/03/2024,"Wolseley Canada, Pipe, fittings and parts",2810,J2810,4154.00,,151671.00
+11/08/2024,"Emco Supply, Pipe, fittings and parts",2811,J2811,1684.00,,153355.00
+11/13/2024,"The Home Depot, Pipe, fittings and parts",2812,J2812,2710.00,,156065.00
+11/18/2024,"Wolseley Canada, Pipe, fittings and parts",2813,J2813,5363.00,,161428.00
+11/23/2024,"Emco Supply, Pipe, fittings and parts",2814,J2814,3227.00,,164655.00
+12/03/2024,"Wolseley Canada, Pipe, fittings and parts",2848,J2848,1120.00,,165775.00
+12/08/2024,"Emco Supply, Pipe, fittings and parts",2849,J2849,3206.00,,168981.00
+12/13/2024,"The Home Depot, Pipe, fittings and parts",2850,J2850,1166.00,,170147.00
+12/18/2024,"Wolseley Canada, Pipe, fittings and parts",2851,J2851,5543.00,,175690.00
+12/23/2024,"Emco Supply, Pipe, fittings and parts",2852,J2852,1190.00,,176880.00
+5100 Subcontractors
+01/10/2024,"Delta Electrical, Subcontract work",2425,J2425,3384.00,,3384.00
+01/19/2024,"Precision Ductwork, Subcontract work",2426,J2426,6714.00,,10098.00
+02/10/2024,"Delta Electrical, Subcontract work",2463,J2463,6511.00,,16609.00
+02/19/2024,"Precision Ductwork, Subcontract work",2464,J2464,3504.00,,20113.00
+03/10/2024,"Delta Electrical, Subcontract work",2501,J2501,3604.00,,23717.00
+03/19/2024,"Precision Ductwork, Subcontract work",2502,J2502,6640.00,,30357.00
+04/10/2024,"Delta Electrical, Subcontract work",2542,J2542,2946.00,,33303.00
+
+Page 6
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+04/19/2024,"Precision Ductwork, Subcontract work",2543,J2543,8630.00,,41933.00
+05/10/2024,"Delta Electrical, Subcontract work",2580,J2580,7471.00,,49404.00
+05/19/2024,"Precision Ductwork, Subcontract work",2581,J2581,6604.00,,56008.00
+06/10/2024,"Delta Electrical, Subcontract work",2618,J2618,4932.00,,60940.00
+06/19/2024,"Precision Ductwork, Subcontract work",2619,J2619,5112.00,,66052.00
+07/10/2024,"Delta Electrical, Subcontract work",2660,J2660,5099.00,,71151.00
+07/19/2024,"Precision Ductwork, Subcontract work",2661,J2661,4324.00,,75475.00
+08/10/2024,"Delta Electrical, Subcontract work",2698,J2698,4382.00,,79857.00
+08/19/2024,"Precision Ductwork, Subcontract work",2699,J2699,8443.00,,88300.00
+09/10/2024,"Delta Electrical, Subcontract work",2736,J2736,5719.00,,94019.00
+09/19/2024,"Precision Ductwork, Subcontract work",2737,J2737,5443.00,,99462.00
+10/10/2024,"Delta Electrical, Subcontract work",2777,J2777,3095.00,,102557.00
+10/19/2024,"Precision Ductwork, Subcontract work",2778,J2778,6934.00,,109491.00
+11/10/2024,"Delta Electrical, Subcontract work",2815,J2815,2957.00,,112448.00
+11/19/2024,"Precision Ductwork, Subcontract work",2816,J2816,3637.00,,116085.00
+12/10/2024,"Delta Electrical, Subcontract work",2853,J2853,7077.00,,123162.00
+12/19/2024,"Precision Ductwork, Subcontract work",2854,J2854,7322.00,,130484.00
+6000 Wages & Salaries
+01/12/2024,"Payroll — M. Chen, Biweekly pay",2878,J2878,2615.38,,2615.38
+01/12/2024,"Payroll — J. Okafor, Biweekly pay",2904,J2904,2423.08,,5038.46
+01/12/2024,"Payroll — R. Singh, Biweekly pay",2930,J2930,2192.31,,7230.77
+01/12/2024,"Payroll — E. Brightwater, Biweekly pay",2956,J2956,3269.23,,10500.00
+01/26/2024,"Payroll — M. Chen, Biweekly pay",2879,J2879,2615.38,,13115.38
+01/26/2024,"Payroll — J. Okafor, Biweekly pay",2905,J2905,2423.08,,15538.46
+01/26/2024,"Payroll — R. Singh, Biweekly pay",2931,J2931,2192.31,,17730.77
+01/26/2024,"Payroll — E. Brightwater, Biweekly pay",2957,J2957,3269.23,,21000.00
+02/09/2024,"Payroll — M. Chen, Biweekly pay",2880,J2880,2615.38,,23615.38
+02/09/2024,"Payroll — J. Okafor, Biweekly pay",2906,J2906,2423.08,,26038.46
+02/09/2024,"Payroll — R. Singh, Biweekly pay",2932,J2932,2192.31,,28230.77
+02/09/2024,"Payroll — E. Brightwater, Biweekly pay",2958,J2958,3269.23,,31500.00
+02/23/2024,"Payroll — M. Chen, Biweekly pay",2881,J2881,2615.38,,34115.38
+02/23/2024,"Payroll — J. Okafor, Biweekly pay",2907,J2907,2423.08,,36538.46
+02/23/2024,"Payroll — R. Singh, Biweekly pay",2933,J2933,2192.31,,38730.77
+02/23/2024,"Payroll — E. Brightwater, Biweekly pay",2959,J2959,3269.23,,42000.00
+03/08/2024,"Payroll — M. Chen, Biweekly pay",2882,J2882,2615.38,,44615.38
+03/08/2024,"Payroll — J. Okafor, Biweekly pay",2908,J2908,2423.08,,47038.46
+03/08/2024,"Payroll — R. Singh, Biweekly pay",2934,J2934,2192.31,,49230.77
+03/08/2024,"Payroll — E. Brightwater, Biweekly pay",2960,J2960,3269.23,,52500.00
+03/22/2024,"Payroll — M. Chen, Biweekly pay",2883,J2883,2615.38,,55115.38
+03/22/2024,"Payroll — J. Okafor, Biweekly pay",2909,J2909,2423.08,,57538.46
+03/22/2024,"Payroll — R. Singh, Biweekly pay",2935,J2935,2192.31,,59730.77
+03/22/2024,"Payroll — E. Brightwater, Biweekly pay",2961,J2961,3269.23,,63000.00
+04/05/2024,"Payroll — M. Chen, Biweekly pay",2884,J2884,2615.38,,65615.38
+04/05/2024,"Payroll — J. Okafor, Biweekly pay",2910,J2910,2423.08,,68038.46
+04/05/2024,"Payroll — R. Singh, Biweekly pay",2936,J2936,2192.31,,70230.77
+04/05/2024,"Payroll — E. Brightwater, Biweekly pay",2962,J2962,3269.23,,73500.00
+04/19/2024,"Payroll — M. Chen, Biweekly pay",2885,J2885,2615.38,,76115.38
+
+Page 7
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+04/19/2024,"Payroll — J. Okafor, Biweekly pay",2911,J2911,2423.08,,78538.46
+04/19/2024,"Payroll — R. Singh, Biweekly pay",2937,J2937,2192.31,,80730.77
+04/19/2024,"Payroll — E. Brightwater, Biweekly pay",2963,J2963,3269.23,,84000.00
+05/03/2024,"Payroll — M. Chen, Biweekly pay",2886,J2886,2615.38,,86615.38
+05/03/2024,"Payroll — J. Okafor, Biweekly pay",2912,J2912,2423.08,,89038.46
+05/03/2024,"Payroll — R. Singh, Biweekly pay",2938,J2938,2192.31,,91230.77
+05/03/2024,"Payroll — E. Brightwater, Biweekly pay",2964,J2964,3269.23,,94500.00
+05/17/2024,"Payroll — M. Chen, Biweekly pay",2887,J2887,2615.38,,97115.38
+05/17/2024,"Payroll — J. Okafor, Biweekly pay",2913,J2913,2423.08,,99538.46
+05/17/2024,"Payroll — R. Singh, Biweekly pay",2939,J2939,2192.31,,101730.77
+05/17/2024,"Payroll — E. Brightwater, Biweekly pay",2965,J2965,3269.23,,105000.00
+05/31/2024,"Payroll — M. Chen, Biweekly pay",2888,J2888,2615.38,,107615.38
+05/31/2024,"Payroll — J. Okafor, Biweekly pay",2914,J2914,2423.08,,110038.46
+05/31/2024,"Payroll — R. Singh, Biweekly pay",2940,J2940,2192.31,,112230.77
+05/31/2024,"Payroll — E. Brightwater, Biweekly pay",2966,J2966,3269.23,,115500.00
+06/14/2024,"Payroll — M. Chen, Biweekly pay",2889,J2889,2615.38,,118115.38
+06/14/2024,"Payroll — J. Okafor, Biweekly pay",2915,J2915,2423.08,,120538.46
+06/14/2024,"Payroll — R. Singh, Biweekly pay",2941,J2941,2192.31,,122730.77
+06/14/2024,"Payroll — E. Brightwater, Biweekly pay",2967,J2967,3269.23,,126000.00
+06/28/2024,"Payroll — M. Chen, Biweekly pay",2890,J2890,2615.38,,128615.38
+06/28/2024,"Payroll — J. Okafor, Biweekly pay",2916,J2916,2423.08,,131038.46
+06/28/2024,"Payroll — R. Singh, Biweekly pay",2942,J2942,2192.31,,133230.77
+06/28/2024,"Payroll — E. Brightwater, Biweekly pay",2968,J2968,3269.23,,136500.00
+07/12/2024,"Payroll — M. Chen, Biweekly pay",2891,J2891,2615.38,,139115.38
+07/12/2024,"Payroll — J. Okafor, Biweekly pay",2917,J2917,2423.08,,141538.46
+07/12/2024,"Payroll — R. Singh, Biweekly pay",2943,J2943,2192.31,,143730.77
+07/12/2024,"Payroll — E. Brightwater, Biweekly pay",2969,J2969,3269.23,,147000.00
+07/26/2024,"Payroll — M. Chen, Biweekly pay",2892,J2892,2615.38,,149615.38
+07/26/2024,"Payroll — J. Okafor, Biweekly pay",2918,J2918,2423.08,,152038.46
+07/26/2024,"Payroll — R. Singh, Biweekly pay",2944,J2944,2192.31,,154230.77
+07/26/2024,"Payroll — E. Brightwater, Biweekly pay",2970,J2970,3269.23,,157500.00
+08/09/2024,"Payroll — M. Chen, Biweekly pay",2893,J2893,2615.38,,160115.38
+08/09/2024,"Payroll — J. Okafor, Biweekly pay",2919,J2919,2423.08,,162538.46
+08/09/2024,"Payroll — R. Singh, Biweekly pay",2945,J2945,2192.31,,164730.77
+08/09/2024,"Payroll — E. Brightwater, Biweekly pay",2971,J2971,3269.23,,168000.00
+08/23/2024,"Payroll — M. Chen, Biweekly pay",2894,J2894,2615.38,,170615.38
+08/23/2024,"Payroll — J. Okafor, Biweekly pay",2920,J2920,2423.08,,173038.46
+08/23/2024,"Payroll — R. Singh, Biweekly pay",2946,J2946,2192.31,,175230.77
+08/23/2024,"Payroll — E. Brightwater, Biweekly pay",2972,J2972,3269.23,,178500.00
+09/06/2024,"Payroll — M. Chen, Biweekly pay",2895,J2895,2615.38,,181115.38
+09/06/2024,"Payroll — J. Okafor, Biweekly pay",2921,J2921,2423.08,,183538.46
+09/06/2024,"Payroll — R. Singh, Biweekly pay",2947,J2947,2192.31,,185730.77
+09/06/2024,"Payroll — E. Brightwater, Biweekly pay",2973,J2973,3269.23,,189000.00
+09/20/2024,"Payroll — M. Chen, Biweekly pay",2896,J2896,2615.38,,191615.38
+09/20/2024,"Payroll — J. Okafor, Biweekly pay",2922,J2922,2423.08,,194038.46
+09/20/2024,"Payroll — R. Singh, Biweekly pay",2948,J2948,2192.31,,196230.77
+
+Page 8
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+09/20/2024,"Payroll — E. Brightwater, Biweekly pay",2974,J2974,3269.23,,199500.00
+10/04/2024,"Payroll — M. Chen, Biweekly pay",2897,J2897,2615.38,,202115.38
+10/04/2024,"Payroll — J. Okafor, Biweekly pay",2923,J2923,2423.08,,204538.46
+10/04/2024,"Payroll — R. Singh, Biweekly pay",2949,J2949,2192.31,,206730.77
+10/04/2024,"Payroll — E. Brightwater, Biweekly pay",2975,J2975,3269.23,,210000.00
+10/18/2024,"Payroll — M. Chen, Biweekly pay",2898,J2898,2615.38,,212615.38
+10/18/2024,"Payroll — J. Okafor, Biweekly pay",2924,J2924,2423.08,,215038.46
+10/18/2024,"Payroll — R. Singh, Biweekly pay",2950,J2950,2192.31,,217230.77
+10/18/2024,"Payroll — E. Brightwater, Biweekly pay",2976,J2976,3269.23,,220500.00
+11/01/2024,"Payroll — M. Chen, Biweekly pay",2899,J2899,2615.38,,223115.38
+11/01/2024,"Payroll — J. Okafor, Biweekly pay",2925,J2925,2423.08,,225538.46
+11/01/2024,"Payroll — R. Singh, Biweekly pay",2951,J2951,2192.31,,227730.77
+11/01/2024,"Payroll — E. Brightwater, Biweekly pay",2977,J2977,3269.23,,231000.00
+11/15/2024,"Payroll — M. Chen, Biweekly pay",2900,J2900,2615.38,,233615.38
+11/15/2024,"Payroll — J. Okafor, Biweekly pay",2926,J2926,2423.08,,236038.46
+11/15/2024,"Payroll — R. Singh, Biweekly pay",2952,J2952,2192.31,,238230.77
+11/15/2024,"Payroll — E. Brightwater, Biweekly pay",2978,J2978,3269.23,,241500.00
+11/29/2024,"Payroll — M. Chen, Biweekly pay",2901,J2901,2615.38,,244115.38
+11/29/2024,"Payroll — J. Okafor, Biweekly pay",2927,J2927,2423.08,,246538.46
+11/29/2024,"Payroll — R. Singh, Biweekly pay",2953,J2953,2192.31,,248730.77
+11/29/2024,"Payroll — E. Brightwater, Biweekly pay",2979,J2979,3269.23,,252000.00
+12/13/2024,"Payroll — M. Chen, Biweekly pay",2902,J2902,2615.38,,254615.38
+12/13/2024,"Payroll — J. Okafor, Biweekly pay",2928,J2928,2423.08,,257038.46
+12/13/2024,"Payroll — R. Singh, Biweekly pay",2954,J2954,2192.31,,259230.77
+12/13/2024,"Payroll — E. Brightwater, Biweekly pay",2980,J2980,3269.23,,262500.00
+12/27/2024,"Payroll — M. Chen, Biweekly pay",2903,J2903,2615.38,,265115.38
+12/27/2024,"Payroll — J. Okafor, Biweekly pay",2929,J2929,2423.08,,267538.46
+12/27/2024,"Payroll — R. Singh, Biweekly pay",2955,J2955,2192.31,,269730.77
+12/27/2024,"Payroll — E. Brightwater, Biweekly pay",2981,J2981,3269.25,,273000.02
+6010 Wages - Officers
+01/15/2024,"Payroll — D. Brightwater, Semi-monthly salary",2982,J2982,10000.00,,10000.00
+01/28/2024,"Payroll — D. Brightwater, Semi-monthly salary",2983,J2983,10000.00,,20000.00
+02/15/2024,"Payroll — D. Brightwater, Semi-monthly salary",2984,J2984,10000.00,,30000.00
+02/28/2024,"Payroll — D. Brightwater, Semi-monthly salary",2985,J2985,10000.00,,40000.00
+03/15/2024,"Payroll — D. Brightwater, Semi-monthly salary",2986,J2986,10000.00,,50000.00
+03/28/2024,"Payroll — D. Brightwater, Semi-monthly salary",2987,J2987,10000.00,,60000.00
+04/15/2024,"Payroll — D. Brightwater, Semi-monthly salary",2988,J2988,10000.00,,70000.00
+04/28/2024,"Payroll — D. Brightwater, Semi-monthly salary",2989,J2989,10000.00,,80000.00
+05/15/2024,"Payroll — D. Brightwater, Semi-monthly salary",2990,J2990,10000.00,,90000.00
+05/28/2024,"Payroll — D. Brightwater, Semi-monthly salary",2991,J2991,10000.00,,100000.00
+06/15/2024,"Payroll — D. Brightwater, Semi-monthly salary",2992,J2992,10000.00,,110000.00
+06/28/2024,"Payroll — D. Brightwater, Semi-monthly salary",2993,J2993,10000.00,,120000.00
+07/15/2024,"Payroll — D. Brightwater, Semi-monthly salary",2994,J2994,10000.00,,130000.00
+07/28/2024,"Payroll — D. Brightwater, Semi-monthly salary",2995,J2995,10000.00,,140000.00
+08/15/2024,"Payroll — D. Brightwater, Semi-monthly salary",2996,J2996,10000.00,,150000.00
+08/28/2024,"Payroll — D. Brightwater, Semi-monthly salary",2997,J2997,10000.00,,160000.00
+09/15/2024,"Payroll — D. Brightwater, Semi-monthly salary",2998,J2998,10000.00,,170000.00
+
+Page 9
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+09/28/2024,"Payroll — D. Brightwater, Semi-monthly salary",2999,J2999,10000.00,,180000.00
+10/15/2024,"Payroll — D. Brightwater, Semi-monthly salary",3000,J3000,10000.00,,190000.00
+10/28/2024,"Payroll — D. Brightwater, Semi-monthly salary",3001,J3001,10000.00,,200000.00
+11/15/2024,"Payroll — D. Brightwater, Semi-monthly salary",3002,J3002,10000.00,,210000.00
+11/28/2024,"Payroll — D. Brightwater, Semi-monthly salary",3003,J3003,10000.00,,220000.00
+12/15/2024,"Payroll — D. Brightwater, Semi-monthly salary",3004,J3004,10000.00,,230000.00
+12/28/2024,"Payroll — D. Brightwater, Semi-monthly salary",3005,J3005,10000.00,,240000.00
+6020 Payroll Taxes - CPP/EI
+01/11/2024,"Receiver General, CPP/EI remittance",2438,J2438,3138.81,,3138.81
+02/11/2024,"Receiver General, CPP/EI remittance",2476,J2476,3224.69,,6363.50
+03/11/2024,"Receiver General, CPP/EI remittance",2514,J2514,3280.93,,9644.43
+04/11/2024,"Receiver General, CPP/EI remittance",2555,J2555,3270.40,,12914.83
+05/11/2024,"Receiver General, CPP/EI remittance",2593,J2593,3212.89,,16127.72
+06/11/2024,"Receiver General, CPP/EI remittance",2631,J2631,3323.38,,19451.10
+07/11/2024,"Receiver General, CPP/EI remittance",2673,J2673,3258.41,,22709.51
+08/11/2024,"Receiver General, CPP/EI remittance",2711,J2711,3345.34,,26054.85
+09/11/2024,"Receiver General, CPP/EI remittance",2749,J2749,3266.16,,29321.01
+10/11/2024,"Receiver General, CPP/EI remittance",2790,J2790,3191.52,,32512.53
+11/11/2024,"Receiver General, CPP/EI remittance",2828,J2828,3132.92,,35645.45
+12/11/2024,"Receiver General, CPP/EI remittance",2866,J2866,3348.54,,38993.99
+6030 WSIB
+03/15/2024,"WSIB, Quarterly premium",2523,J2523,2100.00,,2100.00
+06/15/2024,"WSIB, Quarterly premium",2640,J2640,2100.00,,4200.00
+09/15/2024,"WSIB, Quarterly premium",2758,J2758,2100.00,,6300.00
+12/15/2024,"WSIB, Quarterly premium",2875,J2875,2100.00,,8400.00
+6040 Employee Benefits
+01/13/2024,"Manulife, Group benefits",2439,J2439,1120.00,,1120.00
+02/13/2024,"Manulife, Group benefits",2477,J2477,1120.00,,2240.00
+03/13/2024,"Manulife, Group benefits",2515,J2515,1120.00,,3360.00
+04/13/2024,"Manulife, Group benefits",2556,J2556,1120.00,,4480.00
+05/13/2024,"Manulife, Group benefits",2594,J2594,1120.00,,5600.00
+06/13/2024,"Manulife, Group benefits",2632,J2632,1120.00,,6720.00
+07/13/2024,"Manulife, Group benefits",2674,J2674,1120.00,,7840.00
+08/13/2024,"Manulife, Group benefits",2712,J2712,1120.00,,8960.00
+09/13/2024,"Manulife, Group benefits",2750,J2750,1120.00,,10080.00
+10/13/2024,"Manulife, Group benefits",2791,J2791,1120.00,,11200.00
+11/13/2024,"Manulife, Group benefits",2829,J2829,1120.00,,12320.00
+12/13/2024,"Manulife, Group benefits",2867,J2867,1120.00,,13440.00
+6110 Vehicle - Owner
+01/03/2024,"Lexus Financial, Lease Jan - Lexus RX",3006,J3006,1150.00,,1150.00
+01/11/2024,"Petro-Canada, Fuel - Lexus RX",3018,J3018,438.69,,1588.69
+01/24/2024,"Petro-Canada, Fuel - Lexus RX",3019,J3019,416.31,,2005.00
+02/03/2024,"Lexus Financial, Lease Feb - Lexus RX",3007,J3007,1150.00,,3155.00
+02/11/2024,"Petro-Canada, Fuel - Lexus RX",3020,J3020,387.97,,3542.97
+02/24/2024,"Petro-Canada, Fuel - Lexus RX",3021,J3021,368.14,,3911.11
+03/03/2024,"Lexus Financial, Lease Mar - Lexus RX",3008,J3008,1150.00,,5061.11
+03/11/2024,"Petro-Canada, Fuel - Lexus RX",3022,J3022,409.69,,5470.80
+03/24/2024,"Petro-Canada, Fuel - Lexus RX",3023,J3023,392.17,,5862.97
+04/02/2024,"Intact Insurance, Auto insurance - Lexus RX",3042,J3042,1860.00,,7722.97
+04/03/2024,"Lexus Financial, Lease Apr - Lexus RX",3009,J3009,1150.00,,8872.97
+
+Page 10
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+04/11/2024,"Petro-Canada, Fuel - Lexus RX",3024,J3024,513.28,,9386.25
+04/24/2024,"Petro-Canada, Fuel - Lexus RX",3025,J3025,506.78,,9893.03
+05/03/2024,"Lexus Financial, Lease May - Lexus RX",3010,J3010,1150.00,,11043.03
+05/11/2024,"Petro-Canada, Fuel - Lexus RX",3026,J3026,512.91,,11555.94
+05/24/2024,"Petro-Canada, Fuel - Lexus RX",3027,J3027,676.73,,12232.67
+06/03/2024,"Lexus Financial, Lease Jun - Lexus RX",3011,J3011,1150.00,,13382.67
+06/11/2024,"Petro-Canada, Fuel - Lexus RX",3028,J3028,457.40,,13840.07
+06/24/2024,"Petro-Canada, Fuel - Lexus RX",3029,J3029,504.47,,14344.54
+07/03/2024,"Lexus Financial, Lease Jul - Lexus RX",3012,J3012,1150.00,,15494.54
+07/11/2024,"Petro-Canada, Fuel - Lexus RX",3030,J3030,622.31,,16116.85
+07/24/2024,"Petro-Canada, Fuel - Lexus RX",3031,J3031,580.48,,16697.33
+08/03/2024,"Lexus Financial, Lease Aug - Lexus RX",3013,J3013,1150.00,,17847.33
+08/11/2024,"Petro-Canada, Fuel - Lexus RX",3032,J3032,393.91,,18241.24
+08/24/2024,"Petro-Canada, Fuel - Lexus RX",3033,J3033,515.68,,18756.92
+09/03/2024,"Lexus Financial, Lease Sep - Lexus RX",3014,J3014,1150.00,,19906.92
+09/11/2024,"Petro-Canada, Fuel - Lexus RX",3034,J3034,500.96,,20407.88
+09/24/2024,"Petro-Canada, Fuel - Lexus RX",3035,J3035,530.01,,20937.89
+10/03/2024,"Lexus Financial, Lease Oct - Lexus RX",3015,J3015,1150.00,,22087.89
+10/11/2024,"Petro-Canada, Fuel - Lexus RX",3036,J3036,528.56,,22616.45
+10/24/2024,"Petro-Canada, Fuel - Lexus RX",3037,J3037,593.05,,23209.50
+11/03/2024,"Lexus Financial, Lease Nov - Lexus RX",3016,J3016,1150.00,,24359.50
+11/11/2024,"Petro-Canada, Fuel - Lexus RX",3038,J3038,608.01,,24967.51
+11/24/2024,"Petro-Canada, Fuel - Lexus RX",3039,J3039,609.56,,25577.07
+12/03/2024,"Lexus Financial, Lease Dec - Lexus RX",3017,J3017,1150.00,,26727.07
+12/11/2024,"Petro-Canada, Fuel - Lexus RX",3040,J3040,526.54,,27253.61
+12/24/2024,"Petro-Canada, Fuel - Lexus RX",3041,J3041,586.39,,27840.00
+6120 Fuel - Service Vans
+01/03/2024,"Petro-Canada, Fuel - service vans",2443,J2443,236.07,,236.07
+01/10/2024,"Esso, Fuel - service vans",2444,J2444,244.97,,481.04
+01/17/2024,"Petro-Canada, Fuel - service vans",2445,J2445,187.61,,668.65
+01/24/2024,"Esso, Fuel - service vans",2446,J2446,196.82,,865.47
+02/03/2024,"Petro-Canada, Fuel - service vans",2481,J2481,155.43,,1020.90
+02/10/2024,"Esso, Fuel - service vans",2482,J2482,249.83,,1270.73
+02/17/2024,"Petro-Canada, Fuel - service vans",2483,J2483,196.44,,1467.17
+02/24/2024,"Esso, Fuel - service vans",2484,J2484,249.95,,1717.12
+03/03/2024,"Petro-Canada, Fuel - service vans",2519,J2519,173.21,,1890.33
+03/10/2024,"Esso, Fuel - service vans",2520,J2520,150.04,,2040.37
+03/17/2024,"Petro-Canada, Fuel - service vans",2521,J2521,159.07,,2199.44
+03/24/2024,"Esso, Fuel - service vans",2522,J2522,153.74,,2353.18
+04/03/2024,"Petro-Canada, Fuel - service vans",2560,J2560,184.93,,2538.11
+04/10/2024,"Esso, Fuel - service vans",2561,J2561,214.16,,2752.27
+04/17/2024,"Petro-Canada, Fuel - service vans",2562,J2562,238.88,,2991.15
+04/24/2024,"Esso, Fuel - service vans",2563,J2563,217.02,,3208.17
+05/03/2024,"Petro-Canada, Fuel - service vans",2598,J2598,222.89,,3431.06
+05/10/2024,"Esso, Fuel - service vans",2599,J2599,220.36,,3651.42
+05/17/2024,"Petro-Canada, Fuel - service vans",2600,J2600,141.87,,3793.29
+05/24/2024,"Esso, Fuel - service vans",2601,J2601,149.53,,3942.82
+
+Page 11
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+06/03/2024,"Petro-Canada, Fuel - service vans",2636,J2636,221.66,,4164.48
+06/10/2024,"Esso, Fuel - service vans",2637,J2637,192.66,,4357.14
+06/17/2024,"Petro-Canada, Fuel - service vans",2638,J2638,253.11,,4610.25
+06/24/2024,"Esso, Fuel - service vans",2639,J2639,225.55,,4835.80
+07/03/2024,"Petro-Canada, Fuel - service vans",2678,J2678,222.79,,5058.59
+07/10/2024,"Esso, Fuel - service vans",2679,J2679,163.34,,5221.93
+07/17/2024,"Petro-Canada, Fuel - service vans",2680,J2680,240.16,,5462.09
+07/24/2024,"Esso, Fuel - service vans",2681,J2681,209.88,,5671.97
+08/03/2024,"Petro-Canada, Fuel - service vans",2716,J2716,183.72,,5855.69
+08/10/2024,"Esso, Fuel - service vans",2717,J2717,164.02,,6019.71
+08/17/2024,"Petro-Canada, Fuel - service vans",2718,J2718,217.39,,6237.10
+08/24/2024,"Esso, Fuel - service vans",2719,J2719,177.78,,6414.88
+09/03/2024,"Petro-Canada, Fuel - service vans",2754,J2754,228.46,,6643.34
+09/10/2024,"Esso, Fuel - service vans",2755,J2755,208.91,,6852.25
+09/17/2024,"Petro-Canada, Fuel - service vans",2756,J2756,199.24,,7051.49
+09/24/2024,"Esso, Fuel - service vans",2757,J2757,170.17,,7221.66
+10/03/2024,"Petro-Canada, Fuel - service vans",2795,J2795,181.75,,7403.41
+10/10/2024,"Esso, Fuel - service vans",2796,J2796,221.95,,7625.36
+10/17/2024,"Petro-Canada, Fuel - service vans",2797,J2797,168.09,,7793.45
+10/24/2024,"Esso, Fuel - service vans",2798,J2798,156.43,,7949.88
+11/03/2024,"Petro-Canada, Fuel - service vans",2833,J2833,256.43,,8206.31
+11/10/2024,"Esso, Fuel - service vans",2834,J2834,175.22,,8381.53
+11/17/2024,"Petro-Canada, Fuel - service vans",2835,J2835,198.92,,8580.45
+11/24/2024,"Esso, Fuel - service vans",2836,J2836,249.49,,8829.94
+12/03/2024,"Petro-Canada, Fuel - service vans",2871,J2871,141.44,,8971.38
+12/10/2024,"Esso, Fuel - service vans",2872,J2872,219.60,,9190.98
+12/17/2024,"Petro-Canada, Fuel - service vans",2873,J2873,140.82,,9331.80
+12/24/2024,"Esso, Fuel - service vans",2874,J2874,145.42,,9477.22
+6130 Van Repairs & Maintenance
+03/22/2024,"Midas, Van service",2525,J2525,422.86,,422.86
+06/22/2024,"Midas, Van service",2642,J2642,502.53,,925.39
+09/22/2024,"Midas, Van service",2760,J2760,682.67,,1608.06
+12/22/2024,"Midas, Van service",2877,J2877,317.65,,1925.71
+6200 Meals and Entertainment
+01/06/2024,"The Keg, Client dinner",3043,J3043,268.35,,268.35
+01/14/2024,"Tim Hortons, Team lunch",3044,J3044,284.07,,552.42
+01/22/2024,"Earls Kitchen, Team lunch",3045,J3045,621.13,,1173.55
+02/06/2024,"Café Novo, Team lunch",3046,J3046,733.39,,1906.94
+02/14/2024,"Jack Astor's, Client dinner",3047,J3047,641.30,,2548.24
+02/22/2024,"The Keg, Team lunch",3048,J3048,543.63,,3091.87
+03/06/2024,"Tim Hortons, Team lunch",3049,J3049,411.50,,3503.37
+03/14/2024,"Earls Kitchen, Team lunch",3050,J3050,834.84,,4338.21
+03/22/2024,"Café Novo, Client dinner",3051,J3051,894.01,,5232.22
+04/06/2024,"Jack Astor's, Team lunch",3052,J3052,781.57,,6013.79
+04/14/2024,"The Keg, Team lunch",3053,J3053,786.22,,6800.01
+04/22/2024,"Tim Hortons, Team lunch",3054,J3054,267.90,,7067.91
+05/06/2024,"Earls Kitchen, Client dinner",3055,J3055,391.45,,7459.36
+05/14/2024,"Café Novo, Team lunch",3056,J3056,327.43,,7786.79
+
+Page 12
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+05/22/2024,"Jack Astor's, Team lunch",3057,J3057,885.01,,8671.80
+06/06/2024,"The Keg, Team lunch",3058,J3058,382.47,,9054.27
+06/14/2024,"Tim Hortons, Client dinner",3059,J3059,251.83,,9306.10
+06/22/2024,"Earls Kitchen, Team lunch",3060,J3060,951.05,,10257.15
+07/06/2024,"Café Novo, Team lunch",3061,J3061,807.76,,11064.91
+07/14/2024,"Jack Astor's, Team lunch",3062,J3062,871.27,,11936.18
+07/22/2024,"The Keg, Client dinner",3063,J3063,909.13,,12845.31
+08/06/2024,"Tim Hortons, Team lunch",3064,J3064,345.41,,13190.72
+08/14/2024,"Earls Kitchen, Team lunch",3065,J3065,284.24,,13474.96
+08/22/2024,"Café Novo, Team lunch",3066,J3066,598.09,,14073.05
+09/06/2024,"Jack Astor's, Client dinner",3067,J3067,657.39,,14730.44
+09/14/2024,"The Keg, Team lunch",3068,J3068,531.56,,15262.00
+09/22/2024,"Tim Hortons, Team lunch",3069,J3069,794.01,,16056.01
+10/06/2024,"Earls Kitchen, Team lunch",3070,J3070,883.36,,16939.37
+10/14/2024,"Café Novo, Client dinner",3071,J3071,594.55,,17533.92
+10/22/2024,"Jack Astor's, Team lunch",3072,J3072,754.99,,18288.91
+11/06/2024,"The Keg, Team lunch",3073,J3073,279.47,,18568.38
+11/14/2024,"Tim Hortons, Team lunch",3074,J3074,523.89,,19092.27
+11/22/2024,"Earls Kitchen, Client dinner",3075,J3075,836.63,,19928.90
+12/06/2024,"Café Novo, Team lunch",3076,J3076,849.82,,20778.72
+12/14/2024,"Jack Astor's, Team lunch",3077,J3077,936.85,,21715.57
+12/22/2024,"The Keg, Team lunch",3078,J3078,284.43,,22000.00
+6300 Insurance
+01/09/2024,"Sun Life, Life insurance premium - D. Brightwater",2441,J2441,750.00,,750.00
+02/09/2024,"Sun Life, Life insurance premium - D. Brightwater",2479,J2479,750.00,,1500.00
+03/09/2024,"Sun Life, Life insurance premium - D. Brightwater",2517,J2517,750.00,,2250.00
+03/20/2024,"Intact Insurance, Business insurance - quarterly",2524,J2524,3000.00,,5250.00
+04/09/2024,"Sun Life, Life insurance premium - D. Brightwater",2558,J2558,750.00,,6000.00
+05/09/2024,"Sun Life, Life insurance premium - D. Brightwater",2596,J2596,750.00,,6750.00
+06/09/2024,"Sun Life, Life insurance premium - D. Brightwater",2634,J2634,750.00,,7500.00
+06/20/2024,"Intact Insurance, Business insurance - quarterly",2641,J2641,3000.00,,10500.00
+07/09/2024,"Sun Life, Life insurance premium - D. Brightwater",2676,J2676,750.00,,11250.00
+08/09/2024,"Sun Life, Life insurance premium - D. Brightwater",2714,J2714,750.00,,12000.00
+09/09/2024,"Sun Life, Life insurance premium - D. Brightwater",2752,J2752,750.00,,12750.00
+09/20/2024,"Intact Insurance, Business insurance - quarterly",2759,J2759,3000.00,,15750.00
+10/09/2024,"Sun Life, Life insurance premium - D. Brightwater",2793,J2793,750.00,,16500.00
+11/09/2024,"Sun Life, Life insurance premium - D. Brightwater",2831,J2831,750.00,,17250.00
+12/09/2024,"Sun Life, Life insurance premium - D. Brightwater",2869,J2869,750.00,,18000.00
+12/20/2024,"Intact Insurance, Business insurance - quarterly",2876,J2876,3000.00,,21000.00
+6400 Legal & Professional Fees
+01/09/2024,"Ledgerline Bookkeeping, Monthly bookkeeping",2440,J2440,450.00,,450.00
+02/09/2024,"Ledgerline Bookkeeping, Monthly bookkeeping",2478,J2478,450.00,,900.00
+03/09/2024,"Ledgerline Bookkeeping, Monthly bookkeeping",2516,J2516,450.00,,1350.00
+03/30/2024,"Moore & Partners CPA, Year-end financial statements",3079,J3079,6500.00,,7850.00
+04/09/2024,"Ledgerline Bookkeeping, Monthly bookkeeping",2557,J2557,450.00,,8300.00
+05/09/2024,"Ledgerline Bookkeeping, Monthly bookkeeping",2595,J2595,450.00,,8750.00
+06/09/2024,"Ledgerline Bookkeeping, Monthly bookkeeping",2633,J2633,450.00,,9200.00
+07/09/2024,"Ledgerline Bookkeeping, Monthly bookkeeping",2675,J2675,450.00,,9650.00
+
+Page 13
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+07/15/2024,"Holloway LLP, Settlement - wrongful dismissal",3082,J3082,22000.00,,31650.00
+07/31/2024,"Holloway LLP, Refund of retainer",3083,J3083,,500.00,31150.00
+08/09/2024,"Ledgerline Bookkeeping, Monthly bookkeeping",2713,J2713,450.00,,31600.00
+09/09/2024,"Ledgerline Bookkeeping, Monthly bookkeeping",2751,J2751,450.00,,32050.00
+10/09/2024,"Ledgerline Bookkeeping, Monthly bookkeeping",2792,J2792,450.00,,32500.00
+11/09/2024,"Ledgerline Bookkeeping, Monthly bookkeeping",2830,J2830,450.00,,32950.00
+12/09/2024,"Ledgerline Bookkeeping, Monthly bookkeeping",2868,J2868,450.00,,33400.00
+6500 Rent
+01/09/2024,"Brightwater Holdings Inc., Shop rent",2427,J2427,4500.00,,4500.00
+02/09/2024,"Brightwater Holdings Inc., Shop rent",2465,J2465,4500.00,,9000.00
+03/09/2024,"Brightwater Holdings Inc., Shop rent",2503,J2503,4500.00,,13500.00
+04/09/2024,"Brightwater Holdings Inc., Shop rent",2544,J2544,4500.00,,18000.00
+05/09/2024,"Brightwater Holdings Inc., Shop rent",2582,J2582,4500.00,,22500.00
+06/09/2024,"Brightwater Holdings Inc., Shop rent",2620,J2620,4500.00,,27000.00
+07/09/2024,"Brightwater Holdings Inc., Shop rent",2662,J2662,4500.00,,31500.00
+08/09/2024,"Brightwater Holdings Inc., Shop rent",2700,J2700,4500.00,,36000.00
+09/09/2024,"Brightwater Holdings Inc., Shop rent",2738,J2738,4500.00,,40500.00
+10/09/2024,"Brightwater Holdings Inc., Shop rent",2779,J2779,4500.00,,45000.00
+11/09/2024,"Brightwater Holdings Inc., Shop rent",2817,J2817,4500.00,,49500.00
+12/09/2024,"Brightwater Holdings Inc., Shop rent",2855,J2855,4500.00,,54000.00
+6510 Utilities
+01/10/2024,"Enbridge Gas, Gas",2428,J2428,364.16,,364.16
+01/10/2024,"Toronto Hydro, Hydro",2429,J2429,321.08,,685.24
+02/10/2024,"Enbridge Gas, Gas",2466,J2466,320.22,,1005.46
+02/10/2024,"Toronto Hydro, Hydro",2467,J2467,362.41,,1367.87
+03/10/2024,"Enbridge Gas, Gas",2504,J2504,211.23,,1579.10
+03/10/2024,"Toronto Hydro, Hydro",2505,J2505,329.93,,1909.03
+04/10/2024,"Enbridge Gas, Gas",2545,J2545,245.11,,2154.14
+04/10/2024,"Toronto Hydro, Hydro",2546,J2546,364.38,,2518.52
+05/10/2024,"Enbridge Gas, Gas",2583,J2583,249.14,,2767.66
+05/10/2024,"Toronto Hydro, Hydro",2584,J2584,353.23,,3120.89
+06/10/2024,"Enbridge Gas, Gas",2621,J2621,205.24,,3326.13
+06/10/2024,"Toronto Hydro, Hydro",2622,J2622,340.61,,3666.74
+07/10/2024,"Enbridge Gas, Gas",2663,J2663,379.25,,4045.99
+07/10/2024,"Toronto Hydro, Hydro",2664,J2664,326.97,,4372.96
+08/10/2024,"Enbridge Gas, Gas",2701,J2701,321.78,,4694.74
+08/10/2024,"Toronto Hydro, Hydro",2702,J2702,336.79,,5031.53
+09/10/2024,"Enbridge Gas, Gas",2739,J2739,386.22,,5417.75
+09/10/2024,"Toronto Hydro, Hydro",2740,J2740,349.95,,5767.70
+10/10/2024,"Enbridge Gas, Gas",2780,J2780,286.18,,6053.88
+10/10/2024,"Toronto Hydro, Hydro",2781,J2781,306.21,,6360.09
+11/10/2024,"Enbridge Gas, Gas",2818,J2818,382.16,,6742.25
+11/10/2024,"Toronto Hydro, Hydro",2819,J2819,242.00,,6984.25
+12/10/2024,"Enbridge Gas, Gas",2856,J2856,301.89,,7286.14
+12/10/2024,"Toronto Hydro, Hydro",2857,J2857,289.13,,7575.27
+6520 Telephone & Internet
+01/11/2024,"Bell Canada, Phones",2430,J2430,342.18,,342.18
+01/11/2024,"Rogers, Internet",2431,J2431,129.95,,472.13
+02/11/2024,"Bell Canada, Phones",2468,J2468,323.22,,795.35
+
+Page 14
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+02/11/2024,"Rogers, Internet",2469,J2469,129.95,,925.30
+03/11/2024,"Bell Canada, Phones",2506,J2506,346.69,,1271.99
+03/11/2024,"Rogers, Internet",2507,J2507,129.95,,1401.94
+04/11/2024,"Bell Canada, Phones",2547,J2547,312.50,,1714.44
+04/11/2024,"Rogers, Internet",2548,J2548,129.95,,1844.39
+05/11/2024,"Bell Canada, Phones",2585,J2585,327.11,,2171.50
+05/11/2024,"Rogers, Internet",2586,J2586,129.95,,2301.45
+06/11/2024,"Bell Canada, Phones",2623,J2623,316.68,,2618.13
+06/11/2024,"Rogers, Internet",2624,J2624,129.95,,2748.08
+07/11/2024,"Bell Canada, Phones",2665,J2665,335.79,,3083.87
+07/11/2024,"Rogers, Internet",2666,J2666,129.95,,3213.82
+08/11/2024,"Bell Canada, Phones",2703,J2703,332.72,,3546.54
+08/11/2024,"Rogers, Internet",2704,J2704,129.95,,3676.49
+09/11/2024,"Bell Canada, Phones",2741,J2741,349.20,,4025.69
+09/11/2024,"Rogers, Internet",2742,J2742,129.95,,4155.64
+10/11/2024,"Bell Canada, Phones",2782,J2782,322.64,,4478.28
+10/11/2024,"Rogers, Internet",2783,J2783,129.95,,4608.23
+11/11/2024,"Bell Canada, Phones",2820,J2820,318.92,,4927.15
+11/11/2024,"Rogers, Internet",2821,J2821,129.95,,5057.10
+12/11/2024,"Bell Canada, Phones",2858,J2858,326.97,,5384.07
+12/11/2024,"Rogers, Internet",2859,J2859,129.95,,5514.02
+6600 Advertising & Promotion
+01/09/2024,"Google Ads, Search ads",2432,J2432,1162.15,,1162.15
+02/09/2024,"Google Ads, Search ads",2470,J2470,1159.80,,2321.95
+03/09/2024,"Google Ads, Search ads",2508,J2508,1430.39,,3752.34
+04/09/2024,"Google Ads, Search ads",2549,J2549,1512.54,,5264.88
+05/09/2024,"Google Ads, Search ads",2587,J2587,1348.24,,6613.12
+06/09/2024,"Google Ads, Search ads",2625,J2625,904.32,,7517.44
+07/09/2024,"Google Ads, Search ads",2667,J2667,1226.64,,8744.08
+08/09/2024,"Google Ads, Search ads",2705,J2705,1506.37,,10250.45
+09/09/2024,"Google Ads, Search ads",2743,J2743,1521.43,,11771.88
+10/09/2024,"Google Ads, Search ads",2784,J2784,1549.00,,13320.88
+11/09/2024,"Google Ads, Search ads",2822,J2822,1403.11,,14723.99
+12/09/2024,"Google Ads, Search ads",2860,J2860,1088.21,,15812.20
+6700 Office Supplies
+01/09/2024,"Staples, Office supplies",2433,J2433,251.44,,251.44
+02/09/2024,"Staples, Office supplies",2471,J2471,141.67,,393.11
+03/09/2024,"Staples, Office supplies",2509,J2509,91.35,,484.46
+04/09/2024,"Staples, Office supplies",2550,J2550,232.74,,717.20
+05/09/2024,"Staples, Office supplies",2588,J2588,236.37,,953.57
+06/09/2024,"Staples, Office supplies",2626,J2626,70.48,,1024.05
+07/09/2024,"Staples, Office supplies",2668,J2668,216.21,,1240.26
+08/09/2024,"Staples, Office supplies",2706,J2706,139.47,,1379.73
+09/09/2024,"Staples, Office supplies",2744,J2744,80.84,,1460.57
+10/09/2024,"Staples, Office supplies",2785,J2785,111.51,,1572.08
+11/09/2024,"Staples, Office supplies",2823,J2823,229.73,,1801.81
+12/09/2024,"Staples, Office supplies",2861,J2861,194.45,,1996.26
+6710 Software & Subscriptions
+01/10/2024,"Intuit QuickBooks, QuickBooks Online",2434,J2434,90.00,,90.00
+
+Page 15
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+01/10/2024,"Jobber, Field service software",2435,J2435,249.00,,339.00
+02/10/2024,"Intuit QuickBooks, QuickBooks Online",2472,J2472,90.00,,429.00
+02/10/2024,"Jobber, Field service software",2473,J2473,249.00,,678.00
+03/10/2024,"Intuit QuickBooks, QuickBooks Online",2510,J2510,90.00,,768.00
+03/10/2024,"Jobber, Field service software",2511,J2511,249.00,,1017.00
+04/10/2024,"Intuit QuickBooks, QuickBooks Online",2551,J2551,90.00,,1107.00
+04/10/2024,"Jobber, Field service software",2552,J2552,249.00,,1356.00
+05/10/2024,"Intuit QuickBooks, QuickBooks Online",2589,J2589,90.00,,1446.00
+05/10/2024,"Jobber, Field service software",2590,J2590,249.00,,1695.00
+06/10/2024,"Intuit QuickBooks, QuickBooks Online",2627,J2627,90.00,,1785.00
+06/10/2024,"Jobber, Field service software",2628,J2628,249.00,,2034.00
+07/10/2024,"Intuit QuickBooks, QuickBooks Online",2669,J2669,90.00,,2124.00
+07/10/2024,"Jobber, Field service software",2670,J2670,249.00,,2373.00
+08/10/2024,"Intuit QuickBooks, QuickBooks Online",2707,J2707,90.00,,2463.00
+08/10/2024,"Jobber, Field service software",2708,J2708,249.00,,2712.00
+09/10/2024,"Intuit QuickBooks, QuickBooks Online",2745,J2745,90.00,,2802.00
+09/10/2024,"Jobber, Field service software",2746,J2746,249.00,,3051.00
+10/10/2024,"Intuit QuickBooks, QuickBooks Online",2786,J2786,90.00,,3141.00
+10/10/2024,"Jobber, Field service software",2787,J2787,249.00,,3390.00
+11/10/2024,"Intuit QuickBooks, QuickBooks Online",2824,J2824,90.00,,3480.00
+11/10/2024,"Jobber, Field service software",2825,J2825,249.00,,3729.00
+12/10/2024,"Intuit QuickBooks, QuickBooks Online",2862,J2862,90.00,,3819.00
+12/10/2024,"Jobber, Field service software",2863,J2863,249.00,,4068.00
+6800 Bank Charges
+01/09/2024,"RBC Royal Bank, Monthly fee",2436,J2436,29.95,,29.95
+02/09/2024,"RBC Royal Bank, Monthly fee",2474,J2474,29.95,,59.90
+03/09/2024,"RBC Royal Bank, Monthly fee",2512,J2512,29.95,,89.85
+04/09/2024,"RBC Royal Bank, Monthly fee",2553,J2553,29.95,,119.80
+05/09/2024,"RBC Royal Bank, Monthly fee",2591,J2591,29.95,,149.75
+06/09/2024,"RBC Royal Bank, Monthly fee",2629,J2629,29.95,,179.70
+07/09/2024,"RBC Royal Bank, Monthly fee",2671,J2671,29.95,,209.65
+08/09/2024,"RBC Royal Bank, Monthly fee",2709,J2709,29.95,,239.60
+09/09/2024,"RBC Royal Bank, Monthly fee",2747,J2747,29.95,,269.55
+10/09/2024,"RBC Royal Bank, Monthly fee",2788,J2788,29.95,,299.50
+11/09/2024,"RBC Royal Bank, Monthly fee",2826,J2826,29.95,,329.45
+12/09/2024,"RBC Royal Bank, Monthly fee",2864,J2864,29.95,,359.40
+6810 Interest Expense
+01/10/2024,"RBC Royal Bank, Loan interest",2437,J2437,602.00,,602.00
+02/10/2024,"RBC Royal Bank, Loan interest",2475,J2475,594.00,,1196.00
+03/10/2024,"RBC Royal Bank, Loan interest",2513,J2513,586.00,,1782.00
+04/10/2024,"RBC Royal Bank, Loan interest",2554,J2554,578.00,,2360.00
+05/10/2024,"RBC Royal Bank, Loan interest",2592,J2592,570.00,,2930.00
+06/10/2024,"RBC Royal Bank, Loan interest",2630,J2630,562.00,,3492.00
+07/10/2024,"RBC Royal Bank, Loan interest",2672,J2672,554.00,,4046.00
+08/10/2024,"RBC Royal Bank, Loan interest",2710,J2710,546.00,,4592.00
+09/10/2024,"RBC Royal Bank, Loan interest",2748,J2748,538.00,,5130.00
+10/10/2024,"RBC Royal Bank, Loan interest",2789,J2789,530.00,,5660.00
+11/10/2024,"RBC Royal Bank, Loan interest",2827,J2827,522.00,,6182.00
+
+Page 16
+Brightwater Plumbing & Heating Ltd.
+General Ledger Report
+01/01/2024 to 12/31/2024
+Date,Comment,Source #,JE #,Debits,Credits,Balance
+12/10/2024,"RBC Royal Bank, Loan interest",2865,J2865,514.00,,6696.00
+6900 Dues & Memberships
+01/09/2024,"Glen Abbey Golf Club, Membership dues",2442,J2442,1250.00,,1250.00
+02/01/2024,"HRAI, Association membership",3080,J3080,650.00,,1900.00
+02/09/2024,"Glen Abbey Golf Club, Membership dues",2480,J2480,1250.00,,3150.00
+03/09/2024,"Glen Abbey Golf Club, Membership dues",2518,J2518,1250.00,,4400.00
+04/09/2024,"Glen Abbey Golf Club, Membership dues",2559,J2559,1250.00,,5650.00
+05/09/2024,"Glen Abbey Golf Club, Membership dues",2597,J2597,1250.00,,6900.00
+06/09/2024,"Glen Abbey Golf Club, Membership dues",2635,J2635,1250.00,,8150.00
+07/09/2024,"Glen Abbey Golf Club, Membership dues",2677,J2677,1250.00,,9400.00
+08/09/2024,"Glen Abbey Golf Club, Membership dues",2715,J2715,1250.00,,10650.00
+09/09/2024,"Glen Abbey Golf Club, Membership dues",2753,J2753,1250.00,,11900.00
+10/09/2024,"Glen Abbey Golf Club, Membership dues",2794,J2794,1250.00,,13150.00
+11/09/2024,"Glen Abbey Golf Club, Membership dues",2832,J2832,1250.00,,14400.00
+12/09/2024,"Glen Abbey Golf Club, Membership dues",2870,J2870,1250.00,,15650.00
+6910 Shareholder Expenses
+05/02/2024,"Shoppers Drug Mart, Prescription",3084,J3084,64.20,,64.20
+09/05/2024,"Upper Canada College, Tuition - fall term",3085,J3085,9500.00,,9564.20
+6920 Donations
+11/20/2024,"SickKids Foundation, Donation",3081,J3081,1000.00,,1000.00
+6950 Repairs & Maintenance
+06/18/2024,"Rapid Roofing, Shop roof repair",2643,J2643,2090.10,,2090.10
+7000 Amortization Expense
+12/31/2024,Year-end amortization,3086,J3086,31000.00,,31000.00
+7100 Income Tax Expense
+12/31/2024,Current income taxes,3088,J3088,14200.00,,14200.00
+
+Generated On: 01/09/2025 10:12:33 AM

@@ -22,6 +22,9 @@ import { lineChartRows } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
 import { NotCharted } from "./NotCharted";
 import { useBlockAttrs, useChartPointReporter } from "../blocks";
+// dd: notes on the chart's figures (tooltip line, click/tap → popover).
+import type { FigureView } from "@shared/figure-layer";
+import { ChartFigurePopover, FigureTooltipLine, useChartFigure, useChartPick } from "../figures/ChartFigures";
 
 interface SeriesConfig {
   key: string;
@@ -36,6 +39,11 @@ interface LineChartLayoutData {
   yLabel?: string;
   unit?: string;
   title?: string;
+  /**
+   * The teaser's revenue trend (shared/teaser.ts): values are an index
+   * (first year = 100), not money — no value axis, tooltips say "Index 112".
+   */
+  indexed?: boolean;
 }
 
 interface RendererProps {
@@ -51,10 +59,14 @@ interface CustomTooltipProps {
   label?: string;
   unit?: string;
   series?: SeriesConfig[];
+  indexed?: boolean;
+  /** dd: the figure at a point of a series (null without a figure layer). */
+  figFor?: (datum: unknown, dataKey: string) => FigureView | null;
 }
 
-function CustomTooltip({ active, payload, label, unit, series }: CustomTooltipProps) {
+function CustomTooltip({ active, payload, label, unit, series, indexed, figFor }: CustomTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
+  const figs = figFor ? payload.map((p) => figFor((p as { payload?: unknown }).payload, p.dataKey)).filter((f): f is FigureView => !!f) : [];
   return (
     <div className="bg-card border border-card-border rounded-md shadow-md px-3 py-2 text-xs">
       <p className="font-semibold text-foreground mb-1.5">{label}</p>
@@ -63,13 +75,20 @@ function CustomTooltip({ active, payload, label, unit, series }: CustomTooltipPr
         return (
           <div key={i} className="flex items-center gap-2 mb-0.5">
             <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: p.color }} />
-            <span className="text-muted-foreground">{seriesLabel}:</span>
-            <span className="font-medium tabular-nums">
-              {formatFullValue(p.value, unit)}
-            </span>
+            {indexed ? (
+              <span className="font-medium tabular-nums">Index {Math.round(Number(p.value))}</span>
+            ) : (
+              <>
+                <span className="text-muted-foreground">{seriesLabel}:</span>
+                <span className="font-medium tabular-nums">
+                  {formatFullValue(p.value, unit)}
+                </span>
+              </>
+            )}
           </div>
         );
       })}
+      {figs.slice(0, 2).map((f) => <FigureTooltipLine key={f.id} fig={f} />)}
     </div>
   );
 }
@@ -86,6 +105,13 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
   // false zero, and is listed under the chart as written.
   const lines = lineChartRows(data.data || [], series, data.unit);
   const chartData = lines.rows as Array<Record<string, number | string | null>>;
+  // Rows stay index-aligned with the layout data (the anchors' chart/point:i).
+  const figAt = useChartFigure();
+  const figFor = (datum: unknown, dataKey: string) => figAt(chartData.indexOf(datum as Record<string, number | string | null>), series.findIndex((s) => s.key === dataKey));
+  const { pick, setPick, onChartClick } = useChartPick((i) => {
+    for (let k = 0; k < series.length; k++) { const f = figAt(i, k); if (f) return f; }
+    return null;
+  });
 
   if (chartData.length === 0 || series.length === 0) {
     if (!content) return null;
@@ -96,8 +122,9 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
   // CIM shares one palette (per-series colours in the data are ignored).
   const colorPalette = theme.chart;
 
-  const showLegend = series.length > 1;
-  const yAxisWidth = axisWidthFor(chartData.flatMap((d) => series.map((s) => d[s.key])), data.unit);
+  const indexed = data.indexed === true;
+  const showLegend = series.length > 1 && !indexed;
+  const yAxisWidth = indexed ? 0 : axisWidthFor(chartData.flatMap((d) => series.map((s) => d[s.key])), data.unit);
 
   return (
     <div>
@@ -108,12 +135,14 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
         // column collides with the tick numbers (worst on phones).
         <p className="text-2xs font-medium text-muted-foreground mb-1.5">{data.yLabel}</p>
       )}
+      <div className="relative">
       <ResponsiveContainer width="100%" height={280}>
         <LineChart
           data={chartData}
           margin={{ top: 4, right: 16, left: 4, bottom: data.xLabel ? 24 : 8 }}
           onMouseMove={(s) => point(s?.activeTooltipIndex)}
           onMouseLeave={() => point(null)}
+          onClick={(s) => onChartClick(s)}
         >
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
@@ -132,6 +161,8 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
             label={data.xLabel ? { value: data.xLabel, position: "insideBottom", offset: -12, fontSize: 11, fill: theme.inkMuted } : undefined}
           />
           <YAxis
+            hide={indexed}
+            domain={indexed ? ["dataMin - 10", "dataMax + 10"] : undefined}
             tick={{ fontSize: 11, fill: theme.inkMuted }}
             axisLine={false}
             tickLine={false}
@@ -139,7 +170,8 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
             tickFormatter={(v) => formatAxisTick(v, data.unit)}
           />
           <Tooltip
-            content={<CustomTooltip unit={data.unit} series={series} />}
+            // An indexed chart (the teaser's trend) carries no figures — index values aren't figures (INTEGRATION §2.7 rule 4).
+            content={<CustomTooltip unit={data.unit} series={series} indexed={indexed} figFor={indexed ? undefined : figFor} />}
             cursor={{ stroke: theme.line, strokeWidth: 1 }}
           />
           {showLegend && (
@@ -163,10 +195,14 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
               strokeWidth={2}
               dot={{ r: 3, fill: colorPalette[i % colorPalette.length], strokeWidth: 0 }}
               activeDot={{ r: 5, strokeWidth: 0 }}
+              // An index chart prints its values on the points (a printed teaser has no tooltips).
+              label={indexed ? { position: "top", fontSize: 10, fill: theme.inkMuted, formatter: (v: unknown) => (typeof v === "number" ? Math.round(v) : v) } : undefined}
             />
           ))}
         </LineChart>
       </ResponsiveContainer>
+      <ChartFigurePopover pick={pick} onClose={() => setPick(null)} block="chart" />
+      </div>
       <NotCharted items={lines.unreadable} />
       </div>
     </div>

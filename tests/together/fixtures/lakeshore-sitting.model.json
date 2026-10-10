@@ -1,0 +1,339 @@
+{
+ "note": "Scripted tool outputs for lakeshore-sitting.json (by hand; replace with the recorded real outputs after live check L1). Line numbers are found by each answer's words.",
+ "latencyMs": 3000,
+ "entries": [
+  {
+   "match": "Summer and the cold snaps are crazy",
+   "output": {
+    "answers": [
+     {
+      "key": "peakPeriods",
+      "value": "June through August, and December to February",
+      "quote": "Summer and the cold snaps are crazy. June through August, then December to February",
+      "speaker": "seller",
+      "confidence": "confirmed",
+      "basis": "verbatim"
+     }
+    ],
+    "topicSections": [
+     "seasonality"
+    ]
+   }
+  },
+  {
+   "match": "April and October are dead",
+   "output": {
+    "answers": [
+     {
+      "key": "slowPeriods",
+      "value": "April and October (maintenance and paperwork)",
+      "quote": "April and October are dead",
+      "speaker": "seller",
+      "confidence": "confirmed",
+      "basis": "verbatim"
+     }
+    ],
+    "topicSections": [
+     "seasonality"
+    ]
+   }
+  },
+  {
+   "match": "a hundred and twenty calls a day",
+   "output": {
+    "otherFacts": [
+     {
+      "key": "peakDailyCallVolume",
+      "label": "Calls a day at the peak",
+      "sectionKey": "seasonality",
+      "value": "Up to 120 calls a day in July",
+      "quote": "In July we can run a hundred and twenty calls a day",
+      "confidence": "confirmed"
+     }
+    ],
+    "topicSections": [
+     "seasonality"
+    ]
+   }
+  },
+  {
+   "match": "Denise runs dispatch",
+   "output": {
+    "answers": [
+     {
+      "key": "dispatchAndSchedulingSystem",
+      "value": "Field service software; Denise runs dispatch and Tony helps when it's busy; techs get jobs on their phones",
+      "quote": "Denise runs dispatch on our field service software",
+      "speaker": "seller",
+      "confidence": "confirmed",
+      "basis": "verbatim"
+     }
+    ],
+    "topicSections": [
+     "operations"
+    ]
+   }
+  },
+  {
+   "match": "I'm in the office three days",
+   "output": {
+    "answers": [
+     {
+      "key": "ownerInvolvement",
+      "value": "In the office 3 days a week (4 in busy season); does the quotes on Mondays and runs the Friday tech meeting",
+      "quote": "I'm in the office three days, four in busy season. I do the quotes on Mondays and run the Friday tech meeting",
+      "speaker": "seller",
+      "confidence": "confirmed",
+      "basis": "verbatim"
+     }
+    ],
+    "topicSections": [
+     "employees"
+    ]
+   }
+  },
+  {
+   "match": "big commercial estimates",
+   "output": {
+    "followUp": {
+     "itemId": "employees:ownerInvolvement",
+     "ask": "Who could take over the commercial estimates after the sale?"
+    },
+    "topicSections": [
+     "employees"
+    ]
+   }
+  },
+  {
+   "match": "Actually thirty-eight",
+   "output": {
+    "answers": [
+     {
+      "key": "employees",
+      "value": "38, including 2 part-time office staff",
+      "quote": "Actually thirty-eight, counting the two part-time girls in the office",
+      "speaker": "seller",
+      "confidence": "confirmed",
+      "basis": "verbatim"
+     }
+    ],
+    "topicSections": [
+     "employees"
+    ]
+   }
+  },
+  {
+   "match": "Yeah, that's right",
+   "output": {
+    "answers": [
+     {
+      "key": "comfortClubRenewalRate",
+      "value": "About 85% of members renew each year",
+      "quote": "renew at about eighty-five percent a year",
+      "speaker": "broker_confirmed",
+      "confidence": "confirmed",
+      "basis": "verbatim",
+      "cite": [
+       "renew at about eighty-five percent",
+       "Yeah, that's right"
+      ]
+     }
+    ],
+    "topicSections": [
+     "revenue_sources"
+    ]
+   }
+  },
+  {
+   "match": "Denise has the EMR",
+   "output": {
+    "notKnown": [
+     {
+      "key": "emrRating",
+      "whoHasIt": "Denise (bookkeeper)",
+      "quote": "My bookkeeper Denise has the EMR"
+     }
+    ],
+    "topicSections": [
+     "employees"
+    ]
+   }
+  },
+  {
+   "match": "Thirty years is enough",
+   "output": {
+    "answers": [
+     {
+      "key": "reasonForSale",
+      "value": "Retiring after 30 years; moving to Florida",
+      "quote": "Thirty years is enough. I'm sixty-four and the wife wants Florida",
+      "speaker": "seller",
+      "confidence": "confirmed",
+      "basis": "verbatim"
+     }
+    ],
+    "topicSections": [
+     "reason_for_sale"
+    ]
+   }
+  },
+  {
+   "match": "heart scare",
+   "output": {
+    "private": [
+     {
+      "note": "Tony had a heart scare last spring — part of why he is selling. He asked that health stays out of the CIM.",
+      "reason": "seller_asked",
+      "keepOutTerms": [
+       "heart scare"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "match": "Dave asked me about buying in",
+   "output": {
+    "private": [
+     {
+      "note": "Dave (service manager, 16 years) asked Tony about buying into the business.",
+      "reason": "staff_private"
+     }
+    ]
+   }
+  },
+  {
+   "match": "Your lease runs to August 2028",
+   "output": {
+    "brokerUnconfirmed": [
+     {
+      "key": "leaseExpiry",
+      "value": "August 2028",
+      "quote": "Your lease runs to August 2028"
+     }
+    ],
+    "topicSections": [
+     "real_estate"
+    ]
+   }
+  },
+  {
+   "match": "Heat pumps, for sure",
+   "output": {
+    "answers": [
+     {
+      "key": "growthOpportunities",
+      "value": "Heat pumps (about a fifth of installs, rising with the rebates); a second location in Barrie; commercial maintenance contracts; a second install crew",
+      "quote": "Heat pumps, for sure. The rebates made them about a fifth of our installs already",
+      "speaker": "seller",
+      "confidence": "confirmed",
+      "basis": "verbatim"
+     }
+    ],
+    "topicSections": [
+     "growth_potential"
+    ]
+   }
+  },
+  {
+   "match": "could double the commercial side",
+   "output": {
+    "followUp": {
+     "itemId": "growth_potential:growthOpportunities",
+     "ask": "Which of those would you start with, if you were staying?"
+    },
+    "topicSections": [
+     "growth_potential"
+    ]
+   }
+  },
+  {
+   "match": "Service runs about fifty percent",
+   "output": {
+    "answers": [
+     {
+      "key": "grossMarginByServiceLine",
+      "value": "Service about 50%, installs about 35%",
+      "quote": "Service runs about fifty percent, installs closer to thirty-five",
+      "speaker": "seller",
+      "confidence": "confirmed",
+      "basis": "verbatim"
+     }
+    ],
+    "topicSections": [
+     "financials"
+    ]
+   },
+   "focus": "financials:grossMarginByServiceLine"
+  },
+  {
+   "match": "Avg service call ticket",
+   "output": {
+    "answers": [
+     {
+      "key": "averageServiceCallTicket",
+      "value": "About $375",
+      "quote": "Avg service call ticket about $375",
+      "speaker": "typed",
+      "confidence": "confirmed",
+      "basis": "verbatim"
+     }
+    ]
+   }
+  },
+  {
+   "match": "no-surprise pricing",
+   "output": {
+    "answers": [
+     {
+      "key": "brandIdentity",
+      "value": "Known for no-surprise pricing: flat rates posted on the website, no upsell games",
+      "quote": "We're the no-surprise pricing people. Flat rates, posted on the website, no upsell games",
+      "speaker": "seller",
+      "confidence": "confirmed",
+      "basis": "verbatim"
+     }
+    ],
+    "topicSections": [
+     "overview"
+    ]
+   }
+  },
+  {
+   "match": "treat the guys right",
+   "output": {
+    "answers": [
+     {
+      "key": "idealBuyer",
+      "value": "Someone who will treat the team right — not a private equity roll-up",
+      "quote": "Someone who'll treat the guys right. Not a private equity roll-up that guts the team",
+      "speaker": "seller",
+      "confidence": "confirmed",
+      "basis": "verbatim"
+     }
+    ],
+    "topicSections": [
+     "buyer_profile"
+    ]
+   }
+  },
+  {
+   "match": "Six months, longer if they need it",
+   "output": {
+    "answers": [
+     {
+      "key": "trainingSupport",
+      "value": "Six months, longer if needed: the commercial estimates and introductions to the builders",
+      "quote": "Six months, longer if they need it. I'd do the commercial estimates and introduce them to the builders",
+      "speaker": "seller",
+      "confidence": "confirmed",
+      "basis": "verbatim"
+     }
+    ],
+    "topicSections": [
+     "training_support"
+    ]
+   }
+  }
+ ]
+}

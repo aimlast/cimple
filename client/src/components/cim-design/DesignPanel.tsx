@@ -129,7 +129,7 @@ export function DesignPanel({ dealId, design, loading, library, onPrintPreview }
           <p className="text-sm font-semibold">The business's branding</p>
           <p className="text-[11px] text-muted-foreground flex items-start gap-1.5 mt-0.5">
             <EyeOff className="h-3 w-3 mt-0.5 shrink-0" />
-            Shown in the named CIM (LOI and due-diligence buyers). Never in the blind CIM.
+            Shown in the Full CIM and the due-diligence version. Never in the Blind CIM.
           </p>
         </div>
         <ImagePick

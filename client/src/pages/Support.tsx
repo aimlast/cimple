@@ -44,8 +44,8 @@ const FAQ: Array<{ q: string; a: string }> = [
     a: "Add a buyer on the deal's Buyers tab to create a secure, watermarked view link. Links are email-specific, expire after your default link expiration (30 days unless you change it in Settings → Defaults) unless extended, and can require an NDA signature before any content is shown. Buyer activity (views, time, sections read) appears in Analytics.",
   },
   {
-    q: "What's the difference between the Normal and Blind CIM?",
-    a: "The Blind version replaces identifying details (business name, people, locations) with placeholders while preserving the financial story — it's what early-stage buyers see. Buyers you move to LOI level see the full Normal version. You control each buyer's access level from the deal's Buyers tab.",
+    q: "What's the difference between the Blind CIM and the Full CIM?",
+    a: "The Blind CIM replaces identifying details (business name, people, locations) with placeholders under a project codename while keeping the financial story — it's what early-stage buyers see. Buyers you move to the Full CIM see the business's name, people and places; due-diligence buyers also get the extra due-diligence detail. You choose what each buyer sees on the deal's Buyers tab.",
   },
   {
     q: "Can I export the CIM as a PDF?",

@@ -25,6 +25,10 @@ import { cimRenditions, cimSections, deals, readingBenchmarks } from "@shared/sc
 import { PAGE_ROLES, type PageRole, type RenditionPage } from "@shared/analytics-v2";
 import { BLOCK_KINDS, type BlockKind } from "@shared/cim-blocks";
 import { pageRole } from "@shared/cim-page-role";
+import type { CimMode } from "@shared/analytics-v2";
+import { cimVisitConditions, dbReadingSource } from "./queries";
+import { sampleColumns } from "./demo-columns";
+import { pageTitle, titleIndex } from "./titles";
 
 /** The compare page shows an industry benchmark only with this many other brokerages' deals behind it. */
 export const BENCHMARK_MIN_DEALS = 5;
@@ -123,11 +127,15 @@ export function computeBenchmarkRows(
 
 /** Reads a deal's rollups + served pages and returns its benchmark rows (no writes). */
 export async function computeDealBenchmarks(dealId: string): Promise<DealBenchmarkRow[]> {
+  // Real part-by-part reading only: never the broker's preview, a clamped or
+  // teaser visit, a hidden old visit, old page totals, or sample reading
+  // (demo deals never write benchmarks anyway — defence in depth).
+  const sc = await sampleColumns();
   const rows = await db.execute<{ rendition_id: string | null; page_id: string; block_key: string; access_id: string; att: string | number }>(sql`
     SELECT r.rendition_id, r.page_id, r.block_key, r.buyer_access_id AS access_id, SUM(r.attention_ms)::bigint AS att
     FROM reading_rollups r
     JOIN buyer_visits v ON v.id = r.visit_id
-    WHERE r.deal_id = ${dealId} AND v.self_view = false AND v.clamped = false AND v.legacy = false
+    WHERE r.deal_id = ${dealId} AND ${cimVisitConditions("v", { sampleColumns: sc })} AND v.legacy = false${sc ? sql` AND v.demo_seed IS NULL` : sql``}
     GROUP BY r.rendition_id, r.page_id, r.block_key, r.buyer_access_id
   `);
   const rollups: BenchmarkRollupRow[] = Array.from(rows as unknown as Array<Record<string, unknown>>).map((r) => ({
@@ -139,27 +147,34 @@ export async function computeDealBenchmarks(dealId: string): Promise<DealBenchma
   }));
   const renditionIds = Array.from(new Set(rollups.map((r) => r.renditionId).filter((x): x is string => !!x)));
   if (renditionIds.length === 0) return [];
-  const [renditions, sections] = await Promise.all([
-    db.select({ id: cimRenditions.id, pageIndex: cimRenditions.pageIndex }).from(cimRenditions)
+  const [renditions, sections, kept] = await Promise.all([
+    db.select({ id: cimRenditions.id, mode: cimRenditions.mode, pageIndex: cimRenditions.pageIndex }).from(cimRenditions)
       .where(and(eq(cimRenditions.dealId, dealId), inArray(cimRenditions.id, renditionIds))),
     db.select({
       id: cimSections.id, title: cimSections.sectionTitle, key: cimSections.sectionKey,
       layoutType: cimSections.layoutType, layoutData: cimSections.layoutData, lineage: cimSections.analyticsLineage,
     }).from(cimSections).where(eq(cimSections.dealId, dealId)),
+    dbReadingSource.keptCopyTitles!(dealId).catch(() => null),
   ]);
   const byId = new Map(sections.map((s) => [s.id, s]));
-  const byLineage = new Map(sections.map((s) => [s.lineage || s.id, s]));
-  const pages = new Map<string, RenditionPage>();
-  for (const r of renditions) for (const p of (r.pageIndex ?? []) as RenditionPage[]) pages.set(`${r.id}|${p.pageId}`, p);
+  // The served page's own title decides the role (titles.ts) — never the
+  // title of a section that continues it after a regeneration.
+  const titles = titleIndex({
+    live: sections.map((s) => ({ id: s.id, sectionKey: s.key, sectionTitle: s.title, analyticsLineage: s.lineage })),
+    kept: kept?.sections ?? null,
+    namedServed: new Map(),
+    namedNow: null,
+  });
+  const pages = new Map<string, { page: RenditionPage; mode: CimMode }>();
+  for (const r of renditions) for (const p of (r.pageIndex ?? []) as RenditionPage[]) pages.set(`${r.id}|${p.pageId}`, { page: p, mode: r.mode as CimMode });
   return computeBenchmarkRows(rollups, (rid, pageId) => {
-    const p = pages.get(`${rid}|${pageId}`);
-    if (!p) return null;
-    // The REAL title decides the role (broker side, never stored); the served
-    // (possibly blind) title only when the section no longer exists.
-    const live = byId.get(pageId) ?? byLineage.get(p.lineageId);
+    const hit = pages.get(`${rid}|${pageId}`);
+    if (!hit) return null;
+    const { page: p, mode } = hit;
+    const named = pageTitle(p, mode, titles);
     const role = pageRole({
-      layoutType: p.layoutType, title: live?.title ?? p.servedTitle, sectionKey: live?.key ?? null,
-      layoutData: live?.layoutData, pageId,
+      layoutType: p.layoutType, title: named.title || p.servedTitle, sectionKey: named.sectionKey,
+      layoutData: byId.get(pageId)?.layoutData, pageId,
     });
     return { layoutType: p.layoutType, role, blocks: p.blocks };
   });

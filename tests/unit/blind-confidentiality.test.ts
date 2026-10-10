@@ -260,18 +260,31 @@ test("blind keys are always neutral — never the title slug — and map back fo
     overrides: [override(a, "The team."), override(b, "Photos."), override(c, "Overview.", { relatedSections: ["kitchener_clinic_team", "our_kitchener_clinic_photos"] })],
   });
   assert.deepEqual(out.sections.map((s) => s.sectionKey), [blindSectionKey(a.id), blindSectionKey(b.id), blindSectionKey(c.id)]);
-  assert.equal(out.sections[1].locked, true, "locked stub");
+  // Per-section locks are retired: a legacy "teaser" link is a Blind CIM link
+  // and gets every section — even one an old CIM marked "Full access only".
+  assert.ok(!out.sections[1].locked, "no locked stub any more");
+  assert.equal(out.sections[1].layoutType, b.layoutType);
   assert.ok(!/kitchener/i.test(JSON.stringify(out)), "no city anywhere in the payload");
-  assert.deepEqual((out.sections[2].layoutData as any).relatedSections, [blindSectionKey(a.id)], "links follow; locked target dropped");
+  assert.deepEqual((out.sections[2].layoutData as any).relatedSections, [blindSectionKey(a.id), blindSectionKey(b.id)], "links follow (both targets are served)");
   const back = realSectionKeyMap([a, b, c]);
   assert.equal(back.get(out.sections[0].sectionKey), "kitchener_clinic_team");
 });
 
-test("named (LOI) buyers keep real keys and content", () => {
+test("Full CIM (named; legacy loi) buyers keep real keys and content", () => {
   const a = section({ sectionKey: "reason_for_sale" });
-  const out = buildBuyerCim({ deal, accessLevel: "loi", sections: [a], overrides: [] });
-  assert.equal(out.sections[0].sectionKey, "reason_for_sale");
-  assert.deepEqual(out.leaked, []);
+  for (const level of ["loi", "named"]) {
+    const out = buildBuyerCim({ deal, accessLevel: level, sections: [a], overrides: [] });
+    assert.equal(out.mode, "normal");
+    assert.equal(out.sections[0].sectionKey, "reason_for_sale");
+    assert.deepEqual(out.leaked, []);
+  }
+});
+
+test("a Teaser link (teaser_only) gets no CIM section at all", () => {
+  const a = section({ sectionKey: "reason_for_sale" });
+  const out = buildBuyerCim({ deal, accessLevel: "teaser_only", sections: [a], overrides: [override(a, "The Owner is retiring.")] });
+  assert.deepEqual(out.sections, []);
+  assert.equal(out.preparing, false);
 });
 
 // ── 4. NDA ───────────────────────────────────────────────────────────────
@@ -287,17 +300,22 @@ test("one NDA rule: required + unsigned blocks, anything else passes", () => {
 // ── 5. Q&A scope ─────────────────────────────────────────────────────────
 console.log("Q&A scope");
 
+// Legacy keys on purpose: "teaser" and "full" are Blind CIM links, "loi" a Full CIM link.
 const teaser = { id: "t1", accessLevel: "teaser" };
 const full = { id: "f1", accessLevel: "full" };
 const loi = { id: "l1", accessLevel: "loi" };
+const teaserOnly = { id: "s1", accessLevel: "teaser_only" };
 const qa = (p: Record<string, unknown>) => ({ buyerAccessId: "x", question: "How many vans?", aiAnswer: "14 vans.", publishedAnswer: "14 vans.", ...p });
 
 test("answer scope follows the asker's level", () => {
-  assert.equal(askerScope("teaser"), "all");
-  assert.equal(askerScope(null), "all");
-  assert.equal(askerScope("full"), "full");
+  assert.equal(askerScope("teaser"), "all", "legacy teaser = Blind CIM");
+  assert.equal(askerScope("full"), "all", "legacy full = Blind CIM (no section was ever locked)");
+  assert.equal(askerScope("blind"), "all");
   assert.equal(askerScope("loi"), "private");
+  assert.equal(askerScope("named"), "private");
   assert.equal(askerScope("due_diligence"), "private");
+  assert.equal(askerScope("teaser_only"), "private", "a Teaser link never asks; narrowest if judged");
+  assert.equal(askerScope(null), "private", "unknown = Teaser = narrowest");
 });
 
 test("an answer nobody approved is the asker's alone — whatever its scope", () => {
@@ -308,13 +326,16 @@ test("an answer nobody approved is the asker's alone — whatever its scope", ()
   assert.equal(readerMaySeeRow(row, "all", { id: "t2", accessLevel: "teaser" }, terms), true, "the asker");
   assert.equal(readerMaySeeRow({ ...row, brokerDraft: "14 vans." }, "all", teaser, terms), true, "broker adopted it");
   assert.equal(readerMaySeeRow({ ...row, sellerApproved: true }, "all", teaser, terms), true, "seller approved it");
+  assert.equal(readerMaySeeRow({ ...row, sellerApproved: true }, "all", teaserOnly, terms), false, "a Teaser link reads no Q&A");
+  assert.equal(readerMaySeeRow({ ...row, buyerAccessId: "s1" }, "all", teaserOnly, terms), false, "not even its own (it quotes the CIM)");
 });
 
-test("a full-access buyer's answer never reaches a teaser; full and named readers see it", () => {
+test("a historical full-scope answer reaches every CIM buyer (no section was ever locked), never a Teaser link", () => {
   const row = qa({ answerScope: "full", buyerAccessId: "f2", brokerDraft: "14 vans." });
-  assert.equal(readerMaySeeRow(row, rowScope(row, "full"), teaser, terms), false);
+  assert.equal(readerMaySeeRow(row, rowScope(row, "full"), teaser, terms), true, "legacy teaser = Blind CIM");
   assert.equal(readerMaySeeRow(row, rowScope(row, "full"), full, terms), true);
   assert.equal(readerMaySeeRow(row, rowScope(row, "full"), loi, terms), true);
+  assert.equal(readerMaySeeRow(row, rowScope(row, "full"), teaserOnly, terms), false);
 });
 
 test("a named-CIM answer is only ever the asker's", () => {
@@ -332,9 +353,9 @@ test("a Blind reader never gets a question or answer that names the business —
 
 test("rows from before scopes existed are judged conservatively", () => {
   assert.equal(rowScope(qa({ answerScope: null }), "teaser"), "all");
-  assert.equal(rowScope(qa({ answerScope: null }), "full"), "full");
+  assert.equal(rowScope(qa({ answerScope: null }), "full"), "all");
   assert.equal(rowScope(qa({ answerScope: null }), "loi"), "private");
-  assert.equal(rowScope(qa({ answerScope: null }), false), "full", "unknown asker → not for teasers");
+  assert.equal(rowScope(qa({ answerScope: null }), false), "full", "unknown asker → CIM buyers only (never a Teaser link)");
   assert.equal(rowScope(qa({ answerScope: null, sellerApproved: true }), "loi"), "all", "broker/seller-published");
 });
 

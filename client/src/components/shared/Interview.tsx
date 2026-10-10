@@ -16,18 +16,18 @@
  *  TOP BAR / HEADER
  *  Back button label       │ "← Back" — onBack callback │ "← Back" — onBack callback
  *  Business name           │ Shown                       │ Shown
- *  "Fields captured" count │ Shown                       │ Hidden
+ *  "% collected" + quality │ Shown (coverage board)      │ Shown (coverage board)
  *  Coverage panel toggle   │ Shown (PanelRight button)   │ Hidden
  *
  *  COVERAGE SIDE PANEL
- *  Visibility              │ Shown (togglable, default   │ Never shown. Sellers see
- *                          │ open).                      │ a simplified progress
- *                          │                             │ indicator in the top bar.
+ *  Visibility              │ Shown (togglable, default   │ Never shown. Sellers open
+ *                          │ open): the coverage board's │ "What we've covered" —
+ *                          │ panel variant.              │ statuses only, no values.
  *
  *  PROGRESS INDICATOR
- *  Broker view             │ Coverage panel shows per-   │ N/A
- *                          │ section status              │
- *  Seller view             │ N/A                         │ Dot-based progress + %
+ *  Broker view             │ The board panel: headline,  │ N/A
+ *                          │ sections, items             │
+ *  Seller view             │ N/A                         │ "{p}% collected · quality"
  *                          │                             │ in the top bar
  *
  *  END / EXIT
@@ -45,17 +45,24 @@
  *  onBack?: () => void
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback } from "react";
 import { AIConversationInterface } from "@/components/AIConversationInterface";
+import { CimpleWordmark } from "@/components/brand/CimpleLogo";
 import { Button } from "@/components/ui/button";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import {
   CheckCircle,
   ChevronRight,
-  AlertCircle,
-  Clock,
   ArrowLeft,
+  ListChecks,
+  Loader2,
   PanelRight,
 } from "lucide-react";
+import { useCoverageBoard, useSellerCoverage, invalidateCoverage, sellerCoverageKey } from "@/hooks/useCoverageBoard";
+import { CoverageBoardView } from "@/components/coverage/CoverageBoardView";
+import { queryClient } from "@/lib/queryClient";
+import { useIsMobile } from "@/hooks/use-mobile";
+import type { CoverageSummary } from "@shared/coverage-board";
 
 interface SectionCoverage {
   key: string;
@@ -71,9 +78,6 @@ interface SectionCoverage {
   documentedItems?: number;
 }
 
-const IMPORTANCE_SHORT = { critical: "Critical", important: "Important", helpful: "Helpful" } as const;
-import { computeCimReadiness } from "@shared/cim-readiness";
-import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadinessCard";
 
 interface IndustryContext {
   identified: boolean;
@@ -95,25 +99,13 @@ interface TurnResult {
   deferredTopics: string[];
   shouldEnd: boolean;
   endReason?: string;
+  /** The coverage board's seller numbers (shared/coverage-board.ts) — the seller's header. */
+  coverageSummary?: CoverageSummary;
 }
 
-/** How a broker-led ("together") interview is happening. */
-export type TogetherVia = "person" | "zoom" | "meet" | "teams" | "cimple";
-
-export const VIA_LABEL: Record<TogetherVia, string> = {
-  person: "In person",
-  zoom: "Zoom",
-  meet: "Google Meet",
-  teams: "Microsoft Teams",
-  cimple: "Cimple call",
-};
-
 interface InterviewProps {
-  /** broker = broker alone; seller = seller alone; together = broker with the seller on a call / in person */
-  mode: "broker" | "seller" | "together";
-  /** together mode: where the conversation happens */
-  via?: TogetherVia;
-  meetingLink?: string;
+  /** broker = the broker alone (their own session); seller = the seller. ("Interview together" is the coverage board: pages/TogetherInterview.tsx.) */
+  mode: "broker" | "seller";
   dealId: string;
   businessName?: string;
   /** Seller invite token — authenticates seller-mode interview API calls */
@@ -129,8 +121,6 @@ interface InterviewProps {
 
 export function Interview({
   mode,
-  via,
-  meetingLink,
   dealId,
   businessName,
   sellerToken,
@@ -139,8 +129,7 @@ export function Interview({
   resume,
   transcriptHref,
 }: InterviewProps) {
-  const isTogether = mode === "together";
-  const [sectionCoverage, setSectionCoverage] = useState<SectionCoverage[]>([]);
+  const [, setSectionCoverage] = useState<SectionCoverage[]>([]);
   const [industryContext, setIndustryContext] = useState<IndustryContext>({
     identified: false,
     industry: "",
@@ -148,7 +137,9 @@ export function Interview({
     coveredTopics: [],
   });
   const [deferredTopics, setDeferredTopics] = useState<string[]>([]);
-  const [capturedTotal, setCapturedTotal] = useState(0);
+  const [coverageSummary, setCoverageSummary] = useState<CoverageSummary | null>(null);
+  const [coveredOpen, setCoveredOpen] = useState(false);
+  const isPhone = useIsMobile();
   const [isCompleting, setIsCompleting] = useState(false);
   const [interviewEnded, setInterviewEnded] = useState(false);
   // The coverage panel starts closed on a phone — at 256px it would leave the
@@ -158,16 +149,22 @@ export function Interview({
   );
 
   const isBroker = mode !== "seller";
+  // The coverage board — the same items and numbers as "Interview together",
+  // the Overview and the seller's own pages (shared/coverage-board.ts).
+  const brokerBoard = useCoverageBoard(dealId, "broker", { enabled: isBroker });
+  const sellerBoard = useSellerCoverage(sellerToken, { enabled: !isBroker && !!sellerToken });
 
   const handleTurnResult = useCallback((result: TurnResult) => {
     setSectionCoverage(result.sectionCoverage);
     setIndustryContext(result.industryContext);
     setDeferredTopics(result.deferredTopics);
-    setCapturedTotal(result.captured.total);
+    if (result.coverageSummary) setCoverageSummary(result.coverageSummary);
+    if (isBroker) invalidateCoverage(dealId);
+    else if (sellerToken) queryClient.invalidateQueries({ queryKey: sellerCoverageKey(sellerToken) });
     if (result.shouldEnd) {
       setInterviewEnded(true);
     }
-  }, []);
+  }, [dealId, isBroker, sellerToken]);
 
   const handleComplete = useCallback(async () => {
     if (isCompleting) return;
@@ -179,27 +176,11 @@ export function Interview({
     }
   }, [onComplete, isCompleting]);
 
-  // Derived coverage counts
-  const coveredCount = sectionCoverage.filter(
-    (s) => s.status === "well_covered",
-  ).length;
-  const partialCount = sectionCoverage.filter(
-    (s) => s.status === "partial",
-  ).length;
-  const missingCount = sectionCoverage.filter(
-    (s) => s.status === "missing",
-  ).length;
-  // Importance-weighted quality score — the same function the server uses
-  // for the Overview tab and the seller progress page.
-  const readiness = useMemo(() => computeCimReadiness(sectionCoverage), [sectionCoverage]);
-  // Same formula as the seller progress page (/api/seller/:token/progress) —
-  // partial sections count at 40% so the two surfaces never disagree.
-  const progressPercent =
-    sectionCoverage.length > 0
-      ? Math.round(
-          ((coveredCount + partialCount * 0.4) / sectionCoverage.length) * 100,
-        )
-      : 0;
+  // The seller's header: the turn's summary once there is one, else the
+  // seller board (the same numbers as their progress page).
+  const sellerSummary: CoverageSummary | null =
+    coverageSummary ?? (sellerBoard.data ? { percentCollected: sellerBoard.data.percentCollected, totals: sellerBoard.data.totals, quality: { label: sellerBoard.data.quality.label } } : null);
+  const board = brokerBoard.data;
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
@@ -208,36 +189,32 @@ export function Interview({
         {/* Top bar */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border shrink-0 bg-card/50">
           {!isBroker && (
-            <div
-              role="img"
-              aria-label="Cimple"
-              className="h-3.5 w-14 shrink-0"
-              style={{
-                backgroundColor: "hsl(42, 26%, 92%)",
-                WebkitMaskImage: "url('/cimple-text.png')",
-                WebkitMaskSize: "contain",
-                WebkitMaskRepeat: "no-repeat",
-                maskImage: "url('/cimple-text.png')",
-                maskSize: "contain",
-                maskRepeat: "no-repeat",
-              }}
-            />
+            <CimpleWordmark className="h-3.5" />
           )}
           {onBack && (
             <>
               <button
                 onClick={onBack}
-                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Back"
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors shrink-0"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
-                Back
+                <span className="hidden sm:inline">Back</span>
               </button>
-              <span className="text-muted-foreground/30">·</span>
+              <span className="hidden sm:inline text-muted-foreground/30">·</span>
             </>
           )}
-          <span className="text-sm font-semibold truncate min-w-0">
-            {businessName ?? "Business Overview"}
-          </span>
+          {/* (On a phone the seller's "% collected" sits under the name, so the name keeps its room.) */}
+          <div className="min-w-0 flex flex-col">
+            <span className="text-sm font-semibold truncate min-w-0">
+              {businessName ?? "Business Overview"}
+            </span>
+            {!isBroker && sellerSummary && (
+              <span className="sm:hidden text-2xs text-muted-foreground tabular-nums leading-tight" data-testid="seller-interview-progress-phone">
+                {sellerSummary.percentCollected}% collected · {sellerSummary.quality.label}
+              </span>
+            )}
+          </div>
           {industryContext.identified && (
             <>
               <span className="hidden sm:inline text-muted-foreground/30">·</span>
@@ -246,24 +223,16 @@ export function Interview({
               </span>
             </>
           )}
-          {isTogether && (
-            <>
-              <span className="text-muted-foreground/30">·</span>
-              <span className="text-xs text-muted-foreground inline-flex items-center gap-1" data-testid="label-together-mode">
-                Interview together · {VIA_LABEL[via ?? "person"]}
-              </span>
-            </>
-          )}
           <div className="ml-auto flex items-center gap-2 shrink-0">
-            {/* Broker: fields captured + coverage panel toggle */}
+            {/* Broker: % collected + quality + coverage panel toggle */}
             {isBroker && (
               <>
-                {sectionCoverage.length > 0 && (
-                  <CimReadinessBadge readiness={readiness} className="hidden md:inline-flex" />
+                {board && (
+                  <span className="text-2xs text-muted-foreground tabular-nums hidden sm:block" data-testid="broker-interview-collected">
+                    <span className="text-foreground font-medium">{board.percentCollected}% collected</span>
+                    <span className="hidden md:inline"> · Quality: <span className="text-teal">{board.quality.label}</span></span>
+                  </span>
                 )}
-                <span className="text-2xs text-muted-foreground tabular-nums hidden sm:block">
-                  {capturedTotal} fields captured
-                </span>
                 <button
                   onClick={() => setPanelOpen((p) => !p)}
                   className={`h-7 w-7 flex items-center justify-center rounded-md transition-colors ${
@@ -277,32 +246,26 @@ export function Interview({
                 </button>
               </>
             )}
-            {/* Seller: simple progress dots + percentage */}
-            {/* (On a phone the dots are hidden and the % always shows — a
-                dozen dots pushed it off-screen at 390px.) */}
-            {!isBroker && sectionCoverage.length > 0 && (
-              <div className="flex items-center gap-2 min-w-0 shrink-0" data-testid="seller-interview-progress">
-                <div className="hidden sm:flex gap-0.5">
-                  {sectionCoverage.map((s) => (
-                    <div
-                      key={s.key}
-                      className={`h-1.5 w-3 rounded-full transition-colors ${
-                        s.status === "well_covered"
-                          ? "bg-success"
-                          : s.status === "partial"
-                            ? "bg-teal/60"
-                            : "bg-muted"
-                      }`}
-                    />
-                  ))}
-                </div>
+            {/* Seller: "{p}% collected · {quality}" and "What we've covered" */}
+            {!isBroker && sellerSummary && (
+              <div className="hidden sm:flex items-center gap-2 min-w-0 shrink-0" data-testid="seller-interview-progress">
                 <span className="text-2xs text-muted-foreground tabular-nums">
-                  {progressPercent}%
-                </span>
-                <span className="text-2xs text-muted-foreground/70 hidden sm:inline" title={readiness.summary}>
-                  · {readiness.label}
+                  <span className="text-foreground">{sellerSummary.percentCollected}% collected</span>
+                  <span className="hidden sm:inline text-muted-foreground/80"> · {sellerSummary.quality.label}</span>
                 </span>
               </div>
+            )}
+            {!isBroker && sellerToken && (
+              <button
+                type="button"
+                onClick={() => setCoveredOpen(true)}
+                className="inline-flex items-center gap-1.5 h-7 px-2 rounded-md text-2xs text-muted-foreground hover:text-foreground hover:bg-accent"
+                data-testid="button-what-we-covered"
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">What we've covered</span>
+                <span className="sm:hidden">Covered</span>
+              </button>
             )}
           </div>
         </div>
@@ -315,12 +278,9 @@ export function Interview({
             sellerToken={sellerToken}
             onTurnResult={handleTurnResult}
             onComplete={handleComplete}
-            variant={isTogether ? "together" : "chat"}
             // The broker's own page: a session of their own, recorded as
             // the broker's word — never resumed or read by the seller.
             conductedBy={mode === "broker" ? "broker" : undefined}
-            via={via}
-            meetingLink={meetingLink}
             resume={resume}
             transcriptHref={transcriptHref}
           />
@@ -345,114 +305,16 @@ export function Interview({
         )}
       </div>
 
-      {/* ── Coverage panel — broker only ── */}
+      {/* ── Coverage panel — broker only: the coverage board ── */}
       {isBroker && panelOpen && (
-        <div className="w-64 border-l border-border overflow-y-auto bg-card shrink-0 scrollbar-thin">
-          {/* Quality score — what the CIM will look like with what we have */}
-          {sectionCoverage.length > 0 && (
-            <div className="p-3 border-b border-border">
-              <CimReadinessCard readiness={readiness} className="p-3 bg-transparent border-0" />
+        <div className="w-72 border-l border-border overflow-y-auto bg-card shrink-0 scrollbar-thin" data-testid="interview-coverage-panel">
+          {board ? (
+            <CoverageBoardView variant="panel" dealId={dealId} board={board} />
+          ) : (
+            <div className="p-4 text-xs text-muted-foreground flex items-center gap-1.5">
+              {brokerBoard.error ? "Couldn't load the checklist." : <><Loader2 className="h-3 w-3 animate-spin" /> Getting the checklist…</>}
             </div>
           )}
-
-          {/* Section coverage */}
-          <div className="p-4 border-b border-border">
-            <p className="text-2xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
-              CIM Coverage
-            </p>
-            {sectionCoverage.length > 0 ? (
-              <>
-                {/* Coverage bar */}
-                <div className="flex gap-0.5 h-1.5 rounded-full overflow-hidden mb-3">
-                  <div
-                    className="bg-success rounded-full transition-all"
-                    style={{
-                      width: `${(coveredCount / sectionCoverage.length) * 100}%`,
-                    }}
-                  />
-                  <div
-                    className="bg-teal/60 rounded-full transition-all"
-                    style={{
-                      width: `${(partialCount / sectionCoverage.length) * 100}%`,
-                    }}
-                  />
-                  <div className="bg-muted rounded-full flex-1 transition-all" />
-                </div>
-                <div className="flex gap-3 mb-3 text-2xs text-muted-foreground">
-                  <span>
-                    <span className="text-success font-medium">
-                      {coveredCount}
-                    </span>{" "}
-                    covered
-                  </span>
-                  <span>
-                    <span className="text-teal font-medium">
-                      {partialCount}
-                    </span>{" "}
-                    partial
-                  </span>
-                  <span>
-                    <span className="font-medium">{missingCount}</span> missing
-                  </span>
-                </div>
-                {/* Critical-section tally — what governs "can the interview end" */}
-                {sectionCoverage.some((s) => s.importance) && (
-                  <p className="text-2xs text-muted-foreground mb-2" data-testid="text-critical-coverage">
-                    <span className="text-teal font-medium">
-                      {sectionCoverage.filter((s) => s.importance === "critical" && s.status !== "missing").length}
-                    </span>
-                    /{sectionCoverage.filter((s) => s.importance === "critical").length} critical sections have coverage
-                  </p>
-                )}
-                <div className="space-y-0.5">
-                  {sectionCoverage.map((section) => (
-                    <div
-                      key={section.key}
-                      className="flex items-center gap-2 px-1 py-1 rounded text-xs"
-                      title={section.importanceReason || undefined}
-                    >
-                      {section.status === "well_covered" ? (
-                        <CheckCircle className="h-3 w-3 text-success shrink-0" />
-                      ) : section.status === "partial" ? (
-                        <Clock className="h-3 w-3 text-teal shrink-0" />
-                      ) : (
-                        <AlertCircle className="h-3 w-3 text-muted-foreground/30 shrink-0" />
-                      )}
-                      <span
-                        className={
-                          section.status === "well_covered"
-                            ? "text-foreground"
-                            : section.status === "partial"
-                              ? "text-muted-foreground"
-                              : "text-muted-foreground/40"
-                        }
-                      >
-                        {section.title}
-                      </span>
-                      {section.importance && (
-                        <span
-                          className={
-                            "ml-auto shrink-0 text-[9px] uppercase tracking-wider " +
-                            (section.importance === "critical"
-                              ? "text-teal"
-                              : section.importance === "important"
-                                ? "text-muted-foreground/70"
-                                : "text-muted-foreground/40")
-                          }
-                        >
-                          {IMPORTANCE_SHORT[section.importance]}
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <p className="text-xs text-muted-foreground/60">
-                Coverage updates as the conversation progresses.
-              </p>
-            )}
-          </div>
 
           {/* Industry context */}
           {industryContext.identified && (
@@ -521,6 +383,31 @@ export function Interview({
             </div>
           )}
         </div>
+      )}
+      {/* ── The seller's "What we've covered" (statuses only — never a value) ── */}
+      {!isBroker && sellerToken && (
+        <Sheet open={coveredOpen} onOpenChange={setCoveredOpen}>
+          <SheetContent
+            side={isPhone ? "bottom" : "right"}
+            className={isPhone ? "max-h-[85vh] overflow-y-auto rounded-t-xl" : "w-[26rem] sm:max-w-[26rem] overflow-y-auto"}
+            // Focus the sheet itself, not its first button (the Quality ⓘ — its tooltip would open over the title).
+            onOpenAutoFocus={(e) => { e.preventDefault(); (e.currentTarget as HTMLElement | null)?.focus?.(); }}
+          >
+            <SheetHeader className="text-left">
+              <SheetTitle>What we've covered</SheetTitle>
+              <SheetDescription>Your business overview, section by section.</SheetDescription>
+            </SheetHeader>
+            <div className="mt-4">
+              {sellerBoard.data ? (
+                <CoverageBoardView variant="seller" board={sellerBoard.data} />
+              ) : sellerBoard.error ? (
+                <p className="text-sm text-muted-foreground">Couldn't load this right now — it updates as you go.</p>
+              ) : (
+                <p className="text-sm text-muted-foreground inline-flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…</p>
+              )}
+            </div>
+          </SheetContent>
+        </Sheet>
       )}
     </div>
   );

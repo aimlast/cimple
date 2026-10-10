@@ -147,6 +147,45 @@ export interface DealProgressExtras {
    * sectionsAwaitingApproval). Unknown → the deal's design flags alone.
    */
   sectionsAwaitingApproval?: number;
+  /**
+   * "Add-backs in the books" (server/gl/progress.ts): the step's state, how
+   * many add-backs are still to review, a ledger waiting for its columns, an
+   * accountant the seller named waiting for the broker's "Send it". Null or
+   * absent = the step doesn't apply (no add-back needs proof).
+   */
+  glTracing?: GlTracingProgress | null;
+}
+
+/** The "Add-backs in the books" step as the workflow surfaces see it (gl spec §6.11). */
+export type GlTracingState = "not_needed" | "waived" | "done" | "not_requested" | "with_seller" | "with_broker";
+export interface GlTracingProgress {
+  state: GlTracingState;
+  toGo: number;
+  total?: number;
+  needsColumns: boolean;
+  accountantPending: boolean;
+}
+
+/** The GL step's checklist rows (phase 3) — optional: the due-diligence CIM's gate is what enforces it. */
+export function glChecklistItems(gl: GlTracingProgress | null | undefined): PhaseItem[] {
+  if (!gl || gl.state === "not_needed") return [];
+  return [
+    { label: "Seller shows the add-backs in the books", actor: "seller", optional: true, done: gl.state === "with_broker" || gl.state === "done" || gl.state === "waived" },
+    { label: "Add-backs in the books reviewed", actor: "broker", optional: true, done: gl.state === "done" || gl.state === "waived" },
+  ];
+}
+
+/** The GL step as someone's move, or null (gl spec §6.11). `onlyBroker`: only the broker's own actions. */
+export function glNextStep(dealId: string, gl: GlTracingProgress | null | undefined, onlyBroker = false): NextStep | null {
+  if (!gl) return null;
+  const books = `/deal/${dealId}/financials?fin=books`;
+  if (gl.needsColumns) return { label: "check the columns of the ledger", owner: "you", href: books };
+  if (gl.accountantPending) return { label: "send the accountant their link", owner: "you", href: books };
+  if (gl.state === "with_broker") return { label: "review the add-backs in the books", owner: "you", href: books };
+  if (onlyBroker) return null;
+  if (gl.state === "not_requested") return { label: "ask the seller to show the add-backs in their books", owner: "you", href: books };
+  if (gl.state === "with_seller") return { label: "show the add-backs in their books", owner: "seller", href: books };
+  return null;
 }
 
 /* ─── Is the design approved? ────────────────────────────────────────── */
@@ -170,6 +209,32 @@ export function designApprovalState(
   const brokerApproved = (!!deal.designApprovedByBroker || !!deal.isLive) && !((sectionsAwaitingApproval ?? 0) > 0);
   const sellerApproved = !!deal.designApprovedBySeller || !!deal.isLive;
   return { brokerApproved, sellerApproved, ready: brokerApproved && sellerApproved };
+}
+
+/**
+ * The server's publish gate on the design approvals — the SAME rule as
+ * designApprovalState above, so "Ready to publish the update — All approvals
+ * received" on the Overview is never answered with a 409. A request may
+ * record an approval itself (`patch`); otherwise the stored flag counts, and
+ * a CIM that is already live counts as approved (publishing an update of it).
+ * Per-section approvals are checked separately (server/cim/approvals
+ * sectionsBlockingPublish), exactly as the client's sectionsAwaitingApproval.
+ */
+export function designApprovalsMissing(
+  patch: { designApprovedByBroker?: unknown; designApprovedBySeller?: unknown },
+  current: { designApprovedByBroker?: boolean | null; designApprovedBySeller?: boolean | null; isLive?: boolean | null } | null | undefined,
+): Array<"broker" | "seller"> {
+  // Per side: the flag in this request or stored, else the live CIM — unless
+  // this same request withdraws that side's approval.
+  const approved = (k: "designApprovedByBroker" | "designApprovedBySeller") => {
+    if (patch[k] === false) return false;
+    const live = designApprovalState({ [k]: patch[k] === true || current?.[k] === true, isLive: current?.isLive }, 0);
+    return k === "designApprovedByBroker" ? live.brokerApproved : live.sellerApproved;
+  };
+  const missing: Array<"broker" | "seller"> = [];
+  if (!approved("designApprovedByBroker")) missing.push("broker");
+  if (!approved("designApprovedBySeller")) missing.push("seller");
+  return missing;
 }
 
 /* ─── Can the AI write the CIM now? ──────────────────────────────────── */
@@ -263,6 +328,8 @@ export function phaseChecklist(
       ];
     case "phase3_content_creation":
       return [
+        // Before the CIM is written (gl spec §6.11): optional, the DD CIM's gate enforces it.
+        ...glChecklistItems(extras?.glTracing),
         { label: "CIM draft generated", actor: "auto", done: hasCimDraft(deal, extras) },
         { label: "Broker reviewed", actor: "broker", done: !!deal.contentApprovedByBroker },
         { label: "Seller approved", actor: "seller", done: !!deal.contentApprovedBySeller },
@@ -368,6 +435,9 @@ export function computeNextStep(deal: DealProgressInput, extras: DealProgressExt
         }
         if (openCritical > 0) return conflicts();
         if (followUps > 0) return followUpStep();
+        // "Add-backs in the books" comes before the CIM is written (gl spec §6.11).
+        const gl = glNextStep(deal.id, extras.glTracing);
+        if (gl) return gl;
         return you("generate the CIM");
       }
       if (extras.cimGenerating) return { label: "Cimple is rewriting the CIM", owner: "none", href: overview };
@@ -380,6 +450,7 @@ export function computeNextStep(deal: DealProgressInput, extras: DealProgressExt
       }
       if (openCritical > 0) return conflicts();
       if (followUps > 0) return followUpStep();
+      { const gl = glNextStep(deal.id, extras.glTracing, true); if (gl) return gl; }
       return you("move the deal to Design");
     }
     case "phase4_design_finalization": {
@@ -400,6 +471,7 @@ export function computeNextStep(deal: DealProgressInput, extras: DealProgressExt
       }
       if (openCritical > 0) return conflicts();
       if (followUps > 0) return followUpStep();
+      { const gl = glNextStep(deal.id, extras.glTracing, true); if (gl) return gl; }
       return you("publish to buyers");
     }
     default:

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation, useSearch } from "wouter";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -48,14 +49,49 @@ import { ClarifyingQuestions, countPendingQuestions } from "@/components/financi
 import type { ClarifyingQuestion } from "@/components/financial/ClarifyingQuestions";
 import { InsightsPanel } from "@/components/financial/InsightsPanel";
 import type { InsightsData } from "@/components/financial/InsightsPanel";
-import { AddbackVerification } from "@/components/financial/AddbackVerification";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
+import { BrokerGlPanel } from "@/components/gl/BrokerGlPanel";
+import { useGlProgress } from "@/hooks/useGlStatus";
 
 import {
   DollarSign, Loader2, RefreshCw, Zap, BarChart3,
   Scale, Calculator, HelpCircle, Lightbulb, ArrowLeft, ShieldCheck,
-  AlertTriangle, CheckCircle2, GitCompareArrows, MessageCircleQuestion,
+  AlertTriangle, CheckCircle2, GitCompareArrows, MessageCircleQuestion, BookCheck,
 } from "lucide-react";
+
+/** The Financials sub-tabs, in order — the URL's ?fin= (gl spec §3.4). */
+export const FIN_TABS = [
+  { key: "overview", label: "Overview" },
+  { key: "income", label: "Income Statement" },
+  { key: "balance", label: "Balance Sheet" },
+  { key: "normalization", label: "Normalization" },
+  { key: "working-capital", label: "Working Capital" },
+  { key: "discrepancies", label: "Discrepancies" },
+  { key: "questions", label: "Questions" },
+  { key: "insights", label: "Insights" },
+  { key: "books", label: "Add-backs in the books" },
+] as const;
+export type FinTab = (typeof FIN_TABS)[number]["key"];
+const isFinTab = (v: string | null): v is FinTab => !!v && FIN_TABS.some((t) => t.key === v);
+
+/** The sub-tab in the URL (?fin=…, default Overview); changing it keeps the deal tab's other params. */
+function useFinTab(): [FinTab, (t: FinTab) => void] {
+  const [location, setLocation] = useLocation();
+  const search = useSearch();
+  const params = new URLSearchParams(search);
+  const raw = params.get("fin");
+  const tab: FinTab = isFinTab(raw) ? raw : raw === "verify-addbacks" ? "books" : "overview";
+  const setTab = (t: FinTab) => {
+    const next = new URLSearchParams(search);
+    if (t === "overview") next.delete("fin");
+    else next.set("fin", t);
+    next.delete("addback");
+    next.delete("year");
+    const qs = next.toString();
+    setLocation(`${location}${qs ? `?${qs}` : ""}`);
+  };
+  return [tab, setTab];
+}
 
 /* ──────────────────────────────────────────────
    Props
@@ -81,7 +117,11 @@ const STATUS_BADGE: Record<string, { label: string; color: string }> = {
 ─────────────────────────────────────────────── */
 export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCenterProps) {
   const { toast } = useToast();
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useFinTab();
+  // "Add-backs in the books": how many need the broker (the review, a ledger's columns, the accountant's link).
+  const glProgress = useGlProgress(dealId);
+  const glNow = glProgress.data?.glTracing;
+  const booksBadge = glNow ? (glNow.state === "with_broker" ? glNow.toGo : 0) + (glNow.needsColumns ? 1 : 0) + (glNow.accountantPending ? 1 : 0) : 0;
   // Re-run needs an explicit confirmation — it starts a new version.
   const [rerunOpen, setRerunOpen] = useState(false);
   // A specific earlier version the broker chose to view (null = latest).
@@ -387,6 +427,9 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
             )}
           </Button>
         </div>
+
+        {/* The general ledger can come in any time — before the analysis too (gl spec D2). */}
+        <BrokerGlPanel dealId={dealId} variant="ledgers-only" />
       </div>
     );
   }
@@ -671,8 +714,27 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
       )}
 
       {/* Tabs */}
-      <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList className="w-full justify-start bg-muted/50 h-9">
+      <Tabs value={tab} onValueChange={(v) => isFinTab(v) && setTab(v)} className="w-full">
+        {/* Phones: one select instead of a row of tabs that runs off the screen. */}
+        <div className="md:hidden" data-testid="fin-tab-select">
+          <Select value={tab} onValueChange={(v) => isFinTab(v) && setTab(v)}>
+            <SelectTrigger className="h-10 text-sm" aria-label="Showing">
+              <span className="text-muted-foreground mr-1">Showing:</span>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {FIN_TABS.map((t) => (
+                <SelectItem key={t.key} value={t.key} className="text-sm">
+                  {t.label}
+                  {t.key === "discrepancies" && unrouted.length > 0 ? ` (${unrouted.length})` : ""}
+                  {t.key === "questions" && pendingQuestionCount > 0 ? ` (${pendingQuestionCount})` : ""}
+                  {t.key === "books" && booksBadge > 0 ? ` (${booksBadge})` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <TabsList className="hidden md:flex w-full justify-start bg-muted/50 h-9 overflow-x-auto">
           <TabsTrigger value="overview" className="text-xs gap-1.5 data-[state=active]:bg-background">
             <BarChart3 className="h-3 w-3" /> Overview
           </TabsTrigger>
@@ -709,8 +771,13 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
           <TabsTrigger value="insights" className="text-xs gap-1.5 data-[state=active]:bg-background">
             <Lightbulb className="h-3 w-3" /> Insights
           </TabsTrigger>
-          <TabsTrigger value="verify-addbacks" className="text-xs gap-1.5 data-[state=active]:bg-background">
-            <ShieldCheck className="h-3 w-3" /> Verify Addbacks
+          <TabsTrigger value="books" className="text-xs gap-1.5 data-[state=active]:bg-background" data-testid="fin-tab-books">
+            <BookCheck className="h-3 w-3" /> Add-backs in the books
+            {booksBadge > 0 && (
+              <span className="ml-1 h-4 min-w-[1rem] rounded-full bg-teal/20 text-teal text-2xs font-medium flex items-center justify-center px-1">
+                {booksBadge}
+              </span>
+            )}
           </TabsTrigger>
         </TabsList>
 
@@ -742,6 +809,7 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
           <NormalizationPanel
             data={normData}
             onUpdate={handleNormUpdate}
+            dealId={dealId}
           />
         </TabsContent>
 
@@ -771,11 +839,8 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
           <InsightsPanel data={insightsData} />
         </TabsContent>
 
-        <TabsContent value="verify-addbacks">
-          <AddbackVerification
-            dealId={dealId}
-            financialAnalysisId={analysis?.id}
-          />
+        <TabsContent value="books">
+          <BrokerGlPanel dealId={dealId} />
         </TabsContent>
       </Tabs>
     </div>

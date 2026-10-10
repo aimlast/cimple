@@ -1,0 +1,26 @@
+{
+  "about": "Recorded AI outputs for the QA OCT copies of Lakeshore Home Comfort (fictional demo data). Hand-written to mimic the figure_reasons tool output: every quote is word for word from the copy's own shared documents. Seeded by scripts/seed-figure-notes-fixtures.ts (qa_cimgen 'QA OCT —' deals only).",
+  "notes": [
+    {
+      "figureKey": "line:comfort-club-maintenance-plan-memberships|2023",
+      "kind": "movement",
+      "compareKey": "2022",
+      "text": "Active members grew from 2,150 to 2,520 during FY2023, including members from a book of maintenance plans bought in July 2023.",
+      "blindText": "Active members grew from 2,150 to 2,520 during FY2023, including members from a book of maintenance plans bought in July 2023.",
+      "sources": [
+        { "kind": "document", "document": "^Comfort Club membership report", "quote": "Active members Dec 31, 2022 / 2023 / 2024,2150 / 2520 / 2780" },
+        { "kind": "document", "document": "^Comfort Club membership report", "quote": "Members from July 2023 acquired book" }
+      ]
+    },
+    {
+      "figureKey": "line:comfort-club-maintenance-plan-memberships|2024",
+      "kind": "movement",
+      "compareKey": "2023",
+      "text": "Active members grew from 2,520 to 2,780 during FY2024.",
+      "blindText": "Active members grew from 2,520 to 2,780 during FY2024.",
+      "sources": [
+        { "kind": "document", "document": "^Comfort Club membership report", "quote": "Active members Dec 31, 2022 / 2023 / 2024,2150 / 2520 / 2780" }
+      ]
+    }
+  ]
+}

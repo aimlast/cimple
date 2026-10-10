@@ -25,7 +25,10 @@ import {
   FUNDING_OPTIONS, NDA_BUYER_TYPES, OPERATE_OPTIONS, PROOF_OF_FUNDS_OPTIONS, TIMELINE_OPTIONS, formatPrice,
   type NdaBuyerProfile,
 } from "@shared/nda-buyer-profile";
-import { buyerAccessPhrase } from "@shared/cim-layouts";
+import { BLIND_ACCESS_LEVEL, accessChangePhrase, accessGrantPhrase, accessLevelLabel, isTeaserOnly, normalizeAccessLevel } from "@shared/access-levels";
+import { TEASER_PASS_REASON_WORDS, type TeaserPassReason } from "@shared/teaser";
+import { nextStepWords } from "@shared/buyer-next-steps";
+import { teaserEngagement, wasTeaserLink } from "../teaser/engagement";
 import { storage } from "../storage";
 import { calculateQualifiedLeadScore } from "../scoring/buyer-score";
 import {
@@ -172,7 +175,7 @@ function dealRows(ctx: Ctx) {
       dealId: a.dealId,
       businessName: deal?.businessName ?? "Deal",
       accessId: a.id,
-      accessLevel: a.accessLevel,
+      accessLevel: normalizeAccessLevel(a.accessLevel),
       status: accessStatus(a),
       grantedAt: a.createdAt,
       expiresAt: a.expiresAt,
@@ -219,7 +222,7 @@ export function summaryInput(ctx: Ctx) {
   const { display, fundsMasked } = mergedForBroker(ctx.buyer, ctx.contact, ctx.scope);
   const crm = (ctx.contact?.crmProfile as CrmBuyerProfile | null) ?? null;
   const deals = dealRows(ctx).map((d) => ({
-    deal: d.businessName, access: d.accessLevel, status: d.status, views: d.views, minutes: Math.round(d.seconds / 60),
+    deal: d.businessName, access: accessLevelLabel(d.accessLevel), status: d.status, views: d.views, minutes: Math.round(d.seconds / 60),
     sections: d.topSections.map((s) => s.title), questions: d.questions, ndaSigned: !!d.ndaSignedAt,
     decision: d.decision, nextStep: d.decisionNextStep, reason: d.decisionReason,
     aiFit: d.deepCheck ? `${d.deepCheck.verdict} (${d.deepCheck.fitScore}) — ${d.deepCheck.whyFit}` : null,
@@ -334,7 +337,11 @@ export interface TimelineEvent {
   kind:
     | "added" | "account" | "crm_synced" | "access_granted" | "access_extended" | "access_level" | "access_revoked"
     | "link_expired" | "first_view" | "viewing" | "nda_signed" | "decision" | "question" | "outreach" | "email"
-    | "approval" | "profile_edit" | "login";
+    | "approval" | "profile_edit" | "login"
+    // The teaser (server/teaser/*).
+    | "teaser_sent" | "teaser_opened" | "cim_requested" | "teaser_passed"
+    // vdr: the data room (given it, opened documents, downloads, requests, team).
+    | "data_room";
   title: string;
   detail?: string | null;
   dealId?: string | null;
@@ -351,10 +358,6 @@ const DECISION_TEXT: Record<string, { title: string; tone: TimelineEvent["tone"]
   not_interested: { title: "Not interested", tone: "negative" },
   need_more_time: { title: "Asked for more time", tone: "neutral" },
   lapsed: { title: "Decision lapsed (no response)", tone: "negative" },
-};
-const NEXT_STEP_TEXT: Record<string, string> = {
-  seller_call: "wants a call with the seller", management_meeting: "wants a management meeting", site_visit: "wants a site visit",
-  loi: "ready to submit an LOI", more_info: "wants more information", other: "other next step",
 };
 const FIELD_LABEL: Record<string, string> = {
   name: "Name", phone: "Phone", company: "Company", title: "Title", linkedinUrl: "LinkedIn", buyerType: "Buyer type",
@@ -376,6 +379,17 @@ export async function buildBuyerTimeline(brokerId: string, buyerId: string): Pro
     if (at) ev.push({ ...e, at });
   };
   const dealName = (id: string | null | undefined) => (id ? ctx.dealById.get(id)?.businessName ?? null : null);
+  // Teaser reading per link (only for deals where this buyer had a teaser link).
+  const teaserReading = new Map<string, { firstOpenedAt: string | null; lastOpenedAt: string | null; activeMs: number; readToEnd: boolean; furthestBlock: string | null }>();
+  const teaserDeals = Array.from(new Set(ctx.accesses.filter((a) => wasTeaserLink(a)).map((a) => a.dealId)));
+  for (const dealId of teaserDeals) {
+    try {
+      const eng = await teaserEngagement(dealId);
+      for (const b of eng.buyers) if (ctx.accesses.some((a) => a.id === b.accessId)) teaserReading.set(b.accessId, b);
+    } catch (err) {
+      console.warn(`[buyer-timeline] teaser reading skipped for deal ${dealId}:`, (err as Error)?.message);
+    }
+  }
 
   if (contact) push({ id: `added-${contact.id}`, at: contact.addedAt, kind: "added", title: "Added to your buyers", detail: CONTACT_SOURCE_TEXT[contact.source] ?? null });
   if (buyer.source === "self_signup") push({ id: "account", at: buyer.createdAt, kind: "account", title: "Created a Cimple buyer account" });
@@ -388,10 +402,26 @@ export async function buildBuyerTimeline(brokerId: string, buyerId: string): Pro
   for (const a of ctx.accesses) {
     const d = dealName(a.dealId);
     const eng = ctx.engagement.get(a.id);
-    push({ id: `grant-${a.id}`, at: a.createdAt, kind: "access_granted", title: `Given ${buyerAccessPhrase(a.accessLevel)} access`, dealId: a.dealId, dealName: d });
-    ((a.accessEvents as BuyerAccessEvent[] | null) ?? []).forEach((e, i) => {
+    const events = (a.accessEvents as BuyerAccessEvent[] | null) ?? [];
+    // The level the link was created at (recorded since Oct 2026); older links
+    // show the level they have now.
+    const grantedLevel = events.find((e) => e.type === "granted")?.accessLevel ?? a.accessLevel;
+    push({ id: `grant-${a.id}`, at: a.createdAt, kind: isTeaserOnly(grantedLevel) ? "teaser_sent" : "access_granted", title: accessGrantPhrase(grantedLevel), dealId: a.dealId, dealName: d });
+    // Teaser reading (its own numbers — never the CIM's).
+    const teaserRead = teaserReading.get(a.id);
+    if (teaserRead?.firstOpenedAt) {
+      push({ id: `tv-${a.id}`, at: teaserRead.lastOpenedAt ?? teaserRead.firstOpenedAt, kind: "teaser_opened",
+        title: `Read the teaser${teaserRead.activeMs >= 1000 ? ` · ${fmtDuration(Math.round(teaserRead.activeMs / 1000))}` : ""}`,
+        detail: teaserRead.readToEnd ? "Read to the end" : teaserRead.furthestBlock ? `Stopped at ${teaserRead.furthestBlock}` : null, dealId: a.dealId, dealName: d });
+    }
+    events.forEach((e, i) => {
+      if (e.type === "cim_requested") push({ id: `cr-${a.id}-${i}`, at: e.at, kind: "cim_requested", title: "Asked for the CIM", dealId: a.dealId, dealName: d, tone: "positive" });
+      if (e.type === "teaser_passed") {
+        const why = (e.reasons ?? []).map((r) => TEASER_PASS_REASON_WORDS[r as TeaserPassReason] ?? r).join(", ");
+        push({ id: `tp-${a.id}-${i}`, at: e.at, kind: "teaser_passed", title: `Said the teaser isn't for them${why ? ` — ${why}` : ""}`, detail: e.note ? `“${e.note.slice(0, 240)}”` : null, dealId: a.dealId, dealName: d });
+      }
       if (e.type === "extended") push({ id: `ext-${a.id}-${i}`, at: e.at, kind: "access_extended", title: "Access extended", detail: e.expiresAt ? `Now expires ${new Date(e.expiresAt).toDateString()}` : null, dealId: a.dealId, dealName: d });
-      if (e.type === "level_changed") push({ id: `lvl-${a.id}-${i}`, at: e.at, kind: "access_level", title: e.accessLevel ? `Access changed to ${buyerAccessPhrase(e.accessLevel)}` : "Access level changed", dealId: a.dealId, dealName: d });
+      if (e.type === "level_changed") push({ id: `lvl-${a.id}-${i}`, at: e.at, kind: "access_level", title: e.accessLevel ? accessChangePhrase(e.accessLevel) : "Access level changed", dealId: a.dealId, dealName: d });
       if (e.type === "reminder_undeliverable") {
         push({
           id: `undeliv-${a.id}-${i}`, at: e.at, kind: "email", tone: "negative",
@@ -433,19 +463,24 @@ export async function buildBuyerTimeline(brokerId: string, buyerId: string): Pro
     const t = DECISION_TEXT[data.decision] ?? { title: humanize(data.decision), tone: "neutral" as const };
     const reason = data.decision !== "need_more_time" && a.decision === data.decision ? a.decisionReason : null;
     push({ id: `dec-${a.id}-${i}`, at: e.createdAt, kind: "decision", title: t.title, tone: t.tone,
-      detail: [data.nextStep ? NEXT_STEP_TEXT[data.nextStep] ?? data.nextStep : null, reason ? `“${reason.slice(0, 240)}”` : null].filter(Boolean).join(" · ") || null,
+      detail: [data.nextStep ? nextStepWords(data.nextStep) : null, reason ? `“${reason.slice(0, 240)}”` : null].filter(Boolean).join(" · ") || null,
       dealId: a.dealId, dealName: dealName(a.dealId) });
   });
   for (const a of ctx.accesses) {
     if (seenDecisionAccess.has(a.id) || !a.decisionAt || !a.decision || a.decision === "under_review") continue;
     const t = DECISION_TEXT[a.decision] ?? { title: humanize(a.decision), tone: "neutral" as const };
     push({ id: `dec-${a.id}`, at: a.decisionAt, kind: "decision", title: t.title, tone: t.tone,
-      detail: [a.decisionNextStep ? NEXT_STEP_TEXT[a.decisionNextStep] ?? a.decisionNextStep : null, a.decisionReason ? `“${a.decisionReason.slice(0, 240)}”` : null].filter(Boolean).join(" · ") || null,
+      detail: [a.decisionNextStep ? nextStepWords(a.decisionNextStep) : null, a.decisionReason ? `“${a.decisionReason.slice(0, 240)}”` : null].filter(Boolean).join(" · ") || null,
       dealId: a.dealId, dealName: dealName(a.dealId) });
   }
 
   for (const q of ctx.questions) {
     push({ id: `q-${q.id}`, at: q.createdAt, kind: "question", title: "Asked a question", detail: `“${q.question.slice(0, 280)}”${q.status === "published" ? " — answered" : ""}`, dealId: q.dealId, dealName: dealName(q.dealId) });
+  }
+  // Data room (vdr §9.4): one line per day they opened documents, downloads, requests, their team.
+  {
+    const { vdrTimelineEventsFor } = await import("../vdr/timeline");
+    for (const e of await vdrTimelineEventsFor(ctx.accesses, fmtDuration)) push({ ...e, dealName: dealName(e.dealId) });
   }
   for (const o of ctx.outreach) {
     push({ id: `o-${o.id}`, at: o.sentAt ?? o.createdAt, kind: "outreach", title: o.status === "sent" ? "You emailed them about a listing" : o.status === "draft" ? "Outreach drafted" : "Outreach email not delivered",
@@ -457,8 +492,13 @@ export async function buildBuyerTimeline(brokerId: string, buyerId: string): Pro
   }
   for (const r of ctx.approvals) {
     const d = dealName(r.dealId);
-    push({ id: `ap-${r.id}`, at: r.createdAt, kind: "approval", title: "Submitted for approval", detail: r.background ? r.background.slice(0, 200) : null, dealId: r.dealId, dealName: d });
-    if (r.grantedAt) push({ id: `apg-${r.id}`, at: r.grantedAt, kind: "approval", title: "Approved by the seller — access granted", dealId: r.dealId, dealName: d, tone: "positive" });
+    const t = r as typeof r & { source?: string | null; grantedBy?: string | null; grantAccessLevel?: string | null };
+    // A teaser request is shown as "Asked for the CIM" (from the link's own events).
+    if (t.source !== "teaser_request") push({ id: `ap-${r.id}`, at: r.createdAt, kind: "approval", title: "Submitted for approval", detail: r.background ? r.background.slice(0, 200) : null, dealId: r.dealId, dealName: d });
+    const given = accessGrantPhrase(t.grantAccessLevel ?? BLIND_ACCESS_LEVEL).replace(/^Given /, "");
+    if (r.grantedAt) push({ id: `apg-${r.id}`, at: r.grantedAt, kind: "approval",
+      title: t.grantedBy === "broker" ? `You gave them ${given}` : t.grantedBy === "auto" ? `Given ${given} automatically after the NDA` : "Approved by the seller — access granted",
+      dealId: r.dealId, dealName: d, tone: "positive" });
     else if (r.status?.startsWith("rejected")) push({ id: `apr-${r.id}`, at: r.sellerReviewedAt ?? r.brokerReviewedAt ?? r.createdAt, kind: "approval", title: r.status === "rejected_by_seller" ? "Declined by the seller" : "Declined by you", detail: r.rejectionReason ?? null, dealId: r.dealId, dealName: d, tone: "negative" });
   }
 

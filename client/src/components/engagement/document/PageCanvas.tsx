@@ -18,6 +18,15 @@
  *   - numbered pins 1–3 on the parts with the most time on this page;
  *   - optionally a dashed outline on the parts nobody read.
  *
+ * When only the page's total reading time is known (old tracking, or a
+ * version with different parts — mode "wash"), the whole sheet is washed in
+ * the ramp colour by the page's reading time against the busiest page (alpha
+ * at most 0.37), with a full-strength edge bar down its left side and a
+ * corner badge ("3rd most-read of 29 · 27 min 40 s"). Hovering the paper
+ * (or focusing the badge) shows the page's card; on a phone a tap opens it
+ * as a sheet (onWashTap). No pins, no part buttons: a page total has no
+ * position on the page.
+ *
  * A split section ("7b") renders whole and hides the other part's blocks
  * (viewer-model partVisibility). A section buyers could collapse renders
  * through the view room's own ExpandableSection, in the view the broker
@@ -41,6 +50,7 @@ import {
   type RenditionPage,
 } from "@shared/analytics-v2";
 import type { CimSection } from "@shared/schema";
+import { cn } from "@/lib/utils";
 import { CimBlocksProvider } from "@/components/cim/blocks";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { CimDesignProvider, buildCimDesign, type CimDesignPayload } from "@/components/cim/CimDesignContext";
@@ -52,7 +62,8 @@ import { FinancialToggle } from "@/components/cim/FinancialToggle";
 import { ExpandableSection } from "@/components/cim/ExpandableSection";
 import { HEAT_PAPER_STOPS } from "../heat";
 import {
-  heatIntensity, isUnread, pageInView, paperTint, partVisibility, partVisibilityCss, topBlocks, unreadBlocks, type SectionView,
+  heatIntensity, isUnread, pageInView, paperTint, partVisibility, partVisibilityCss, topBlocks, unreadBlocks, washEdge, washFill,
+  type DrawMode, type SectionView,
 } from "./viewer-model";
 
 /** Paper-side colours (theme-locked, like the CIM itself). */
@@ -89,6 +100,31 @@ export interface PageCanvasProps {
   view?: SectionView | null;
   /** The section's own "Show full details / Show less" button was clicked. */
   onViewChange?(view: SectionView): void;
+  /** What is drawn: each part, the whole page, or nothing (default: "parts" when paint, else "none"). */
+  mode?: DrawMode;
+  /** The whole-page shade's intensity (0–1, against the busiest page). */
+  washT?: number;
+  /** What the whole-page card and badge say. */
+  washCard?: WashCard | null;
+  /** Phones: the washed page was tapped (open the card as a sheet). */
+  onWashTap?(): void;
+  /** A part outlined from elsewhere (compare: the same part on the other side). */
+  outlineKey?: string | null;
+  /**
+   * Who the view shows (shared engagementViewScope): in a narrower view a
+   * part nobody here read may well have been read by other buyers, so it is
+   * "Not read" / "No buyer in this view read this part", never "Nobody".
+   */
+  viewScope?: "one" | "some" | null;
+}
+
+/** The whole-page card: "This page · 27 min 40 s from 8 buyers · whole page only". */
+export interface WashCard {
+  /** "27 min 40 s". */
+  time: string;
+  buyers: number;
+  /** "3rd most-read of 29" (null when nobody read it). */
+  rankText: string | null;
 }
 
 export function PageCanvas(props: PageCanvasProps) {
@@ -265,12 +301,120 @@ function edgeColour(t: number): string {
   return stops[Math.min(stops.length - 1, 1 + Math.round(t * (stops.length - 2)))];
 }
 
+/** The whole-page wash: tint, edge bar, corner badge and the page card (heat-map spec §3.3). */
+function WashOverlay({ t, card, showHeat, touch, wrapRef, onWashTap }: {
+  t: number;
+  card: WashCard | null | undefined;
+  showHeat: boolean;
+  touch: boolean;
+  wrapRef: RefObject<HTMLDivElement>;
+  onWashTap?(): void;
+}) {
+  const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
+  const [focusAt, setFocusAt] = useState<{ x: number; y: number } | null>(null);
+  // Hovering anywhere on the paper shows the card (desktop); a tap opens the sheet (phones).
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap || !showHeat) return;
+    const move = (e: MouseEvent) => { if (!touch) setPointer({ x: e.clientX, y: e.clientY }); };
+    const leave = () => setPointer(null);
+    const tap = (e: MouseEvent) => {
+      if (!touch || !onWashTap) return;
+      // A switch or link inside the page keeps working.
+      if ((e.target as HTMLElement | null)?.closest("button:not([data-heat-wash-badge]), a, input, [role=switch], [role=radio]")) return;
+      onWashTap();
+    };
+    wrap.addEventListener("mousemove", move);
+    wrap.addEventListener("mouseleave", leave);
+    wrap.addEventListener("click", tap);
+    return () => {
+      wrap.removeEventListener("mousemove", move);
+      wrap.removeEventListener("mouseleave", leave);
+      wrap.removeEventListener("click", tap);
+    };
+  }, [wrapRef, touch, onWashTap, showHeat]);
+  if (!showHeat) return null;
+  const fill = washFill(t);
+  const edge = washEdge(t);
+  const describe = card
+    ? `Whole page: ${card.time} of reading time from ${card.buyers} buyer${card.buyers === 1 ? "" : "s"}${card.rankText ? `, ${card.rankText.charAt(0).toLowerCase()}${card.rankText.slice(1)} pages` : ""}`
+    : "Whole page shaded by its reading time";
+  const at = pointer ?? focusAt;
+  return (
+    <div className="pointer-events-none absolute inset-0" data-heat-overlay>
+      {fill && (
+        <div
+          className="absolute inset-0 rounded-[3px]"
+          style={{ background: fill, mixBlendMode: "multiply" }}
+          role="img"
+          aria-label={describe}
+          data-heat-wash
+        />
+      )}
+      <span className="absolute left-0 top-0 bottom-0 rounded-l-[3px]" style={{ width: 6, background: edge }} aria-hidden data-heat-wash-edge />
+      {card && (
+        <button
+          type="button"
+          data-heat-wash-badge
+          className={
+            touch
+              ? "pointer-events-auto absolute right-1.5 top-1.5 rounded-[4px] px-1.5 py-0.5 text-[10px] font-medium tabular-nums shadow-sm outline-none focus-visible:ring-2"
+              : "pointer-events-auto absolute right-3 top-3 rounded-[4px] px-2 py-1 text-[11px] font-medium tabular-nums shadow-sm outline-none focus-visible:ring-2"
+          }
+          style={{ color: INK, background: "rgba(251, 249, 244, 0.92)", border: `1px solid ${edge}` }}
+          aria-label={describe}
+          onFocus={(e) => { const r = e.currentTarget.getBoundingClientRect(); setFocusAt({ x: r.left, y: r.bottom }); }}
+          onBlur={() => setFocusAt(null)}
+          onClick={(e) => { e.stopPropagation(); if (touch) onWashTap?.(); }}
+        >
+          {card.rankText ? `${card.rankText} · ${card.time}` : card.time}
+        </button>
+      )}
+      {!touch && at && card && (
+        <div
+          className="pointer-events-none fixed z-50 rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-xl"
+          style={cardPosition(at, 260, 110)}
+          role="tooltip"
+          data-testid="engagement-wash-card"
+        >
+          <WashDetails card={card} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function cardPosition(at: { x: number; y: number }, W: number, H: number): { top: number; left: number; width: number } {
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const left = at.x + 16 + W > vw - 8 ? Math.max(8, at.x - 16 - W) : at.x + 16;
+  const top = at.y + 16 + H > vh - 8 ? Math.max(8, at.y - 16 - H) : at.y + 16;
+  return { top, left, width: W };
+}
+
+/** What the broker learns about a page known only as a total (hover card and phone sheet). */
+export function WashDetails({ card }: { card: WashCard }) {
+  return (
+    <div className="space-y-1">
+      <p className="text-[11px] text-muted-foreground">This page</p>
+      <p className="text-sm">
+        <span className="text-lg font-semibold tabular-nums">{card.time}</span>
+        <span className="text-muted-foreground"> from {card.buyers} buyer{card.buyers === 1 ? "" : "s"} · whole page only</span>
+      </p>
+      {card.rankText && <p className="text-xs text-foreground/85">{card.rankText} pages</p>}
+    </div>
+  );
+}
+
 const HeatOverlay = memo(function HeatOverlay({
   page, paint, showHeat, showUnread, maxMs, rects, selectedKey, hoveredKey, onSelectKey, onHoverKey, touch, renditionPage, wrapRef, view = null,
+  mode: modeProp, washT = 0, washCard, onWashTap, outlineKey = null, viewScope = null,
 }: PageCanvasProps & { rects: Map<string, Rect>; wrapRef: RefObject<HTMLDivElement> }) {
+  const mode: DrawMode = modeProp ?? (paint ? "parts" : "none");
+  const parts = mode === "parts";
   const blocks = useMemo(() => new Map((page?.blocks ?? []).map((b) => [b.key, b])), [page]);
-  const pins = useMemo(() => (page && paint ? topBlocks(pageInView(page, view)) : []), [page, paint, view]);
-  const unread = useMemo(() => new Set(page && paint && showUnread ? unreadBlocks(page, renditionPage?.blocks, view) : []), [page, paint, showUnread, renditionPage, view]);
+  const pins = useMemo(() => (page && parts ? topBlocks(pageInView(page, view)) : []), [page, parts, view]);
+  const unread = useMemo(() => new Set(page && parts && showUnread ? unreadBlocks(page, renditionPage?.blocks, view) : []), [page, parts, showUnread, renditionPage, view]);
   // The card follows the pointer (a tall paragraph would push a card anchored
   // to the part off screen); a clicked part keeps its card where it was clicked.
   const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null);
@@ -278,7 +422,9 @@ const HeatOverlay = memo(function HeatOverlay({
   useEffect(() => { if (!selectedKey) setPinnedAt(null); }, [selectedKey]);
   void wrapRef;
 
-  if (!page || !paint) return null;
+  if (!page) return null;
+  if (mode === "wash") return <WashOverlay t={washT} card={washCard} showHeat={showHeat} touch={touch} wrapRef={wrapRef} onWashTap={onWashTap} />;
+  if (!parts) return null;
   const hoverCard = !touch && hoveredKey && pointer ? { key: hoveredKey, at: pointer } : null;
   const pinnedCard = !touch && selectedKey && pinnedAt ? { key: selectedKey, at: pinnedAt } : null;
   const card = hoverCard ?? pinnedCard;
@@ -293,7 +439,7 @@ const HeatOverlay = memo(function HeatOverlay({
         const fill = showHeat ? paperTint(t) : null;
         const pin = pins.indexOf(key);
         const isUnread = unread.has(key);
-        const active = key === selectedKey || key === hoveredKey;
+        const active = key === selectedKey || key === hoveredKey || key === outlineKey;
         return (
           <button
             key={key}
@@ -340,26 +486,39 @@ const HeatOverlay = memo(function HeatOverlay({
                 className="absolute rounded-sm px-1.5 py-[1px] text-[10px] font-medium"
                 style={{ right: 4, bottom: 4, background: PAPER, color: BRASS, border: `1px solid ${BRASS}` }}
               >
-                Nobody read this
+                {viewScope ? "Not read" : "Nobody read this"}
               </span>
             )}
           </button>
         );
       })}
+      {showHeat && page.heat?.basis === "mixed" && page.heat.pageOnlyMs >= 1000 && (
+        <span
+          className={cn(
+            "absolute rounded-[4px] font-medium tabular-nums",
+            touch ? "right-1.5 top-1.5 px-1.5 py-0.5 text-[10px]" : "right-3 top-3 px-2 py-1 text-[11px]",
+          )}
+          style={{ color: INK, background: "rgba(251, 249, 244, 0.92)", border: `1px solid ${BRASS}` }}
+          data-heat-mixed-badge
+        >
+          + {formatReadingTime(page.heat.pageOnlyMs)} read as a whole page
+        </span>
+      )}
       {card && cardBlock && (
         <BlockHoverCard
           block={cardBlock}
           page={page}
           expectedMs={renditionPage?.blocks.find((x) => x.key === card.key)?.expectedMs ?? null}
           at={card.at}
+          viewScope={viewScope}
         />
       )}
     </div>
   );
 });
 
-function BlockHoverCard({ block, page, expectedMs, at }: {
-  block: BlockAttention; page: DocumentPage; expectedMs: number | null; at: { x: number; y: number };
+function BlockHoverCard({ block, page, expectedMs, at, viewScope = null }: {
+  block: BlockAttention; page: DocumentPage; expectedMs: number | null; at: { x: number; y: number }; viewScope?: "one" | "some" | null;
 }) {
   const W = 280;
   const H = 170;
@@ -374,13 +533,17 @@ function BlockHoverCard({ block, page, expectedMs, at }: {
       role="tooltip"
       data-testid="engagement-block-card"
     >
-      <BlockDetails block={block} page={page} expectedMs={expectedMs} />
+      <BlockDetails block={block} page={page} expectedMs={expectedMs} viewScope={viewScope} />
     </div>
   );
 }
 
 /** What the broker learns about one part: used by the hover card and the phone bottom sheet. */
-export function BlockDetails({ block, page, expectedMs }: { block: BlockAttention; page: DocumentPage; expectedMs: number | null }) {
+export function BlockDetails({ block, page, expectedMs, viewScope = null }: {
+  block: BlockAttention; page: DocumentPage; expectedMs: number | null;
+  /** Who the view shows (engagementViewScope): a narrower view never says "Nobody". */
+  viewScope?: "one" | "some" | null;
+}) {
   const nobody = block.attentionMs < 1000;
   const seen = nobody && !isUnread(block);
   return (
@@ -392,7 +555,9 @@ export function BlockDetails({ block, page, expectedMs }: { block: BlockAttentio
           <span className="text-muted-foreground">, while the parts around it took the reading time</span>
         </p>
       ) : nobody ? (
-        <p className="text-sm font-medium">Nobody read this part</p>
+        <p className="text-sm font-medium">
+          {viewScope === "one" ? "This buyer didn't read this part" : viewScope === "some" ? "No buyer in this view read this part" : "Nobody read this part"}
+        </p>
       ) : (
         <p className="text-sm">
           <span className="text-lg font-semibold tabular-nums">{formatReadingTime(block.attentionMs)}</span>

@@ -1,0 +1,6 @@
+{
+ "note": "A recorded model that is always unavailable — for the 'Cimple can't file answers right now' screenshot (specs/together.md §4.5, §11.5).",
+ "latencyMs": 500,
+ "failAll": true,
+ "entries": []
+}

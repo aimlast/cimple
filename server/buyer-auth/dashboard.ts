@@ -19,6 +19,7 @@ import { matchBuyerToDeal } from "../matching/engine.js";
 import { ndaBlocksBuyer } from "@shared/cim-buyer-view";
 import { dashboardShowsLinkedDeals, viewLinkProblem } from "../buyers/view-access.js";
 import { dealPublishedForBuyers } from "@shared/buyer-publish-gate";
+import { isTeaserOnly, normalizeAccessLevel, seesNamedCim } from "@shared/access-levels";
 
 interface DashboardDeal {
   dealId: string;
@@ -92,10 +93,17 @@ export function registerBuyerDashboardRoutes(app: Express) {
       const seen = new Set<string>();
       const dashboardDeals: DashboardDeal[] = [];
 
+      const teaserLinks: typeof byUser = [];
       for (const access of byUser) {
         // Revoked or expired links are not opportunities — the card would
         // link straight into a view room that rejects the token.
         if (viewLinkProblem(access)) continue;
+        // A Teaser link reads the teaser, not the CIM: its card is added
+        // below (it needs the teaser to be published, not the CIM).
+        if (isTeaserOnly(access.accessLevel)) {
+          teaserLinks.push(access);
+          continue;
+        }
         if (seen.has(access.dealId)) continue;
         seen.add(access.dealId);
 
@@ -150,9 +158,9 @@ export function registerBuyerDashboardRoutes(app: Express) {
           || extracted?.locationSite?.state
           || null;
 
-        // Buyers on teaser/full access see the BLIND CIM — the dashboard card
-        // must not reveal what the view room withholds (name, location, description).
-        const blind = !["loi", "due_diligence"].includes(String(access.accessLevel));
+        // Blind CIM buyers — the dashboard card must not reveal what the view
+        // room withholds (name, location, description).
+        const blind = !seesNamedCim(access.accessLevel);
         dashboardDeals.push({
           dealId: deal.id,
           businessName: blind ? ((deal as any).blindCodename || "Confidential Opportunity") : deal.businessName,
@@ -165,10 +173,46 @@ export function registerBuyerDashboardRoutes(app: Express) {
           description: blind || ndaBlocksBuyer(deal, access) ? null : ((deal as any).description || extracted?.executiveSummary || null),
           brokerFirm,
           accessToken: access.accessToken,
-          accessLevel: access.accessLevel,
+          accessLevel: normalizeAccessLevel(access.accessLevel),
           ndaSigned: !!access.ndaSigned,
           lastAccessedAt: access.lastAccessedAt ? new Date(access.lastAccessedAt).toISOString() : null,
           match,
+        });
+      }
+
+      // Teaser links: a "Summary" card while the teaser is published — the
+      // codename, no description or location, the price only as the teaser
+      // shows it (its number style), never anything from the CIM.
+      for (const access of teaserLinks) {
+        if (seen.has(access.dealId)) continue;
+        const deal = await storage.getDeal(access.dealId);
+        if (!deal) continue;
+        const { getDealTeaser } = await import("../teaser/store");
+        const { linkOpenForBuyer } = await import("../teaser/serve");
+        const teaser = await getDealTeaser(deal.id);
+        if (!linkOpenForBuyer(deal, access, teaser) || !teaser) continue;
+        seen.add(access.dealId);
+        const { priceForTeaser, teaserTerms } = await import("@shared/teaser-view");
+        const { servedCodenameFor } = await import("../teaser/summary");
+        const codename = await servedCodenameFor(deal);
+        let brokerFirm: string | null = null;
+        try {
+          brokerFirm = ((await storage.getBrandingByBroker(deal.brokerId)) as any)?.companyName || null;
+        } catch {}
+        dashboardDeals.push({
+          dealId: deal.id,
+          businessName: codename,
+          industry: deal.industry || null,
+          subIndustry: null,
+          askingPrice: priceForTeaser(listedAskingPrice(deal), { show: teaser.showAskingPrice, numbers: teaser.numbers, terms: teaserTerms(deal, codename) }),
+          location: null,
+          description: null,
+          brokerFirm,
+          accessToken: access.accessToken,
+          accessLevel: normalizeAccessLevel(access.accessLevel),
+          ndaSigned: !!access.ndaSigned,
+          lastAccessedAt: access.lastAccessedAt ? new Date(access.lastAccessedAt).toISOString() : null,
+          match: null,
         });
       }
 

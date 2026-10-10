@@ -2,10 +2,15 @@
  * DD (Due Diligence) CIM Enrichment Engine
  *
  * Enriches normal CIM sections with previously withheld sensitive information:
- * - Customer names revealed in charts (replacing "Customer A" etc.)
- * - Addback verification details shown inline
- * - Financial comparison against bank statements / T2s
- * - Revenue verification commentary
+ * customer, supplier and lessor names revealed (replacing "Customer A" etc.).
+ *
+ * It no longer writes "verification notes" (dd spec D15): how the figures
+ * check out against the tax returns and other records is shown separately,
+ * from the documents themselves (server/cim/figures/*, the DD figure layer —
+ * comparisons, citations, "How the figures check out"), never as prose the
+ * writer is asked to add. With reveal gating on (DD_REVEAL_GATING=on, P2),
+ * only sections that hold an anonymised reference go to the model; the
+ * others keep their named version at no cost.
  *
  * The DD version uses the same layout/format but highlights what's new:
  * newly revealed or newly added spans inside FREE-TEXT fields are wrapped in
@@ -161,6 +166,13 @@ export function buildDdContext(input: {
   resolved?: ResolvedDiscrepancyNote[];
   /** Items that must not reach buyers (keep-out.ts); the private-note rules when absent. */
   keepOut?: KeepOut | null;
+  /**
+   * gl: the add-backs found in the general ledger, from the broker's
+   * PUBLISHED evidence (server/gl/evidence.ts glWriterLines) — label, status,
+   * per-year amounts and entry counts; never a vendor or a description. When
+   * present they replace the old add-back verification lines.
+   */
+  glLines?: string[] | null;
 }): DdInputs {
   const parts: string[] = [];
   const { confirmed } = splitFactsForCim(input.extractedInfo ?? {});
@@ -184,7 +196,10 @@ export function buildDdContext(input: {
     parts.push(`## Real customer and supplier data (the only names you may reveal)\n${customerFacts.map(([k, v]) => `- ${k}: ${factValueText(v)}`).join("\n")}`);
   }
 
-  if (input.addbackVerification) {
+  if (input.glLines && input.glLines.length > 0) {
+    // gl: what the published "Where each add-back is in the books" page shows (a held name never reaches it).
+    parts.push(`## Add-backs found in the general ledger (matched by the owner, reviewed by the broker; not an audit)\n${input.glLines.filter((l) => !mentionsHeldPerson(l, heldNames)).join("\n")}`);
+  } else if (input.addbackVerification) {
     const av = input.addbackVerification;
     // Only lines the CIM's analysis adds back: a dividend, a rejected line
     // or a clawback the rules took out is never presented as an add-back.
@@ -269,14 +284,15 @@ export async function loadDdInputs(deal: Pick<Deal, "id" | "extractedInfo">): Pr
     documents: docs.map((d) => ({ name: d.name, category: d.category || "other", visibility: (d as { visibility?: string | null }).visibility ?? null })),
     resolved: currentResolvedNotes(settled.notes),
     keepOut: await keepOutFor(deal.id, extractedInfo),
+    glLines: await import("../gl/evidence").then((m) => m.glWriterLines(deal.id)).catch(() => []),
   });
 }
 
 // ── Validation ───────────────────────────────────────────────────────────
 
-/** Wording about Cimple's own process that must never reach a buyer. */
-const INTERNAL_WORDING =
-  /\b(?:confirmed facts?|per (?:the )?(?:broker|facts|knowledge base|analysis|interview)|knowledge base|teaser|dd context|clarifying questions?|internal (?:note|review)|broker[- ]only|crm|the seller (?:said|told us|claimed|stated)|initially estimated|previously (?:stated|estimated))\b/i;
+/** Wording about Cimple's own process that must never reach a buyer (shared with the figure notes' guards). */
+import { INTERNAL_WORDING } from "./dd-enrichment-wording";
+export { INTERNAL_WORDING };
 
 function textsOf(value: unknown, out: string[] = [], depth = 0): string[] {
   if (depth > 8 || value == null) return out;
@@ -1018,6 +1034,56 @@ export function sanitizeDdOutput(layoutData: any, contentOverride: string): { la
   };
 }
 
+// ── Reveal gating (spec D15, §9.8; P2) ─────────────────────────────────────
+
+/**
+ * Wording that stands in for a name the DD version may reveal: "Customer A",
+ * "Supplier 2", "our largest customer", "a regional grocery distributor",
+ * "a national retailer", "the landlord", "Top 5 customers", "an undisclosed
+ * client". Case matters for the letter in "Customer A" (never "customer a").
+ */
+const ANON_PATTERNS: RegExp[] = [
+  /\b(?:[Cc]ustomer|[Cc]lient|[Ss]upplier|[Vv]endor|[Aa]ccount|[Pp]ayer|[Cc]arrier|[Cc]ontractor|[Ss]ubcontractor|[Dd]istributor|[Ww]holesaler|[Mm]anufacturer|[Pp]artner|[Ll]andlord|[Ll]essor|[Ii]nsurer|[Tt]enant|[Ss]hipper)s?\s+(?:[A-Z]|\d{1,2}|#\d{1,2})\b/,
+  /\b(?:largest|biggest|top|key|major|main|primary|principal|anchor|second[- ]largest|third[- ]largest|leading|single)\s+(?:[a-z-]+\s+){0,2}?(?:customers?|clients?|accounts?|suppliers?|vendors?|payers?|contracts?|distributors?|partners?|carriers?|wholesalers?)\b/i,
+  /\b(?:a|an|one|two|three|four|five|several|its|their)\s+(?:large|major|national|regional|provincial|local|leading|global|international|multinational|publicly[- ]traded|well[- ]known|tier[- ]one|fortune\s*\d+|canadian|american|u\.?s\.?|big[- ]box|blue[- ]chip)\s+(?:[a-z&-]+\s+){0,3}?(?:compan(?:y|ies)|retailers?|chains?|distributors?|grocers?|operators?|manufacturers?|hospitals?|insurers?|networks?|groups?|customers?|clients?|suppliers?|carriers?|brands?|universit(?:y|ies)|municipalit(?:y|ies)|agenc(?:y|ies)|governments?|developers?|builders?|homebuilders?|contractors?|firms?|banks?|lenders?|landlords?|reits?|health authorit(?:y|ies)|school boards?|residences?|homes?|facilit(?:y|ies))\b/i,
+  /\b(?:undisclosed|unnamed|confidential|anonymi[sz]ed)\s+(?:[a-z-]+\s+){0,2}?(?:customers?|clients?|accounts?|suppliers?|vendors?|partners?|landlord|lessor|parties|party|buyers?|tenants?)\b/i,
+  /\b(?:the|our|its|their)\s+(?:landlord|lessor|property owner)\b/i,
+  /\btop\s+\d{1,2}\s+(?:customers?|clients?|accounts?|suppliers?|payers?)\b/i,
+];
+
+/** Every string in a section (layout data and its prose). */
+function sectionStrings(section: Pick<CimSection, "layoutData" | "aiDraftContent" | "brokerEditedContent">): string[] {
+  const out: string[] = [];
+  const walk = (v: unknown, depth: number) => {
+    if (depth > 8 || v == null) return;
+    if (typeof v === "string") { out.push(v); return; }
+    if (Array.isArray(v)) { for (const x of v) walk(x, depth + 1); return; }
+    if (typeof v === "object") for (const x of Object.values(v as Record<string, unknown>)) walk(x, depth + 1);
+  };
+  walk(section.layoutData, 0);
+  if (section.brokerEditedContent) out.push(section.brokerEditedContent);
+  else if (section.aiDraftContent) out.push(section.aiDraftContent);
+  return out;
+}
+
+/** True when the section holds wording the DD version may replace with a real name. */
+export function holdsAnonymisedReferences(section: Pick<CimSection, "layoutData" | "aiDraftContent" | "brokerEditedContent">): boolean {
+  return sectionStrings(section).some((t) => ANON_PATTERNS.some((re) => re.test(t)));
+}
+
+/**
+ * Reveal gating is off until the founder's live comparison (dd spec §15:
+ * the DD reveal pass with and without gating on a Beacon copy) shows it keeps
+ * every reveal. Turn on with DD_REVEAL_GATING=on.
+ */
+let gatingOverride: boolean | null = null;
+export function ddRevealGatingOn(): boolean {
+  return gatingOverride ?? /^(?:on|1|true|yes)$/i.test(process.env.DD_REVEAL_GATING ?? "");
+}
+export function _setDdRevealGatingForTests(on: boolean | null): void {
+  gatingOverride = on;
+}
+
 /** Swappable for tests. */
 type DdClient = { messages: { create: (body: any) => Promise<any> } };
 let ddClient: DdClient = anthropic as unknown as DdClient;
@@ -1044,6 +1110,10 @@ export async function enrichSection(
   if (section.layoutType === "cover_page" || section.layoutType === "divider" || isMediaLayout(section.layoutType)) {
     return keep();
   }
+  // P2 reveal gating (D15): nothing anonymised in it → nothing to reveal → no model call.
+  if (ddRevealGatingOn() && !holdsAnonymisedReferences(section)) {
+    return keep();
+  }
 
   let parsed: { layoutData?: unknown; contentOverride?: unknown } | null = null;
   try {
@@ -1055,11 +1125,11 @@ export async function enrichSection(
       messages: [
         {
           role: "user",
-          content: `You are writing the Due Diligence version of one CIM section. The buyer reading it has signed an LOI; the DD version reveals previously withheld detail and adds verification notes.
+          content: `You are writing the Due Diligence version of one CIM section. The buyer reading it is in due diligence; this version reveals detail the earlier versions withheld.
 
 ## What to do
 1. If this section contains anonymized references (Customer A, Supplier A, a regional grocery distributor, etc.), replace them with the real names — ONLY names listed in the DD context below. If the context doesn't give the name, keep the anonymized wording.
-2. If this section is financial and the DD context has verification data (verified financials, add-back verification, supporting documents), add a short inline note on how the figures were verified.
+2. Do not add notes on how figures were checked; that is shown separately.
 3. MARK WHAT IS NEW. Wrap every newly revealed or newly added span of text in ${DD_OPEN} and ${DD_CLOSE}, e.g. "Revenue is concentrated with ${DD_OPEN}Acme Logistics (31%)${DD_CLOSE}."
    - Markers ONLY inside free-text fields: body, description, caption, footnote(s), notes, pullQuote, highlights, summary, and the content text.
    - NEVER put markers in labels, values, names, titles, chart data, table cells or metric values — reveal those plainly.
@@ -1315,6 +1385,8 @@ export function startFullDdGeneration(deal: Deal, sections: CimSection[], inputs
     .then((summary) => {
       lastRuns.set(deal.id, summary);
       ddRunning.delete(deal.id);
+      // dd figure notes: a DD run is one of the AI pass's triggers (debounced).
+      if (!summary.error) void import("./figures/build").then((m) => m.scheduleFigureBuild(deal.id, "dd_generated")).catch(() => {});
       return summary;
     });
   return { done };

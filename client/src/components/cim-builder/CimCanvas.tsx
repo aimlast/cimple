@@ -10,7 +10,9 @@
  * and each buyer version's own (Blind never shows business branding).
  * The brokerage pages (disclaimer, contact) appear where buyers see them.
  */
-import { Check, EyeOff, Loader2, Lock, Pencil, Plus, Sparkles, X } from "lucide-react";
+import { Check, EyeOff, Loader2, Pencil, Plus, Sparkles, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import type { GlEvidencePayload } from "@shared/gl-evidence";
 import type { CimSection, CimSectionOverride } from "@shared/schema";
 import type { MediaAssetRef } from "@shared/cim-media";
 import { buildBuyerCim } from "@shared/cim-buyer-view";
@@ -22,12 +24,40 @@ import { CimDesignProvider, buildCimDesign, type CimDesignPayload } from "@/comp
 import { CimSheet } from "@/components/cim/CimSheet";
 import { CimSectionHeading } from "@/components/cim/CimSectionHeading";
 import { CimContactPage, CimDisclaimerPage, useBrokeragePageFlags, withBrokeragePages } from "@/components/cim/CimFrontBackPages";
-import { cimModeForAccessLevel } from "@shared/cim-layouts";
+import { BLIND_ACCESS_LEVEL, DD_ACCESS_LEVEL, NAMED_ACCESS_LEVEL, cimModeForAccessLevel, parseAccessLevelInput, seesCim } from "@shared/access-levels";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { TASK_LABEL, type BuilderSection } from "./api";
+import { FigureLayerProvider } from "@/components/cim/figures/FigureLayerContext";
+import { VdrLinkProvider } from "@/components/vdr/VdrLinkContext";
+import { GlRoomLinkProvider } from "@/components/vdr/GlRoomLinks";
+import { GlMarksProvider, glMarkedLineIds } from "@/components/cim/gl/GlLinks";
+import { DdBanner } from "@/components/cim/figures/DdBanner";
+import { DdPreviewBar } from "@/components/cim/figures/DdPreviewBar";
+import { usePreviewFigureLayer, withPreviewExtras } from "@/components/cim/figures/usePreviewFigureLayer";
+import { usePreviewFigureActions } from "@/pages/broker/deal/figures/usePreviewFigureActions";
 
-export type PreviewAs = "editor" | "teaser" | "full" | "loi" | "due_diligence";
+/** "Editing", or a CIM buyer's version (shared/access-levels.ts keys; the teaser has its own preview). */
+export type PreviewAs = "editor" | typeof BLIND_ACCESS_LEVEL | typeof NAMED_ACCESS_LEVEL | typeof DD_ACCESS_LEVEL;
+
+/** The builder's ?preview= value for each buyer version: blind | full-cim | due-diligence. */
+export const PREVIEW_PARAM: Record<Exclude<PreviewAs, "editor">, string> = {
+  [BLIND_ACCESS_LEVEL]: "blind",
+  [NAMED_ACCESS_LEVEL]: "full-cim",
+  [DD_ACCESS_LEVEL]: "due-diligence",
+};
+
+/**
+ * ?preview= → the version to preview. Old links keep working: teaser / full
+ * (both the Blind CIM), loi (the Full CIM) and the level keys themselves.
+ * The teaser isn't a CIM version (it has its own preview) → editing.
+ */
+export function previewFromParam(p: string | null | undefined): PreviewAs {
+  if (p === PREVIEW_PARAM[NAMED_ACCESS_LEVEL]) return NAMED_ACCESS_LEVEL;
+  if (p === PREVIEW_PARAM[DD_ACCESS_LEVEL]) return DD_ACCESS_LEVEL;
+  const level = parseAccessLevelInput(p);
+  return level && seesCim(level) ? (level as Exclude<PreviewAs, "editor">) : "editor";
+}
 
 interface Props {
   sections: BuilderSection[];
@@ -125,11 +155,10 @@ function EditorSheetBody({ sections, branding, selectedId, onSelect, onAddAfter,
               data-testid={`canvas-section-${s.id}`}
             >
               {/* Broker chips — app chrome over the paper, never part of the CIM */}
-              {(hidden || s.accessTier === "full" || proposal || drafted) && (
+              {(hidden || proposal || drafted) && (
                 <div className="absolute -top-3 right-2 z-20 flex flex-wrap justify-end gap-1">
                   {drafted && <Chip tone="brass"><Pencil className="h-3 w-3" /> Unsaved changes</Chip>}
                   {proposal && <Chip tone="brass"><Sparkles className="h-3 w-3" /> Proposed rewrite — not applied yet</Chip>}
-                  {s.accessTier === "full" && <Chip><Lock className="h-3 w-3" /> Full access only</Chip>}
                   {hidden && <Chip><EyeOff className="h-3 w-3" /> Hidden from buyers</Chip>}
                 </div>
               )}
@@ -179,8 +208,26 @@ function EditorSheetBody({ sections, branding, selectedId, onSelect, onAddAfter,
   );
 }
 
+/**
+ * gl: the add-back evidence this preview shows — what buyers see once it's
+ * published, else the live data marked "Not shown to buyers yet".
+ */
+function useGlPreviewEvidence(dealId: string, mode: "blind" | "normal" | "dd") {
+  return useQuery<{ payload: GlEvidencePayload | null }>({
+    queryKey: ["/api/deals", dealId, "gl", "evidence", mode, "preview"],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/gl/evidence?mode=${mode}&source=preview`, { credentials: "include" });
+      if (!r.ok) return { payload: null };
+      return r.json();
+    },
+    staleTime: 30_000,
+  }).data?.payload ?? null;
+}
+
 function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId, onSelect, media, design: designPayload, askingPrice }: Props) {
+  const glEvidence = useGlPreviewEvidence(deal.id, cimModeForAccessLevel(previewAs));
   const view = buildBuyerCim({
+    glEvidence,
     deal,
     accessLevel: previewAs,
     sections: sections as unknown as CimSection[],
@@ -189,8 +236,12 @@ function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId
     // The price as buyers see it (the view room applies the listed price at view time).
     ...(askingPrice !== undefined ? { askingPrice } : {}),
   });
+  // Notes on the figures (+ DD checks) as this buyer would see them, with the
+  // broker's marks on what buyers don't see yet (dd, D21).
+  const fig = usePreviewFigureLayer(deal.id, previewAs);
+  const figActions = usePreviewFigureActions(deal.id);
   if (view.preparing) return null; // the page shows the "not generated yet" banner
-  const shown = view.sections as unknown as CimSection[];
+  const shown = withPreviewExtras(view.sections, fig.data?.extraSections) as unknown as CimSection[];
   // This buyer's version of the design (Blind: no business branding), with
   // chapter numbers following what this buyer actually sees.
   const design = buildCimDesign(designPayload, cimModeForAccessLevel(previewAs));
@@ -204,9 +255,28 @@ function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId
       </CimDesignProvider>
     );
   }
+  const figureMode = cimModeForAccessLevel(previewAs);
   return (
     <CimDesignProvider design={design} sections={shown}>
+      <DdPreviewBar
+        mode={figureMode}
+        layer={fig.data?.layer ?? null}
+        loading={fig.loading}
+        failed={fig.failed}
+        refreshing={!!fig.data?.refreshing}
+        hasOtherRecords={fig.data?.hasOtherRecords}
+        dropped={fig.data?.dropped ?? null}
+        onReview={figActions.openReview}
+      />
+      {figActions.overlays}
+      {/* The broker's preview: citation chips name the deal's own documents and link into the
+          Data room tab; gl's ledger links and row marks read the same way as for buyers (INTEGRATION §2.6–2.7). */}
+      <VdrLinkProvider source={{ kind: "broker", dealId: deal.id }}>
+      <GlRoomLinkProvider>
+      <GlMarksProvider marks={glMarkedLineIds(shown)}>
+      <FigureLayerProvider layer={fig.data?.layer ?? null} broker={figActions.hooks}>
       <CimSheet className="px-4 py-6 sm:px-10 sm:py-12">
+        {!shown.some((s) => s.layoutType === "cover_page") && <DdBanner />}
         {withBrokeragePages(shown, flags).map((item) =>
           item.kind !== "section" ? (
             item.kind === "disclaimer" ? <CimDisclaimerPage key={item.key} /> : <CimContactPage key={item.key} />
@@ -221,10 +291,15 @@ function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId
                 <ExpandableSection section={item.section} branding={branding} brokerMode={false} />
                 <ConnectedContent section={item.section} allSections={shown} />
               </SectionBoundary>
+              {item.section.layoutType === "cover_page" && <DdBanner />}
             </div>
           ),
         )}
       </CimSheet>
+      </FigureLayerProvider>
+      </GlMarksProvider>
+      </GlRoomLinkProvider>
+      </VdrLinkProvider>
     </CimDesignProvider>
   );
 }

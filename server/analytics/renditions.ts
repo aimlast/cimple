@@ -30,10 +30,16 @@ import {
 } from "@shared/cim-blocks";
 import type { CimMode, CimVariant, RenditionBlock, RenditionPage, ViewRoomReading } from "@shared/analytics-v2";
 import type { BuyerSection } from "@shared/cim-buyer-view";
+import { renditionKindFor } from "@shared/access-levels";
 
-/** teaser buyers get locked stubs; every other level is the "full" variant of its mode. */
+/**
+ * The rendition variant a level reads (shared/access-levels.ts renditionKindFor):
+ * "teaser" = the Teaser document (teaser_only); every CIM level is the "full"
+ * variant of its mode. (Renditions recorded before Oct 2026 as
+ * {blind, teaser} were the Blind CIM — the same document as {blind, full}.)
+ */
 export function variantForAccessLevel(level: string | null | undefined): CimVariant {
-  return level === "teaser" ? "teaser" : "full";
+  return renditionKindFor(level).variant;
 }
 
 /** The design flags the view room reads for the brokerage pages. */
@@ -73,16 +79,23 @@ export interface LineageSource {
   analyticsLineage?: string | null;
 }
 
-/** The page index of a served CIM. Labels come from the SERVED sections only. */
+/**
+ * The page index of a served CIM. Labels come from the SERVED sections only.
+ * `extraPages` are prepended (the teaser's header page, `teaser_header`);
+ * the orders of the rest follow them.
+ */
 export function buildPageIndex(
   sections: ReadonlyArray<BuyerSection>,
   design: DesignLike | null | undefined,
   live: ReadonlyArray<LineageSource> = [],
+  extraPages: ReadonlyArray<Omit<RenditionPage, "order">> = [],
 ): RenditionPage[] {
   const shown = sections.filter(shownToBuyer);
   const byId = new Map(shown.map((s) => [s.id, s]));
   const lineage = new Map(live.map((s) => [s.id, s.analyticsLineage || s.id]));
-  return servedPageOrder(shown, design).map((pageId, order): RenditionPage => {
+  const lead: RenditionPage[] = extraPages.map((p, order) => ({ ...p, order }));
+  return [...lead, ...servedPageOrder(shown, design).map((pageId, i): RenditionPage => {
+    const order = lead.length + i;
     if (pageId === DISCLAIMER_PAGE_ID || pageId === CONTACT_PAGE_ID) {
       const blocks = brokeragePageBlocks(pageId);
       return {
@@ -108,7 +121,7 @@ export function buildPageIndex(
       blockFingerprint: blockFingerprint(s.layoutType, defaultView),
       blocks: blocks.map(toRenditionBlock),
     };
-  });
+  })];
 }
 
 /** Stable JSON (sorted keys) so equal servings hash equal. */
@@ -119,19 +132,24 @@ function stableJson(v: unknown): string {
   return `{${Object.keys(o).filter((k) => o[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${stableJson(o[k])}`).join(",")}}`;
 }
 
-export function renditionId(input: { mode: CimMode; variant: CimVariant; design: unknown; sections: unknown }): string {
+/** A rendition's mode: a CIM version, or the teaser document (mode = variant = "teaser"). */
+export type RenditionMode = CimMode | "teaser";
+
+export function renditionId(input: { mode: RenditionMode; variant: CimVariant; design: unknown; sections: unknown }): string {
   return createHash("sha256").update(stableJson({ mode: input.mode, variant: input.variant, design: input.design ?? null, sections: input.sections })).digest("hex").slice(0, 32);
 }
 
 export interface RenditionInput {
   dealId: string;
-  mode: CimMode;
+  mode: RenditionMode;
   variant: CimVariant;
   cimLayoutVersion: number | null;
   sections: BuyerSection[];
   design: unknown;
   /** The deal's live sections (for lineage). */
   live: ReadonlyArray<LineageSource>;
+  /** Pages before the sections (the teaser header). */
+  extraPages?: ReadonlyArray<Omit<RenditionPage, "order">>;
 }
 
 export interface RenditionWriter {
@@ -187,7 +205,7 @@ export async function recordRendition(input: RenditionInput, writer: RenditionWr
     const shown = input.sections.filter(shownToBuyer);
     if (shown.length === 0) return null;
     const id = renditionId({ mode: input.mode, variant: input.variant, design: input.design, sections: input.sections });
-    const pageIndex = buildPageIndex(input.sections, input.design as DesignLike, input.live);
+    const pageIndex = buildPageIndex(input.sections, input.design as DesignLike, input.live, input.extraPages ?? []);
     const seenAt = known.get(id);
     if (!seenAt || Date.now() - seenAt > KNOWN_TTL_MS) {
       await writer.insert({
@@ -205,6 +223,47 @@ export async function recordRendition(input: RenditionInput, writer: RenditionWr
   }
 }
 
+/** The teaser's header page id (the reading tracker's first page on a teaser). */
+export const TEASER_HEADER_PAGE_ID = "teaser_header";
+
+/** The teaser header as a rendition page: one block, the heading (about 4 s to read). */
+export function teaserHeaderPage(title: string): Omit<RenditionPage, "order"> {
+  const blocks = [{ key: "heading", kind: "heading" as const, label: "Header", expectedMs: 4000, part: 0 }];
+  return {
+    pageId: TEASER_HEADER_PAGE_ID,
+    lineageId: TEASER_HEADER_PAGE_ID,
+    parts: 1,
+    servedTitle: title,
+    layoutType: "teaser_header",
+    locked: false,
+    expectedMs: 4000,
+    blockFingerprint: blockFingerprint("teaser_header", blocks),
+    blocks,
+  };
+}
+
+/**
+ * Records the teaser a buyer was served (mode = variant = "teaser"): the
+ * header page first, then each block with its own id as lineage (block ids
+ * are stable across edits). The disclaimer and contact pages are off.
+ */
+export async function recordTeaserRendition(
+  input: { dealId: string; sections: BuyerSection[]; design: unknown; header: { label?: string; codename?: string; tagline?: string; chips?: string[] } },
+  writer: RenditionWriter = dbRenditionWriter,
+): Promise<ViewRoomReading | null> {
+  const design = { ...((input.design as Record<string, unknown>) ?? {}), teaserHeader: input.header };
+  return recordRendition({
+    dealId: input.dealId,
+    mode: "teaser",
+    variant: "teaser",
+    cimLayoutVersion: null,
+    sections: input.sections,
+    design,
+    live: input.sections.map((b) => ({ id: b.id, analyticsLineage: b.id })),
+    extraPages: [teaserHeaderPage(input.header.codename || "Header")],
+  }, writer);
+}
+
 /** Test hook: forget which ids were written. */
 export function _resetRenditionCache(): void {
   known.clear();
@@ -216,23 +275,33 @@ export function _resetRenditionCache(): void {
  * while an update is reviewed, a live CIM's approved versions otherwise —
  * with the codename that copy was redacted under, + the design payload).
  * Null while the CIM is held, the blind version is still being prepared or
- * nothing is shown. Used by the reading seeder (scripts/seed-reading-demo.ts)
- * and the legacy view (server/engagement/legacy.ts); the view room itself
- * records what it actually served.
+ * nothing is shown. Used by the reading seeders (scripts/seed-reading-demo.ts,
+ * scripts/seed-demo-reading.ts) and the legacy view (server/engagement/legacy.ts);
+ * the view room itself records what it actually served.
+ *
+ * opts.ignoreHold (broker-side code and scripts ONLY — never a buyer path):
+ * draw a CIM that is held from buyers (an update waiting for review with
+ * nothing served meanwhile) as buyers WILL be served it when the broker
+ * publishes. Everything else is identical: buildBuyerCim, every blind
+ * guard (fail-closed), the published versions, the kept copy.
+ * opts.accessId: the buyer link a per-buyer rendition is for (null = the
+ * level-wide one; INTEGRATION §2.2 — that buyer's extras come through
+ * buyerCimExtras: gl's evidence and dd's figures).
  */
 export async function servedCimFor(
   deal: import("@shared/schema").Deal,
   accessLevel: string,
+  opts: { ignoreHold?: boolean; accessId?: string | null } = {},
 ): Promise<(RenditionInput & { accessLevel: string }) | null> {
   const [{ buildBuyerCim, cimHeldFromBuyers }, { designPayload }, { loadMediaAssets }, { listedAskingPrice }, { cimModeForAccessLevel }, { buyerCimRows, servedBlindCodename }] = await Promise.all([
     import("@shared/cim-buyer-view"),
     import("../cim/templates"),
     import("../cim/media-store"),
     import("../information/deal-mirror"),
-    import("@shared/cim-layouts"),
+    import("@shared/access-levels"),
     import("../cim/published-snapshot"),
   ]);
-  if (cimHeldFromBuyers(deal)) return null;
+  if (cimHeldFromBuyers(deal) && !opts.ignoreHold) return null;
   const mode = cimModeForAccessLevel(accessLevel);
   const [rows, media, keptCodename] = await Promise.all([
     buyerCimRows(deal, accessLevel),
@@ -241,7 +310,13 @@ export async function servedCimFor(
   ]);
   if (rows.missing) return null;
   const servedDeal = keptCodename ? { ...deal, blindCodename: keptCodename } : deal;
-  const cim = buildBuyerCim({ deal: servedDeal, accessLevel, sections: rows.sections, overrides: rows.overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published });
+  const { buyerCimExtras } = await import("../cim/buyer-extras");
+  // One extras helper for every buyer path (INTEGRATION §2.2), so the pages here — gl's "Where each
+  // add-back is in the books" and dd's "How the figures check out" included — are the ones buyers got.
+  // A per-buyer rendition gets that buyer's extras (gl: the data room's per-buyer deny tightening);
+  // level-wide (null) gets none of that.
+  const extras = await buyerCimExtras(servedDeal, accessLevel, opts.accessId ?? null);
+  const cim = buildBuyerCim({ deal: servedDeal, accessLevel, sections: rows.sections, overrides: rows.overrides, media, askingPrice: listedAskingPrice(deal), published: rows.published, ...extras });
   if (cim.preparing || cim.sections.length === 0) return null;
   const design = await designPayload(deal, mode);
   return {

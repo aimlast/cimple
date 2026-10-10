@@ -30,7 +30,11 @@ export function useDdRun(
       qc.invalidateQueries({ queryKey: builderKey(dealId) });
       toast({ title: "Writing the due-diligence version", description: "This runs in the background — you can leave this page." });
     },
-    onError: (e) => toast({ title: "Couldn't generate the due-diligence version", description: errorText(e), variant: "destructive" }),
+    onError: (e) => {
+      // "Add-backs in the books" may have held it (409 gl_trace_required): the notices follow.
+      qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "gl"] });
+      toast({ title: "Couldn't generate the due-diligence version", description: errorText(e), variant: "destructive" });
+    },
   });
 
   // Announce once, when this run's result is in the builder state.

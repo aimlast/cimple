@@ -85,9 +85,9 @@ await test("identical servings share one id; any change is a new one; written on
   assert.equal(await recordRendition(input, failing), null, "a failure never breaks the view room");
   assert.equal(await recordRendition({ ...input, sections: [] }, writer), null);
 });
-await test("variants: teaser gets its own; every other level is full", () => {
-  assert.equal(variantForAccessLevel("teaser"), "teaser");
-  for (const l of ["full", "loi", "due_diligence"]) assert.equal(variantForAccessLevel(l), "full");
+await test("variants: the Teaser document (teaser_only) gets its own; every CIM level is full (legacy teaser = Blind CIM)", () => {
+  assert.equal(variantForAccessLevel("teaser_only"), "teaser");
+  for (const l of ["teaser", "full", "loi", "blind", "named", "due_diligence"]) assert.equal(variantForAccessLevel(l), "full");
 });
 
 // ── Ingest ───────────────────────────────────────────────────────────────
@@ -159,8 +159,9 @@ await test("a foreign rendition, an unknown page and another buyer's visit are r
   const s = freshStore();
   assert.equal((await ingestReading(s, input(payload({ renditionId: "0".repeat(32) })))).status, 400, "unknown rendition");
   assert.equal((await ingestReading(s, input(payload({ renditionId: "f".repeat(32) })))).status, 400, "another deal's rendition");
-  assert.equal((await ingestReading(s, input(payload(), undefined, { access: { ...access, accessLevel: "teaser" } }))).status, 400, "another version (teaser)");
-  assert.equal((await ingestReading(s, input(payload(), undefined, { access: { ...access, accessLevel: "loi" } }))).status, 400, "another version (named)");
+  assert.equal((await ingestReading(s, input(payload(), undefined, { access: { ...access, accessLevel: "teaser_only" } }))).status, 400, "another version (the teaser)");
+  assert.equal((await ingestReading(s, input(payload(), undefined, { access: { ...access, accessLevel: "loi" } }))).status, 400, "another version (named, legacy key)");
+  assert.equal((await ingestReading(s, input(payload(), undefined, { access: { ...access, accessLevel: "named" } }))).status, 400, "another version (named)");
   assert.equal((await ingestReading(s, input(payload({ blocks: { "99999999-9999-4999-8999-999999999999|row:0": [1, 0, 0, 0] } })))).status, 400, "unknown page");
   assert.equal((await ingestReading(s, input(payload({ path: { from: 0, entries: [[0, "not-a-page"]] } })))).status, 400);
   assert.equal((await ingestReading(s, input(payload({ events: [{ seq: 1, type: "copy", pageId: "nope", at: "x" }] })))).status, 400);

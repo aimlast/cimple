@@ -21,6 +21,7 @@ import { templateForDeal } from "./templates";
 import { generationShortfall } from "./generation-shortfall";
 import type { BuyerAccess, CimGenerationStatus, Deal, FinancialAnalysis } from "@shared/schema";
 import { phaseIndex } from "@shared/deal-progress";
+import { parseAccessLevelInput, seesCim } from "@shared/access-levels";
 import { listedAskingPrice } from "../information/deal-mirror";
 import { brokerFactsView } from "../information/facts";
 import { settleResolvedFacts, currentResolvedNotes, resolvedNotes } from "./resolved-block";
@@ -231,16 +232,23 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
   };
 }
 
-/** Buyer links that can open the CIM right now (not revoked, not expired). */
-export function openBuyerLinks(access: Pick<BuyerAccess, "revokedAt" | "expiresAt">[], now = new Date()): number {
-  return access.filter((a) => !a.revokedAt && (!a.expiresAt || new Date(a.expiresAt) > now)).length;
+/**
+ * Buyer links that can open the CIM right now (not revoked, not expired). A
+ * Teaser link can't see the CIM (shared/access-levels.ts), so it never forces
+ * a review hold. Anything else counts — a row whose level isn't known is
+ * counted too: for a review hold, counting one link too many is the safe side.
+ */
+export function openBuyerLinks(access: Array<Pick<BuyerAccess, "revokedAt" | "expiresAt"> & { accessLevel?: string | null }>, now = new Date()): number {
+  return access.filter((a) =>
+    !a.revokedAt && (!a.expiresAt || new Date(a.expiresAt) > now) &&
+    !(parseAccessLevelInput(a.accessLevel) !== null && !seesCim(a.accessLevel))).length;
 }
 
 /**
  * Does replacing this deal's CIM need the broker's review before buyers see
  * it? Yes when buyers could open the old one, or it was live or approved —
  * "Regenerate all" on Pacific (live, 13 buyers) put an unreviewed AI CIM in
- * front of LOI buyers within minutes, with the approvals still showing.
+ * front of Full CIM buyers within minutes, with the approvals still showing.
  */
 export function replacementNeedsReview(
   deal: Pick<Deal, "isLive" | "contentApprovedByBroker" | "contentApprovedBySeller" | "designApprovedByBroker" | "designApprovedBySeller" | "cimGeneration">,
@@ -431,6 +439,9 @@ async function run(job: CimGenerationJob, deal: Deal, beforeWriting?: BeforeWrit
     job.sectionCount = document.sections.length;
     job.warnings = document.warnings ?? [];
     job.heldPrivate = document.heldPrivate ?? [];
+    // dd: the new CIM's figures — the $0 refresh now, the AI pass debounced.
+    void import("./figures/refresh").then((m) => m.scheduleFigureRefresh(job.dealId, "cim_generated")).catch(() => {});
+    void import("./figures/build").then((m) => m.scheduleFigureBuild(job.dealId, "cim_generated")).catch(() => {});
   } catch (err: any) {
     if (err?.name === "DiscrepancyGateError") console.log(`[cim-generation] deal ${job.dealId} stopped at the discrepancy gate: ${err.message}`);
     else console.error(`[cim-generation] deal ${job.dealId} failed:`, err);
@@ -470,6 +481,10 @@ export async function startCimGeneration(
   mode: CimGenerationMode,
   opts: { beforeWriting?: BeforeWriting } = {},
 ): Promise<CimGenerationJob> {
+  // "Add-backs in the books" (gl spec §6.9): the broker's "hold the whole CIM" switch
+  // stops every full generation here (content, layout, any future caller). 409 gl_trace_required.
+  const { assertGlGate } = await import("../gl/gate");
+  await assertGlGate(deal, "cim");
   const existing = jobs.get(deal.id);
   if (existing?.status === "running") throw new CimGenerationRunningError(existing);
   const now = new Date().toISOString();
