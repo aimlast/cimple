@@ -25,6 +25,12 @@ assert.deepEqual(names, [
   "Travis Holmgren",
 ]);
 assert.equal(new Set(names).size, names.length, "never the same words twice");
+// Two people with the same name on two deals that share a name (e.g. QA copies): one entry, counted.
+assert.deepEqual(buyerNameList([
+  row("Natalie Vasconcelos", "n.a@x.invalid", "c1", "QA OCT — Pacific Coast Logistics Ltd."),
+  row("Natalie Vasconcelos", "n.b@x.invalid", "c2", "QA OCT — Pacific Coast Logistics Ltd."),
+  row("Ann Bo", "ann@x.invalid", "c1", "QA OCT — Pacific Coast Logistics Ltd."),
+]), ["Natalie Vasconcelos (2 links)", "Ann Bo"]);
 const src = (await import("node:fs")).readFileSync(new URL("../../server/analytics-dashboard/kpis.ts", import.meta.url), "utf8");
 assert.ok(src.includes("const names = buyerNameList(sets.expiring);") && src.includes("names: buyerNameList(sets.not_opened)"), "both heads-up lines use it");
 console.log("analytics-headsup-names: ok");

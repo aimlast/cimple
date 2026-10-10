@@ -495,11 +495,19 @@ export function buyerNameList(rows: ReadonlyArray<CimBuyer>): string[] {
     }
     groups.push({ name: b.name, email, deals: [item.deal.id], dealNames: [item.deal.businessName] });
   }
-  return groups.map((g) => {
+  const labels = groups.map((g) => {
     if (g.deals.length > 1) return `${g.name} (${g.deals.length} deals)`;
     const twin = groups.some((o) => o !== g && o.name === g.name);
     return twin ? `${g.name} (${g.dealNames[0]})` : g.name;
   });
+  // Still the same words (same name, deals with the same name): one entry, counted.
+  const out: string[] = [];
+  labels.forEach((l, i) => {
+    const n = labels.filter((x) => x === l).length;
+    if (n === 1) { out.push(l); return; }
+    if (labels.indexOf(l) === i) out.push(`${groups[i].name} (${n} links)`);
+  });
+  return out;
 }
 
 function namesWords(names: string[]): string {
